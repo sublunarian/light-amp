@@ -22,38 +22,29 @@ is greyscale unless you turn its filter off. See <a href="#what-isnt-in-the-sdk-
 
 ## Features
 
-- Subsonic (Navidrome, Airsonic, Gonic), Plex, and the phone's own files. Add as
-  many as you like and switch between them; each keeps its own downloads,
-  settings and cache.
-- Bandcamp works too. It [speaks Subsonic](https://blog.bandcamp.com/2026/07/16/discover-improvements-and-subsonic-implementation/)
-  as of July 2026, so you can use Amp without hosting anything.
-- Downloads for offline, by album, track, or "keep everything I've liked", with
-  a storage limit.
-- Streaming quality set separately for wifi and cellular. I stream FLAC at home
-  and keep MP3s on the phone for everywhere else.
+- Subsonic (Navidrome, Airsonic, Gonic), Plex, and files on the phone — several
+  at once, each with its own downloads, settings and cache.
+- Bandcamp [speaks Subsonic](https://blog.bandcamp.com/2026/07/16/discover-improvements-and-subsonic-implementation/)
+  now, so you can use Amp without hosting anything.
+- Offline downloads, by album, track, or everything you've liked.
+- Separate streaming quality for wifi and cellular.
 - Synced lyrics, from your server or [lrclib.net](https://lrclib.net).
 - Play counts, ratings, likes and playlist edits sync back to the server.
 - Cast to a DLNA speaker or receiver.
-- Artwork can be turned off completely, if you'd rather read a list of words.
+- Artwork can be turned off completely.
 
 I've been using it as my only music player for a week, on a library of about
 8,000 tracks with 50GB downloaded.
 
 ## Installing
 
-Turn on USB debugging first: **Settings → Developer options → Allow USB
-debugging**.
-
-Then get the APK from [Releases](../../releases) and either drop it on
-[Light Phone Manager](https://github.com/greghare/light-phone-manager), or:
+USB debugging needs to be on: **Settings → Developer options → Allow USB
+debugging**. Then take the APK from [Releases](../../releases) and either drop
+it on [Light Phone Manager](https://github.com/greghare/light-phone-manager), or:
 
 ```bash
 adb install -r amp-*.apk
 ```
-
-Open it and add a source. Subsonic wants an address, username and password —
-cleartext HTTP is allowed, so a server on your LAN works. Plex signs in with a
-code at plex.tv/link, so nothing gets typed on the phone.
 
 ## Music on the phone
 
@@ -71,32 +62,22 @@ opens anywhere else, and one you drop in that folder shows up in Amp.
 
 ## What isn't in the SDK yet
 
-Amp mostly sticks to the official SDK. Two things it can't do through it, and
-both are why it isn't a plain SDK tool yet:
+Four things sit outside the official SDK. **Background audio** and **background
+downloads** are the two that stop this being a plain SDK tool. **Colour** and
+**DLNA casting** are extras that would come out for a store build.
 
-- **Background audio.** Music stops when you leave the app unless something owns
-  a media service, and a tool can't start one. Amp ships one in the SDK layer.
-- **Background downloads.** A backgrounded transfer gets throttled about ninefold
-  on this phone, which is the difference between an album arriving and not.
+What each stands in for, and what would replace it, is in
+[SDK gaps](tool/docs/SDK-GAPS.md). The SDK changes themselves are listed with
+revert steps in [SDK patches](tool/docs/SDK-PATCHES.md).
 
-Two more are off-SDK because I wanted them, and would come out for a store build:
+Colour is the only one you have to do anything about. It's off by default, and
+switching the phone's greyscale filter needs a one-time grant:
 
-- **Colour.** The greyscale is a device-wide filter applied after everything is
-  drawn, so no app can paint around it. Amp can switch it off while it's in front
-  and put it back when you leave, but that needs a permission you grant once:
+```bash
+adb shell pm grant com.sublunar.amp android.permission.WRITE_SECURE_SETTINGS
+```
 
-  ```bash
-  adb shell pm grant com.sublunar.amp android.permission.WRITE_SECURE_SETTINGS
-  ```
-
-  Then turn off **Settings → Monochrome Artwork**. Without the grant the
-  permission is inert and the toggle does nothing.
-- **Casting.** There's no output-routing API, so the UPnP discovery is written by
-  hand.
-
-All four, and what would replace them, are in [SDK gaps](tool/docs/SDK-GAPS.md).
-The SDK changes themselves are listed with revert steps in
-[SDK patches](tool/docs/SDK-PATCHES.md).
+Then turn off **Settings → Monochrome Artwork**.
 
 ## Building
 
@@ -107,11 +88,7 @@ the app in its `tool/` module, which is the shape a LightOS tool takes.
 ./gradlew :tool:assembleRelease
 ```
 
-Set `serverPackage` in `tool/lighttool.toml` to `com.thelightphone.sdk.emulator`
-if you're running the emulator instead of a phone.
-
 ## Licence
 
-The app, everything under `tool/`, is MIT © Amp contributors. The rest is Light's
-SDK, MIT © The Light Phone, carried here with our changes on top so it builds in
-one command. See [LICENSE](LICENSE).
+MIT. The app is © Amp contributors; the rest is Light's SDK, © The Light Phone,
+carried here with our changes on top. See [LICENSE](LICENSE).
