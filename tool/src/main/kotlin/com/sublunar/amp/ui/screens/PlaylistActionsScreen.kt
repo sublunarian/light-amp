@@ -2,6 +2,7 @@ package com.sublunar.amp.ui.screens
 
 import android.view.KeyEvent
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,8 +37,15 @@ class PlaylistActionsScreen(
             tracks = App.library.playlistTracks(playlistId)
         }
         val list = tracks ?: emptyList()
+        // Plex's smart playlists are real objects on the server, so Delete here
+        // would really delete one — and Plex builds their contents from a
+        // filter, so renaming is the only thing it would even accept. Neither
+        // is offered: see Playlist.readOnly.
+        val readOnly = App.library.playlists.collectAsState().value
+            .firstOrNull { it.id == playlistId }?.readOnly == true
+        val kind = if (readOnly) "Smart playlist" else "Playlist"
 
-        ListScreen(onBack = { goBack() }, title = playlistName, subtitle = "Playlist") {
+        ListScreen(onBack = { goBack() }, title = playlistName, subtitle = kind) {
             ActionList {
                 TextRow(title = "Play") {
                     if (list.isNotEmpty()) {
@@ -51,13 +59,15 @@ class PlaylistActionsScreen(
                         go { NowPlayingScreen(it) }
                     }
                 }
-                TextRow(title = "Rename") { rename() }
-                TextRow(title = if (confirmDelete) "Tap again to delete" else "Delete Playlist") {
-                    if (confirmDelete) {
-                        App.scope.launch { App.library.deletePlaylist(playlistId) }
-                        goBack()
-                    } else {
-                        confirmDelete = true
+                if (!readOnly) {
+                    TextRow(title = "Rename") { rename() }
+                    TextRow(title = if (confirmDelete) "Tap again to delete" else "Delete Playlist") {
+                        if (confirmDelete) {
+                            App.scope.launch { App.library.deletePlaylist(playlistId) }
+                            goBack()
+                        } else {
+                            confirmDelete = true
+                        }
                     }
                 }
             }
