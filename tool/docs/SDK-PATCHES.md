@@ -112,9 +112,15 @@ libraries that would normally do this.
 
 ## Seeing them as a diff
 
-This repository carries Light's SDK with our changes on top, so upstream is one
-remote away and the diff is the patch set — always accurate, with nothing to keep
-in step by hand:
+**The markers are authoritative**, not the diff. If a change isn't marked
+`SDK PATCH`, `SPIKE` or `TEMPORARY`, it isn't ours:
+
+```bash
+grep -rn "SDK PATCH\|SPIKE\|TEMPORARY" sdk/ tool/src
+```
+
+Upstream can be added as a remote, and the diff is worth reading — but it is
+*not* the patch set:
 
 ```bash
 git remote add upstream https://github.com/lightphone/light-sdk
@@ -122,8 +128,15 @@ git fetch upstream
 git diff upstream/main -- sdk/
 ```
 
-The markers in the source (`SDK PATCH`, `SPIKE`, `TEMPORARY`) are the other half
-of keeping this honest — if a change isn't marked, it isn't ours.
+This repository was started with `git init` rather than forked, so it shares no
+history with upstream and git has no merge base to work from. That diff is a raw
+comparison of two unrelated trees: it shows our changes *and* everything Light
+has done since this copy was taken, with no way to tell them apart. Files Light
+has added since show up as deletions on our side. It gets less useful the longer
+upstream runs ahead.
+
+To see what upstream has that we don't, read the diff the other way round and
+ignore anything carrying a marker.
 
 ## Before submitting a tool
 
