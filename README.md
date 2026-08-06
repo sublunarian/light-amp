@@ -23,11 +23,14 @@ built on Light's SDK, so it looks like it belongs there.
 - Bandcamp [speaks Subsonic](https://blog.bandcamp.com/2026/07/16/discover-improvements-and-subsonic-implementation/)
   now, so you can use Amp without hosting anything.
 - Offline downloads, by album, track, or everything you've liked.
-- Data Saver Mode.
+- Data Mode: choose what happens off Wi-Fi. Nothing is silently downgraded.
 - Synced lyrics.
 - Play counts, ratings, likes and playlist edits sync back to the server.
 - Cast to a DLNA speaker or receiver.
 - Artwork can be turned off completely.
+
+I use it as my only music player, on a library of about 8,000 tracks with 50GB
+downloaded.
 
 ## Installing
 
@@ -46,6 +49,9 @@ Amp reads `Music/Amp`, and nothing else.
 ```bash
 adb push ~/Music/some-album "/sdcard/Music/Amp/"
 ```
+
+Sub-folders are fine. Names come from the tags rather than the folders, and
+artwork has to be embedded in the files — a `cover.jpg` next to them won't show.
 
 Playlists live in `Music/Amp/Playlists` as `.m3u8`, so one you make on the phone
 opens anywhere else, and one you drop in that folder shows up in Amp.
