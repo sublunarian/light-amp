@@ -48,7 +48,7 @@ Then get the APK from [Releases](../../releases) and either drop it on
 [Light Phone Manager](https://github.com/greghare/light-phone-manager), or:
 
 ```bash
-adb install -r amp.apk
+adb install -r amp-*.apk
 ```
 
 Open it and add a source. Subsonic wants an address, username and password —
