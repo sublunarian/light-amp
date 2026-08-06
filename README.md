@@ -24,6 +24,8 @@ built on Light's SDK, so it looks like it belongs there.
   now, so you can use Amp without hosting anything.
 - Offline downloads, by album, track, or everything you've liked.
 - Data Mode: choose what happens off Wi-Fi. Nothing is silently downgraded.
+  **Defaults to WiFi Only**, so on cellular it plays your downloads rather than
+  streaming — change it in Settings if you'd rather it streamed.
 - Synced lyrics.
 - Play counts, ratings, likes and playlist edits sync back to the server.
 - Cast to a DLNA speaker or receiver.
