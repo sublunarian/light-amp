@@ -12,9 +12,6 @@ built on Light's SDK, so it looks like it belongs there.
   <img src="docs/screenshots/albums.png" width="24%" alt="All albums, with the A–Z index">
 </p>
 
-<p align="center"><em>Colour is optional and off by default — the Light Phone III
-is greyscale unless you turn its filter off. See <a href="#what-isnt-in-the-sdk-yet">below</a>.</em></p>
-
 > Side-load only for now. The tool store isn't open yet.
 >
 > For advanced users at this stage — installing means USB debugging and `adb`,
@@ -22,19 +19,15 @@ is greyscale unless you turn its filter off. See <a href="#what-isnt-in-the-sdk-
 
 ## Features
 
-- Subsonic (Navidrome, Airsonic, Gonic), Plex, and files on the phone — several
-  at once, each with its own downloads, settings and cache.
+- Subsonic (Navidrome, Airsonic, Gonic), Plex, and/or local files on the phone.
 - Bandcamp [speaks Subsonic](https://blog.bandcamp.com/2026/07/16/discover-improvements-and-subsonic-implementation/)
   now, so you can use Amp without hosting anything.
 - Offline downloads, by album, track, or everything you've liked.
-- Separate streaming quality for wifi and cellular.
-- Synced lyrics, from your server or [lrclib.net](https://lrclib.net).
+- Data Saver Mode.
+- Synced lyrics.
 - Play counts, ratings, likes and playlist edits sync back to the server.
 - Cast to a DLNA speaker or receiver.
 - Artwork can be turned off completely.
-
-I've been using it as my only music player for a week, on a library of about
-8,000 tracks with 50GB downloaded.
 
 ## Installing
 
@@ -53,9 +46,6 @@ Amp reads `Music/Amp`, and nothing else.
 ```bash
 adb push ~/Music/some-album "/sdcard/Music/Amp/"
 ```
-
-Sub-folders are fine. Names come from the tags rather than the folders, and
-artwork has to be embedded in the files — a `cover.jpg` next to them won't show.
 
 Playlists live in `Music/Amp/Playlists` as `.m3u8`, so one you make on the phone
 opens anywhere else, and one you drop in that folder shows up in Amp.
