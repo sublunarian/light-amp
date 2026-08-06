@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug/side-load overlay: permit cleartext HTTP so self-hosted Navidrome
+  servers on a LAN (e.g. http://192.168.x.x:4533) can be reached. HTTPS
+  servers are unaffected. The plugin only forbids src/main/AndroidManifest.xml,
+  so this variant overlay is allowed and merges into the generated manifest.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!--
+      TEMPORARY SPIKE — see sdk/client/.../display/LightDisplayColor.kt.
+      Lets the app switch LightOS's device-wide monochrome filter off while it
+      is in front. Needs a one-time grant (the permission's `development`
+      protection flag is what makes that possible on a side-loaded build):
+
+        adb shell pm grant com.sublunar.amp android.permission.WRITE_SECURE_SETTINGS
+
+      Debug overlay only: the plugin validates src/main, so this never reaches a
+      submitted build. Remove along with the spike when Light offers an official
+      way to exempt a tool from the filter.
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+    <application android:usesCleartextTraffic="true" />
+</manifest>

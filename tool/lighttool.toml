@@ -1,0 +1,17 @@
+[tool]
+id = "com.sublunar.amp"
+label = "Amp"
+versionCode = 1
+versionName = "0.1.0"
+orientation = "portrait"
+permissions = [
+    "android.permission.INTERNET",
+    "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.WAKE_LOCK",
+    # Reading the phone's own music folder, for the Local Music source. On the
+    # SDK's allowed list, and requested through LightOS the first time it is used.
+    "android.permission.READ_MEDIA_AUDIO",
+]
+# Real LP3 hardware binds to the LightOS system app.
+# Use "com.thelightphone.sdk.emulator" for the LightOS emulator instead.
+serverPackage = "com.lightos"

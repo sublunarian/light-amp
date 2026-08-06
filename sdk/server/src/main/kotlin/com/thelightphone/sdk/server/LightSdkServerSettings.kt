@@ -1,0 +1,132 @@
+package com.thelightphone.sdk.server
+
+import android.content.Context
+import android.content.Context.MODE_PRIVATE
+import android.content.SharedPreferences
+import android.provider.Settings
+import android.util.Log
+import com.thelightphone.sdk.shared.LightServiceMethod
+
+enum class ClientFilterLevel {
+    // LightOS will not show any tools other than the ones baked in by default
+    ExcludeAllApks,
+
+    // LightOS will show default tools as well as those curated from the community
+    AllowLightApprovedApks,
+
+    // LightOS will show default tools as well as any that have been built as SDK clients and signed using a Light SDK cert
+    AllowLightSignedApks,
+
+    // LightOS will show default tools as well as any other APKs that have been installed on the device.
+    AllowAllApks
+}
+
+enum class ForceFocusLevel {
+    // The server app will pull itself into the foreground when any alerts fire, AND when
+    // the device locks (so that it can act as the home/lock screen - default behavior in LightOS)
+    Always,
+
+    // Server app will pull itself into the foreground when any alerts fire
+    AlertsOnly,
+
+    // Server app will never pull itself into the foreground
+    Never
+}
+
+interface LightSdkServerSettings {
+    var clientFilterLevel: ClientFilterLevel
+    var keyboardOptions: LightServiceMethod.GetKeyboardOptions.Response
+    var userPreferences: LightServiceMethod.GetUserPreferences.Response
+
+    /**
+     * defines the behavior for when the server app should "foreground" itself over other running apps
+     * LightOS is aggressive about this by default. It will foreground itself for all alerts, and whenever
+     * the phone is locked.
+     */
+    var forceFocusLevel: ForceFocusLevel
+}
+
+class DefaultLightSdkServerSettings(context: Context) : LightSdkServerSettings {
+
+    companion object {
+        const val TAG = "LightSdkServerSettings"
+        private const val CLIENT_FILTER_LEVEL = "client_filter_level"
+        private const val FORCE_FOCUS_LEVEL = "light_force_focus_level"
+        private const val USER_PREFERENCES_HAPTICS = "user_preferences_haptics_enabled"
+        private const val KEYBOARD_EMOJIS = "lp3_keyboard_emojis"
+        private const val KEYBOARD_SHOW_VOICE = "lp3_keyboard_show_voice"
+        private const val KEYBOARD_ENABLE_KEY_ANIMATION = "lp3_keyboard_enable_key_animation"
+        private const val KEYBOARD_ENABLE_SWIPE = "lp3_keyboard_enable_swipe"
+    }
+
+    private val contentResolver = context.contentResolver
+    private val preferences: SharedPreferences =
+        context.getSharedPreferences("light_sdk_server", MODE_PRIVATE)
+
+    override var clientFilterLevel: ClientFilterLevel
+        get() = preferences
+            .getInt(CLIENT_FILTER_LEVEL, LightSdkServer.defaultClientFilterLevel.ordinal)
+            .let { index ->
+                ClientFilterLevel.entries.getOrElse(index) {
+                    Log.e(TAG, "Invalid value for client filter level: $it")
+                    LightSdkServer.defaultClientFilterLevel
+                }
+            }
+        set(value) {
+            preferences.edit().putInt(CLIENT_FILTER_LEVEL, value.ordinal).apply()
+        }
+
+    // store in system settings, likely only going to expose for users using adb
+    override var forceFocusLevel: ForceFocusLevel
+        get() = Settings.System.getInt(
+            contentResolver,
+            FORCE_FOCUS_LEVEL,
+            LightSdkServer.defaultForceFocusLevel.ordinal
+        ).let { index ->
+            ForceFocusLevel.entries.getOrElse(index) {
+                Log.e(TAG, "Invalid value for client filter level: $it")
+                LightSdkServer.defaultForceFocusLevel
+            }
+        }
+        set(value) {
+            Settings.System.putInt(contentResolver, FORCE_FOCUS_LEVEL, value.ordinal)
+        }
+
+    override var userPreferences: LightServiceMethod.GetUserPreferences.Response
+        get() {
+            val hapticsEnabled = preferences.getBoolean(USER_PREFERENCES_HAPTICS, false)
+            return LightServiceMethod.GetUserPreferences.Response(hapticsEnabled)
+        }
+        set(value) {
+            preferences.edit().putBoolean(USER_PREFERENCES_HAPTICS, value.hapticsEnabled).apply()
+        }
+
+    // store in system settings for now so readable from apps that can't talk to server
+    override var keyboardOptions: LightServiceMethod.GetKeyboardOptions.Response
+        get() {
+            return LightServiceMethod.GetKeyboardOptions.Response(
+                emojisAsString = Settings.System.getString(contentResolver, KEYBOARD_EMOJIS),
+                displayVoice = Settings.System.getInt(contentResolver, KEYBOARD_SHOW_VOICE, 1) == 1,
+                swipeEnabled = Settings.System.getInt(contentResolver, KEYBOARD_ENABLE_SWIPE, 1) == 1,
+                enableKeyAnimation = Settings.System.getInt(
+                    contentResolver,
+                    KEYBOARD_ENABLE_KEY_ANIMATION,
+                    1
+                ) == 1,
+            )
+        }
+        set(value) {
+            Settings.System.putString(contentResolver, KEYBOARD_EMOJIS, value.emojisAsString)
+            Settings.System.putInt(
+                contentResolver,
+                KEYBOARD_SHOW_VOICE,
+                if (value.displayVoice) 1 else 0
+            )
+            Settings.System.putInt(
+                contentResolver,
+                KEYBOARD_ENABLE_KEY_ANIMATION,
+                if (value.enableKeyAnimation) 1 else 0
+            )
+        }
+
+}

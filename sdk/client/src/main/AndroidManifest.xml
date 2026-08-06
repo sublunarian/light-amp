@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Lets tools talk to USB security keys / hardware tokens. required=false
+         so it never filters out devices without USB host support. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
+    <!-- SPIKE (background audio): keep-alive foreground service. Revert when
+         LightOS ships official background audio for side-loaded tools. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- SPIKE (background downloads): keeps a long transfer off the cached bucket.
+         Revert with LightTransferService. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <provider
+            android:name="com.thelightphone.sdk.LightFileProvider"
+            android:authorities="${applicationId}.lightfiles"
+            android:exported="true" />
+        <service android:name="com.thelightphone.sdk.LightPushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT"/>
+            </intent-filter>
+        </service>
+        <!-- SPIKE (background audio + media notification): revert with the rest. -->
+        <service
+            android:name="com.thelightphone.sdk.audio.LightMediaService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+        <!-- SPIKE (background downloads): revert with LightTransferService. -->
+        <service
+            android:name="com.thelightphone.sdk.transfer.LightTransferService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+    </application>
+</manifest>

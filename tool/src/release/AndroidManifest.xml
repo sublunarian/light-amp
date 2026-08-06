@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Release overlay for side-loaded builds.
+
+  Cleartext HTTP, for the same reason the debug overlay has it: a self-hosted
+  Navidrome on a LAN is normally plain HTTP on a port, and without this a
+  published APK simply cannot reach one. HTTPS servers are unaffected.
+
+  This is a variant overlay, not src/main — the plugin validates src/main only,
+  so a build submitted to Light never carries either of these. If a store build
+  ever needs to talk to a LAN server, that is a conversation with Light about a
+  network security config rather than something to smuggle in here.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      TEMPORARY SPIKE — see sdk/client/.../display/LightDisplayColor.kt.
+
+      Lets the app switch LightOS's device-wide monochrome filter off while it is
+      in front, which is the only route to colour album art on this phone: the
+      filter is applied by SurfaceFlinger after composition, so nothing an app
+      draws can defeat it.
+
+      Here as well as in the debug overlay because the Settings screen carries a
+      Color toggle. Shipping that toggle in a build where it *cannot* work is the
+      misleading kind of control this project refuses to ship — so either the
+      permission travels with it or the toggle goes.
+
+      It does nothing on its own. The permission is signature|privileged and only
+      grantable because of its `development` protection flag, so it stays inert
+      until the user runs, once, on a machine with adb:
+
+        adb shell pm grant com.sublunar.amp android.permission.WRITE_SECURE_SETTINGS
+
+      Verified: without the grant the app launches, the filter stays on, and
+      nothing throws — a clean no-op. The grant survives `install -r` and is lost
+      on a full uninstall.
+
+      Remove along with the spike when Light offers a sanctioned way to exempt a
+      tool from the filter; see docs/SDK-GAPS.md §4.
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+
+    <application android:usesCleartextTraffic="true" />
+</manifest>

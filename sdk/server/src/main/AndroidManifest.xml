@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" >
+
+    <protected-broadcast android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+    <protected-broadcast android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+    <protected-broadcast android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+    <protected-broadcast android:name="org.unifiedpush.android.connector.MESSAGE" />
+
+    <application>
+        <receiver
+            android:name=".LightPushDistributor"
+            android:exported="true" >
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.distributor.REGISTER" />
+                <action android:name="org.unifiedpush.android.distributor.UNREGISTER" />
+                <action android:name="org.unifiedpush.android.distributor.MESSAGE_ACK" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".LightSdkService"
+            android:exported="true" >
+            <intent-filter>
+                <action android:name="com.thelightphone.sdk.action.BIND_SERVICE" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>

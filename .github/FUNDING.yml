@@ -1,0 +1,23 @@
+# Puts a "Sponsor" button at the top of the repository.
+#
+# GitHub Sponsors only works once you have enrolled at
+# github.com/sponsors — until then this line is inert and no button
+# appears. Enrolling needs Stripe onboarding and identity verification;
+# that stays between you and GitHub, and sponsors only ever see the
+# username below.
+github: sublunarian
+
+# Uncomment whichever of these you actually set up. Ko-fi is the better
+# "buy me a coffee" — it takes 0% on donations where Buy Me a Coffee
+# takes 5%, and the page can carry a project name rather than your own.
+# Liberapay is the usual choice for recurring support in free software.
+#
+# ko_fi: sublunar
+# liberapay: sublunar
+# buy_me_a_coffee: sublunar
+# custom: ["https://example.com/donate"]
+
+# Deliberately not here: PayPal. A PayPal.me link shows your legal name to
+# everyone who clicks it, personal-account payments can be charged back
+# months later, and unexpected inflows are the classic way to get an
+# account frozen.

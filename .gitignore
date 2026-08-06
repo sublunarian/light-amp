@@ -1,0 +1,62 @@
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+local.properties
+local/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### Kotlin ###
+.kotlin
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+
+### Clanker ###
+.claude/
+
+### Python (builder/) ###
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Release signing — never commit a key you publish with. The dev keystore that
+# ships in Light's repo (sdk/keys/lightsdk-dev.jks) is fine for side-loading
+# your own builds and wrong for anything public: everyone building a tool has it.
+release.keystore
+release.jks
+keystore.properties
+
+# Staged release APKs — these belong in GitHub Releases, not the repo.
+dist/

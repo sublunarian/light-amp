@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sharedUserId="android.uid.system">
+
+    <application
+        android:name=".EmulatorApplication"
+        android:label="LightOS Emulator"
+        android:supportsRtl="true"
+        android:theme="@style/LightEmulator.Theme">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".LightSdkPermissionActivity"
+            android:exported="true"
+            android:label="Light SDK Permission"
+            android:theme="@style/LightEmulator.Theme.Permission" />
+    </application>
+</manifest>
