@@ -32,7 +32,9 @@ class AddToPlaylistScreen(
 
     @Composable
     override fun Content() {
-        val playlists by App.library.playlists.collectAsState()
+        // Not the server's own: Plex refuses to add to a smart playlist, so
+        // offering it here would be a row that only ever fails.
+        val playlists = App.library.playlists.collectAsState().value.filterNot { it.readOnly }
         LaunchedEffect(Unit) { App.library.refreshPlaylists() }
 
         ListScreen(onBack = { goBack() }, title = "Add to Playlist") {

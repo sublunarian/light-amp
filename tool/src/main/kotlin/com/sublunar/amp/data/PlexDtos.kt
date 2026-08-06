@@ -51,6 +51,13 @@ data class PlexDirectory(
 
 @Serializable
 data class PlexMetadata(
+    /**
+     * Set on a smart playlist — one Plex builds from a filter rather than a
+     * list. A [JsonElement] for the same reason as [PlexMediaContainer.refreshing]:
+     * Plex writes `1` in some responses and `true` in others, and a Boolean
+     * field would silently read the numeric form as false.
+     */
+    val smart: JsonElement? = null,
     val ratingKey: String = "",
     val key: String = "",
     val type: String = "",
@@ -92,7 +99,11 @@ data class PlexMetadata(
     val playlistItemID: Long? = null,
     @SerialName("Genre") val genres: List<PlexTag> = emptyList(),
     @SerialName("Media") val media: List<PlexMedia> = emptyList(),
-)
+) {
+    /** Plex builds this one from a filter, so its contents can't be edited. */
+    val isSmart: Boolean
+        get() = (smart as? JsonPrimitive)?.content?.lowercase() in setOf("true", "1")
+}
 
 /** Plex's tag shape — genres, moods, styles all arrive as `{ "tag": "..." }`. */
 @Serializable

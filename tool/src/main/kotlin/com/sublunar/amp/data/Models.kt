@@ -72,6 +72,16 @@ data class Playlist(
     val createdAt: Long,
     val updatedAt: Long,
     val trackIds: List<String>,
+    /**
+     * The server owns this one's contents — Plex's smart playlists, which it
+     * builds from a filter.
+     *
+     * They arrive from the same endpoint as ordinary playlists and are real
+     * objects on the server, so a delete here would really delete one. Adding
+     * to one is refused outright. Shown, because a smart playlist someone made
+     * is still theirs to listen to — but not offered as something to change.
+     */
+    val readOnly: Boolean = false,
 )
 
 /** Starred ids returned together by getStarred2. */
