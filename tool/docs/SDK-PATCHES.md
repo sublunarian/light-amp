@@ -3,11 +3,11 @@
 Amp needs some changes to `sdk/client` in Light's repository. They fall into
 two groups, and the difference matters.
 
-**Additions** (§1–5) are small, self-contained and would be reasonable in the SDK
+**Additions** (§1–6) are small, self-contained and would be reasonable in the SDK
 as it stands. Every one is marked in the source with
 `SDK PATCH (additive, upstreamable)`.
 
-**Workarounds** (§6–10) exist only because there is no supported route. Every one
+**Workarounds** (§7–11) exist only because there is no supported route. Every one
 is marked `SPIKE` or `TEMPORARY`, carries revert instructions in its own comment,
 and must come out before a tool is submitted. What each is standing in for is
 explained in [SDK-GAPS.md](SDK-GAPS.md).
@@ -75,35 +75,45 @@ reverting is deleting the group.
 
 ---
 
+### 6. `setHandleAudioBecomingNoisy(true)`
+
+One line on the `ExoPlayer.Builder`, and the default is wrong for anything that
+plays audio: without it, Bluetooth disconnecting or headphones being unplugged
+leaves playback running out of the phone's speaker. Media3 handles the
+`ACTION_AUDIO_BECOMING_NOISY` broadcast itself once it's set.
+
+A tool cannot do this for itself — it needs a `BroadcastReceiver`, and
+`android.content` is blocked.
+
 ## Workarounds
 
 Each of these is described in full — what it's standing in for, and how to
 remove it — in [SDK-GAPS.md](SDK-GAPS.md). In brief:
 
-### 6. `audio/LightMediaService.kt` + manifest
+### 7. `audio/LightMediaService.kt` + manifest
 
 Foreground `MediaSessionService` so audio survives the screen going off.
 Also declares `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_MEDIA_PLAYBACK`.
 
-### 7. `transfer/LightTransferService.kt` + manifest
+### 8. `transfer/LightTransferService.kt` + manifest
 
 `dataSync` foreground service so downloads aren't throttled ~9× when the tool is
 backgrounded.
 
-### 8. `LightActivity` — volume key pass-through
+### 9. `LightActivity` — volume key pass-through
 
 Lets hardware volume keys reach the system so the media session can route them,
 which is what makes the rocker control a cast renderer rather than a silent
 local player.
 
-### 9. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
+### 10. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
 
 Switches LightOS's device-wide greyscale filter off while the tool is in front.
 Needs `WRITE_SECURE_SETTINGS`, declared in the `debug` and `release` manifest
 overlays but never in `src/main` — the plugin validates `src/main` only, so it
 cannot reach a submitted build.
 
-### 10. `cast/DlnaCast.kt`
+### 11. `cast/DlnaCast.kt`
 
 SSDP discovery and SOAP control, written by hand because the sandbox blocks the
 libraries that would normally do this.
@@ -147,5 +157,5 @@ this finds every one of them:
 grep -rn "SPIKE\|TEMPORARY" sdk/ tool/src
 ```
 
-The additions in §1–5 are a separate conversation with Light: they are useful to
+The additions in §1–6 are a separate conversation with Light: they are useful to
 any tool, not just this one, and are written to be upstreamable as they stand.
