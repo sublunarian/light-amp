@@ -71,6 +71,14 @@ class LightAudioPlayer internal constructor(
 
     private val player = ExoPlayer.Builder(context)
         .setDeviceVolumeControlEnabled(true)
+        // SDK PATCH (additive, upstreamable): pause when the audio route goes
+        // away — Bluetooth disconnecting, headphones unplugged. Media3 handles
+        // ACTION_AUDIO_BECOMING_NOISY itself when this is set, and the default
+        // is false: without it, pulling your headphones out or walking away
+        // from a speaker starts playing out loud on the phone. A tool cannot
+        // do this for itself — it needs a BroadcastReceiver, and the sandbox
+        // blocks `android.content`.
+        .setHandleAudioBecomingNoisy(true)
         .build().apply player@{
         setAudioAttributes(usage.toMedia3AudioAttributes(), false)
         addListener(object : Player.Listener {
