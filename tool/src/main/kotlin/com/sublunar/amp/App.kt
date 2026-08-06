@@ -252,6 +252,16 @@ object App {
                     val current = source.value
                     if (!current.supportsLibraries) return@collect
                     val folders = runCatching { library.musicFolders() }.getOrNull() ?: return@collect
+                    // Empty means "couldn't ask", not "there are none".
+                    // musicFolders() answers emptyList() for a network failure, a
+                    // client that isn't up yet, and a server with no folders
+                    // alike — so writing it through wiped libraries that had
+                    // already been discovered, collapsing the Sources page back
+                    // to a single "All Libraries" row until a later sync
+                    // happened to succeed. A server with no libraries renders
+                    // identically anyway, so there is nothing to lose by
+                    // treating empty as unknown.
+                    if (folders.isEmpty()) return@collect
                     settings.setSourceLibraries(
                         current.id,
                         folders.map { SourceLibrary(it.id, it.name) },
