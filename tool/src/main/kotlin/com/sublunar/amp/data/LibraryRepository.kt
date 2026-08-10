@@ -358,18 +358,18 @@ class LibraryRepository(
      * the library no longer holds, which is the same thing the server would do.
      */
     suspend fun playlistTracks(id: String): List<Track> {
-        val tracks = if (playlistsAreLocal()) {
-            getTracksByIds(LocalPlaylists.trackIds(id))
-        } else {
-            serverClient.value?.let { client ->
-                runCatching { client.getPlaylistTracks(id) }.getOrNull()
-            } ?: run {
-                val ids = (_playlists.value.firstOrNull { it.id == id } ?: return emptyList()).trackIds
-                getTracksByIds(ids)
-            }
-        }
+        val tracks = fetchPlaylistTracks(id)
         _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
         return tracks
+    }
+
+    private suspend fun fetchPlaylistTracks(id: String): List<Track> {
+        if (playlistsAreLocal()) return getTracksByIds(LocalPlaylists.trackIds(id))
+        serverClient.value?.let { client ->
+            runCatching { client.getPlaylistTracks(id) }.getOrNull()?.let { return it }
+        }
+        val ids = (_playlists.value.firstOrNull { it.id == id } ?: return emptyList()).trackIds
+        return getTracksByIds(ids)
     }
 
     /**
@@ -382,10 +382,23 @@ class LibraryRepository(
      */
     private val _playlistTrackIds = MutableStateFlow<Map<String, List<String>>>(emptyMap())
 
-    /** Fills the membership cache for [id] if it isn't already known. */
+    /**
+     * Fills the membership cache for [id] if it isn't already known.
+     *
+     * Talks to the server directly rather than through [playlistTracks], and
+     * skips the cache write on failure — [playlistTracks]'s offline rebuild is
+     * the right fallback for a screen that must show *something*, but caching
+     * that guess here would freeze a transient failure as "confirmed empty"
+     * for good, since this only ever runs once per id.
+     */
     suspend fun primePlaylistTrackIds(id: String) {
         if (id in _playlistTrackIds.value) return
-        playlistTracks(id)
+        if (playlistsAreLocal() || serverClient.value == null) {
+            playlistTracks(id)
+            return
+        }
+        val tracks = runCatching { serverClient.value?.getPlaylistTracks(id) }.getOrNull() ?: return
+        _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
     }
 
     /** Playlists whose every known track is downloaded — drives the download badge. */
@@ -1046,6 +1059,7 @@ class LibraryRepository(
         // this, the tab shows the previous server's playlists until the new
         // ones have been fetched over the network, which is long enough to read.
         _playlists.value = emptyList()
+        _playlistTrackIds.value = emptyMap()
         topSongs.clear()
         artistIds = null
         haystackFor = null
