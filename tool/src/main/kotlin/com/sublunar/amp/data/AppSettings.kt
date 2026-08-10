@@ -309,6 +309,16 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     val albumGrid: Flow<Boolean> = boolFlow(ALBUM_GRID, false)
 
     /**
+     * The same choice, kept separately for an artist's own page.
+     *
+     * A discography and the whole library aren't the same kind of list — a
+     * dozen covers read well as a grid where eight thousand don't, and the
+     * reverse is just as reasonable. One setting for both meant picking a
+     * layout for one place and having it applied to the other.
+     */
+    val artistAlbumGrid: Flow<Boolean> = boolFlow(ARTIST_ALBUM_GRID, false)
+
+    /**
      * Artwork stays grey — the app's own switch over the display workaround.
      *
      * On by default, because turning it off changes the whole device's colour
@@ -387,6 +397,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setInvertColors(value: Boolean) = putBool(INVERT_COLORS, value)
     suspend fun setKaraokeLyrics(value: Boolean) = putBool(KARAOKE_LYRICS, value)
     suspend fun setAlbumGrid(value: Boolean) = putBool(ALBUM_GRID, value)
+    suspend fun setArtistAlbumGrid(value: Boolean) = putBool(ARTIST_ALBUM_GRID, value)
 
     suspend fun setMonochromeArtwork(value: Boolean) = putBool(MONOCHROME_ARTWORK, value)
     suspend fun setArtwork(value: ArtworkMode) = putString(ARTWORK, value.name)
@@ -432,6 +443,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val INVERT_COLORS = booleanPreferencesKey("pref.invertColors")
         private val KARAOKE_LYRICS = booleanPreferencesKey("pref.karaokeLyrics")
         private val ALBUM_GRID = booleanPreferencesKey("pref.albumGrid")
+        private val ARTIST_ALBUM_GRID = booleanPreferencesKey("pref.artistAlbumGrid")
         private val MONOCHROME_ARTWORK = booleanPreferencesKey("pref.monochromeArtwork")
         private val ARTWORK = stringPreferencesKey("pref.artworkMode")
         private val SOURCES = stringPreferencesKey("pref.sources")

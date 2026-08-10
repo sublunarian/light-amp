@@ -419,6 +419,12 @@ object App {
             .stateIn(scope, SharingStarted.Eagerly, false)
     }
 
+    /** The same, for an artist's own page — see [AppSettings.artistAlbumGrid]. */
+    val artistAlbumGrid: StateFlow<Boolean> by lazy {
+        combine(settings.artistAlbumGrid, hideArtwork) { grid, hidden -> grid && !hidden }
+            .stateIn(scope, SharingStarted.Eagerly, false)
+    }
+
     val sortedAlbums: StateFlow<SortedView<Album>> by lazy {
         combine(library.albums, albumSort, albumSortReversed) { list, sort, rev ->
             val sorted = sortAlbums(list, sort, rev)
