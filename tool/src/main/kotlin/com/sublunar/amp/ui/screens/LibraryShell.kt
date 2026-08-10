@@ -531,6 +531,7 @@ private fun ArtistsTab(actions: ShellActions) {
     val supportsLikes = App.source.collectAsState().value.supportsLikes
     val likedArtists by App.library.likedArtists.collectAsState()
     val hasLiked = supportsLikes && likedArtists.isNotEmpty()
+    val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
     val needsAccess = !rememberLocalAccess()
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     Column(Modifier.fillMaxSize()) {
@@ -551,6 +552,7 @@ private fun ArtistsTab(actions: ShellActions) {
                 ArtistRow(
                     name = artist.name,
                     subtitle = "${artist.albumCount} albums · ${artist.trackCount} songs",
+                    downloaded = artist.name in downloadedArtists,
                     onClick = { actions.openArtist(artist.name) },
                     onLongClick = { actions.artistOptions(artist.name) },
                 )
