@@ -247,6 +247,8 @@ fun ArtistRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
+    /** Shows the offline badge — set when every track of the artist's is downloaded. */
+    downloaded: Boolean = false,
 ) {
     Row(
         modifier = modifier
@@ -257,7 +259,9 @@ fun ArtistRow(
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Spacer(Modifier.width(px(ROW_LEAD_PX)))
+        Box(modifier = Modifier.width(px(ROW_LEAD_PX))) {
+            if (downloaded) AppIcon(AppIcons.Downloaded, size = px(ROW_MARK_PX))
+        }
         Column {
             AppText(
                 name,
