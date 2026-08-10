@@ -199,6 +199,10 @@ class ArtistActionsScreen(
         val artists by App.library.artists.collectAsState()
         val liked = artists.firstOrNull { it.name == name }?.liked == true
         val source by App.source.collectAsState()
+        val tracks by App.library.tracks.collectAsState()
+        val artistTracks = remember(tracks, name) { App.library.tracksForArtist(name) }
+        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
+        val fullyDownloaded = artistTracks.isNotEmpty() && artistTracks.all { it.id in downloadedIds }
 
         ListScreen(onBack = { goBack() }, title = name) {
             ActionList {
@@ -209,6 +213,19 @@ class ArtistActionsScreen(
                     }
                 }
                 TextRow(title = "All Songs") { go { ArtistSongsScreen(it, name) } }
+                if (artistTracks.isNotEmpty() && source.supportsDownloads) {
+                    if (fullyDownloaded) {
+                        TextRow(title = "Remove from Downloads") {
+                            App.scope.launch { App.downloader.removeAll(artistTracks.map { it.id }) }
+                            goBack()
+                        }
+                    } else {
+                        TextRow(title = "Download All Albums") {
+                            App.downloader.enqueue(artistTracks)
+                            goBack()
+                        }
+                    }
+                }
             }
         }
     }
