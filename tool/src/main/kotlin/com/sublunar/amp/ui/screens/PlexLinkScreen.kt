@@ -155,13 +155,19 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
      */
     private suspend fun prepare(server: PlexResource, accountToken: String): PendingServer? {
         val uri = PlexAccount.reachable(server, accountToken) ?: return null
-        return inspectPlexServer(
+        val pending = inspectPlexServer(
             name = server.name,
             uri = uri,
             token = server.accessToken ?: accountToken,
             // An account already knows the server's id; only the typed-in path
             // has to go and ask for it.
             machineIdentifier = server.clientIdentifier,
+        ) ?: return null
+        // Keep the addresses that didn't win too: the one that answers at home
+        // is usually the LAN address, which is unreachable from anywhere else.
+        // See MusicSource.connections.
+        return pending.copy(
+            source = pending.source.copy(connections = PlexAccount.candidates(server)),
         )
     }
 

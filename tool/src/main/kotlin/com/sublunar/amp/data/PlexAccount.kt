@@ -84,6 +84,20 @@ object PlexAccount {
      * and a relay. The LAN address is the fastest when you're at home and dead
      * when you're not, so they're tried in that order rather than guessed at.
      */
+    /** Every advertised address, best first — local, then direct, then relay. */
+    fun candidates(resource: PlexResource): List<String> =
+        resource.connections
+            .sortedWith(compareBy({ !it.local }, { it.relay }))
+            .map { it.uri.trimEnd('/') }
+            .distinct()
+
+    /**
+     * The first advertised address that answers.
+     *
+     * Local first because it is faster and avoids Plex's relay — but see
+     * [MusicSource.connections]: the rest are kept so this can be redone when
+     * the network changes underneath a source.
+     */
     suspend fun reachable(resource: PlexResource, token: String): String? {
         val ordered = resource.connections.sortedWith(
             compareBy({ !it.local }, { it.relay }),
@@ -97,6 +111,20 @@ object PlexAccount {
                 response.status.value in 200..299
             }.getOrDefault(false)
             if (ok) return connection.uri.trimEnd('/')
+        }
+        return null
+    }
+
+    /** The first of [uris] that answers, for re-resolving a stored source. */
+    suspend fun firstReachable(uris: List<String>, token: String): String? {
+        for (uri in uris) {
+            val ok = runCatching {
+                http.get(uri.trimEnd('/') + "/identity") {
+                    plexHeaders()
+                    header("X-Plex-Token", token)
+                }.status.value in 200..299
+            }.getOrDefault(false)
+            if (ok) return uri.trimEnd('/')
         }
         return null
     }
