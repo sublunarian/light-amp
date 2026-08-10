@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -388,11 +389,56 @@ class LibraryRepository(
      * the library no longer holds, which is the same thing the server would do.
      */
     suspend fun playlistTracks(id: String): List<Track> {
+        val tracks = fetchPlaylistTracks(id)
+        _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
+        return tracks
+    }
+
+    private suspend fun fetchPlaylistTracks(id: String): List<Track> {
         if (playlistsAreLocal()) return getTracksByIds(LocalPlaylists.trackIds(id))
-        runCatching { serverClient.value?.getPlaylistTracks(id) }.getOrNull()?.let { return it }
+        serverClient.value?.let { client ->
+            runCatching { client.getPlaylistTracks(id) }.getOrNull()?.let { return it }
+        }
         val ids = (_playlists.value.firstOrNull { it.id == id } ?: return emptyList()).trackIds
         return getTracksByIds(ids)
     }
+
+    /**
+     * Membership cache backing [downloadedPlaylistIds].
+     *
+     * `getPlaylists` — Subsonic's and Plex's alike — never returns a playlist's
+     * songs, only its metadata, so the download badge in the playlist list has
+     * nothing to compare against until something calls [playlistTracks] once per
+     * playlist. [primePlaylistTrackIds] does that filling for the list itself.
+     */
+    private val _playlistTrackIds = MutableStateFlow<Map<String, List<String>>>(emptyMap())
+
+    /**
+     * Fills the membership cache for [id] if it isn't already known.
+     *
+     * Talks to the server directly rather than through [playlistTracks], and
+     * skips the cache write on failure — [playlistTracks]'s offline rebuild is
+     * the right fallback for a screen that must show *something*, but caching
+     * that guess here would freeze a transient failure as "confirmed empty"
+     * for good, since this only ever runs once per id.
+     */
+    suspend fun primePlaylistTrackIds(id: String) {
+        if (id in _playlistTrackIds.value) return
+        if (playlistsAreLocal() || serverClient.value == null) {
+            playlistTracks(id)
+            return
+        }
+        val tracks = runCatching { serverClient.value?.getPlaylistTracks(id) }.getOrNull() ?: return
+        _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
+    }
+
+    /** Playlists whose every known track is downloaded — drives the download badge. */
+    val downloadedPlaylistIds: StateFlow<Set<String>> =
+        combine(_playlistTrackIds, downloadedTrackIds) { membership, downloaded ->
+            membership.entries.mapNotNullTo(mutableSetOf()) { (playlistId, ids) ->
+                playlistId.takeIf { ids.isNotEmpty() && ids.all { trackId -> trackId in downloaded } }
+            }
+        }.stateIn(scope, SharingStarted.Eagerly, emptySet())
 
     suspend fun createPlaylist(name: String) = createPlaylist(name, emptyList())
 
@@ -1044,6 +1090,7 @@ class LibraryRepository(
         // this, the tab shows the previous server's playlists until the new
         // ones have been fetched over the network, which is long enough to read.
         _playlists.value = emptyList()
+        _playlistTrackIds.value = emptyMap()
         topSongs.clear()
         artistIds = null
         haystackFor = null
