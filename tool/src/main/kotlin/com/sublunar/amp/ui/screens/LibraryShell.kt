@@ -567,6 +567,12 @@ private fun PlaylistsTab(actions: ShellActions) {
     val playlists = view.items
     val letters = view.letters
     val reversed by App.settings.playlistSortReversed.collectAsState(initial = false)
+    val downloadedPlaylists by App.library.downloadedPlaylistIds.collectAsState()
+    // getPlaylists only returns metadata, not membership — so the badge above
+    // has nothing to go on until each playlist's tracks are fetched once here.
+    LaunchedEffect(playlists) {
+        for (playlist in playlists) App.library.primePlaylistTrackIds(playlist.id)
+    }
     // A server that can only create a playlist with songs in it has no use for a
     // bare "New Playlist" — see MusicSource.supportsEmptyPlaylists.
     val source = App.source.collectAsState().value
@@ -592,6 +598,7 @@ private fun PlaylistsTab(actions: ShellActions) {
                     subtitle = "",
                     coverArtId = playlist.coverArtId,
                     fallback = AppIcons.QueueMusic,
+                    downloaded = playlist.id in downloadedPlaylists,
                     onClick = { actions.openPlaylist(playlist.id, playlist.name) },
                     onLongClick = { actions.playlistOptions(playlist.id, playlist.name) },
                 )
