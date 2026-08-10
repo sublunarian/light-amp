@@ -122,7 +122,7 @@ class ArtistDetailScreen(
             hasPopular = App.library.topSongsForArtist(name).isNotEmpty()
         }
 
-        val grid = App.albumGrid.collectAsState().value
+        val grid = App.artistAlbumGrid.collectAsState().value
 
         LibrarySubPage {
             AppHeader(
@@ -133,7 +133,7 @@ class ArtistDetailScreen(
                 onTitleClick = if (App.hideArtwork.collectAsState().value) {
                     null
                 } else {
-                    { go { AlbumViewScreen(it) } }
+                    { go { AlbumViewScreen(it, forArtist = true) } }
                 },
                 searchAction = { openLibrarySearch(withKeyboard = true) },
                 rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },

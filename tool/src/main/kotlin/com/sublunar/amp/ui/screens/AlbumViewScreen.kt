@@ -24,7 +24,11 @@ import kotlinx.coroutines.launch
  * fourth button. Only offered while artwork is on, since the grid is nothing
  * but artwork.
  */
-class AlbumViewScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
+class AlbumViewScreen(
+    sealed: SealedLightActivity,
+    /** Editing an artist's own page rather than the whole album list. */
+    private val forArtist: Boolean = false,
+) : SimpleLightScreen<Unit>(sealed) {
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
@@ -32,9 +36,16 @@ class AlbumViewScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
 
     @Composable
     override fun Content() {
-        val grid by App.settings.albumGrid.collectAsState(initial = false)
+        val setting = if (forArtist) App.settings.artistAlbumGrid else App.settings.albumGrid
+        val grid by setting.collectAsState(initial = false)
 
-        ListScreen(onBack = { goBack() }, title = "View") {
+        // Named, because the two pickers are otherwise identical and setting one
+        // no longer changes the other.
+        ListScreen(
+            onBack = { goBack() },
+            title = "View",
+            subtitle = if (forArtist) "An artist's albums" else "All albums",
+        ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Choice("List", chosen = !grid) { choose(false) }
                 Choice("Grid", chosen = grid) { choose(true) }
@@ -52,7 +63,9 @@ class AlbumViewScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
     }
 
     private fun choose(grid: Boolean) {
-        App.scope.launch { App.settings.setAlbumGrid(grid) }
+        App.scope.launch {
+            if (forArtist) App.settings.setArtistAlbumGrid(grid) else App.settings.setAlbumGrid(grid)
+        }
         goBack()
     }
 }
