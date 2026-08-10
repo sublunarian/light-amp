@@ -114,6 +114,10 @@ class PlaybackController(
      */
     private var sessionId: String = UUID.randomUUID().toString()
 
+    /** The track [sessionId] currently belongs to, so it can be closed out by id
+     * when replaced — see [mintSessionId]. Null when nothing's reported yet. */
+    private var sessionTrackId: String? = null
+
     // Local files for downloaded tracks, refreshed as downloads land so queue
     // items can be built synchronously.
     private var localFiles: Map<String, Pair<java.io.File, StreamFormat>> = emptyMap()
@@ -222,8 +226,10 @@ class PlaybackController(
                     streamOffsetMs = 0
                     // A new track is a new session too, or Plex sees the same
                     // one just keep changing what it's playing rather than one
-                    // track ending and the next beginning.
-                    sessionId = UUID.randomUUID().toString()
+                    // track ending and the next beginning. The one it replaces
+                    // is told it's stopped first, so it doesn't just sit in
+                    // `/status/sessions` until its lease times out.
+                    _queue.value.getOrNull(idx)?.let { mintSessionId(it.id) }
                     // Seeded from the library rather than waited for: a chunked
                     // stream may never report a duration at all, and the player
                     // won't emit again to give the collector above a second go.
@@ -532,6 +538,7 @@ class PlaybackController(
     /** Stop playback and empty the queue. */
     fun stop() {
         reportTimeline(TimelineState.STOPPED)
+        sessionTrackId = null
         _castRenderer.value?.let { renderer ->
             castJob?.cancel()
             castJob = null
@@ -829,8 +836,10 @@ class PlaybackController(
     private suspend fun startCastTrack(renderer: DlnaRenderer, seekToMs: Long = 0L): Boolean {
         val track = _queue.value.getOrNull(_index.value) ?: return false
         // A new track on the renderer is a new session, same as the local
-        // player's — see the index collector in bind().
-        sessionId = UUID.randomUUID().toString()
+        // player's — see the index collector in bind(). Also covers a seek,
+        // which restarts the renderer's stream from scratch the same way a
+        // track change does, so the session it's replacing needs closing too.
+        mintSessionId(track.id)
         val (format, mime) = castFormatFor(renderer, track)
         // Anything under a second is where the track starts anyway, and a
         // timeOffset of 0 is a re-encode for nothing.
@@ -1152,6 +1161,36 @@ class PlaybackController(
         val position = _positionMs.value
         val duration = _durationMs.value
         scope.launch { runCatching { client.reportTimeline(sid, track.id, state, position, duration) } }
+    }
+
+    /**
+     * Close out a session that's about to be replaced by a fresh one — a new
+     * [sessionId] with nothing telling Plex the old one is done leaves it
+     * sitting in `/status/sessions` until its lease times out on its own, and
+     * a track change every few minutes means those pile up faster than they
+     * expire. Takes the outgoing id and track explicitly, since by the time
+     * this runs [sessionId] has usually already moved on to the next one.
+     */
+    private fun reportTimelineStopped(oldSessionId: String, oldTrackId: String) {
+        if (LocalLibrary.isLocal(oldTrackId)) return
+        val client = serverClient.value ?: return
+        scope.launch {
+            runCatching {
+                client.reportTimeline(oldSessionId, oldTrackId, TimelineState.STOPPED, 0L, 0L)
+            }
+        }
+    }
+
+    /**
+     * Retire [sessionId] on whatever track it belonged to (if any) and mint a
+     * fresh one for [newTrackId]. Every spot that used to just reassign
+     * `sessionId = UUID.randomUUID().toString()` goes through this instead, so
+     * the outgoing session is never simply dropped on the floor.
+     */
+    private fun mintSessionId(newTrackId: String) {
+        sessionTrackId?.let { oldTrackId -> reportTimelineStopped(sessionId, oldTrackId) }
+        sessionId = UUID.randomUUID().toString()
+        sessionTrackId = newTrackId
     }
 
     private fun maybeScrobble() {
