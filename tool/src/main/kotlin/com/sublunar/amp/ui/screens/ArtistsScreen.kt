@@ -51,6 +51,7 @@ class LikedArtistsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
     @Composable
     override fun Content() {
         val artists by App.library.likedArtists.collectAsState()
+        val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
 
         LibrarySubPage {
             AppHeader(
@@ -72,6 +73,7 @@ class LikedArtistsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                     ArtistRow(
                         name = artist.name,
                         subtitle = "${artist.albumCount} albums · ${artist.trackCount} songs",
+                        downloaded = artist.name in downloadedArtists,
                         onClick = { go { ArtistDetailScreen(it, artist.name) } },
                         onLongClick = { go { ArtistActionsScreen(it, artist.name) } },
                     )
@@ -201,8 +203,8 @@ class ArtistActionsScreen(
         val source by App.source.collectAsState()
         val tracks by App.library.tracks.collectAsState()
         val artistTracks = remember(tracks, name) { App.library.tracksForArtist(name) }
-        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
-        val fullyDownloaded = artistTracks.isNotEmpty() && artistTracks.all { it.id in downloadedIds }
+        val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
+        val fullyDownloaded = artistTracks.isNotEmpty() && name in downloadedArtists
 
         ListScreen(onBack = { goBack() }, title = name) {
             ActionList {
