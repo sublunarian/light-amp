@@ -124,12 +124,46 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         list.firstOrNull { it.id == id } ?: list.firstOrNull()
     }.distinctUntilChanged()
 
-    /** Add a source, or replace the one with the same id. */
-    suspend fun saveSource(source: MusicSource) {
+    /**
+     * Add a source, or replace the one with the same id.
+     *
+     * A Plex source is re-matched against `machineIdentifier` first: that is
+     * Plex's own stable server id, unlike [MusicSource.id] which is minted fresh
+     * every time the link flow runs (account-link, "Enter address and token", a
+     * re-link on a different network reaching a different address...). Without
+     * this, re-linking the same server just appends another row with the same
+     * name and a new id — a duplicate entry in Sources that looks identical to
+     * the user but points at a second, empty local database.
+     */
+    suspend fun saveSource(source: MusicSource): String {
+        var effectiveId = source.id
         editSources { list ->
-            val index = list.indexOfFirst { it.id == source.id }
-            if (index < 0) list + source else list.toMutableList().also { it[index] = source }
+            val existing = list.indexOfFirst { it.id == source.id }.takeIf { it >= 0 }
+                ?: source.machineIdentifier.takeIf { it.isNotBlank() }?.let { mid ->
+                    list.indexOfFirst { it.kind == source.kind && it.machineIdentifier == mid }
+                        .takeIf { it >= 0 }
+                }
+            if (existing == null) {
+                list + source
+            } else {
+                val old = list[existing]
+                // Keep the id (and with it, the downloads database and the
+                // user's own preferences for this source) — only what was just
+                // discovered about the server itself should move.
+                effectiveId = old.id
+                val merged = source.copy(
+                    id = old.id,
+                    downloadFormatId = source.downloadFormatId ?: old.downloadFormatId,
+                    offlineModeName = source.offlineModeName ?: old.offlineModeName,
+                    downloadLimitBytes = source.downloadLimitBytes ?: old.downloadLimitBytes,
+                    downloadLibraryId = source.downloadLibraryId ?: old.downloadLibraryId,
+                    downloadLyrics = source.downloadLyrics ?: old.downloadLyrics,
+                    libraryId = source.libraryId ?: old.libraryId,
+                )
+                list.toMutableList().also { it[existing] = merged }
+            }
         }
+        return effectiveId
     }
 
     suspend fun removeSource(id: String) {
