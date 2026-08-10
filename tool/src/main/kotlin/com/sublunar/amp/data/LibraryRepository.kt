@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -357,11 +358,43 @@ class LibraryRepository(
      * the library no longer holds, which is the same thing the server would do.
      */
     suspend fun playlistTracks(id: String): List<Track> {
-        if (playlistsAreLocal()) return getTracksByIds(LocalPlaylists.trackIds(id))
-        runCatching { serverClient.value?.getPlaylistTracks(id) }.getOrNull()?.let { return it }
-        val ids = (_playlists.value.firstOrNull { it.id == id } ?: return emptyList()).trackIds
-        return getTracksByIds(ids)
+        val tracks = if (playlistsAreLocal()) {
+            getTracksByIds(LocalPlaylists.trackIds(id))
+        } else {
+            serverClient.value?.let { client ->
+                runCatching { client.getPlaylistTracks(id) }.getOrNull()
+            } ?: run {
+                val ids = (_playlists.value.firstOrNull { it.id == id } ?: return emptyList()).trackIds
+                getTracksByIds(ids)
+            }
+        }
+        _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
+        return tracks
     }
+
+    /**
+     * Membership cache backing [downloadedPlaylistIds].
+     *
+     * `getPlaylists` — Subsonic's and Plex's alike — never returns a playlist's
+     * songs, only its metadata, so the download badge in the playlist list has
+     * nothing to compare against until something calls [playlistTracks] once per
+     * playlist. [primePlaylistTrackIds] does that filling for the list itself.
+     */
+    private val _playlistTrackIds = MutableStateFlow<Map<String, List<String>>>(emptyMap())
+
+    /** Fills the membership cache for [id] if it isn't already known. */
+    suspend fun primePlaylistTrackIds(id: String) {
+        if (id in _playlistTrackIds.value) return
+        playlistTracks(id)
+    }
+
+    /** Playlists whose every known track is downloaded — drives the download badge. */
+    val downloadedPlaylistIds: StateFlow<Set<String>> =
+        combine(_playlistTrackIds, downloadedTrackIds) { membership, downloaded ->
+            membership.entries.mapNotNullTo(mutableSetOf()) { (playlistId, ids) ->
+                playlistId.takeIf { ids.isNotEmpty() && ids.all { trackId -> trackId in downloaded } }
+            }
+        }.stateIn(scope, SharingStarted.Eagerly, emptySet())
 
     suspend fun createPlaylist(name: String) = createPlaylist(name, emptyList())
 
