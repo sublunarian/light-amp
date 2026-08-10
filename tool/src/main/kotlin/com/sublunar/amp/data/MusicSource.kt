@@ -102,6 +102,17 @@ data class MusicSource(
      * thinks to go and tick it.
      */
     val hiddenLibraryIds: List<String?> = emptyList(),
+    /**
+     * Every address Plex advertised for this server, best first.
+     *
+     * [baseUrl] is whichever one answered when the server was linked, and that
+     * is usually the LAN address — faster, and it skips Plex's relay. But it is
+     * only reachable from that LAN, so a source linked at home stops working
+     * the moment the phone is on cellular, with no way to recover: nothing
+     * re-resolved it. Keeping the alternatives means a failure can be retried
+     * against the next one instead.
+     */
+    val connections: List<String> = emptyList(),
 ) {
     /**
      * The formats this source can actually serve, asked of the client that talks

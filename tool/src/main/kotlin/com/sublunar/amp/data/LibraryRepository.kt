@@ -455,7 +455,53 @@ class LibraryRepository(
     }
 
     /** The actual scoped sync (null = all libraries); callers serialize via [syncMutex]. */
-    private suspend fun runSync(musicFolderId: String?) {
+    /**
+     * A sync failure in words the person holding the phone can act on.
+     *
+     * The raw messages are the server's, not theirs: "Plex says 521 for
+     * /library/sections/3/all" is accurate, unreadable, and long enough to be
+     * truncated to nonsense in the one row that shows it. 5xx in particular
+     * matters — it means the server is down rather than anything being wrong
+     * with the app or the login, and without saying so the only visible symptom
+     * is a Sync button that flashes and does nothing.
+     */
+    private fun syncErrorMessage(e: Exception): String {
+        val code = Regex("""\b(\d{3})\b""").find(e.message.orEmpty())?.value?.toIntOrNull()
+        return when {
+            code == null -> e.message?.takeIf { it.length < 60 } ?: "Couldn't reach the server"
+            // 52x are Cloudflare's: it answered, the server behind it didn't.
+            code in 520..529 -> "Your server isn't responding ($code)"
+            code in 500..599 -> "The server had an error ($code)"
+            code == 401 || code == 403 -> "The server refused the login"
+            code == 404 -> "That library isn't on the server any more"
+            else -> "The server said $code"
+        }
+    }
+
+    /**
+     * Try the server's other advertised addresses, and keep one that answers.
+     *
+     * Plex hands out a LAN address and one or more remote ones. Whichever
+     * answered at link time is almost always the LAN one — and it stops working
+     * the moment the phone leaves that network, with nothing to re-resolve it.
+     * The stored source then points at 192.168.x.x for ever and Plex appears
+     * broken on cellular no matter what else is changed.
+     *
+     * Returns true when the address changed; saving the source rebuilds the
+     * client, so playback and downloads follow it without being told.
+     */
+    private suspend fun repointPlex(): Boolean {
+        val source = settings.activeSource.first() ?: return false
+        if (source.kind != SourceKind.PLEX || source.connections.isEmpty()) return false
+        val ordered = (source.connections - source.baseUrl) + source.baseUrl
+        val found = PlexAccount.firstReachable(ordered, source.token) ?: return false
+        if (found == source.baseUrl) return false
+        android.util.Log.i("AmpSync", "plex moved: ${source.baseUrl} -> $found")
+        settings.saveSource(source.copy(baseUrl = found))
+        return true
+    }
+
+    private suspend fun runSync(musicFolderId: String?, allowRepoint: Boolean = true) {
         // The phone's own music has no server to ask; it is read off the disk.
         if (settings.activeSource.first()?.kind == SourceKind.LOCAL) {
             runLocalScan()
@@ -473,6 +519,8 @@ class LibraryRepository(
                 client.getMusicFolders().map { it.id }.ifEmpty { listOf(null) }
             }
 
+            android.util.Log.i("AmpSync", "scope=$musicFolderId folders=$folderIds")
+
             val starred = folderIds.map { client.getStarred(it) }.mergeStarred()
 
             _syncState.value = _syncState.value.copy(phase = "Fetching albums")
@@ -480,16 +528,31 @@ class LibraryRepository(
                 .distinctBy { it.id }
                 .map { it.copy(liked = it.id in starred.albumIds) }
             val serverAlbumById = serverAlbums.associateBy { it.id }
+            android.util.Log.i("AmpSync", "fetched ${serverAlbums.size} albums")
 
             val cached = dao.allAlbumsSnapshot().associateBy { it.id }
 
             dao.upsertAlbums(serverAlbums.map { it.toEntity() })
 
-            // Prune albums (and their tracks) that no longer exist on the server.
-            val staleAlbumIds = cached.keys - serverAlbumById.keys
-            if (staleAlbumIds.isNotEmpty()) {
-                staleAlbumIds.forEach { dao.deleteTracksForAlbum(it) }
-                dao.deleteAlbums(staleAlbumIds.toList())
+            // Prune albums (and their tracks) that no longer exist on the server —
+            // but never on an empty result.
+            //
+            // A fetch that succeeds and returns nothing is indistinguishable from
+            // a server whose library has genuinely been emptied: a stale library
+            // scope, a 200 with an empty body, a section id that no longer
+            // resolves. Pruning on that deletes the whole cached library, and
+            // because the next sync asks the same question the same way, syncing
+            // again doesn't bring it back. A server that really has no albums
+            // shows an empty library either way, so there is nothing to lose by
+            // refusing to act on it.
+            if (serverAlbums.isEmpty()) {
+                android.util.Log.w("AmpSync", "returned no albums; keeping ${cached.size} cached")
+            } else {
+                val staleAlbumIds = cached.keys - serverAlbumById.keys
+                if (staleAlbumIds.isNotEmpty()) {
+                    staleAlbumIds.forEach { dao.deleteTracksForAlbum(it) }
+                    dao.deleteAlbums(staleAlbumIds.toList())
+                }
             }
 
             // Only new or changed albums need their songs re-fetched — but "changed"
@@ -535,9 +598,16 @@ class LibraryRepository(
             _syncState.value = _syncState.value.copy(syncing = false)
             throw e
         } catch (e: Exception) {
+            android.util.Log.w("AmpSync", "sync failed: ${e::class.simpleName}: ${e.message}", e)
+            // The address may simply have moved — see repointPlex. Only once,
+            // so a genuinely dead server can't loop.
+            if (allowRepoint && repointPlex()) {
+                runSync(musicFolderId, allowRepoint = false)
+                return
+            }
             _syncState.value = _syncState.value.copy(
                 syncing = false,
-                error = e.message ?: "Sync failed",
+                error = syncErrorMessage(e),
             )
             onSyncFailed?.invoke()
         }
