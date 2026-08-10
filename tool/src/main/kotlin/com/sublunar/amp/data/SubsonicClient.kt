@@ -95,6 +95,8 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
          * A download would rather read to EOF and take whatever length is real.
          */
         estimateContentLength: Boolean,
+        /** Subsonic has no session concept; unused here. */
+        sessionId: String?,
     ): String {
         val params = mutableListOf("id" to songId)
         if (format == StreamFormat.RAW) {
