@@ -75,6 +75,14 @@ interface MusicServer {
         format: StreamFormat,
         timeOffsetSeconds: Int = 0,
         estimateContentLength: Boolean = true,
+        /**
+         * A caller-generated id for *this* playback, distinct from any other
+         * stream or download in flight. Optional, and ignored by servers with
+         * no idea of a session (Subsonic); Plex uses it to tell one playing
+         * track from another so a download alongside it can't tear it down —
+         * see the comment on [PlexClient.streamUrl].
+         */
+        sessionId: String? = null,
     ): String
 
     /**
@@ -90,7 +98,8 @@ interface MusicServer {
         format: StreamFormat,
         timeOffsetSeconds: Int = 0,
         estimateContentLength: Boolean = true,
-    ): String = streamUrl(track.id, format, timeOffsetSeconds, estimateContentLength)
+        sessionId: String? = null,
+    ): String = streamUrl(track.id, format, timeOffsetSeconds, estimateContentLength, sessionId)
 
     fun coverArtUrl(coverArtId: String?): String?
 
@@ -112,6 +121,23 @@ interface MusicServer {
     // --- Writing back --------------------------------------------------------
 
     suspend fun scrobble(songId: String, atMs: Long? = null, submission: Boolean = true) = Unit
+
+    /**
+     * Tell the server this session is still going, so something watching active
+     * sessions — Plex's dashboard, chiefly — has a "Now Playing" to show.
+     *
+     * [sessionId] ties a run of calls to one playback the way [streamUrl]'s
+     * parameter of the same name does; it should be the same string handed to
+     * that call for the stream this is reporting on. A server with no notion of
+     * a live session (Subsonic) does nothing with any of this.
+     */
+    suspend fun reportTimeline(
+        sessionId: String,
+        songId: String,
+        state: TimelineState,
+        positionMs: Long,
+        durationMs: Long,
+    ) = Unit
 
     /** 1–5, or 0 to clear. False when the server wouldn't take it. */
     suspend fun setRating(id: String, stars: Int): Boolean = false
@@ -144,4 +170,12 @@ interface MusicServer {
     suspend fun addToPlaylist(id: String, songId: String) = Unit
     suspend fun removeFromPlaylistAt(id: String, index: Int) = Unit
     suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>) = Unit
+}
+
+/** What [MusicServer.reportTimeline] tells the server a session is doing. */
+enum class TimelineState {
+    PLAYING,
+    PAUSED,
+    STOPPED,
+    BUFFERING,
 }
