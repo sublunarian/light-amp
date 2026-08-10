@@ -519,8 +519,6 @@ class LibraryRepository(
                 client.getMusicFolders().map { it.id }.ifEmpty { listOf(null) }
             }
 
-            android.util.Log.i("AmpSync", "scope=$musicFolderId folders=$folderIds")
-
             val starred = folderIds.map { client.getStarred(it) }.mergeStarred()
 
             _syncState.value = _syncState.value.copy(phase = "Fetching albums")
@@ -528,7 +526,6 @@ class LibraryRepository(
                 .distinctBy { it.id }
                 .map { it.copy(liked = it.id in starred.albumIds) }
             val serverAlbumById = serverAlbums.associateBy { it.id }
-            android.util.Log.i("AmpSync", "fetched ${serverAlbums.size} albums")
 
             val cached = dao.allAlbumsSnapshot().associateBy { it.id }
 
