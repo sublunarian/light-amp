@@ -117,7 +117,7 @@ protocol.
 
 ## Smaller asks
 
-Not workarounds — just things that were missing and are trivial to add. All six
+Not workarounds — just things that were missing and are trivial to add. All seven
 are already written as small additions to the SDK; see
 [SDK-PATCHES.md](SDK-PATCHES.md).
 
@@ -128,6 +128,7 @@ are already written as small additions to the SDK; see
 | `replaceRange()` | Reordering a queue by repeated `moveItem` rebuilds the media session's queue per move; a few hundred moves exhausts memory. One range swap does it once. |
 | `fallbackToDestructiveMigration` | `buildDatabase` gives no way to handle a schema change, so any change crashes on upgrade. |
 | Splash icon centring | The SDK's "loading…" glyph sits ~88px above centre on a 1240px panel, because the artwork is off-centre inside its own viewport. |
+| `isCurrentItemSeekable` | Whether the stream that arrived can be seeked within. Guessing from the requested format is wrong whenever a server declines to transcode, and the failure is silent — the track restarts while the position claims otherwise. |
 | `setHandleAudioBecomingNoisy(true)` | One line on the player's builder, and the default is wrong for audio: without it, Bluetooth disconnecting or headphones being unplugged leaves music playing out of the phone's speaker. Needs a `BroadcastReceiver` to do by hand, which the sandbox blocks. |
 
 ## Things that are genuinely blocked

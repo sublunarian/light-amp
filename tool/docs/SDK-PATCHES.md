@@ -3,11 +3,11 @@
 Amp needs some changes to `sdk/client` in Light's repository. They fall into
 two groups, and the difference matters.
 
-**Additions** (§1–6) are small, self-contained and would be reasonable in the SDK
+**Additions** (§1–7) are small, self-contained and would be reasonable in the SDK
 as it stands. Every one is marked in the source with
 `SDK PATCH (additive, upstreamable)`.
 
-**Workarounds** (§7–11) exist only because there is no supported route. Every one
+**Workarounds** (§8–12) exist only because there is no supported route. Every one
 is marked `SPIKE` or `TEMPORARY`, carries revert instructions in its own comment,
 and must come out before a tool is submitted. What each is standing in for is
 explained in [SDK-GAPS.md](SDK-GAPS.md).
@@ -85,35 +85,48 @@ leaves playback running out of the phone's speaker. Media3 handles the
 A tool cannot do this for itself — it needs a `BroadcastReceiver`, and
 `android.content` is blocked.
 
+### 7. `LightAudioPlayer.isCurrentItemSeekable`
+
+Whether the stream that actually arrived can be seeked within — true for a file
+or any response carrying a length and byte ranges, false for a live chunked
+transcode. Media3 already knows; the SDK didn't pass it on.
+
+Without it a tool has to infer seekability from the format it *asked* for, and
+that is wrong precisely when a server declines to transcode. Ask Navidrome for
+mp3 when the file is already mp3 and it sends the file untouched — then ignores
+`timeOffset`, having no encode to offset. The tool seeks the only way it thinks
+it can, the server ignores it, and the track silently restarts while the
+position readout insists the seek landed.
+
 ## Workarounds
 
 Each of these is described in full — what it's standing in for, and how to
 remove it — in [SDK-GAPS.md](SDK-GAPS.md). In brief:
 
-### 7. `audio/LightMediaService.kt` + manifest
+### 8. `audio/LightMediaService.kt` + manifest
 
 Foreground `MediaSessionService` so audio survives the screen going off.
 Also declares `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_MEDIA_PLAYBACK`.
 
-### 8. `transfer/LightTransferService.kt` + manifest
+### 9. `transfer/LightTransferService.kt` + manifest
 
 `dataSync` foreground service so downloads aren't throttled ~9× when the tool is
 backgrounded.
 
-### 9. `LightActivity` — volume key pass-through
+### 10. `LightActivity` — volume key pass-through
 
 Lets hardware volume keys reach the system so the media session can route them,
 which is what makes the rocker control a cast renderer rather than a silent
 local player.
 
-### 10. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
+### 11. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
 
 Switches LightOS's device-wide greyscale filter off while the tool is in front.
 Needs `WRITE_SECURE_SETTINGS`, declared in the `debug` and `release` manifest
 overlays but never in `src/main` — the plugin validates `src/main` only, so it
 cannot reach a submitted build.
 
-### 11. `cast/DlnaCast.kt`
+### 12. `cast/DlnaCast.kt`
 
 SSDP discovery and SOAP control, written by hand because the sandbox blocks the
 libraries that would normally do this.
@@ -157,5 +170,5 @@ this finds every one of them:
 grep -rn "SPIKE\|TEMPORARY" sdk/ tool/src
 ```
 
-The additions in §1–6 are a separate conversation with Light: they are useful to
+The additions in §1–7 are a separate conversation with Light: they are useful to
 any tool, not just this one, and are written to be upstreamable as they stand.

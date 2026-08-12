@@ -314,6 +314,18 @@ class LightAudioPlayer internal constructor(
         abandonFocus()
     }
 
+    /**
+     * SDK PATCH (additive, upstreamable): whether the current stream can be
+     * seeked within.
+     *
+     * True for a file or any response with a length and byte ranges; false for
+     * a live, chunked transcode. Without it a tool has to *guess* — and guessing
+     * from the requested format is wrong exactly when a server decides not to
+     * transcode after all, at which point seeking silently restarts the track
+     * while the clock says otherwise.
+     */
+    val isCurrentItemSeekable: Boolean get() = player.isCurrentMediaItemSeekable
+
     /** Seeks to [ms], clamped to the resolved duration. Unknown duration clamps to zero. */
     fun seekTo(ms: Long) {
         player.seekTo(ms.coerceIn(0L, player.duration.validDuration()))
