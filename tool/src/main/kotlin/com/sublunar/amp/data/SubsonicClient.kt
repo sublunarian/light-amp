@@ -15,6 +15,8 @@ data class SubsonicConfig(
     val baseUrl: String,
     val username: String,
     val password: String,
+    /** Sent as `c=`; null keeps the app's default ("amp"). */
+    val clientName: String? = null,
 ) {
     companion object {
         /**
@@ -61,7 +63,7 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
             append("&t=").append(token)
             append("&s=").append(salt)
             append("&v=").append(API_VERSION)
-            append("&c=").append(CLIENT_NAME)
+            append("&c=").append(enc(config.clientName?.ifBlank { null } ?: CLIENT_NAME))
             append("&f=json")
         }
     }
@@ -457,7 +459,10 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
          */
         val STREAM_FORMATS: List<StreamFormat> = StreamFormat.entries.toList()
 
-        /** Sent as `c=` on every request; Navidrome registers a Player under it. */
+        /**
+         * Default `c=` value, when a source has no [SubsonicConfig.clientName]
+         * of its own. Navidrome registers a Player under whatever this is.
+         */
         private const val CLIENT_NAME = "amp"
         private const val API_VERSION = "1.16.1"
         private const val ALBUM_PAGE_SIZE = 500

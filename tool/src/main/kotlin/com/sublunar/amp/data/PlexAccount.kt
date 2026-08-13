@@ -131,7 +131,7 @@ object PlexAccount {
 
     private fun io.ktor.client.request.HttpRequestBuilder.plexHeaders() {
         header("Accept", "application/json")
-        PlexClient.PLEX_IDENTITY.forEach { (k, v) -> header(k, v) }
+        PlexClient.plexIdentity().forEach { (k, v) -> header(k, v) }
     }
 
     private const val POLL_INTERVAL_MS = 2_000L

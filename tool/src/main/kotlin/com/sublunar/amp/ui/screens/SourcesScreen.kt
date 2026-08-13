@@ -364,6 +364,37 @@ class SourceDetailScreen(
                         )
                     }
                 }
+                // What this source reports itself as to the server — the
+                // scrobbling client Navidrome names a "Player" from, or Plex's
+                // product/device fields. Blank keeps the app's own default.
+                if (source.kind != SourceKind.LOCAL) {
+                    item {
+                        TextRow(
+                            title = "Player name",
+                            subtitle = source.playerName.ifBlank { "Amp (default)" },
+                            onClick = {
+                                navigateTo<String?>(
+                                    {
+                                        TextEntryScreen(
+                                            it,
+                                            title = "Player name",
+                                            initial = source.playerName,
+                                        )
+                                    },
+                                    resultCallback = { text ->
+                                        if (text != null) {
+                                            App.scope.launch {
+                                                App.settings.saveSource(
+                                                    source.copy(playerName = text.trim()),
+                                                )
+                                            }
+                                        }
+                                    },
+                                )
+                            },
+                        )
+                    }
+                }
                 // Both qualities together, and per source: two servers can hold
                 // the same album in different formats and only one of them may
                 // be able to transcode it, so this is a fact about the server
