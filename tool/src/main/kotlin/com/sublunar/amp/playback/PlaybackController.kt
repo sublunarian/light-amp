@@ -204,6 +204,28 @@ class PlaybackController(
                 // What the library says the track runs to, which is a real number
                 // even before a single byte has arrived.
                 val known = _queue.value.getOrNull(_index.value)?.durationMs ?: 0L
+                // The server took the seek request and ignored it.
+                //
+                // Navidrome only honours timeOffset while it is actually
+                // transcoding. Ask it for a format the file already is — mp3
+                // for an mp3 — and it serves the file whole and drops the
+                // offset, so the audio restarts from the beginning while the
+                // readouts, shifted by streamOffsetMs, insist the seek worked.
+                //
+                // A seeked stream's own duration is the *remainder*; this one's
+                // is the whole track, which is how the two are told apart. The
+                // file is a real file with a seek table, so the player can
+                // finish the job itself.
+                if (streamOffsetMs > 0L &&
+                    known > 0L &&
+                    reported >= known - IGNORED_OFFSET_SLACK_MS
+                ) {
+                    val target = streamOffsetMs
+                    streamOffsetMs = 0L
+                    scope.launch(Dispatchers.Main.immediate) { p.seekTo(target) }
+                    _durationMs.value = reported
+                    return@collect
+                }
                 _durationMs.value = when {
                     // A transcode arrives chunked, with no length to derive a
                     // duration from — Plex streams every format but the original
@@ -482,16 +504,66 @@ class PlaybackController(
         val track = _queue.value.getOrNull(_index.value)
         if (track == null || !needsServerSeek(track)) {
             p.seekTo(ms)
+            // Trust it, then check — see [verifyNativeSeek].
+            if (track != null) verifyNativeSeek(p, track, ms)
             return
         }
         serverSeek(p, track, ms)
     }
 
-    /** True when the current source is a transcode the player can't seek within. */
+    /**
+     * Tracks whose native seek was tried and didn't land.
+     *
+     * Whether a stream can be seeked in the player is not something we can work
+     * out in advance. "It's the original file, so it has a seek table" is true
+     * of the file and says nothing about what arrives: a raw stream still needs
+     * the server to answer byte ranges, and when it doesn't, the player reports
+     * the position it was asked for while the audio plays on from the top.
+     *
+     * So it's measured instead of predicted — and remembered, so a track only
+     * pays for the wrong guess once.
+     */
+    private val seekNeedsReload = mutableSetOf<String>()
+
+    /** Bumped per seek, so a slow verify can't act on a stale target. */
+    private var seekGeneration = 0
+
+    /** True when the player can't be trusted to seek within this stream. */
     private fun needsServerSeek(track: Track): Boolean {
         if (track.source() is LightAudioSource.FileSource) return false
-        // The original file is served as-is, with its own headers and seek table.
+        if (track.id in seekNeedsReload) return true
+        // Ask the player, which knows what actually arrived. Asking for mp3 and
+        // getting mp3 means the server sent the file untouched — with a length
+        // and byte ranges — and it then ignores timeOffset, because it is not
+        // transcoding and has nothing to offset. Inferring "not RAW, therefore a
+        // transcode" picks server-seeking for exactly the streams where only
+        // native seeking works, and the failure is silent: the audio restarts
+        // and the clock claims the seek landed.
+        player?.let { if (it.isCurrentItemSeekable) return false }
+        // Nothing playing yet to ask — fall back to the request we made.
         return effectiveFormat() != StreamFormat.RAW
+    }
+
+    /**
+     * Check where a native seek actually landed, and reload if it missed.
+     *
+     * The player answers with the position it was told to go to, so its own
+     * reading is worthless immediately. A moment later it reflects the stream,
+     * and a stream that ignored the seek is back near the beginning.
+     */
+    private fun verifyNativeSeek(p: LightAudioPlayer, track: Track, target: Long) {
+        val generation = ++seekGeneration
+        scope.launch {
+            delay(SEEK_VERIFY_MS)
+            if (generation != seekGeneration) return@launch
+            if (_castRenderer.value != null) return@launch
+            if (_queue.value.getOrNull(_index.value)?.id != track.id) return@launch
+            val landed = p.positionMs.value + streamOffsetMs
+            if (kotlin.math.abs(landed - target) <= SEEK_TOLERANCE_MS) return@launch
+            android.util.Log.i("AmpSeek", "missed: wanted $target, landed $landed — reloading")
+            seekNeedsReload += track.id
+            serverSeek(p, track, target)
+        }
     }
 
     private fun serverSeek(p: LightAudioPlayer, track: Track, ms: Long) {
@@ -1287,6 +1359,19 @@ class PlaybackController(
 
     companion object {
         private const val PREVIOUS_RESTART_MS = 3_000L
+        /**
+         * How close a seeked stream's duration has to be to the whole track
+         * before we conclude the server ignored the offset. Generous, because a
+         * transcode's duration is its own estimate.
+         */
+        private const val IGNORED_OFFSET_SLACK_MS = 3_000L
+
+        /** Long enough for the player to be reporting the stream, not the request. */
+        private const val SEEK_VERIFY_MS = 900L
+
+        /** How far a native seek may land from the target before it counts as a miss. */
+        private const val SEEK_TOLERANCE_MS = 5_000L
+
         private const val CAST_POLL_MS = 1_000L
 
         /**

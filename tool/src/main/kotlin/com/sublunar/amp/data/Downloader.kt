@@ -103,16 +103,45 @@ class Downloader(
     @Volatile
     private var userPaused = false
 
-    /** Set when the server stops answering; cleared when it answers again. */
+    /**
+     * When to try again after the server stopped answering — not *whether* to.
+     *
+     * This used to be a boolean latched on the first failed transfer and
+     * cleared only by a successful library sync. A single blip therefore parked
+     * downloads indefinitely: the queue sat on "Waiting for the server" on
+     * perfectly good wifi, and nothing about downloading could get it going
+     * again, because only syncing could clear the flag. A deadline retries by
+     * itself and needs nobody's permission.
+     */
     @Volatile
-    private var offline = false
+    private var retryAtMs = 0L
 
-    private val paused: Boolean get() = syncing || userPaused || offline
+    /** Consecutive failed transfers, for how long to wait before the next try. */
+    @Volatile
+    private var failures = 0
+
+    private val waiting: Boolean get() = System.currentTimeMillis() < retryAtMs
+
+    private val paused: Boolean get() = syncing || userPaused || waiting
 
     private fun pauseReason(): String = when {
         userPaused -> "Paused"
-        offline -> "Waiting for the server"
+        waiting -> "Waiting for the server"
         else -> "Paused while syncing"
+    }
+
+    /** Backs off to a minute, so a server that is really down isn't hammered. */
+    private fun backOff() {
+        failures++
+        val wait = (RETRY_BASE_MS * (1L shl (failures - 1).coerceAtMost(6)))
+            .coerceAtMost(RETRY_MAX_MS)
+        retryAtMs = System.currentTimeMillis() + wait
+    }
+
+    /** A transfer that worked proves the server is there, whatever else said. */
+    private fun clearBackOff() {
+        failures = 0
+        retryAtMs = 0L
     }
 
     // --- Public API ----------------------------------------------------------
@@ -126,6 +155,10 @@ class Downloader(
      */
     fun enqueue(tracks: List<Track>, manual: Boolean = true) {
         if (tracks.isEmpty()) return
+        // Asking for something by hand is also asking to try now: whatever the
+        // last failure decided about waiting, the person tapping Download has
+        // better information about whether the server is up than we do.
+        if (manual) clearBackOff()
         scope.launch {
             // One query for the whole set. Asking per track meant an automatic mode
             // over a ten-thousand-track library fired ten thousand point selects,
@@ -173,7 +206,9 @@ class Downloader(
      * counter in a few seconds and leaves nothing to resume.
      */
     fun setOffline(value: Boolean) {
-        offline = value
+        // A reachability signal is a hint, not a verdict: it schedules the next
+        // attempt, and a success clears it. See retryAtMs.
+        if (value) backOff() else clearBackOff()
     }
 
     /** The user's own pause, from the Downloads page. Survives a restart. */
@@ -275,6 +310,10 @@ class Downloader(
 
     private companion object {
         const val PAUSE_POLL_MS = 1_000L
+
+        /** First retry after a failed transfer; doubles up to [RETRY_MAX_MS]. */
+        private const val RETRY_BASE_MS = 2_000L
+        private const val RETRY_MAX_MS = 60_000L
     }
 
     // --- Worker --------------------------------------------------------------
@@ -421,6 +460,7 @@ class Downloader(
                     ),
                 )
                 completed++
+                clearBackOff()
             } else {
                 _progress.value = _progress.value.copy(error = store.lastError)
                 // A failed transfer is the server's problem more often than the
@@ -435,8 +475,8 @@ class Downloader(
                     lane[next.id] = next
                     lane.putAll(rest)
                 }
-                offline = true
-                return
+                backOff()
+                continue
             }
         }
 
