@@ -36,7 +36,11 @@ class PlexClient(
     private val token: String,
     /** Needed to build the URIs that add items to a playlist. */
     private val machineIdentifier: String = "",
+    /** Overrides `X-Plex-Product`/`X-Plex-Device`; null keeps the app's defaults. */
+    private val product: String? = null,
 ) : MusicServer {
+
+    private val identityHeaders: List<Pair<String, String>> = plexIdentity(product)
 
     private val http = HttpClient(OkHttp) { expectSuccess = false }
 
@@ -85,7 +89,7 @@ class PlexClient(
     private fun io.ktor.client.request.HttpRequestBuilder.plexHeaders() {
         header("X-Plex-Token", token)
         header("Accept", "application/json")
-        PLEX_IDENTITY.forEach { (k, v) -> header(k, v) }
+        identityHeaders.forEach { (k, v) -> header(k, v) }
     }
 
     override suspend fun ping() {
@@ -294,7 +298,7 @@ class PlexClient(
             // download, which is why this is left out unless given one.
             if (!sessionId.isNullOrBlank()) add("X-Plex-Session-Identifier" to sessionId)
             add("X-Plex-Token" to token)
-            PLEX_IDENTITY.forEach { (k, v) -> add(k to v) }
+            identityHeaders.forEach { (k, v) -> add(k to v) }
         }
         val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
         return baseUrl.trimEnd('/') + "/music/:/transcode/universal/start.mp3?$query"
@@ -622,12 +626,16 @@ class PlexClient(
          * Who we say we are. Plex wants these on every request, and uses the
          * client identifier to tie a token to a device — it must be stable, so
          * it is the app's own id rather than something generated per launch.
+         *
+         * [product] overrides `X-Plex-Product` and `X-Plex-Device`, both of
+         * which default to naming the app rather than anything per-source —
+         * null keeps those defaults.
          */
-        val PLEX_IDENTITY: List<Pair<String, String>> = listOf(
+        fun plexIdentity(product: String? = null): List<Pair<String, String>> = listOf(
             "X-Plex-Client-Identifier" to "com.sublunar.amp",
-            "X-Plex-Product" to "Amp",
+            "X-Plex-Product" to (product ?: "Amp"),
             "X-Plex-Version" to "1.0.0",
-            "X-Plex-Device" to "Light Phone III",
+            "X-Plex-Device" to (product ?: "Light Phone III"),
             "X-Plex-Platform" to "Android",
         )
     }
