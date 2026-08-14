@@ -211,7 +211,10 @@ class LibraryRepository(
         combine(allTracks, downloadFiles) { list, rows ->
             if (rows.isEmpty()) return@combine emptySet()
             val sizes = artistSizes(list)
-            val byId = list.associateBy { it.id }
+            // The shared index, not one of its own: this recomputes every time a
+            // download lands, and building a ten-thousand-entry map per finished
+            // track is exactly what that memo exists to avoid.
+            val byId = trackIndex(list)
             val have = HashMap<String, Int>()
             for (row in rows) {
                 val artist = byId[row.trackId]?.let { it.albumArtist.ifBlank { it.artist } } ?: continue
