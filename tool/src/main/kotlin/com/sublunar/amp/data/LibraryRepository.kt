@@ -191,6 +191,37 @@ class LibraryRepository(
             }
         }.stateIn(scope, SharingStarted.Eagerly, emptySet())
 
+    // How many tracks each artist has, rebuilt only when the library itself
+    // changes — the same memoisation as albumSizes, for the same reason.
+    private var artistSizesFor: List<Track>? = null
+    private var artistSizes: Map<String, Int> = emptyMap()
+
+    private fun artistSizes(list: List<Track>): Map<String, Int> {
+        if (artistSizesFor === list) return artistSizes
+        artistSizes = list.groupingBy { it.albumArtist.ifBlank { it.artist } }.eachCount()
+        artistSizesFor = list
+        return artistSizes
+    }
+
+    /**
+     * Artists whose every cached track is downloaded — drives the artist list's
+     * download badge, the same way [downloadedAlbumIds] drives the album one.
+     */
+    val downloadedArtistNames: StateFlow<Set<String>> =
+        combine(allTracks, downloadFiles) { list, rows ->
+            if (rows.isEmpty()) return@combine emptySet()
+            val sizes = artistSizes(list)
+            val byId = list.associateBy { it.id }
+            val have = HashMap<String, Int>()
+            for (row in rows) {
+                val artist = byId[row.trackId]?.let { it.albumArtist.ifBlank { it.artist } } ?: continue
+                have[artist] = (have[artist] ?: 0) + 1
+            }
+            have.entries.mapNotNullTo(mutableSetOf()) { (artist, n) ->
+                artist.takeIf { sizes[artist] == n }
+            }
+        }.stateIn(scope, SharingStarted.Eagerly, emptySet())
+
     // Track lookup for the Downloads page, memoised on the library list instance so
     // a completed download doesn't rebuild a ten-thousand-entry map.
     private var trackIndexFor: List<Track>? = null
