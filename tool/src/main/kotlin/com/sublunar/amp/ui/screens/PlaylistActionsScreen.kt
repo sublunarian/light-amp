@@ -18,7 +18,7 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.launch
 
-/** Long-press actions for a playlist row: play, rename, delete. */
+/** Long-press actions for a playlist row: play, download, rename, delete. */
 class PlaylistActionsScreen(
     sealed: SealedLightActivity,
     private val playlistId: String,
@@ -31,12 +31,15 @@ class PlaylistActionsScreen(
 
     @Composable
     override fun Content() {
+        val source by App.source.collectAsState()
         var tracks by remember(playlistId) { mutableStateOf<List<Track>?>(null) }
         var confirmDelete by remember { mutableStateOf(false) }
         LaunchedEffect(playlistId) {
             tracks = App.library.playlistTracks(playlistId)
         }
         val list = tracks ?: emptyList()
+        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
+        val fullyDownloaded = list.isNotEmpty() && list.all { it.id in downloadedIds }
         // Plex's smart playlists are real objects on the server, so Delete here
         // would really delete one — and Plex builds their contents from a
         // filter, so renaming is the only thing it would even accept. Neither
@@ -57,6 +60,19 @@ class PlaylistActionsScreen(
                     if (list.isNotEmpty()) {
                         App.playback.playQueue(shuffled(list), 0)
                         go { NowPlayingScreen(it) }
+                    }
+                }
+                if (list.isNotEmpty() && source.supportsDownloads) {
+                    if (fullyDownloaded) {
+                        TextRow(title = "Remove from Downloads") {
+                            App.scope.launch { App.downloader.removeAll(list.map { it.id }) }
+                            goBack()
+                        }
+                    } else {
+                        TextRow(title = "Download Playlist") {
+                            App.downloader.enqueue(list)
+                            goBack()
+                        }
                     }
                 }
                 if (!readOnly) {
