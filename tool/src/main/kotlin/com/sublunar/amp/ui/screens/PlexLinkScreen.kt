@@ -173,8 +173,13 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
 
     private fun save(source: MusicSource) {
         App.scope.launch {
-            App.settings.saveSource(source)
-            App.settings.setActiveSource(source.id)
+            // Re-linking an already-known server (by Plex's own machine id)
+            // updates that source in place rather than adding a second one —
+            // see the note on AppSettings.saveSource — so the id actually made
+            // active has to be whatever saveSource settled on, not the fresh
+            // one this screen minted.
+            val id = App.settings.saveSource(source)
+            App.settings.setActiveSource(id)
         }
         goBack()
     }
@@ -313,8 +318,12 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
 
     private fun save(source: MusicSource) {
         App.scope.launch {
-            App.settings.saveSource(source)
-            App.settings.setActiveSource(source.id)
+            // See the note in PlexLinkScreen.save: the id that ends up active
+            // is whichever one saveSource kept, which may be an existing
+            // source's if this same server (by machineIdentifier) was already
+            // linked under a different address.
+            val id = App.settings.saveSource(source)
+            App.settings.setActiveSource(id)
         }
         goBack(Unit)
     }
