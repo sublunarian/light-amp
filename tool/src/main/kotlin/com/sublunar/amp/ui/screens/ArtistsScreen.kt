@@ -51,6 +51,7 @@ class LikedArtistsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
     @Composable
     override fun Content() {
         val artists by App.library.likedArtists.collectAsState()
+        val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
 
         LibrarySubPage {
             AppHeader(
@@ -72,6 +73,7 @@ class LikedArtistsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                     ArtistRow(
                         name = artist.name,
                         subtitle = "${artist.albumCount} albums · ${artist.trackCount} songs",
+                        downloaded = artist.name in downloadedArtists,
                         onClick = { go { ArtistDetailScreen(it, artist.name) } },
                         onLongClick = { go { ArtistActionsScreen(it, artist.name) } },
                     )
@@ -199,6 +201,10 @@ class ArtistActionsScreen(
         val artists by App.library.artists.collectAsState()
         val liked = artists.firstOrNull { it.name == name }?.liked == true
         val source by App.source.collectAsState()
+        val tracks by App.library.tracks.collectAsState()
+        val artistTracks = remember(tracks, name) { App.library.tracksForArtist(name) }
+        val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
+        val fullyDownloaded = artistTracks.isNotEmpty() && name in downloadedArtists
 
         ListScreen(onBack = { goBack() }, title = name) {
             ActionList {
@@ -209,6 +215,19 @@ class ArtistActionsScreen(
                     }
                 }
                 TextRow(title = "All Songs") { go { ArtistSongsScreen(it, name) } }
+                if (artistTracks.isNotEmpty() && source.supportsDownloads) {
+                    if (fullyDownloaded) {
+                        TextRow(title = "Remove from Downloads") {
+                            App.scope.launch { App.downloader.removeAll(artistTracks.map { it.id }) }
+                            goBack()
+                        }
+                    } else {
+                        TextRow(title = "Download All Albums") {
+                            App.downloader.enqueue(artistTracks)
+                            goBack()
+                        }
+                    }
+                }
             }
         }
     }
