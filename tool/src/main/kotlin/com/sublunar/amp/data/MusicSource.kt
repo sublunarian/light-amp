@@ -80,6 +80,13 @@ data class MusicSource(
     val downloadLibraryId: String? = null,
     /** Whether a download brings the words with it. */
     val downloadLyrics: Boolean? = null,
+    /**
+     * What this source reports itself as: Subsonic's `c=` client parameter
+     * (Navidrome names its "Player" from it) and, on Plex, the
+     * `X-Plex-Product`/`X-Plex-Device` headers. Blank means the app's own
+     * default ("Amp" / "Light Phone III").
+     */
+    val playerName: String = "",
     /** Plex's `X-Plex-Token`, from linking or entered by hand. */
     val token: String = "",
     /** Plex's server id, needed to build the URIs that fill a playlist. */
@@ -175,14 +182,14 @@ data class MusicSource(
             if (baseUrl.isBlank() || token.isBlank()) {
                 null
             } else {
-                PlexClient(baseUrl, token, machineIdentifier)
+                PlexClient(baseUrl, token, machineIdentifier, playerName.ifBlank { null })
             }
     }
 
     /** Null unless this is a Subsonic server with somewhere to point. */
     fun toConfig(): SubsonicConfig? =
         if (kind == SourceKind.SUBSONIC && baseUrl.isNotBlank()) {
-            SubsonicConfig(baseUrl, username, password)
+            SubsonicConfig(baseUrl, username, password, playerName.ifBlank { null })
         } else {
             null
         }

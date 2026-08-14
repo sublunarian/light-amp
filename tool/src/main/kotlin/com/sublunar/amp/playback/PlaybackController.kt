@@ -16,6 +16,7 @@ import com.sublunar.amp.App
 import com.sublunar.amp.data.PendingAction
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.MusicServer
+import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.qualityRank
@@ -42,6 +43,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
 
 /**
  * The single, app-scoped playback engine. Wraps one [LightAudioPlayer] (created
@@ -101,6 +103,20 @@ class PlaybackController(
     @Volatile
     private var onWifi = false
     private var lastScrobbledId: String? = null
+
+    /**
+     * Identifies *this* playback to the server, distinct from any other
+     * stream (or download) in flight — see the comment on
+     * [MusicServer.streamUrl]. Minted fresh whenever the track actually
+     * playing changes, and carried on both the stream URL and the
+     * [reportTimeline] calls that go with it, so Plex's dashboard has one
+     * session to show rather than none.
+     */
+    private var sessionId: String = UUID.randomUUID().toString()
+
+    /** The track [sessionId] currently belongs to, so it can be closed out by id
+     * when replaced — see [mintSessionId]. Null when nothing's reported yet. */
+    private var sessionTrackId: String? = null
 
     // Local files for downloaded tracks, refreshed as downloads land so queue
     // items can be built synchronously.
@@ -230,12 +246,19 @@ class PlaybackController(
                     _index.value = idx
                     // A new track is a fresh stream from its own beginning.
                     streamOffsetMs = 0
+                    // A new track is a new session too, or Plex sees the same
+                    // one just keep changing what it's playing rather than one
+                    // track ending and the next beginning. The one it replaces
+                    // is told it's stopped first, so it doesn't just sit in
+                    // `/status/sessions` until its lease times out.
+                    _queue.value.getOrNull(idx)?.let { mintSessionId(it.id) }
                     // Seeded from the library rather than waited for: a chunked
                     // stream may never report a duration at all, and the player
                     // won't emit again to give the collector above a second go.
                     _queue.value.getOrNull(idx)?.durationMs
                         ?.takeIf { it > 0L }
                         ?.let { _durationMs.value = it }
+                    reportTimeline(TimelineState.PLAYING)
                 }
                 maybeScrobble()
             }
@@ -299,6 +322,17 @@ class PlaybackController(
             while (true) {
                 delay(SAVE_STATE_INTERVAL_MS)
                 persistState()
+            }
+        }
+
+        // Plex tears a session out of `/status/sessions` if nothing pings it
+        // for a while — the same idea as a UPnP lease. Only while something is
+        // actually playing: a paused session was already told once and doesn't
+        // need repeating, and an idle queue has no session at all.
+        scope.launch {
+            while (true) {
+                delay(TIMELINE_INTERVAL_MS)
+                if (_isPlaying.value) reportTimeline(TimelineState.PLAYING)
             }
         }
     }
@@ -407,10 +441,13 @@ class PlaybackController(
             scope.launch {
                 if (wasPlaying) DlnaCast.pause(renderer) else DlnaCast.resume(renderer)
             }
+            reportTimeline(if (wasPlaying) TimelineState.PAUSED else TimelineState.PLAYING)
             return
         }
         val p = player ?: return
-        if (_isPlaying.value) p.pause() else p.play()
+        val wasPlaying = _isPlaying.value
+        if (wasPlaying) p.pause() else p.play()
+        reportTimeline(if (wasPlaying) TimelineState.PAUSED else TimelineState.PLAYING)
     }
 
     fun play() {
@@ -418,9 +455,11 @@ class PlaybackController(
         if (renderer != null) {
             _isPlaying.value = true
             scope.launch { DlnaCast.resume(renderer) }
+            reportTimeline(TimelineState.PLAYING)
             return
         }
         player?.play()
+        reportTimeline(TimelineState.PLAYING)
     }
 
     fun pause() {
@@ -428,9 +467,11 @@ class PlaybackController(
         if (renderer != null) {
             _isPlaying.value = false
             scope.launch { DlnaCast.pause(renderer) }
+            reportTimeline(TimelineState.PAUSED)
             return
         }
         player?.pause()
+        reportTimeline(TimelineState.PAUSED)
     }
 
     /**
@@ -532,6 +573,7 @@ class PlaybackController(
             track,
             effectiveFormat(),
             timeOffsetSeconds = (target / 1000).toInt(),
+            sessionId = sessionId,
         )
         streamOffsetMs = target
         // Only the playing item is replaced; the queue either side of it is
@@ -567,6 +609,8 @@ class PlaybackController(
 
     /** Stop playback and empty the queue. */
     fun stop() {
+        reportTimeline(TimelineState.STOPPED)
+        sessionTrackId = null
         _castRenderer.value?.let { renderer ->
             castJob?.cancel()
             castJob = null
@@ -863,6 +907,11 @@ class PlaybackController(
     /** Push the queue's current track to the renderer, optionally seeking in. */
     private suspend fun startCastTrack(renderer: DlnaRenderer, seekToMs: Long = 0L): Boolean {
         val track = _queue.value.getOrNull(_index.value) ?: return false
+        // A new track on the renderer is a new session, same as the local
+        // player's — see the index collector in bind(). Also covers a seek,
+        // which restarts the renderer's stream from scratch the same way a
+        // track change does, so the session it's replacing needs closing too.
+        mintSessionId(track.id)
         val (format, mime) = castFormatFor(renderer, track)
         // Anything under a second is where the track starts anyway, and a
         // timeOffset of 0 is a re-encode for nothing.
@@ -884,6 +933,7 @@ class PlaybackController(
             format,
             estimateContentLength = false,
             timeOffsetSeconds = (offset / 1000).toInt(),
+            sessionId = sessionId,
         ) ?: return false
         val started = DlnaCast.play(
             renderer = renderer,
@@ -918,8 +968,11 @@ class PlaybackController(
         val after = nextCastIndex() ?: return
         val track = _queue.value.getOrNull(after) ?: return
         val (format, mime) = castFormatFor(renderer, track)
+        // Its own id, not the current track's: both transcodes are in flight
+        // at once during the hand-off, and Plex tears down whichever one
+        // shares an identifier with the other.
         val url = serverClient.value
-            ?.streamUrl(track, format, estimateContentLength = false)
+            ?.streamUrl(track, format, estimateContentLength = false, sessionId = UUID.randomUUID().toString())
             ?: return
         val queued = DlnaCast.setNext(
             renderer = renderer,
@@ -1166,6 +1219,52 @@ class PlaybackController(
         }
     }
 
+    /**
+     * Tell the server this session is playing, paused or stopped — see
+     * [MusicServer.reportTimeline]. Fire-and-forget: a dropped heartbeat just
+     * means the dashboard is stale until the next one, not a broken stream.
+     */
+    private fun reportTimeline(state: TimelineState) {
+        val track = _queue.value.getOrNull(_index.value) ?: return
+        // Nothing playing on the server's behalf to report on.
+        if (LocalLibrary.isLocal(track.id)) return
+        val client = serverClient.value ?: return
+        val sid = sessionId
+        val position = _positionMs.value
+        val duration = _durationMs.value
+        scope.launch { runCatching { client.reportTimeline(sid, track.id, state, position, duration) } }
+    }
+
+    /**
+     * Close out a session that's about to be replaced by a fresh one — a new
+     * [sessionId] with nothing telling Plex the old one is done leaves it
+     * sitting in `/status/sessions` until its lease times out on its own, and
+     * a track change every few minutes means those pile up faster than they
+     * expire. Takes the outgoing id and track explicitly, since by the time
+     * this runs [sessionId] has usually already moved on to the next one.
+     */
+    private fun reportTimelineStopped(oldSessionId: String, oldTrackId: String) {
+        if (LocalLibrary.isLocal(oldTrackId)) return
+        val client = serverClient.value ?: return
+        scope.launch {
+            runCatching {
+                client.reportTimeline(oldSessionId, oldTrackId, TimelineState.STOPPED, 0L, 0L)
+            }
+        }
+    }
+
+    /**
+     * Retire [sessionId] on whatever track it belonged to (if any) and mint a
+     * fresh one for [newTrackId]. Every spot that used to just reassign
+     * `sessionId = UUID.randomUUID().toString()` goes through this instead, so
+     * the outgoing session is never simply dropped on the floor.
+     */
+    private fun mintSessionId(newTrackId: String) {
+        sessionTrackId?.let { oldTrackId -> reportTimelineStopped(sessionId, oldTrackId) }
+        sessionId = UUID.randomUUID().toString()
+        sessionTrackId = newTrackId
+    }
+
     private fun maybeScrobble() {
         val track = _queue.value.getOrNull(_index.value) ?: return
         // Nothing to tell, and nowhere to keep a play count: a local file's
@@ -1244,7 +1343,7 @@ class PlaybackController(
             if (!preferStream) return LightAudioSource.FileSource(file)
         }
         return LightAudioSource.UrlSource(
-            serverClient.value?.streamUrl(this, effectiveFormat()).orEmpty(),
+            serverClient.value?.streamUrl(this, effectiveFormat(), sessionId = sessionId).orEmpty(),
         )
     }
 
@@ -1295,5 +1394,8 @@ class PlaybackController(
         /** How often the queue snapshot is written while playing. */
         private const val SAVE_STATE_INTERVAL_MS = 5_000L
         private const val SAVE_STATE_TIMEOUT_MS = 1_000L
+
+        /** How often a live session is re-announced; PlexAmp uses roughly this. */
+        private const val TIMELINE_INTERVAL_MS = 10_000L
     }
 }
