@@ -36,7 +36,11 @@ class PlexClient(
     private val token: String,
     /** Needed to build the URIs that add items to a playlist. */
     private val machineIdentifier: String = "",
+    /** Overrides `X-Plex-Product`/`X-Plex-Device`; null keeps the app's defaults. */
+    private val product: String? = null,
 ) : MusicServer {
+
+    private val identityHeaders: List<Pair<String, String>> = plexIdentity(product)
 
     private val http = HttpClient(OkHttp) { expectSuccess = false }
 
@@ -85,7 +89,7 @@ class PlexClient(
     private fun io.ktor.client.request.HttpRequestBuilder.plexHeaders() {
         header("X-Plex-Token", token)
         header("Accept", "application/json")
-        PLEX_IDENTITY.forEach { (k, v) -> header(k, v) }
+        identityHeaders.forEach { (k, v) -> header(k, v) }
     }
 
     override suspend fun ping() {
@@ -272,6 +276,7 @@ class PlexClient(
         format: StreamFormat,
         timeOffsetSeconds: Int,
         estimateContentLength: Boolean,
+        sessionId: String?,
     ): String {
         val original = format == StreamFormat.RAW
         val params = buildList {
@@ -284,13 +289,16 @@ class PlexClient(
             add("hasMDE" to "1")
             if (timeOffsetSeconds > 0) add("offset" to timeOffsetSeconds.toString())
             format.maxBitRate?.let { add("musicBitrate" to it.toString()) }
-            // Deliberately no session identifier. Plex keeps one transcode per
-            // identifier and tears down the previous holder of it, so sharing one
-            // across the app means a download in flight kills the stream that is
-            // playing — the server answers 400 and playback stops dead. Left off,
-            // every request gets its own, which is what concurrent streams need.
+            // Not shared across calls: Plex keeps one transcode per identifier
+            // and tears down the previous holder of it, so the same id on a
+            // download in flight and the stream that is playing would have the
+            // second one kill the first — the server answers 400 and playback
+            // stops dead. The caller is expected to mint a fresh one per
+            // playback (see PlaybackController) and never reuse it for a
+            // download, which is why this is left out unless given one.
+            if (!sessionId.isNullOrBlank()) add("X-Plex-Session-Identifier" to sessionId)
             add("X-Plex-Token" to token)
-            PLEX_IDENTITY.forEach { (k, v) -> add(k to v) }
+            identityHeaders.forEach { (k, v) -> add(k to v) }
         }
         val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
         return baseUrl.trimEnd('/') + "/music/:/transcode/universal/start.mp3?$query"
@@ -309,10 +317,13 @@ class PlexClient(
         format: StreamFormat,
         timeOffsetSeconds: Int,
         estimateContentLength: Boolean,
+        sessionId: String?,
     ): String {
         if (format != StreamFormat.RAW || track.streamPath.isBlank()) {
-            return streamUrl(track.id, format, timeOffsetSeconds, estimateContentLength)
+            return streamUrl(track.id, format, timeOffsetSeconds, estimateContentLength, sessionId)
         }
+        // The original file is served whole and direct, with no transcode
+        // session behind it to identify — nothing to attach sessionId to.
         return baseUrl.trimEnd('/') + track.streamPath +
             (if (track.streamPath.contains('?')) "&" else "?") +
             "download=0&X-Plex-Token=" + enc(token)
@@ -365,6 +376,43 @@ class PlexClient(
             listOf("key" to songId, "identifier" to LIBRARY_IDENTIFIER),
         )
     }
+
+    /**
+     * A heartbeat for whatever is watching `/status/sessions` — Plex's own
+     * dashboard, chiefly. Without this, a stream this app started is bytes
+     * moving and nothing else: Plex has no session object to hold it in, and
+     * so nothing to list as "now playing".
+     *
+     * `time`/`duration` are milliseconds, which is what `/:/timeline` wants —
+     * unlike most of this client's calls, which work in Plex's native seconds.
+     */
+    override suspend fun reportTimeline(
+        sessionId: String,
+        songId: String,
+        state: TimelineState,
+        positionMs: Long,
+        durationMs: Long,
+    ) {
+        val params = buildList {
+            add("ratingKey" to songId)
+            add("key" to "/library/metadata/$songId")
+            add("identifier" to LIBRARY_IDENTIFIER)
+            add("state" to state.plexValue)
+            add("time" to positionMs.coerceAtLeast(0L).toString())
+            if (durationMs > 0) add("duration" to durationMs.toString())
+            add("hasMDE" to "1")
+            add("X-Plex-Session-Identifier" to sessionId)
+        }
+        send("GET", "/:/timeline", params)
+    }
+
+    private val TimelineState.plexValue: String
+        get() = when (this) {
+            TimelineState.PLAYING -> "playing"
+            TimelineState.PAUSED -> "paused"
+            TimelineState.STOPPED -> "stopped"
+            TimelineState.BUFFERING -> "buffering"
+        }
 
     /** Plex rates 0–10, so a star is worth two. */
     override suspend fun setRating(id: String, stars: Int): Boolean {
@@ -578,12 +626,16 @@ class PlexClient(
          * Who we say we are. Plex wants these on every request, and uses the
          * client identifier to tie a token to a device — it must be stable, so
          * it is the app's own id rather than something generated per launch.
+         *
+         * [product] overrides `X-Plex-Product` and `X-Plex-Device`, both of
+         * which default to naming the app rather than anything per-source —
+         * null keeps those defaults.
          */
-        val PLEX_IDENTITY: List<Pair<String, String>> = listOf(
+        fun plexIdentity(product: String? = null): List<Pair<String, String>> = listOf(
             "X-Plex-Client-Identifier" to "com.sublunar.amp",
-            "X-Plex-Product" to "Amp",
+            "X-Plex-Product" to (product ?: "Amp"),
             "X-Plex-Version" to "1.0.0",
-            "X-Plex-Device" to "Light Phone III",
+            "X-Plex-Device" to (product ?: "Light Phone III"),
             "X-Plex-Platform" to "Android",
         )
     }
