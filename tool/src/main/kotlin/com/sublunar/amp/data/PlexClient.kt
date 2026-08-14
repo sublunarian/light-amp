@@ -627,15 +627,18 @@ class PlexClient(
          * client identifier to tie a token to a device — it must be stable, so
          * it is the app's own id rather than something generated per launch.
          *
-         * [product] overrides `X-Plex-Product` and `X-Plex-Device`, both of
-         * which default to naming the app rather than anything per-source —
-         * null keeps those defaults.
+         * [product] overrides `X-Plex-Product`, the player's own name, which is
+         * what Plex shows a session as; null keeps the app's. `X-Plex-Device`
+         * deliberately stays the hardware: a source name is set per source, and
+         * two sources configured here are still the same phone — so naming the
+         * device after one of them would make Plex read "Kitchen on Kitchen"
+         * and lose which machine it was talking to.
          */
         fun plexIdentity(product: String? = null): List<Pair<String, String>> = listOf(
             "X-Plex-Client-Identifier" to "com.sublunar.amp",
             "X-Plex-Product" to (product ?: "Amp"),
             "X-Plex-Version" to "1.0.0",
-            "X-Plex-Device" to (product ?: "Light Phone III"),
+            "X-Plex-Device" to "Light Phone III",
             "X-Plex-Platform" to "Android",
         )
     }
