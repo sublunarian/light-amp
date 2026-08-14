@@ -16,6 +16,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -393,7 +394,14 @@ class LibraryRepository(
      */
     suspend fun playlistTracks(id: String): List<Track> {
         val tracks = fetchPlaylistTracks(id)
-        _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
+        // An empty answer is not cached. It means either a genuinely empty
+        // playlist or a fetch that failed — and this path can't tell them apart,
+        // where the one below can. Kept, it would satisfy primePlaylistTrackIds'
+        // "already known" guard for the rest of the session, so one bad moment
+        // would leave that playlist's badge off until the app restarted.
+        if (tracks.isNotEmpty()) {
+            _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
+        }
         return tracks
     }
 
@@ -433,6 +441,22 @@ class LibraryRepository(
         }
         val tracks = runCatching { serverClient.value?.getPlaylistTracks(id) }.getOrNull() ?: return
         _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
+    }
+
+    /**
+     * The same, for a whole list — what the playlists tab actually needs.
+     *
+     * One request per playlist is unavoidable, since no server returns
+     * membership with the list. Running them one after another is not: forty
+     * playlists meant forty serial round trips before the last badge could
+     * appear. Same gate as the library sync, so a tab opening can't take the
+     * server apart either.
+     */
+    suspend fun primePlaylistTrackIds(ids: List<String>) = coroutineScope {
+        val gate = Semaphore(SYNC_CONCURRENCY)
+        ids.filterNot { it in _playlistTrackIds.value }
+            .map { id -> launch { gate.withPermit { primePlaylistTrackIds(id) } } }
+            .joinAll()
     }
 
     /** Playlists whose every known track is downloaded — drives the download badge. */

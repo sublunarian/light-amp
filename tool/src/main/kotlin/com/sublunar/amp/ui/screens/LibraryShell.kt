@@ -571,7 +571,7 @@ private fun PlaylistsTab(actions: ShellActions) {
     // getPlaylists only returns metadata, not membership — so the badge above
     // has nothing to go on until each playlist's tracks are fetched once here.
     LaunchedEffect(playlists) {
-        for (playlist in playlists) App.library.primePlaylistTrackIds(playlist.id)
+        App.library.primePlaylistTrackIds(playlists.map { it.id })
     }
     // A server that can only create a playlist with songs in it has no use for a
     // bare "New Playlist" — see MusicSource.supportsEmptyPlaylists.
