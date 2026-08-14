@@ -105,17 +105,30 @@ class PlaybackController(
     private var lastScrobbledId: String? = null
 
     /**
-     * Identifies *this* playback to the server, distinct from any other
-     * stream (or download) in flight — see the comment on
-     * [MusicServer.streamUrl]. Minted fresh whenever the track actually
-     * playing changes, and carried on both the stream URL and the
-     * [reportTimeline] calls that go with it, so Plex's dashboard has one
-     * session to show rather than none.
+     * Identifies playback to the server, distinct from any other stream (or
+     * download) in flight — see the comment on [MusicServer.streamUrl]. Carried
+     * on both the stream URL and the [reportTimeline] calls that go with it, so
+     * Plex's dashboard has one session to show rather than none.
+     *
+     * One id **per track**, derived rather than minted, because of when stream
+     * URLs are built: the whole queue is turned into audio items at once, each
+     * carrying the id that existed at that moment. A single field reassigned on
+     * every track change therefore ended up reporting a session that no stream
+     * was carrying — and gave every queued track the same identifier, which is
+     * the one thing Plex must not see twice. It keeps one transcode per
+     * identifier and tears down the previous holder, so the next track being
+     * prepared while the current one plays could kill the stream that is
+     * playing. Deriving it from the track keeps the URL and the timeline in
+     * agreement however far ahead the queue was built.
+     *
+     * [playbackSession] changes with each new queue, so playing the same track
+     * again is a new session rather than a continuation of the old one.
      */
-    private var sessionId: String = UUID.randomUUID().toString()
+    private var playbackSession: String = UUID.randomUUID().toString()
 
-    /** The track [sessionId] currently belongs to, so it can be closed out by id
-     * when replaced — see [mintSessionId]. Null when nothing's reported yet. */
+    private fun sessionIdFor(trackId: String): String = "$playbackSession:$trackId"
+
+    /** The track whose session is currently open, so it can be closed out by id. */
     private var sessionTrackId: String? = null
 
     // Local files for downloaded tracks, refreshed as downloads land so queue
@@ -251,7 +264,7 @@ class PlaybackController(
                     // track ending and the next beginning. The one it replaces
                     // is told it's stopped first, so it doesn't just sit in
                     // `/status/sessions` until its lease times out.
-                    _queue.value.getOrNull(idx)?.let { mintSessionId(it.id) }
+                    _queue.value.getOrNull(idx)?.let { openSessionFor(it.id) }
                     // Seeded from the library rather than waited for: a chunked
                     // stream may never report a duration at all, and the player
                     // won't emit again to give the collector above a second go.
@@ -392,10 +405,33 @@ class PlaybackController(
             runBlocking { withTimeoutOrNull(CAST_STOP_TIMEOUT_MS) { DlnaCast.stop(renderer) } }
         }
         // One last snapshot before the player goes: an orderly exit should not
-        // lose the few seconds since the last tick.
-        runBlocking { withTimeoutOrNull(SAVE_STATE_TIMEOUT_MS) { persistState() } }
+        // lose the few seconds since the last tick. The session is closed out in
+        // the same breath — stop() does it when the queue is emptied, but simply
+        // leaving never went through stop(), so the server was left showing this
+        // phone as playing until the session's lease ran out.
+        runBlocking {
+            withTimeoutOrNull(SAVE_STATE_TIMEOUT_MS) {
+                sessionTrackId?.let { reportTimelineStoppedNow(it) }
+                persistState()
+            }
+        }
+        sessionTrackId = null
         player?.release()
         player = null
+    }
+
+    /**
+     * The blocking form of [reportTimelineStopped], for teardown.
+     *
+     * The fire-and-forget version launches into [scope], which is being torn
+     * down around it — the request would be cancelled before it left.
+     */
+    private suspend fun reportTimelineStoppedNow(trackId: String) {
+        if (LocalLibrary.isLocal(trackId)) return
+        val client = serverClient.value ?: return
+        runCatching {
+            client.reportTimeline(sessionIdFor(trackId), trackId, TimelineState.STOPPED, 0L, 0L)
+        }
     }
 
     // --- Playback controls ---------------------------------------------------
@@ -403,6 +439,10 @@ class PlaybackController(
     /** Replace the queue with [tracks] and start at [startIndex]. */
     fun playQueue(tracks: List<Track>, startIndex: Int = 0) {
         if (tracks.isEmpty()) return
+        // A new queue is a new listening session, so the ids derived from it are
+        // new too — otherwise playing the same track again an hour later would
+        // report itself as the same session still going.
+        playbackSession = UUID.randomUUID().toString()
         val start = startIndex.coerceIn(0, tracks.lastIndex)
         if (_shuffle.value) {
             val first = tracks[start]
@@ -573,7 +613,7 @@ class PlaybackController(
             track,
             effectiveFormat(),
             timeOffsetSeconds = (target / 1000).toInt(),
-            sessionId = sessionId,
+            sessionId = sessionIdFor(track.id),
         )
         streamOffsetMs = target
         // Only the playing item is replaced; the queue either side of it is
@@ -911,7 +951,7 @@ class PlaybackController(
         // player's — see the index collector in bind(). Also covers a seek,
         // which restarts the renderer's stream from scratch the same way a
         // track change does, so the session it's replacing needs closing too.
-        mintSessionId(track.id)
+        openSessionFor(track.id)
         val (format, mime) = castFormatFor(renderer, track)
         // Anything under a second is where the track starts anyway, and a
         // timeOffset of 0 is a re-encode for nothing.
@@ -933,7 +973,7 @@ class PlaybackController(
             format,
             estimateContentLength = false,
             timeOffsetSeconds = (offset / 1000).toInt(),
-            sessionId = sessionId,
+            sessionId = sessionIdFor(track.id),
         ) ?: return false
         val started = DlnaCast.play(
             renderer = renderer,
@@ -972,7 +1012,7 @@ class PlaybackController(
         // at once during the hand-off, and Plex tears down whichever one
         // shares an identifier with the other.
         val url = serverClient.value
-            ?.streamUrl(track, format, estimateContentLength = false, sessionId = UUID.randomUUID().toString())
+            ?.streamUrl(track, format, estimateContentLength = false, sessionId = sessionIdFor(track.id))
             ?: return
         val queued = DlnaCast.setNext(
             renderer = renderer,
@@ -1229,39 +1269,41 @@ class PlaybackController(
         // Nothing playing on the server's behalf to report on.
         if (LocalLibrary.isLocal(track.id)) return
         val client = serverClient.value ?: return
-        val sid = sessionId
+        val sid = sessionIdFor(track.id)
         val position = _positionMs.value
         val duration = _durationMs.value
         scope.launch { runCatching { client.reportTimeline(sid, track.id, state, position, duration) } }
     }
 
     /**
-     * Close out a session that's about to be replaced by a fresh one — a new
-     * [sessionId] with nothing telling Plex the old one is done leaves it
-     * sitting in `/status/sessions` until its lease times out on its own, and
-     * a track change every few minutes means those pile up faster than they
-     * expire. Takes the outgoing id and track explicitly, since by the time
-     * this runs [sessionId] has usually already moved on to the next one.
+     * Close out the session for a track that has stopped being the one playing.
+     *
+     * Without it the old session sits in `/status/sessions` until its lease
+     * times out on its own, and a track change every few minutes makes them pile
+     * up faster than they expire. Takes the track explicitly, because by the
+     * time this runs the queue has usually moved on to the next one.
      */
-    private fun reportTimelineStopped(oldSessionId: String, oldTrackId: String) {
+    private fun reportTimelineStopped(oldTrackId: String) {
         if (LocalLibrary.isLocal(oldTrackId)) return
         val client = serverClient.value ?: return
+        val sid = sessionIdFor(oldTrackId)
         scope.launch {
             runCatching {
-                client.reportTimeline(oldSessionId, oldTrackId, TimelineState.STOPPED, 0L, 0L)
+                client.reportTimeline(sid, oldTrackId, TimelineState.STOPPED, 0L, 0L)
             }
         }
     }
 
     /**
-     * Retire [sessionId] on whatever track it belonged to (if any) and mint a
-     * fresh one for [newTrackId]. Every spot that used to just reassign
-     * `sessionId = UUID.randomUUID().toString()` goes through this instead, so
-     * the outgoing session is never simply dropped on the floor.
+     * Hand the open session over to [newTrackId], stopping the outgoing one.
+     *
+     * The id itself is derived from the track rather than minted here — see
+     * [sessionIdFor] — so this only tracks *which* session is currently open.
      */
-    private fun mintSessionId(newTrackId: String) {
-        sessionTrackId?.let { oldTrackId -> reportTimelineStopped(sessionId, oldTrackId) }
-        sessionId = UUID.randomUUID().toString()
+    private fun openSessionFor(newTrackId: String) {
+        val outgoing = sessionTrackId
+        if (outgoing == newTrackId) return
+        outgoing?.let { reportTimelineStopped(it) }
         sessionTrackId = newTrackId
     }
 
@@ -1343,7 +1385,7 @@ class PlaybackController(
             if (!preferStream) return LightAudioSource.FileSource(file)
         }
         return LightAudioSource.UrlSource(
-            serverClient.value?.streamUrl(this, effectiveFormat(), sessionId = sessionId).orEmpty(),
+            serverClient.value?.streamUrl(this, effectiveFormat(), sessionId = sessionIdFor(id)).orEmpty(),
         )
     }
 
