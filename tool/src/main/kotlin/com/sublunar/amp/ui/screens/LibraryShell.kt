@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -27,11 +26,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import com.sublunar.amp.App
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.thelightphone.sdk.rememberPermissionRequestLauncher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AlphabetIndex
@@ -46,6 +48,7 @@ import com.sublunar.amp.ui.components.INDEX_STRIP_PX
 import com.sublunar.amp.ui.components.ListScrollBar
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.rememberScrollTarget
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import com.sublunar.amp.ui.components.AlbumGrid
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.ui.components.PlayAllRow
@@ -95,12 +98,14 @@ class ShellActions(
     /** Opens the full-screen LP3 keyboard to edit the search query. */
     val editSearch: (String) -> Unit,
     val more: () -> Unit,
-    val openAlbum: (String) -> Unit,
-    val openArtist: (String) -> Unit,
+    /**
+     * Each takes the page back should land on — a tab list is the parent of what
+     * it opens, while a search result is a jump and names the hierarchy it
+     * belongs to instead of stacking on top of the results. See [Parent].
+     */
+    val openAlbum: (String, Parent) -> Unit,
+    val openArtist: (String, Parent) -> Unit,
     val openPlaylist: (String, String) -> Unit,
-    val likedAlbums: () -> Unit,
-    val likedSongs: () -> Unit,
-    val likedArtists: () -> Unit,
     val albumsSort: () -> Unit,
     /** The album lists' own list-or-grid menu, opened from the title. */
     val albumView: () -> Unit,
@@ -128,12 +133,6 @@ fun LibraryShell(
     onSearchClear: () -> Unit,
     actions: ShellActions,
 ) {
-    // Composed only while this is the top of the back stack, which is exactly
-    // when a tab's own list is what the user can see — see LibraryNav.shellShowing.
-    DisposableEffect(Unit) {
-        LibraryNav.shellShowing.value = true
-        onDispose { LibraryNav.shellShowing.value = false }
-    }
     PlayerTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
@@ -195,7 +194,10 @@ private fun SearchView(
             if (results.artists.isNotEmpty()) {
                 item { SectionLabel("Artists") }
                 items(results.artists, key = { "ar-${it.name}" }) { artist ->
-                    TextRow(title = artist.name) { onClose(); actions.openArtist(artist.name) }
+                    TextRow(title = artist.name) {
+                        onClose()
+                        actions.openArtist(artist.name, Parent.tab(LibraryTab.ARTISTS))
+                    }
                 }
             }
             if (results.albums.isNotEmpty()) {
@@ -206,7 +208,7 @@ private fun SearchView(
                         subtitle = album.artist,
                         coverArtId = album.coverArtId,
                         fallback = AppIcons.Album,
-                        onClick = { onClose(); actions.openAlbum(album.id) },
+                        onClick = { onClose(); actions.openAlbum(album.id, Parent.artist(album.artist)) },
                         onLongClick = { onClose(); actions.albumOptions(album.id) },
                     )
                 }
@@ -273,33 +275,44 @@ private fun SearchHeader(
  */
 @Composable
 private fun TabHeader(
-    title: String,
+    tab: LibraryTab,
     onSort: (() -> Unit)?,
     actions: ShellActions,
-    /** The liked list, when the setting puts its switch up here. */
-    onLiked: (() -> Unit)? = null,
     /** Makes the title a menu — list or grid, on the album lists. */
     onTitleClick: (() -> Unit)? = null,
 ) {
+    // Now-playing at the left corner, More at the right where it reads as this
+    // page's own menu rather than a fifth tab, and sort folded into the title,
+    // which is already the thing that names what you are looking at.
     AppHeader(
-        title = title,
-        leftAction = onSort?.let { HeaderAction(AppIcons.Sort, it) },
-        // Outlined: this is the way *to* the liked list. The liked pages show it
-        // filled, which is also how they get back.
-        secondaryLeftAction = onLiked?.let { HeaderAction(AppIcons.FavoriteBorder, it) },
-        onTitleClick = onTitleClick,
+        title = tabTitle(tab, likedOnly(tab)),
+        leftAction = HeaderAction(AppIcons.Waveform, actions.nowPlaying),
+        onTitleClick = onSort ?: onTitleClick,
         searchAction = actions.search,
-        rightAction = HeaderAction(AppIcons.Waveform, actions.nowPlaying),
+        rightAction = HeaderAction(AppIcons.MoreHoriz, actions.more),
     )
 }
 
+/** Whether this tab is currently showing only liked items. */
+@Composable
+fun likedOnly(tab: LibraryTab): Boolean = when (tab) {
+    LibraryTab.ALBUMS -> App.likedAlbumsOnly.collectAsState().value
+    LibraryTab.SONGS -> App.likedSongsOnly.collectAsState().value
+    LibraryTab.ARTISTS -> App.likedArtistsOnly.collectAsState().value
+    // Nothing likes a playlist.
+    LibraryTab.PLAYLISTS -> false
+}
+
 /**
- * Whether the phone's own music folder can be read, re-checked whenever a sync
- * finishes — granting access is something the user leaves the app to do, and
- * coming back is when the answer changes.
+ * What the tab is called, given the narrowing over it.
  *
- * False only ever means "not allowed yet": an empty folder still lists.
+ * The title is the only thing on the page that says a list has been narrowed —
+ * without it a filtered library just looks like one that lost most of its
+ * records.
  */
+fun tabTitle(tab: LibraryTab, likedOnly: Boolean): String =
+    if (likedOnly) "Liked " + tab.title else tab.title
+
 @Composable
 private fun rememberLocalAccess(): Boolean {
     val source = App.source.collectAsState().value
@@ -336,17 +349,14 @@ private fun AlbumsTab(actions: ShellActions) {
     // triggering recomposition — which is why the albums tab kept its switch
     // hidden long after the liked albums had loaded.
     val supportsLikes = App.source.collectAsState().value.supportsLikes
-    val likedAlbums by App.library.likedAlbums.collectAsState()
-    val hasLiked = supportsLikes && likedAlbums.isNotEmpty()
     val needsAccess = !rememberLocalAccess()
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     val grid = App.albumGrid.collectAsState().value
     Column(Modifier.fillMaxSize()) {
         TabHeader(
-            "All Albums",
+            LibraryTab.ALBUMS,
             actions.albumsSort,
             actions,
-            onLiked = actions.likedAlbums.takeIf { hasLiked },
             // Only where there is a choice to make: with covers off there is no
             // grid to switch to.
             onTitleClick = actions.albumView.takeIf { !App.hideArtwork.collectAsState().value },
@@ -357,25 +367,27 @@ private fun AlbumsTab(actions: ShellActions) {
             Box(modifier = Modifier.weight(1f)) {
                 AlbumGrid(
                     albums = sorted,
-                    onOpen = { actions.openAlbum(it.id) },
+                    onOpen = { actions.openAlbum(it.id, Parent.Here) },
                     onLongPress = { actions.albumOptions(it.id) },
                     // Its own anchor, separate from the list's: see
                     // rememberGridAnchor.
-                    state = rememberGridAnchor("tab:albums/grid"),
-                )
+                    state = rememberGridAnchor("tab:albums/grid", headerCount = 1),
+                ) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        RandomAlbumRow(sorted, actions)
+                    }
+                }
             }
         } else {
             IndexedList(
                 anchor = "tab:albums",
                 // The index only makes sense while the list is in name order.
                 letters = letters,
-                headerCount = 0,
+                headerCount = 1,
                 reversed = reversed,
             ) {
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
-                // Nothing above the shelf: the heart lives in the header, and
-                // Play or Shuffle over a whole library is a rarer thing to want
-                // than it looks.
+                item { RandomAlbumRow(sorted, actions) }
                 items(sorted, key = { it.id }) { album ->
                     TrackRow(
                         title = album.title,
@@ -383,10 +395,37 @@ private fun AlbumsTab(actions: ShellActions) {
                         coverArtId = album.coverArtId,
                         fallback = AppIcons.Album,
                         downloaded = album.id in downloadedAlbums,
-                        onClick = { actions.openAlbum(album.id) },
+                        onClick = { actions.openAlbum(album.id, Parent.Here) },
                         onLongClick = { actions.albumOptions(album.id) },
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * One record off the shelf, at random.
+ *
+ * Shuffle's place on the song lists, but not shuffle's job: an album is a thing
+ * someone sequenced, so this picks one and plays it in its own order. Obeys the
+ * list as it stands, so a filter or a search narrows what can come up.
+ */
+@Composable
+private fun RandomAlbumRow(albums: List<Album>, actions: ShellActions) {
+    PlayAllRow(AppIcons.Shuffle, "Play Random Album") {
+        val album = albums.randomOrNull() ?: return@PlayAllRow
+        App.scope.launch {
+            // Reading the album's tracks is a database call and belongs off the
+            // main thread; handing them to the player is not. ExoPlayer's looper
+            // *is* Main and it enforces that — see PlaybackController, where
+            // every other caller happens to arrive from a composable and so is
+            // already on it.
+            val queue = App.library.albumQueue(listOf(album.id))
+            if (queue.isEmpty()) return@launch
+            withContext(Dispatchers.Main) {
+                App.playback.playQueue(queue, 0)
+                actions.nowPlaying()
             }
         }
     }
@@ -450,8 +489,6 @@ private fun SongsTab(actions: ShellActions) {
     // triggering recomposition — which is why the albums tab kept its switch
     // hidden long after the liked tracks had loaded.
     val supportsLikes = App.source.collectAsState().value.supportsLikes
-    val likedTracks by App.library.likedTracks.collectAsState()
-    val hasLiked = supportsLikes && likedTracks.isNotEmpty()
     val needsAccess = !rememberLocalAccess()
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
 
@@ -461,12 +498,7 @@ private fun SongsTab(actions: ShellActions) {
                 actions.selectionActions(selection.pick(sorted) { it.id }, selection)
             }
         } else {
-            TabHeader(
-                "All Songs",
-                actions.songsSort,
-                actions,
-                onLiked = actions.likedSongs.takeIf { hasLiked },
-            )
+            TabHeader(LibraryTab.SONGS, actions.songsSort, actions)
         }
         IndexedList(
             anchor = "tab:songs",
@@ -477,20 +509,10 @@ private fun SongsTab(actions: ShellActions) {
             if (!selection.active) {
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
                 item {
-                    SplitActionRow(
-                        leftIcon = AppIcons.PlayArrow,
-                        leftLabel = "Play",
-                        onLeft = {
-                            App.playback.playQueue(sorted, 0)
-                            actions.nowPlaying()
-                        },
-                        rightIcon = AppIcons.Shuffle,
-                        rightLabel = "Shuffle",
-                        onRight = {
-                            App.playback.playQueue(shuffled(sorted), 0)
-                            actions.nowPlaying()
-                        },
-                    )
+                    PlayAllRow(AppIcons.Shuffle, "Shuffle") {
+                        App.playback.playQueue(shuffled(sorted), 0)
+                        actions.nowPlaying()
+                    }
                 }
             }
             items(sorted, key = { it.id }) { track ->
@@ -529,18 +551,14 @@ private fun ArtistsTab(actions: ShellActions) {
     // triggering recomposition — which is why the albums tab kept its switch
     // hidden long after the liked artists had loaded.
     val supportsLikes = App.source.collectAsState().value.supportsLikes
-    val likedArtists by App.library.likedArtists.collectAsState()
-    val hasLiked = supportsLikes && likedArtists.isNotEmpty()
     val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
+    // One request for the server's own artist records, which is where their
+    // pictures are — the library's artists come from track tags and have none.
+    LaunchedEffect(Unit) { App.library.primeArtistImages() }
     val needsAccess = !rememberLocalAccess()
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     Column(Modifier.fillMaxSize()) {
-        TabHeader(
-            "All Artists",
-            actions.artistsSort,
-            actions,
-            onLiked = actions.likedArtists.takeIf { hasLiked },
-        )
+        TabHeader(LibraryTab.ARTISTS, actions.artistsSort, actions)
         IndexedList(
             anchor = "tab:artists",
             letters = letters,
@@ -553,7 +571,8 @@ private fun ArtistsTab(actions: ShellActions) {
                     name = artist.name,
                     subtitle = "${artist.albumCount} albums · ${artist.trackCount} songs",
                     downloaded = artist.name in downloadedArtists,
-                    onClick = { actions.openArtist(artist.name) },
+                    imageId = artist.imageId,
+                    onClick = { actions.openArtist(artist.name, Parent.Here) },
                     onLongClick = { actions.artistOptions(artist.name) },
                 )
             }
@@ -582,7 +601,7 @@ private fun PlaylistsTab(actions: ShellActions) {
     // stayed composed through the switch would sit on an empty list for ever.
     LaunchedEffect(source.id) { App.library.refreshPlaylists() }
     Column(Modifier.fillMaxSize()) {
-        TabHeader("Playlists", actions.playlistsSort, actions)
+        TabHeader(LibraryTab.PLAYLISTS, actions.playlistsSort, actions)
         IndexedList(
             anchor = "tab:playlists",
             letters = letters,
@@ -614,14 +633,18 @@ fun Navbar(
     onMore: () -> Unit,
     moreActive: Boolean = false,
 ) {
+    // More lives in the header, where it belongs to the page rather than sitting
+    // in the bar as a fifth destination. What is left is four tabs, evenly
+    // spaced: pushed to the edges as the five were, four icons drift apart and
+    // stop reading as a row.
     Row(
         modifier = Modifier
             .fillMaxWidth()
             // Matches the LP3's stock bottom bar: 4 grid units = 160px exactly,
             // no top margin. No vertical padding, so icons centre on 80px.
             .height(px(BOTTOM_BAR_PX))
-            .padding(horizontal = px(NAV_EDGE_PX)),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(horizontal = 0.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // A source with no server has nowhere to keep a playlist, so the tab
@@ -652,10 +675,6 @@ fun Navbar(
             current == LibraryTab.SONGS,
             scale = navScale(SONGS_DRAWN_PX, TALL_TARGET_PX),
         ) { onSelect(LibraryTab.SONGS) }
-        // Not normalised: three dots in a row are 18px tall whatever box they
-        // are given, and scaling them to a common *height* would blow them up to
-        // the width of the bar. Its width already matches its neighbours.
-        NavIcon(AppIcons.MoreHoriz, moreActive, onClick = onMore)
     }
 }
 
@@ -747,7 +766,7 @@ private fun navScale(drawnPx: Int, targetPx: Int): Float = targetPx.toFloat() / 
 private const val PLAYLISTS_SCALE = 0.94f
 private const val PLAYLISTS_LIFT_PX = 5
 
-private const val NAV_EDGE_PX = 30
+
 
 
 

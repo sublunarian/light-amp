@@ -57,6 +57,8 @@ data class Album(
 /** Derived client-side by grouping tracks; the server is album-centric. */
 data class Artist(
     val name: String,
+    /** The server's own picture of them, when it has one — see ArtistRef. */
+    val imageId: String? = null,
     val albumCount: Int,
     val trackCount: Int,
     val playCount: Int = 0,
@@ -94,7 +96,23 @@ data class Starred(
 )
 
 /** A server-side artist entry, used only to resolve ids for starring. */
-data class ArtistRef(val id: String, val name: String)
+/**
+ * An artist as the *server* knows them, which is not how the app does.
+ *
+ * The library's artists are derived from track tags, so they have names and
+ * nothing else. This is the bridge to the server's own record of the same
+ * artist: its id, for starring, and its picture.
+ */
+data class ArtistRef(
+    val id: String,
+    val name: String,
+    /**
+     * Cover id for their picture, in whatever form that server's coverArtUrl
+     * takes: a path on Plex, the artist's own id on Subsonic — Navidrome serves
+     * artist art from getCoverArt when given one.
+     */
+    val imageId: String? = null,
+)
 
 /** A server library / music folder (Navidrome exposes each library as one). */
 data class MusicFolder(val id: String, val name: String)

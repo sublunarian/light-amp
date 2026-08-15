@@ -294,13 +294,59 @@ class LibraryRepository(
     fun tracksWithComposer(composer: String): List<Track> =
         tracks.value.filter { track -> splitTag(track.composer).any { it.equals(composer, true) } }
 
+    /**
+     * How many songs carry each value of one tag — what the tag lists sort by
+     * when they aren't in name order.
+     *
+     * Keyed exactly as [genres] and [composers] list them, so every value has a
+     * count and none is split across two spellings of the same word.
+     */
+    fun tagCounts(byComposer: Boolean): Map<String, Int> {
+        val counts = mutableMapOf<String, Int>()
+        tracks.value.forEach { track ->
+            splitTag(if (byComposer) track.composer else track.genre).forEach { value ->
+                counts[value] = (counts[value] ?: 0) + 1
+            }
+        }
+        return counts
+    }
+
     private val likedArtistNames: StateFlow<Set<String>> =
         observing { it.observeLikedArtists() }.map { names -> names.toSet() }
             .stateIn(scope, SharingStarted.Eagerly, emptySet())
 
+    /**
+     * Each artist's picture, keyed by the name the library knows them under.
+     *
+     * The app's artists come from track tags and so have nothing but a name; the
+     * server keeps its own record of the same artist, with a picture on it. This
+     * is the join between the two, filled by [primeArtistImages].
+     */
+    private val _artistImages = MutableStateFlow<Map<String, String>>(emptyMap())
+
     val artists: StateFlow<List<Artist>> =
-        tracks.combine(likedArtistNames) { list, liked -> deriveArtists(list, liked) }
-            .stateIn(scope, SharingStarted.Eagerly, emptyList())
+        combine(tracks, likedArtistNames, _artistImages) { list, liked, images ->
+            deriveArtists(list, liked, images)
+        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Fetch the server's artist index for its pictures, once per source.
+     *
+     * One request for the whole list, asked for by the pages that show artists
+     * rather than on every sync: a library with no artist art on the server
+     * would otherwise pay for it on every launch. Failure leaves the map as it
+     * was, so the rows simply show their placeholder.
+     */
+    suspend fun primeArtistImages() {
+        if (_artistImages.value.isNotEmpty()) return
+        val client = serverClient.value ?: return
+        val refs = runCatching { client.getArtistIndex(libraryId.first()) }.getOrNull() ?: return
+        // Doubles as the id index that starring needs, which is the same call.
+        if (artistIds == null) artistIds = refs.associate { it.name to it.id }
+        _artistImages.value = refs
+            .mapNotNull { ref -> ref.imageId?.takeIf { it.isNotBlank() }?.let { ref.name to it } }
+            .toMap()
+    }
 
     // State, not cold flows: a screen collecting one of these with an empty
     // initial value showed "No liked albums yet" for as long as the push took,
@@ -1120,15 +1166,21 @@ class LibraryRepository(
         _playlistTrackIds.value = emptyMap()
         topSongs.clear()
         artistIds = null
+        _artistImages.value = emptyMap()
         haystackFor = null
         haystack = emptyList()
     }
 
-    private fun deriveArtists(list: List<Track>, liked: Set<String>): List<Artist> =
+    private fun deriveArtists(
+        list: List<Track>,
+        liked: Set<String>,
+        images: Map<String, String>,
+    ): List<Artist> =
         list.groupBy { it.albumArtist.ifBlank { it.artist } }
             .map { (name, ts) ->
                 Artist(
                     name = name,
+                    imageId = images[name],
                     albumCount = ts.mapNotNull { it.albumId }.distinct().size,
                     trackCount = ts.size,
                     playCount = ts.sumOf { it.playCount },

@@ -29,6 +29,7 @@ import com.sublunar.amp.data.newSourceId
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
+import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.n
 import com.sublunar.amp.ui.nSp
@@ -86,7 +87,7 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
         }
 
         ListScreen(onBack = { goBack() }, title = "Link Plex") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 if (servers.isEmpty()) {
                     item {
                         Column(
@@ -249,7 +250,7 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
     @Composable
     override fun Content() {
         ListScreen(onBack = { goBack() }, title = "Plex Server") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 val choice = pending
                 if (choice != null) {
                     item { SectionLabel("Which library?") }
@@ -259,7 +260,7 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                         }
                     }
                     item { TextRow(title = "All libraries") { save(choice.source) } }
-                    return@LazyColumn
+                    return@ScrollableList
                 }
                 item { SectionLabel(status ?: "For a server not linked to an account") }
                 item {

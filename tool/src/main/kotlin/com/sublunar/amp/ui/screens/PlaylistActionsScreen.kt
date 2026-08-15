@@ -53,13 +53,13 @@ class PlaylistActionsScreen(
                 TextRow(title = "Play") {
                     if (list.isNotEmpty()) {
                         App.playback.playQueue(list, 0)
-                        go { NowPlayingScreen(it) }
+                        replaceWithPlayer()
                     }
                 }
                 TextRow(title = "Shuffle") {
                     if (list.isNotEmpty()) {
                         App.playback.playQueue(shuffled(list), 0)
-                        go { NowPlayingScreen(it) }
+                        replaceWithPlayer()
                     }
                 }
                 if (list.isNotEmpty() && source.supportsDownloads) {

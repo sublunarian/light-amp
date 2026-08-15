@@ -74,6 +74,16 @@ enum class ArtistSort { NAME, MOST_PLAYED }
 enum class PlaylistSort { RECENTLY_UPDATED, NAME, DATE_CREATED }
 
 /**
+ * Ordering for the genre and composer lists, which are bare tag values.
+ *
+ * A tag carries nothing to sort on but itself, so the only other question worth
+ * asking of it is how much music sits under it — [SONGS] answers that. One key
+ * serves both lists: they are the same kind of list, and setting the order of
+ * each separately is a distinction no one is asking for.
+ */
+enum class TagSort { NAME, SONGS }
+
+/**
  * All persisted state: the server credentials plus user preferences, backed by
  * the tool's private Preferences DataStore. Everything is exposed as a Flow so
  * the UI recomposes reactively.
@@ -297,12 +307,26 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     val songSort: Flow<SongSort> = enumFlow(SONG_SORT, SongSort.TITLE)
     val artistSort: Flow<ArtistSort> = enumFlow(ARTIST_SORT, ArtistSort.NAME)
     val playlistSort: Flow<PlaylistSort> = enumFlow(PLAYLIST_SORT, PlaylistSort.RECENTLY_UPDATED)
+    val tagSort: Flow<TagSort> = enumFlow(TAG_SORT, TagSort.NAME)
+
+    /**
+     * Whether a tab is showing only what you have liked.
+     *
+     * One flag per tab rather than one for the library: the tabs are different
+     * lists, visited for different reasons, and a narrowing set on one of them
+     * is not a statement about the others. Playlists have none — nothing likes a
+     * playlist.
+     */
+    val likedAlbumsOnly: Flow<Boolean> = boolFlow(LIKED_ALBUMS_ONLY, false)
+    val likedSongsOnly: Flow<Boolean> = boolFlow(LIKED_SONGS_ONLY, false)
+    val likedArtistsOnly: Flow<Boolean> = boolFlow(LIKED_ARTISTS_ONLY, false)
 
     // Inverts each tab's sort; re-tapping the selected option flips it.
     val albumSortReversed: Flow<Boolean> = boolFlow(ALBUM_SORT_REV, false)
     val songSortReversed: Flow<Boolean> = boolFlow(SONG_SORT_REV, false)
     val artistSortReversed: Flow<Boolean> = boolFlow(ARTIST_SORT_REV, false)
     val playlistSortReversed: Flow<Boolean> = boolFlow(PLAYLIST_SORT_REV, false)
+    val tagSortReversed: Flow<Boolean> = boolFlow(TAG_SORT_REV, false)
 
     // --- Offline / downloads -------------------------------------------------
 
@@ -351,6 +375,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * layout for one place and having it applied to the other.
      */
     val artistAlbumGrid: Flow<Boolean> = boolFlow(ARTIST_ALBUM_GRID, false)
+
 
     /**
      * Artwork stays grey — the app's own switch over the display workaround.
@@ -422,11 +447,16 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setSongSort(value: SongSort) = putString(SONG_SORT, value.name)
     suspend fun setArtistSort(value: ArtistSort) = putString(ARTIST_SORT, value.name)
     suspend fun setPlaylistSort(value: PlaylistSort) = putString(PLAYLIST_SORT, value.name)
+    suspend fun setTagSort(value: TagSort) = putString(TAG_SORT, value.name)
+    suspend fun setLikedAlbumsOnly(value: Boolean) = putBool(LIKED_ALBUMS_ONLY, value)
+    suspend fun setLikedSongsOnly(value: Boolean) = putBool(LIKED_SONGS_ONLY, value)
+    suspend fun setLikedArtistsOnly(value: Boolean) = putBool(LIKED_ARTISTS_ONLY, value)
 
     suspend fun setAlbumSortReversed(value: Boolean) = putBool(ALBUM_SORT_REV, value)
     suspend fun setSongSortReversed(value: Boolean) = putBool(SONG_SORT_REV, value)
     suspend fun setArtistSortReversed(value: Boolean) = putBool(ARTIST_SORT_REV, value)
     suspend fun setPlaylistSortReversed(value: Boolean) = putBool(PLAYLIST_SORT_REV, value)
+    suspend fun setTagSortReversed(value: Boolean) = putBool(TAG_SORT_REV, value)
 
     suspend fun setInvertColors(value: Boolean) = putBool(INVERT_COLORS, value)
     suspend fun setKaraokeLyrics(value: Boolean) = putBool(KARAOKE_LYRICS, value)
@@ -468,11 +498,16 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val SONG_SORT = stringPreferencesKey("pref.songSort")
         private val ARTIST_SORT = stringPreferencesKey("pref.artistSort")
         private val PLAYLIST_SORT = stringPreferencesKey("pref.playlistSort")
+        private val TAG_SORT = stringPreferencesKey("pref.tagSort")
+        private val LIKED_ALBUMS_ONLY = booleanPreferencesKey("pref.likedAlbumsOnly")
+        private val LIKED_SONGS_ONLY = booleanPreferencesKey("pref.likedSongsOnly")
+        private val LIKED_ARTISTS_ONLY = booleanPreferencesKey("pref.likedArtistsOnly")
 
         private val ALBUM_SORT_REV = booleanPreferencesKey("pref.albumSortReversed")
         private val SONG_SORT_REV = booleanPreferencesKey("pref.songSortReversed")
         private val ARTIST_SORT_REV = booleanPreferencesKey("pref.artistSortReversed")
         private val PLAYLIST_SORT_REV = booleanPreferencesKey("pref.playlistSortReversed")
+        private val TAG_SORT_REV = booleanPreferencesKey("pref.tagSortReversed")
 
         private val INVERT_COLORS = booleanPreferencesKey("pref.invertColors")
         private val KARAOKE_LYRICS = booleanPreferencesKey("pref.karaokeLyrics")

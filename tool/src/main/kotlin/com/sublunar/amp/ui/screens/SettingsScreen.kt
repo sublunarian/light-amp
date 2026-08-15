@@ -14,6 +14,7 @@ import com.sublunar.amp.data.DataMode
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
+import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
@@ -60,7 +61,7 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
         val sync by App.library.syncState.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Settings") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 // Streaming quality lives on the server's own page: it is a
                 // property of what that server can transcode, not of the app.
                 item { SectionLabel("Playback") }
@@ -152,7 +153,7 @@ class StreamFormatScreen(
         val source = sources.firstOrNull { it.id == sourceId }
         val current = source?.wifiFormat ?: StreamFormat.DEFAULT
         ListScreen(onBack = { goBack() }, title = "On Wi-Fi") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 // Only what this server will actually send — see
                 // MusicSource.streamFormats.
                 items(source?.streamFormats ?: StreamFormat.entries.toList()) { format ->
@@ -181,7 +182,7 @@ class CellularFormatScreen(
         val source = sources.firstOrNull { it.id == sourceId }
         val current = source?.cellularFormat ?: StreamFormat.DEFAULT
         ListScreen(onBack = { goBack() }, title = "On cellular") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 items(source?.streamFormats ?: StreamFormat.entries.toList()) { format ->
                     TextRow(
                         title = formatLabel(format),
@@ -208,7 +209,7 @@ class SourceDownloadFormatScreen(
         val source = sources.firstOrNull { it.id == sourceId }
         val current = source?.downloadFormat ?: StreamFormat.DEFAULT
         ListScreen(onBack = { goBack() }, title = "Download quality") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 items(source?.streamFormats ?: StreamFormat.entries.toList()) { format ->
                     TextRow(
                         title = formatLabel(format),

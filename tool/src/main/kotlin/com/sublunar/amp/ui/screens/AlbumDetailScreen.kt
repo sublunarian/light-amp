@@ -85,7 +85,7 @@ class AlbumDetailScreen(
                         // repeating what the page already says.
                         title = album?.title ?: "Album",
                         searchAction = { openLibrarySearch(withKeyboard = true) },
-                        rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+                        rightAction = libraryCornerAction(),
                     )
                 }
 

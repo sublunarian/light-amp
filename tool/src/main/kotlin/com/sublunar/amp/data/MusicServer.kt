@@ -1,6 +1,19 @@
 package com.sublunar.amp.data
 
 /**
+ * A queue the server is holding, from this client or another one.
+ *
+ * [currentId] rather than an index: the library on this phone may no longer have
+ * every row the queue names, and the track that was playing has to survive the
+ * ones that drop out.
+ */
+data class SavedQueue(
+    val trackIds: List<String>,
+    val currentId: String?,
+    val positionMs: Long,
+)
+
+/**
  * What the app needs from a music server, whichever kind it is.
  *
  * Extracted from [SubsonicClient] so a second backend — Plex — can sit beside
@@ -104,6 +117,21 @@ interface MusicServer {
     fun coverArtUrl(coverArtId: String?): String?
 
     /**
+     * The same cover, asked for no larger than [maxSizePx] on its long edge.
+     *
+     * Servers keep album art at whatever size it came in at — Plex's is often
+     * three thousand pixels square and several megabytes — and a phone has no
+     * use for any of it beyond the screen's own width. Asking for the original
+     * once per row is a lot of bytes to throw away, and it is felt most exactly
+     * where it hurts most: a grid, on a connection that leaves the house.
+     *
+     * Defaults to the full-size URL, for a server that can't resize. The caller
+     * is expected to fall back to that anyway if this one doesn't answer — see
+     * ArtworkLoader.fetch.
+     */
+    fun coverArtUrl(coverArtId: String?, maxSizePx: Int): String? = coverArtUrl(coverArtId)
+
+    /**
      * The formats this server will actually deliver.
      *
      * Declared by each implementation rather than assumed by the app, because
@@ -120,6 +148,15 @@ interface MusicServer {
 
     // --- Writing back --------------------------------------------------------
 
+    /**
+     * [submission] false says "this is playing now", true says "this was played".
+     *
+     * Two different statements, and servers treat them as such: the first is
+     * what Navidrome shows as now-playing and hands to its agents when a track
+     * starts, the second is the play itself and is what reaches a scrobbling
+     * service. A client that only ever sends the second announces nothing while
+     * it plays, and logs a play for every track it was skipped past.
+     */
     suspend fun scrobble(songId: String, atMs: Long? = null, submission: Boolean = true) = Unit
 
     /**
@@ -138,6 +175,16 @@ interface MusicServer {
         positionMs: Long,
         durationMs: Long,
     ) = Unit
+
+    /**
+     * Hand the queue to the server, so another client can pick it up.
+     *
+     * [currentId] is the track, not its index — see [SavedQueue].
+     */
+    suspend fun savePlayQueue(trackIds: List<String>, currentId: String?, positionMs: Long) = Unit
+
+    /** The queue this account last left somewhere, or null if the server keeps none. */
+    suspend fun getPlayQueue(): SavedQueue? = null
 
     /** 1–5, or 0 to clear. False when the server wouldn't take it. */
     suspend fun setRating(id: String, stars: Int): Boolean = false

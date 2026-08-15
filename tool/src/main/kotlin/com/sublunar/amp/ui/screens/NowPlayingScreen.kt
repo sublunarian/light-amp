@@ -39,6 +39,7 @@ import kotlinx.coroutines.isActive
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -59,6 +60,7 @@ import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AppArtwork
 import com.sublunar.amp.ui.components.AppHeader
+import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppProgressBar
@@ -88,6 +90,7 @@ import com.sublunar.amp.ui.nSp
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.sublunar.amp.ui.components.rowClickable
+import com.sublunar.amp.ui.components.slowLongPress
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightThemeTokens
@@ -115,6 +118,31 @@ enum class NpView { ARTWORK, QUEUE }
 object NowPlayingNav {
     val view = mutableStateOf(NpView.ARTWORK)
     val lyricsOverlay = mutableStateOf(false)
+
+    /**
+     * The cover behind the controls — the Cover Only full-artwork layout.
+     *
+     * Not a screen of its own, deliberately. "The same page with the sleeve
+     * behind it" is only true if it *is* the same page: any second copy of the
+     * header, seek line and transport would have to be kept in step with this
+     * one by hand, and the two earlier attempts at that were both rejected for
+     * drifting out of place. So the player draws itself exactly as it always
+     * does and this only changes what is behind it.
+     */
+    val coverOnly = mutableStateOf(false)
+
+    /**
+     * Whether the controls are up while the cover fills the screen.
+     *
+     * Deliberately *not* persistent, unlike [coverOnly]: opening the player puts
+     * them back. Hiding them is something you do to look at a sleeve for a
+     * moment, not a preference about the page — and a player that opens with no
+     * controls on it reads as a fault, with the tap that recovers them
+     * discoverable only to someone who already knows it is there. Held here
+     * rather than in the screen so that toggling it survives a look at the queue
+     * pane; the screen resets it on each open.
+     */
+    val coverChrome = mutableStateOf(true)
 }
 
 private fun nextView(v: NpView): NpView = when (v) {
@@ -133,6 +161,16 @@ class NowPlayingScreen(
         // remembered across navigation so the queue survives a trip into track
         // options, but a fresh open should never drop the user in the list.
         NowPlayingNav.view.value = if (openOnQueue) NpView.QUEUE else NpView.ARTWORK
+        // The cover is deliberately *not* reset with it. Which pane you are on is
+        // a step in a task — you opened the queue to do something, and coming
+        // back to the player later means coming back to the controls. Whether
+        // the sleeve fills the screen is a preference about how the player
+        // looks, and a preference that undoes itself every time you leave the
+        // page is one you have to keep setting.
+        //
+        // Having *hidden* the controls is neither: it is a moment's look at a
+        // sleeve, so opening the player always brings them back.
+        NowPlayingNav.coverChrome.value = true
     }
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
@@ -163,7 +201,12 @@ class NowPlayingScreen(
     @Composable
     private fun NothingPlaying() {
         Column(modifier = Modifier.fillMaxSize()) {
-            AppHeader(onBack = { goBack() }, title = "Now Playing")
+            // Same button as the player itself, so the way out doesn't move
+            // depending on whether anything happens to be playing.
+            AppHeader(
+                onBack = { goBack() },
+                title = "Now Playing",
+            )
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 AppText("Nothing playing", nSp(22))
             }
@@ -425,6 +468,10 @@ class NowPlayingScreen(
      * clocks 40px under that, transport 240px up, the secondary row 120px up.
      * Stacking would make every one of those depths a consequence of the ones
      * above it, and a single font-metric change would move them all.
+     *
+     * Cover Only is this same page with the sleeve moved out from its panel to
+     * fill everything under the header. Nothing else moves — the controls dim,
+     * gain a wash to be read against, and a tap can put them away.
      */
     @Composable
     private fun ArtPlayer(current: Track) {
@@ -432,11 +479,22 @@ class NowPlayingScreen(
         // The words want the whole panel, so the title goes back to the header
         // it came from rather than sitting behind them.
         val heroTitle = artwork == ArtworkMode.NONE && !NowPlayingNav.lyricsOverlay.value
+        // Either of these leaves nothing to put behind the controls: no cover at
+        // all, or the lyrics in its place.
+        val coverOnly = NowPlayingNav.coverOnly.value &&
+            artwork != ArtworkMode.NONE &&
+            !NowPlayingNav.lyricsOverlay.value
+        // Held in NowPlayingNav, not here, so putting the controls away outlasts
+        // a trip to the queue or the library — see NowPlayingNav.coverChrome.
+        val chrome = NowPlayingNav.coverChrome.value
 
         Column(modifier = Modifier.fillMaxSize()) {
             PlayerHeader(
                 current,
                 left = {
+                    // The same chevron the queue view uses, on the shared edge
+                    // axis — ArrowBackIos draws its glyph left of centre, which
+                    // is what BACK_ICON_BIAS puts right.
                     AppIcon(
                         AppIcons.ArrowBackIos,
                         size = px(BACK_ICON_PX),
@@ -449,19 +507,66 @@ class NowPlayingScreen(
                     AppIcon(
                         AppIcons.MoreVert,
                         size = px(HEADER_ICON_PX),
-                        modifier = Modifier.appClickable { openOptions(current.id, artwork) },
+                        modifier = Modifier.appClickable {
+                            openOptions(current.id, artwork, coverOnly)
+                        },
                     )
                 },
                 showTitle = !heroTitle,
             )
             Box(modifier = Modifier.fillMaxSize()) {
-                Stage(current, artwork)
+                Stage(
+                    current,
+                    fullBleed = coverOnly,
+                    // A tap puts the controls away and brings them back; the
+                    // long press that opened the cover closes it, which is how
+                    // the other two layouts leave as well.
+                    onTap = { if (coverOnly) NowPlayingNav.coverChrome.value = !chrome },
+                    onLongPress = {
+                        NowPlayingNav.coverOnly.value = !coverOnly
+                        if (!coverOnly) NowPlayingNav.coverChrome.value = true
+                    },
+                )
                 if (heroTitle) TitleBlock(current)
-                SeekBand(dim = false)
-                TransportRow()
-                SecondaryRow(current)
+                if (!coverOnly || chrome) {
+                    // On the cover everything steps back a little, but by less
+                    // than the secondary row is knocked back on black: there it
+                    // is being separated from the transport above it, here it is
+                    // being kept legible over a picture, and the second job needs
+                    // more of the glyph than the first.
+                    val dim = if (coverOnly) ON_COVER_ALPHA else DIM_ALPHA
+                    if (coverOnly) ControlScrim()
+                    SeekBand(alpha = if (coverOnly) ON_COVER_ALPHA else 1f)
+                    TransportRow()
+                    SecondaryRow(current, alpha = dim)
+                }
             }
         }
+    }
+
+    /**
+     * The wash the controls sit on once the cover is behind them.
+     *
+     * There to stop white-on-white, not to dim the picture: it fades out
+     * entirely a little above the seek line, so the sleeve is untouched over most
+     * of the screen and only the part carrying controls is darkened.
+     */
+    @Composable
+    private fun BoxScope.ControlScrim() {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .height(px(SCRIM_H_PX))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.Transparent,
+                            LightThemeTokens.colors.background.copy(alpha = SCRIM_ALPHA),
+                        ),
+                    ),
+                ),
+        )
     }
 
     /**
@@ -652,9 +757,22 @@ class NowPlayingScreen(
         }
     }
 
-    /** The cover, or the lyrics in its place — 1080 square, edge to edge. */
+    /**
+     * The cover, or the lyrics in its place — 1080 square, edge to edge.
+     *
+     * [fullBleed] is Cover Only: the sleeve leaves its panel for the whole area
+     * under the header. That area is the screen's width squared, so a square
+     * cover fills it exactly — which is also why the header stays put in this
+     * mode. Take it away and the box is taller than it is wide, and the sleeve
+     * would have to be cropped at the sides to fill it.
+     */
     @Composable
-    private fun BoxScope.Stage(current: Track, mode: ArtworkMode) {
+    private fun BoxScope.Stage(
+        current: Track,
+        fullBleed: Boolean,
+        onTap: () -> Unit,
+        onLongPress: () -> Unit,
+    ) {
         val width = LocalConfiguration.current.screenWidthDp.dp
         val widthPx = with(LocalDensity.current) { width.roundToPx() }
         val image = rememberArtwork(current.coverArtId, widthPx)
@@ -662,11 +780,15 @@ class NowPlayingScreen(
         // One panel, one occupant. Lyrics take the cover's place rather than
         // sitting over it: a wash dark enough to read against had already hidden
         // most of the sleeve, and the artwork comes straight back on closing.
-        val panel = Modifier
-            .align(Alignment.TopStart)
-            .fillMaxWidth()
-            .height(px(PANEL_H_PX))
-            .padding(horizontal = px(INSET_PX))
+        val panel = if (fullBleed) {
+            Modifier.matchParentSize()
+        } else {
+            Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .height(px(PANEL_H_PX))
+                .padding(horizontal = px(INSET_PX))
+        }
 
         if (NowPlayingNav.lyricsOverlay.value) {
             LyricsOverlay(current, Color.Transparent, panel)
@@ -675,12 +797,26 @@ class NowPlayingScreen(
         if (image == null) return
         // The cover square inside the panel: cropping a sleeve to the panel's
         // shape would be worse than the margins.
-        Box(modifier = panel, contentAlignment = Alignment.Center) {
+        //
+        // Long-pressing it opens the cover full-screen — the same gesture the
+        // album page uses for the same thing, and the way back is the same press
+        // again rather than hunting for the back arrow.
+        Box(
+            modifier = panel.slowLongPress(onClick = onTap, onLongPress = onLongPress),
+            contentAlignment = Alignment.Center,
+        ) {
             Image(
                 bitmap = image,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxHeight().aspectRatio(1f),
+                // Filling rather than squaring off the height: the two are the
+                // same number here, and only this one still holds on a screen
+                // whose header doesn't leave a square behind it.
+                modifier = if (fullBleed) {
+                    Modifier.fillMaxSize()
+                } else {
+                    Modifier.fillMaxHeight().aspectRatio(1f)
+                },
             )
         }
     }
@@ -734,8 +870,7 @@ class NowPlayingScreen(
 
     /** Seek line and its clocks, both inset [INSET_PX] from either edge. */
     @Composable
-    private fun BoxScope.SeekBand(dim: Boolean) {
-        val alpha = if (dim) DIM_ALPHA else 1f
+    private fun BoxScope.SeekBand(alpha: Float) {
         val position by App.playback.positionMs.collectAsState()
         val duration by App.playback.durationMs.collectAsState()
         var dragRatio by remember { mutableStateOf<Float?>(null) }
@@ -822,7 +957,7 @@ class NowPlayingScreen(
      * something you go and read, not something you reach for mid-track.
      */
     @Composable
-    private fun BoxScope.SecondaryRow(current: Track) {
+    private fun BoxScope.SecondaryRow(current: Track, alpha: Float) {
         val size = px(SECONDARY_BOX_PX)
         val libraryTracks by App.library.tracks.collectAsState()
         val liked = libraryTracks.firstOrNull { it.id == current.id }?.liked ?: current.liked
@@ -843,12 +978,12 @@ class NowPlayingScreen(
                     AppIcon(
                         if (liked) AppIcons.AddCircle else AppIcons.Add,
                         size = size,
-                        modifier = Modifier.alpha(DIM_ALPHA),
+                        modifier = Modifier.alpha(alpha),
                     )
                 }
             }
             Slot(CENTRE_X_PX, onClick = { openOutput() }) {
-                AppIcon(AppIcons.Cast, size = size, modifier = Modifier.alpha(DIM_ALPHA))
+                AppIcon(AppIcons.Cast, size = size, modifier = Modifier.alpha(alpha))
             }
             Slot(
                 SCREEN_W_PX - SIDE_X_PX,
@@ -862,7 +997,7 @@ class NowPlayingScreen(
                 val onQueue = NowPlayingNav.view.value == NpView.QUEUE
                 Box(
                     modifier = Modifier
-                        .alpha(DIM_ALPHA)
+                        .alpha(alpha)
                         .size(px(QUEUE_TILE_PX))
                         .then(
                             if (onQueue) {
@@ -936,7 +1071,12 @@ class NowPlayingScreen(
         go { OutputScreen(it) }
     }
 
-    private fun openOptions(trackId: String, artworkMode: ArtworkMode) {
+    private fun openOptions(
+        trackId: String,
+        artworkMode: ArtworkMode,
+        /** Passed in rather than read again: the player has already decided it. */
+        coverOnly: Boolean,
+    ) {
         go {
             TrackActionsScreen(
                 it,
@@ -946,18 +1086,25 @@ class NowPlayingScreen(
                 showDownload = false,
                 showRating = false,
                 showAddToPlaylist = false,
-                // Only worth offering when the cover is in its panel: at Big it
-                // already fills the screen, and at None there's nothing to show.
+                // Only worth offering when there is a cover to enlarge; with
+                // artwork off there is nothing to show.
+                //
+                // In Cover Only it stays as the way back out too. The long press
+                // on the cover toggles it either way, but that gesture is
+                // invisible — the menu is where you look when you don't already
+                // know it exists.
                 onShowArtwork = if (artworkMode == ArtworkMode.SMALL) {
                     {
                         // Replaces this sheet rather than stacking on it, so back
                         // from the artwork lands on the player as intended.
                         goBack()
-                        go { FullArtworkScreen(it) }
+                        NowPlayingNav.coverOnly.value = !coverOnly
+                        if (!coverOnly) NowPlayingNav.coverChrome.value = true
                     }
                 } else {
                     null
                 },
+                artworkShowing = coverOnly,
                 lyricsShowing = NowPlayingNav.lyricsOverlay.value,
                 onToggleLyrics = {
                     val show = !NowPlayingNav.lyricsOverlay.value
@@ -1077,6 +1224,27 @@ private const val BACK_ICON_PX = 57
 private const val QUEUE_TILE_PX = 66
 private const val QUEUE_TILE_RADIUS_PX = 6
 
-/** Transport is full white; everything else on the cover is knocked back. */
+/** Transport is full white; everything else on black is knocked back. */
 private const val DIM_ALPHA = 0.45f
+
+/**
+ * The same controls once they are standing on a sleeve rather than on black.
+ *
+ * Well up from the 0.45 these controls carry on black: over a picture they have
+ * to hold their own against whatever is behind them, and the wash only does half
+ * that job. Judged on the device across several values — the transport stays the
+ * only thing at full strength, so the hierarchy survives the higher setting.
+ */
+private const val ON_COVER_ALPHA = 0.75f
+
+/**
+ * The wash under the controls in Cover Only, and how solid it gets at the very
+ * bottom of it.
+ *
+ * 520px clears the topmost control — the seek line's band starts 400px up — so
+ * the gradient has run out before it reaches anything, rather than stopping
+ * against an edge you can see.
+ */
+private const val SCRIM_H_PX = 520
+private const val SCRIM_ALPHA = 0.82f
 

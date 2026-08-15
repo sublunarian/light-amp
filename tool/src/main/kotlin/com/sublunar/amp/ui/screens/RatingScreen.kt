@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
+import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
@@ -47,7 +48,7 @@ class RatingScreen(
         var saving by remember { mutableStateOf(false) }
 
         ListScreen(onBack = { goBack() }, title = "Rating") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 item { SectionLabel(status ?: title) }
                 items(6) { i ->
                     // Listed 5 stars down to none, so the common choices are first.
