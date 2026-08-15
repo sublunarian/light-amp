@@ -13,6 +13,7 @@ import com.sublunar.amp.App
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.PlayAllRow
+import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
@@ -38,7 +39,7 @@ class AddToPlaylistScreen(
         LaunchedEffect(Unit) { App.library.refreshPlaylists() }
 
         ListScreen(onBack = { goBack() }, title = "Add to Playlist") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 // First, and shown even with no playlists yet: "these songs are a
                 // new playlist" is at least as common a reason to be here as
                 // filing them into an existing one.

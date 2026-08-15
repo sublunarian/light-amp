@@ -47,6 +47,17 @@ class TrackActionsScreen(
     private val showAddToPlaylist: Boolean = true,
     /** Set by the player; a cover at full width is only about what's playing. */
     private val onShowArtwork: (() -> Unit)? = null,
+    /**
+     * True when the cover is already filling the screen, which makes that row a
+     * way back out of it.
+     *
+     * Only Controls on Cover can be in that state while this sheet is up — it
+     * stays on the player rather than opening a page of its own, so the menu is
+     * still reachable and has to say which way it goes. The other two layouts
+     * are a separate screen with the menu behind them, and can only ever be
+     * opened from here.
+     */
+    private val artworkShowing: Boolean = false,
     /** Set by lists that support multi-select; starts selection on this track. */
     private val onSelect: (() -> Unit)? = null,
     // When set (opened from a playlist detail), adds a "Remove from Playlist" row.
@@ -154,7 +165,11 @@ class TrackActionsScreen(
                     }
                 }
                 if (onShowArtwork != null) {
-                    TextRow(title = "Show Full Artwork") { onShowArtwork.invoke() }
+                    TextRow(
+                        title = if (artworkShowing) "Hide Full Artwork" else "Show Full Artwork",
+                    ) {
+                        onShowArtwork.invoke()
+                    }
                 }
                 // Beside the rating: both say what you think of the track, and
                 // reading "Like" next to "Rating" is how you tell them apart.
@@ -169,14 +184,17 @@ class TrackActionsScreen(
                         go { RatingScreen(it, track.id, track.title, track.rating, isAlbum = false) }
                     }
                 }
+                // This sheet is opened from anywhere — a list, the queue, the
+                // player — so neither destination has a parent on the stack:
+                // both name the walk that leads to them.
+                val artist = track.albumArtist.ifBlank { track.artist }
                 if (track.albumId != null) {
                     TextRow(title = "Go to Album") {
-                        go { AlbumDetailScreen(it, track.albumId) }
+                        openAlbum(track.albumId, Parent.artist(artist))
                     }
                 }
                 TextRow(title = "Go to Artist") {
-                    val artistName = track.albumArtist.ifBlank { track.artist }
-                    go { ArtistDetailScreen(it, artistName) }
+                    openArtist(artist, Parent.tab(LibraryTab.ARTISTS))
                 }
             }
         }

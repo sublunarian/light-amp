@@ -8,7 +8,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.sublunar.amp.App
 import com.sublunar.amp.ui.PlayerTheme
+import com.sublunar.amp.ui.components.AppIcons
+import com.sublunar.amp.ui.components.HeaderAction
 import com.thelightphone.sdk.SimpleLightScreen
 
 /**
@@ -29,6 +32,11 @@ fun SimpleLightScreen<*>.openLibrarySearch(withKeyboard: Boolean = false) {
     popToRoot()
 }
 
+/** More sits in every library page's right-hand corner — see LibraryShell. */
+@Composable
+fun SimpleLightScreen<*>.libraryCornerAction(): HeaderAction =
+    HeaderAction(AppIcons.MoreHoriz) { go { MoreScreen(it) } }
+
 @Composable
 fun SimpleLightScreen<*>.LibrarySubPage(
     /** Set by More, which is a tab in its own right rather than a page of one. */
@@ -42,9 +50,12 @@ fun SimpleLightScreen<*>.LibrarySubPage(
             }
             // The tab that led here stays lit, so drilling Artists → artist →
             // album still reads as "you are in Artists" until a tab is tapped.
+            // Unless no tab led here at all: a page opened as a peer of the tabs
+            // lights none of them, and nor does anything opened from one.
             val current by LibraryNav.currentTab.collectAsState()
+            val offTab by LibraryNav.offTab.collectAsState()
             Navbar(
-                current = if (moreActive) null else current,
+                current = if (moreActive || offTab) null else current,
                 moreActive = moreActive,
                 onSelect = { tab ->
                     LibraryNav.selectTab(tab)

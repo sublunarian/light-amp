@@ -3,6 +3,7 @@ package com.sublunar.amp.ui.screens
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,16 +16,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.BuildConfig
+import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.ListScreen
+import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.n
 import com.sublunar.amp.ui.nSp
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIcons
+import kotlinx.coroutines.launch
 
 /** The bottom-nav "···" hub: secondary destinations that don't get their own tab. */
 class MoreScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
@@ -44,22 +50,21 @@ class MoreScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) 
         val composers by App.library.composers.collectAsState()
         val compilations by App.library.compilations.collectAsState()
 
-        // Keeps the tab bar and the now-playing button: More is part of the
-        // library, not a departure from it. Settings, below, is the departure —
-        // it drops both, so there is a clear edge to the app's own preferences.
-        LibrarySubPage(moreActive = true) {
-            // No back button: More is one of the tabs, and the bar below is how
-            // you leave it — a chevron here would suggest a page above it.
+        // Covers the tab bar rather than sitting above it: this is the library
+        // page's own menu, opened from its header, and a menu that leaves the
+        // navigation showing underneath reads as another page rather than as
+        // something on top of the one you were on.
+        PlayerTheme {
+            Column(modifier = Modifier.fillMaxSize()) {
             AppHeader(
                 title = "More",
-                // Settings takes the corner square rather than a row of its own:
-                // it is the app's own preferences, not another place in the
-                // library, and the gear is the one control here that says so.
-                leftAction = HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
-                searchAction = { openLibrarySearch(withKeyboard = true) },
-                rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+                onBack = { goBack() },
+                // No search here: this page is a short menu you read rather than
+                // a list you look through, and search belongs to the library
+                // pages it would send you back to anyway.
+                rightAction = HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
             )
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 // Where the music comes from, named by whichever source is in
                 // use — with one configured it reads as a label, with several it
                 // is the switch.
@@ -73,30 +78,43 @@ class MoreScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) 
                         onClick = { go { SourcesScreen(it) } },
                     )
                 }
+                // Every row below opens a library page in its own right rather
+                // than a page of this one — More is a way in, like the tab bar,
+                // not somewhere above them to go back up to. See openLibraryPage.
+                //
+                // Liked lives here rather than behind a heart in three different
+                // headers: it is a view across the library, which is exactly
+                // what this page collects.
                 if (genres.isNotEmpty()) {
                     item {
-                        TextRow(title = "Genres") { go { GenresScreen(it) } }
+                        TextRow(title = "Genres") { openLibraryPage { GenresScreen(it) } }
                     }
                 }
                 if (compilations.isNotEmpty()) {
                     item {
-                        TextRow(title = "Compilations") { go { CompilationsScreen(it) } }
+                        TextRow(title = "Compilations") {
+                            openLibraryPage { CompilationsScreen(it) }
+                        }
                     }
                 }
                 if (composers.isNotEmpty()) {
                     item {
-                        TextRow(title = "Composers") { go { ComposersScreen(it) } }
+                        TextRow(title = "Composers") { openLibraryPage { ComposersScreen(it) } }
                     }
                 }
                 // Nothing to download when the audio is already on the phone —
                 // see MusicSource.supportsDownloads.
                 if (source.supportsDownloads) {
-                    item { TextRow(title = "Downloaded Songs") { go { DownloadsScreen(it) } } }
+                    item {
+                        TextRow(title = "Downloaded Songs") {
+                            openLibraryPage { DownloadsScreen(it) }
+                        }
+                    }
                 }
+            }
             }
         }
     }
-
 }
 
 class AboutScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {

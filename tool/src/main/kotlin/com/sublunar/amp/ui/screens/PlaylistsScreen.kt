@@ -97,7 +97,7 @@ class PlaylistDetailScreen(
                     onBack = { goBack() },
                     title = playlistName,
                     searchAction = { openLibrarySearch(withKeyboard = true) },
-                    rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+                    rightAction = libraryCornerAction(),
                 )
             }
             when (val list = tracks.value) {
@@ -129,20 +129,10 @@ class PlaylistDetailScreen(
             ) {
             if (!editing) {
                 item {
-                    SplitActionRow(
-                        leftIcon = AppIcons.PlayArrow,
-                        leftLabel = "Play",
-                        onLeft = {
-                            App.playback.playQueue(list, 0)
-                            go { NowPlayingScreen(it) }
-                        },
-                        rightIcon = AppIcons.Shuffle,
-                        rightLabel = "Shuffle",
-                        onRight = {
-                            App.playback.playQueue(shuffled(list), 0)
-                            go { NowPlayingScreen(it) }
-                        },
-                    )
+                    PlayAllRow(AppIcons.Shuffle, "Shuffle") {
+                        App.playback.playQueue(shuffled(list), 0)
+                        go { NowPlayingScreen(it) }
+                    }
                 }
                 // Same glyph as the handles it reveals, so the row says what it does.
                 item { PlayAllRow(AppIcons.Dehaze, "Edit") { selection.begin() } }

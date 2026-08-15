@@ -14,6 +14,7 @@ import android.view.KeyEvent
 import androidx.media3.common.PlaybackException
 import com.sublunar.amp.App
 import com.sublunar.amp.data.PendingAction
+import com.sublunar.amp.data.SavedQueue
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.TimelineState
@@ -103,6 +104,9 @@ class PlaybackController(
     @Volatile
     private var onWifi = false
     private var lastScrobbledId: String? = null
+    private var nowPlayingId: String? = null
+    /** Identity of the queue last handed to the server — see pushQueueToServer. */
+    private var lastSavedQueueKey: Int? = null
 
     /**
      * Identifies playback to the server, distinct from any other stream (or
@@ -190,6 +194,17 @@ class PlaybackController(
     private var castCurrentUrl: String? = null
     private var castNextUrl: String? = null
 
+    /**
+     * True once [bind] has attached the audio stack.
+     *
+     * Restoring the last queue needs a player, and does nothing without one —
+     * see [restoreState], which has no second chance. Boot launches that restore
+     * on another thread and only then binds, so the two really are in a race,
+     * and this is how the restore waits for its turn.
+     */
+    private val _bound = MutableStateFlow(false)
+    val bound: StateFlow<Boolean> = _bound
+
     /** Attach the audio stack from the current activity. Idempotent per process. */
     fun bind(audio: LightAudio) {
         if (player != null) return
@@ -273,7 +288,7 @@ class PlaybackController(
                         ?.let { _durationMs.value = it }
                     reportTimeline(TimelineState.PLAYING)
                 }
-                maybeScrobble()
+                announceNowPlaying()
             }
         }
         // Anything that changes what plays next — an edit, a jump, a repeat mode —
@@ -328,6 +343,9 @@ class PlaybackController(
             }
         }
 
+        // A play is submitted part-way through rather than at the start, so the
+        // position is what decides when — see maybeSubmitPlay.
+        scope.launch { _positionMs.collect { maybeSubmitPlay(it) } }
         // Snapshot the queue periodically rather than on every position tick: the
         // point is to survive a kill, and a few seconds of lost progress is a fair
         // trade against writing to DataStore once a second forever.
@@ -348,13 +366,45 @@ class PlaybackController(
                 if (_isPlaying.value) reportTimeline(TimelineState.PLAYING)
             }
         }
+        _bound.value = true
     }
 
     /** Write the queue, index and position so the next launch can pick them up. */
-    private suspend fun persistState() {
+    private suspend fun persistState(final: Boolean = false) {
         val tracks = _queue.value
         if (tracks.isEmpty()) return
         settings.saveQueue(tracks.map { it.id }, _index.value, _positionMs.value)
+        pushQueueToServer(tracks, force = final)
+    }
+
+    /**
+     * Hand the queue to the server, so another client can pick it up where this
+     * one left it.
+     *
+     * Sent only when the queue or the track in it has actually changed, unlike
+     * the local snapshot beside it: this is a network round trip, not a write to
+     * a file on the phone. So the position that rides along is the one from the
+     * moment the track changed — close enough to resume from, and exact when it
+     * matters, because leaving forces one last push.
+     */
+    private suspend fun pushQueueToServer(tracks: List<Track>, force: Boolean) {
+        val client = serverClient.value ?: return
+        val at = _index.value.coerceAtLeast(0)
+        val currentId = tracks.getOrNull(at)?.id
+        // Trimmed to a window starting at whatever is playing. Subsonic takes
+        // the ids one URL parameter each, so Play All over a large library would
+        // be a request tens of thousands of characters long — refused by the
+        // server, or by anything proxying it, and silently at that. What is
+        // ahead of you is the part another device can use anyway.
+        val ids = if (tracks.size <= MAX_SAVED_QUEUE) {
+            tracks.map { it.id }
+        } else {
+            tracks.subList(at, minOf(at + MAX_SAVED_QUEUE, tracks.size)).map { it.id }
+        }
+        val key = 31 * ids.hashCode() + currentId.hashCode()
+        if (!force && key == lastSavedQueueKey) return
+        lastSavedQueueKey = key
+        runCatching { client.savePlayQueue(ids, currentId, _positionMs.value) }
     }
 
     /**
@@ -366,17 +416,28 @@ class PlaybackController(
      */
     suspend fun restoreState(library: List<Track>) {
         if (player == null || _queue.value.isNotEmpty()) return
-        val ids = settings.savedQueueIds.first()
-        if (ids.isEmpty()) return
+        val localIds = settings.savedQueueIds.first()
+        val saved = if (localIds.isNotEmpty()) {
+            SavedQueue(
+                localIds,
+                localIds.getOrNull(settings.savedQueueIndex.first()),
+                settings.savedPositionMs.first(),
+            )
+        } else {
+            // Nothing of our own to restore — a fresh install, or a cleared
+            // cache. The server may still be holding what this account was
+            // listening to somewhere else, which is the point of it keeping a
+            // queue at all. Only consulted when this phone has nothing: a queue
+            // the user can see here is never replaced by one they can't.
+            serverClient.value?.let { runCatching { it.getPlayQueue() }.getOrNull() }
+        } ?: return
         val byId = library.associateBy { it.id }
-        val savedIndex = settings.savedQueueIndex.first()
-        val wantedId = ids.getOrNull(savedIndex)
-        val tracks = ids.mapNotNull { byId[it] }
+        val tracks = saved.trackIds.mapNotNull { byId[it] }
         if (tracks.isEmpty()) return
-        val index = tracks.indexOfFirst { it.id == wantedId }.takeIf { it >= 0 } ?: 0
+        val index = tracks.indexOfFirst { it.id == saved.currentId }.takeIf { it >= 0 } ?: 0
 
         val p = player ?: return
-        val position = settings.savedPositionMs.first()
+        val position = saved.positionMs
         // ExoPlayer's application looper is Main and it enforces that: touching the
         // player from this coroutine's Default dispatcher throws "Player is accessed
         // on the wrong thread" and takes the app down on launch. Every other caller
@@ -384,6 +445,7 @@ class PlaybackController(
         withContext(Dispatchers.Main.immediate) {
             _queue.value = tracks
             lastScrobbledId = null
+            nowPlayingId = null
             // Start position goes in at prepare time: seekTo() clamps to the
             // duration, which is still unknown this early, so it would land on 0.
             p.setMediaQueueAt(tracks.map { it.toAudioItem() }, index, position)
@@ -412,7 +474,7 @@ class PlaybackController(
         runBlocking {
             withTimeoutOrNull(SAVE_STATE_TIMEOUT_MS) {
                 sessionTrackId?.let { reportTimelineStoppedNow(it) }
-                persistState()
+                persistState(final = true)
             }
         }
         sessionTrackId = null
@@ -944,8 +1006,25 @@ class PlaybackController(
         }
     }
 
-    /** Push the queue's current track to the renderer, optionally seeking in. */
-    private suspend fun startCastTrack(renderer: DlnaRenderer, seekToMs: Long = 0L): Boolean {
+    /**
+     * Push the queue's current track to the renderer, optionally seeking in.
+     *
+     * Seeking is the renderer's job first. It has the stream, and any response
+     * with a length and byte ranges — which includes anything a server hands
+     * over untranscoded — it can seek by itself, instantly and without
+     * re-fetching. Only when it refuses is the seek handed to the server as a
+     * `timeOffset`, and [askServer] says that has already been tried.
+     *
+     * Inferring it from the format was wrong in the one case that matters:
+     * asking for mp3 when the file is already mp3 gets the file untouched, and
+     * the server then ignores timeOffset because it isn't transcoding. The
+     * track restarted from the top while the readout claimed the seek landed.
+     */
+    private suspend fun startCastTrack(
+        renderer: DlnaRenderer,
+        seekToMs: Long = 0L,
+        askServer: Boolean = false,
+    ): Boolean {
         val track = _queue.value.getOrNull(_index.value) ?: return false
         // A new track on the renderer is a new session, same as the local
         // player's — see the index collector in bind(). Also covers a seek,
@@ -955,12 +1034,8 @@ class PlaybackController(
         val (format, mime) = castFormatFor(renderer, track)
         // Anything under a second is where the track starts anyway, and a
         // timeOffset of 0 is a re-encode for nothing.
-        //
-        // Only for a transcode: the original file is served whole, with its own
-        // seek table and byte ranges the renderer can use — and Navidrome
-        // ignores timeOffset for it, so asking would land back at 0:00.
         val wanted = if (seekToMs > 1_000L) seekToMs else 0L
-        val offset = if (format == StreamFormat.RAW) 0L else wanted
+        val offset = if (askServer) wanted else 0L
         // No estimated length for a renderer. Navidrome derives the estimate from
         // duration x the *cap* bitrate, but its ffmpeg output is ABR and comes in
         // well under: a 100s track declared 3,091,660 bytes and delivered
@@ -975,6 +1050,10 @@ class PlaybackController(
             timeOffsetSeconds = (offset / 1000).toInt(),
             sessionId = sessionIdFor(track.id),
         ) ?: return false
+        castLog(
+            "play ${track.title} fmt=${format.id} offset=${offset}ms " +
+                "len=${track.durationMs}ms url=${castTail(url)}",
+        )
         val started = DlnaCast.play(
             renderer = renderer,
             url = url,
@@ -989,8 +1068,31 @@ class PlaybackController(
         _durationMs.value = track.durationMs
         castOffsetMs = offset
         _positionMs.value = wanted
-        if (offset == 0L && wanted > 0L) DlnaCast.seek(renderer, wanted)
-        maybeScrobble()
+        if (offset == 0L && wanted > 0L) {
+            // Refusing outright is the easy case. The hard one is a renderer
+            // that accepts a Seek it can't honour: a live transcode arrives
+            // chunked with no length, so there is nothing to jump to and it
+            // grinds forward through the encode instead — minutes of silence on
+            // a long track. Unlike the local player, GetPositionInfo reports
+            // where the renderer really is, so this is measurable.
+            if (!DlnaCast.seek(renderer, wanted)) {
+                return startCastTrack(renderer, wanted, askServer = true)
+            }
+            val generation = ++seekGeneration
+            scope.launch {
+                delay(CAST_SEEK_VERIFY_MS)
+                if (generation != seekGeneration) return@launch
+                if (_castRenderer.value?.id != renderer.id) return@launch
+                val landed = DlnaCast.position(renderer)?.positionMs ?: return@launch
+                if (landed >= wanted - CAST_SEEK_TOLERANCE_MS) return@launch
+                android.util.Log.i("AmpSeek", "renderer stuck at $landed of $wanted — asking server")
+                castJob?.cancel()
+                castJob = scope.launch {
+                    if (startCastTrack(renderer, wanted, askServer = true)) pollRenderer(renderer)
+                }
+            }
+        }
+        announceNowPlaying()
         castCurrentUrl = url
         queueNextOnRenderer(renderer)
         return true
@@ -1014,6 +1116,7 @@ class PlaybackController(
         val url = serverClient.value
             ?.streamUrl(track, format, estimateContentLength = false, sessionId = sessionIdFor(track.id))
             ?: return
+        castLog("setNext ${track.title} fmt=${format.id} url=${castTail(url)}")
         val queued = DlnaCast.setNext(
             renderer = renderer,
             url = url,
@@ -1106,8 +1209,32 @@ class PlaybackController(
      * finishes — a renderer only ever holds one URI, so gapless hand-off has to
      * be driven from here.
      */
+    /**
+     * TEMPORARY — casting diagnosis. Remove once the Denon's mid-track stops are
+     * understood; see the AmpCast tag in logcat.
+     */
+    private fun castLog(message: String) {
+        android.util.Log.i("AmpCast", message)
+    }
+
+    /** A URL with its query — and so its token — left off. */
+    private fun castTail(url: String?): String =
+        url?.substringBefore("?")?.takeLast(28) ?: "-"
+
     private suspend fun pollRenderer(renderer: DlnaRenderer) {
         var settled = false
+        // What the renderer said last time. A position that hasn't moved is not
+        // evidence that anything is playing — see below.
+        var lastPositionMs = -1L
+        // The queue index we have already tried to start by hand, so a track
+        // that refuses to play is asked once and then passed over rather than
+        // restarted for ever.
+        var startedIndex = -1
+        // How patient to be with a track that hasn't started. A stream being
+        // opened from scratch deserves a few seconds; one the renderer has
+        // *already* taken from the queue and stopped on does not — see the
+        // hand-off below.
+        var restartAfter = STALLED_POLLS_TO_RESTART
         // A renderer reports STOPPED for a moment while it re-buffers as well as
         // at the end of a track, and the two are indistinguishable from one poll.
         // Two in a row is: the stream really has ended.
@@ -1115,6 +1242,14 @@ class PlaybackController(
         while (coroutineContext.isActive && _castRenderer.value?.id == renderer.id) {
             delay(CAST_POLL_MS)
             val position = DlnaCast.position(renderer)
+            val state = DlnaCast.state(renderer)
+            castLog(
+                "poll state=$state pos=${position?.positionMs} dur=${position?.durationMs} " +
+                    "settled=$settled stopped=$stoppedPolls " +
+                    "track=${_queue.value.getOrNull(_index.value)?.title} " +
+                    "uri=${castTail(position?.trackUri)} current=${castTail(castCurrentUrl)} " +
+                    "next=${castTail(castNextUrl)}",
+            )
             if (position != null) {
                 // The renderer crossed into the track we queued: follow it here
                 // rather than driving it, so nothing interrupts the audio.
@@ -1125,26 +1260,78 @@ class PlaybackController(
                     castNextUrl != castCurrentUrl &&
                     position.trackUri == castNextUrl
                 if (moved) {
+                    castLog("renderer moved to the queued track by itself")
                     nextCastIndex()?.let { _index.value = it }
                     castCurrentUrl = castNextUrl
                     // The queued track was handed over whole, from its start.
                     castOffsetMs = 0L
                     _durationMs.value = _queue.value.getOrNull(_index.value)?.durationMs
                         ?: _durationMs.value
-                    maybeScrobble()
+                    announceNowPlaying()
                     queueNextOnRenderer(renderer)
                     stoppedPolls = 0
+                    // The renderer has *taken* the queued track but not started
+                    // it: for a second or two it reports STOPPED while it opens
+                    // the stream, and reports the finished track's position
+                    // while doing so. Both of those read as "this track just
+                    // ended" — which is what skipped the track that had only
+                    // just begun. Unsettling it puts the new track back under
+                    // the same protection a track gets when it first starts,
+                    // and the rest of this poll is about the old one, so there
+                    // is nothing here worth reading.
+                    settled = false
+                    // Seeded with the reading we just saw, not cleared: cleared,
+                    // the next identical stale reading looks like a change and
+                    // re-arms the very flag this is putting down.
+                    lastPositionMs = position.positionMs
+                    _positionMs.value = 0L
+                    // A hand-off that worked has the renderer already PLAYING the
+                    // new stream at this very poll, its position back at zero —
+                    // that is the gapless case, and nothing here should touch it.
+                    // A dead one has it stopped, still holding the finished
+                    // track's position, and it has never once recovered on its
+                    // own. So give that one a single further poll to prove
+                    // otherwise rather than the seconds a cold stream needs.
+                    restartAfter = if (state == DlnaState.PLAYING) {
+                        STALLED_POLLS_TO_RESTART
+                    } else {
+                        HANDOFF_POLLS_TO_RESTART
+                    }
+                    continue
                 }
-                _positionMs.value = position.positionMs + castOffsetMs
-                // The renderer only knows about the piece of the track it was
-                // given, so a stream that started part-way in reports a short
-                // duration. The track's own is the honest number.
-                if (castOffsetMs == 0L && position.durationMs > 0) {
-                    _durationMs.value = position.durationMs
+                // Only what the renderer says about *our* track. Between one
+                // stream and the next it goes on reporting the last one — a
+                // frozen position, sometimes for seconds — and reading that as
+                // ours put the finished track's time on the new track's bar:
+                // eighteen minutes into a thirty-seven second song, when the
+                // offset we had seeked to was added on top.
+                val ours = position.trackUri == null || position.trackUri == castCurrentUrl
+                if (!ours) castLog("ignoring a reading for a stream we are not playing")
+                if (ours) {
+                    _positionMs.value = position.positionMs + castOffsetMs
+                    // The renderer only knows about the piece of the track it was
+                    // given, so a stream that started part-way in reports a short
+                    // duration. The track's own is the honest number.
+                    if (castOffsetMs == 0L && position.durationMs > 0) {
+                        _durationMs.value = position.durationMs
+                    }
+                    // What counts as "this track has started": the renderer
+                    // saying PLAYING (below), or a position that has *moved*
+                    // while it is not stopped. A stopped renderer's position is
+                    // never evidence of playing, whatever number it holds —
+                    // through a hand-off it keeps reporting the finished track's
+                    // last position, and reading that as a start is what let the
+                    // next track's loading silence count as that track ending.
+                    if (state != DlnaState.STOPPED &&
+                        position.positionMs > 0 &&
+                        position.positionMs != lastPositionMs
+                    ) {
+                        settled = true
+                    }
+                    lastPositionMs = position.positionMs
                 }
-                if (position.positionMs > 0) settled = true
             }
-            when (DlnaCast.state(renderer)) {
+            when (state) {
                 DlnaState.PLAYING -> {
                     settled = true
                     stoppedPolls = 0
@@ -1154,12 +1341,52 @@ class PlaybackController(
                     stoppedPolls = 0
                     _isPlaying.value = false
                 }
-                // Only treat STOPPED as end-of-track once the renderer has
-                // actually started; it also reports STOPPED while loading.
-                DlnaState.STOPPED -> if (settled && ++stoppedPolls >= STOPPED_POLLS_TO_ADVANCE) {
-                    if (!advanceCast(renderer)) return
-                    settled = false
-                    stoppedPolls = 0
+                DlnaState.STOPPED -> {
+                    stoppedPolls++
+                    val track = _queue.value.getOrNull(_index.value)
+                    when {
+                        // Played, then stopped: the track ended. Move on.
+                        settled && stoppedPolls >= STOPPED_POLLS_TO_ADVANCE -> {
+                            castLog(
+                                "ADVANCING after $stoppedPolls stopped polls at " +
+                                    "${_positionMs.value}ms of ${_durationMs.value}ms — " +
+                                    "${track?.title}",
+                            )
+                            if (!advanceCast(renderer)) return
+                            settled = false
+                            stoppedPolls = 0
+                            startedIndex = -1
+                            restartAfter = STALLED_POLLS_TO_RESTART
+                        }
+                        // Never played at all. This renderer takes the track we
+                        // queue ahead of time, transitions to it — and then sits
+                        // there stopped, for ever. It is why tracks appeared to
+                        // be skipped: the miscounted stops that followed made us
+                        // advance *past* the track it had just loaded, so what
+                        // was really a dead hand-off sounded like a jump. Start
+                        // it ourselves rather than stepping over it.
+                        !settled &&
+                            stoppedPolls >= restartAfter &&
+                            startedIndex != _index.value -> {
+                            castLog("queued track never started — starting ${track?.title}")
+                            startedIndex = _index.value
+                            stoppedPolls = 0
+                            restartAfter = STALLED_POLLS_TO_RESTART
+                            if (!startCastTrack(renderer)) return
+                        }
+                        // Asked again and it still won't play: something is wrong
+                        // with this track rather than with the hand-off, and
+                        // sitting in silence is worse than going on.
+                        !settled &&
+                            stoppedPolls >= restartAfter &&
+                            startedIndex == _index.value -> {
+                            castLog("still will not start — moving past ${track?.title}")
+                            if (!advanceCast(renderer)) return
+                            stoppedPolls = 0
+                            startedIndex = -1
+                            restartAfter = STALLED_POLLS_TO_RESTART
+                        }
+                    }
                 }
                 else -> stoppedPolls = 0
             }
@@ -1307,12 +1534,47 @@ class PlaybackController(
         sessionTrackId = newTrackId
     }
 
-    private fun maybeScrobble() {
+    /**
+     * Say what is playing, the moment it starts.
+     *
+     * Not the same statement as the play itself — see [MusicServer.scrobble].
+     * Nothing is kept for a retry: a now-playing notice replayed an hour later
+     * is simply false, where a play is still true whenever it arrives.
+     */
+    private fun announceNowPlaying() {
         val track = _queue.value.getOrNull(_index.value) ?: return
         // Nothing to tell, and nowhere to keep a play count: a local file's
         // history would be invented by this app and restorable by nothing.
         if (LocalLibrary.isLocal(track.id)) return
+        if (track.id == nowPlayingId) return
+        nowPlayingId = track.id
+        val client = serverClient.value ?: return
+        scope.launch { runCatching { client.scrobble(track.id, submission = false) } }
+    }
+
+    /**
+     * How much of a track has to be heard before the play counts.
+     *
+     * Half of it, or four minutes, whichever comes first — the rule Last.fm
+     * applies at the far end of whatever the server forwards to. A track whose
+     * length nothing has reported yet falls back to the four minutes; that only
+     * happens on a stream that never declares one.
+     */
+    private fun submitAfterMs(durationMs: Long): Long =
+        if (durationMs <= 0L) SUBMIT_AFTER_MS else minOf(durationMs / 2, SUBMIT_AFTER_MS)
+
+    /**
+     * Submit the play, once enough of the track has actually been heard.
+     *
+     * This used to fire the instant a track started, which meant a queue skimmed
+     * through in ten seconds logged a play for every track in it — in the local
+     * counts that drive Plays sorting, and on whatever the server scrobbles to.
+     */
+    private fun maybeSubmitPlay(positionMs: Long) {
+        val track = _queue.value.getOrNull(_index.value) ?: return
+        if (LocalLibrary.isLocal(track.id)) return
         if (track.id == lastScrobbledId) return
+        if (positionMs < submitAfterMs(_durationMs.value)) return
         lastScrobbledId = track.id
         // Stamped now, sent whenever: a play that happened offline still belongs
         // at the time it happened once the server hears about it.
@@ -1414,6 +1676,10 @@ class PlaybackController(
         /** How far a native seek may land from the target before it counts as a miss. */
         private const val SEEK_TOLERANCE_MS = 5_000L
 
+        /** Long enough for a renderer that can seek to have done so. */
+        private const val CAST_SEEK_VERIFY_MS = 4_000L
+        private const val CAST_SEEK_TOLERANCE_MS = 15_000L
+
         private const val CAST_POLL_MS = 1_000L
 
         /**
@@ -1429,6 +1695,25 @@ class PlaybackController(
         /** Consecutive STOPPED readings that mean the track really ended. */
         private const val STOPPED_POLLS_TO_ADVANCE = 2
 
+        /**
+         * How long a track that has never played is given before we start it
+         * ourselves — see the STOPPED branch in pollRenderer.
+         *
+         * Longer than the advance threshold on purpose: a renderer opening a
+         * fresh stream is legitimately stopped for a few seconds (about three on
+         * the Denon), and this must not fire while it is merely loading.
+         */
+        private const val STALLED_POLLS_TO_RESTART = 6
+
+        /**
+         * The same, for a track the renderer took from the queue and stopped on.
+         *
+         * Nothing is being loaded there — it had the whole of the previous track
+         * to prepare — so a stop at that moment is a hand-off that has already
+         * failed, not one still getting ready.
+         */
+        private const val HANDOFF_POLLS_TO_RESTART = 2
+
         /** Settling time before re-arming the renderer's next track after an edit. */
         private const val CAST_REQUEUE_DEBOUNCE_MS = 400L
         private const val CAST_STOP_TIMEOUT_MS = 1_500L
@@ -1439,5 +1724,22 @@ class PlaybackController(
 
         /** How often a live session is re-announced; PlexAmp uses roughly this. */
         private const val TIMELINE_INTERVAL_MS = 10_000L
+        /**
+         * The far end of "enough of it was heard to count as a play".
+         *
+         * Half the track or this, whichever comes first — Last.fm's rule, and
+         * the one the server will apply to whatever it forwards.
+         */
+        private const val SUBMIT_AFTER_MS = 4 * 60 * 1000L
+
+        /**
+         * How many tracks of the queue the server is told about.
+         *
+         * An id is around forty characters once it is a URL parameter, so this is
+         * a few kilobytes of request — under the eight that proxies commonly cut
+         * off, and far enough ahead that resuming on another device has somewhere
+         * to go.
+         */
+        private const val MAX_SAVED_QUEUE = 100
     }
 }

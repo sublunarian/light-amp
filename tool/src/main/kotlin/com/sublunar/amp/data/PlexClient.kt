@@ -192,7 +192,7 @@ class PlexClient(
         val sections = musicFolderId?.let { listOf(it) } ?: getMusicFolders().map { it.id }
         return sections
             .flatMap { pagedSection(it, ARTIST_TYPE) }
-            .map { ArtistRef(id = it.ratingKey, name = it.title) }
+            .map { ArtistRef(id = it.ratingKey, name = it.title, imageId = it.thumb) }
             .distinctBy { it.id }
     }
 
@@ -366,9 +366,36 @@ class PlexClient(
             (if (coverArtId.contains('?')) "&" else "?") + "X-Plex-Token=" + enc(token)
     }
 
+    /**
+     * The cover through Plex's own image resizer, which is what its clients use.
+     *
+     * The stored art is whatever the scanner found — routinely 2000px and
+     * several megabytes — and the path above serves exactly that. This asks the
+     * server to do the shrinking, which turns a page of covers from tens of
+     * megabytes into a few hundred kilobytes. `upscale=0` so a small original is
+     * left alone rather than blown up to the asked-for size and back down again
+     * on this end.
+     */
+    override fun coverArtUrl(coverArtId: String?, maxSizePx: Int): String? {
+        if (coverArtId.isNullOrBlank()) return null
+        if (maxSizePx <= 0) return coverArtUrl(coverArtId)
+        val params = listOf(
+            "width" to maxSizePx.toString(),
+            "height" to maxSizePx.toString(),
+            "minSize" to "1",
+            "upscale" to "0",
+            "url" to coverArtId,
+            "X-Plex-Token" to token,
+        ).joinToString("&") { (k, v) -> "$k=${enc(v)}" }
+        return baseUrl.trimEnd('/') + "/photo/:/transcode?" + params
+    }
+
     // --- Writing back --------------------------------------------------------
 
     override suspend fun scrobble(songId: String, atMs: Long?, submission: Boolean) {
+        // Plex has no now-playing call of this shape — that job belongs to
+        // [reportTimeline], which it does understand. Marking the track played
+        // on a start notice would count everything that was skipped past.
         if (!submission) return
         send(
             "GET",
@@ -639,6 +666,11 @@ class PlexClient(
             "X-Plex-Product" to (product ?: "Amp"),
             "X-Plex-Version" to "1.0.0",
             "X-Plex-Device" to "Light Phone III",
+            // A different field from the one above: this is the *friendly* name,
+            // and it is what Plex prints as a session's "Player". Missing, Plex
+            // falls back to the product — so a session read "Amp / Amp", the
+            // app's name twice with no sign of which phone was playing.
+            "X-Plex-Device-Name" to "Light Phone III",
             "X-Plex-Platform" to "Android",
         )
     }

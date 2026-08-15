@@ -21,6 +21,7 @@ import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.SectionLabel
+import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
@@ -62,7 +63,7 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
         val activeLibrary by App.settings.libraryId.collectAsState(initial = null)
 
         ListScreen(onBack = { goBack() }, title = "Sources") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 sources.forEach { source ->
                     val chosen = source.id == active?.id
                     // The source is the heading its libraries sit under, not a
@@ -183,8 +184,8 @@ class LibraryVisibilityScreen(
         val source = sources.firstOrNull { it.id == sourceId }
 
         ListScreen(onBack = { goBack() }, title = "Shown on Sources") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                if (source == null) return@LazyColumn
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
+                if (source == null) return@ScrollableList
                 item { SectionLabel("Tap to show or hide") }
                 item {
                     VisibilityRow(
@@ -247,7 +248,7 @@ class SourceListScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
         val sources by App.settings.sources.collectAsState(initial = emptyList())
 
         ListScreen(onBack = { goBack() }, title = "Sources") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 items(sources, key = { it.id }) { source ->
                     TextRow(
                         title = source.name,
@@ -282,7 +283,7 @@ class AddSourceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
         val sources by App.settings.sources.collectAsState(initial = emptyList())
 
         ListScreen(onBack = { goBack() }, title = "Add Source") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 item { SectionLabel("Subsonic covers Navidrome, Airsonic and Bandcamp") }
                 item {
                     PlayAllRow(AppIcons.Add, "Subsonic Server") {
@@ -341,8 +342,8 @@ class SourceDetailScreen(
         val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Source") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                if (source == null) return@LazyColumn
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
+                if (source == null) return@ScrollableList
                 if (source.kind == SourceKind.LOCAL && !canRead) {
                     // The folder listing comes back empty rather than failing
                     // without the permission, so without this the source would
@@ -515,7 +516,7 @@ class LibraryFolderScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>
         LaunchedEffect(Unit) { folders = App.library.musicFolders() }
 
         ListScreen(onBack = { goBack() }, title = "Library") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 item { row("All Libraries", selected == null) { choose(null) } }
                 items(folders, key = { it.id }) { folder: MusicFolder ->
                     row(folder.name, selected == folder.id) { choose(folder.id) }

@@ -21,6 +21,7 @@ import com.sublunar.amp.data.SubsonicConfig
 import com.sublunar.amp.data.SubsonicException
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
+import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
@@ -117,7 +118,7 @@ class ServerScreen(
         val dots = "•".repeat((newPass?.length ?: storedLength).coerceIn(0, 24))
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Add Source") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 item { SectionLabel(status ?: "Tap a field to change it") }
                 if (source == null) {
                     // Required, and first: with several sources the list is read
@@ -222,7 +223,6 @@ class ServerScreen(
                                     // were headed.
                                     is SaveOutcome.Added -> withContext(Dispatchers.Main) {
                                         LibraryNav.selectTab(LibraryTab.ALBUMS)
-                                        LibraryNav.setLiked(LibraryTab.ALBUMS, false)
                                         popToRoot()
                                     }
                                     is SaveOutcome.Said -> {

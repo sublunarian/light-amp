@@ -76,6 +76,18 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
+    /**
+     * This screen *is* the tabs, so while it shows, no page that isn't a tab
+     * does — see [LibraryNav.offTab].
+     *
+     * The SDK's own hook rather than a composition effect: it fires on the way
+     * back down as well (goBack and popToRoot both announce the screen they
+     * reveal), which is every path that can leave a standalone page.
+     */
+    override fun willShow() {
+        LibraryNav.offTab.value = false
+    }
+
     override fun onScreenDestroy() {
         App.shutdown()
     }
@@ -128,30 +140,6 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                     )
                 }
                 val searchActive by viewModel.searchActive.collectAsState()
-                // A tab whose liked list was the last one used opens straight
-                // back onto it: that *is* its front page for this user.
-                //
-                // Not while search is up, though: a search opened from a liked
-                // page unwinds to this screen, and re-pushing the page on top of
-                // the results is why search from Liked Songs appeared to do
-                // nothing at all.
-                // Belt as well as braces. The flag is cleared when the source
-                // changes, but a liked page on a server with no likes is empty
-                // by definition and its way out is a row on the page itself —
-                // so it must not be reachable at all rather than merely
-                // unlikely.
-                val likesWork = App.source.collectAsState().value.supportsLikes
-                LaunchedEffect(tab, searchActive, likesWork) {
-                    if (searchActive) return@LaunchedEffect
-                    if (!likesWork) return@LaunchedEffect
-                    if (!LibraryNav.isLiked(tab)) return@LaunchedEffect
-                    when (tab) {
-                        LibraryTab.ALBUMS -> go { AlbumsScreen(it, liked = true) }
-                        LibraryTab.SONGS -> go { SongsScreen(it, liked = true) }
-                        LibraryTab.ARTISTS -> go { LikedArtistsScreen(it) }
-                        LibraryTab.PLAYLISTS -> Unit
-                    }
-                }
                 val searchQuery by viewModel.searchQuery.collectAsState()
                 LibraryShell(
                     currentTab = tab,
@@ -187,21 +175,9 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                             )
                         },
                         more = { go { MoreScreen(it) } },
-                        openAlbum = { id -> go { AlbumDetailScreen(it, id) } },
-                        openArtist = { name -> go { ArtistDetailScreen(it, name) } },
+                        openAlbum = { id, parent -> openAlbum(id, parent) },
+                        openArtist = { name, parent -> openArtist(name, parent) },
                         openPlaylist = { id, name -> go { PlaylistDetailScreen(it, id, name) } },
-                        likedAlbums = {
-                            LibraryNav.setLiked(LibraryTab.ALBUMS, true)
-                            go { AlbumsScreen(it, liked = true) }
-                        },
-                        likedSongs = {
-                            LibraryNav.setLiked(LibraryTab.SONGS, true)
-                            go { SongsScreen(it, liked = true) }
-                        },
-                        likedArtists = {
-                            LibraryNav.setLiked(LibraryTab.ARTISTS, true)
-                            go { LikedArtistsScreen(it) }
-                        },
                         albumsSort = { go { AlbumsSortScreen(it) } },
                         albumView = { go { AlbumViewScreen(it) } },
                         songsSort = { go { SongsSortScreen(it) } },

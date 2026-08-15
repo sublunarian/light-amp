@@ -21,18 +21,19 @@ import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.formatBytes
 import com.sublunar.amp.data.formatGb
 import com.sublunar.amp.data.shuffled
+import com.sublunar.amp.data.sortSongs
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.ListScreen
+import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.SplitActionRow
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.ScrollableList
-import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.n
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
@@ -72,7 +73,14 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
 
     @Composable
     override fun Content() {
-        val tracks by App.library.downloads.collectAsState(initial = emptyList())
+        val downloaded by App.library.downloads.collectAsState(initial = emptyList())
+        // The song lists' own order, chosen from the header — this page used to
+        // be stuck with whatever order the store handed back.
+        val sort by App.songSort.collectAsState()
+        val reversed by App.songSortReversed.collectAsState()
+        val tracks = remember(downloaded, sort, reversed) {
+            sortSongs(downloaded, sort, reversed)
+        }
         val bytes by App.library.downloadedBytes.collectAsState()
         val limit = App.source.collectAsState().value.downloadLimit
         // The global count, not `tracks.size`: the list below is scoped to the
@@ -81,17 +89,21 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
         val progress by App.downloader.progress.collectAsState()
         val paused by App.settings.downloadsPaused.collectAsState(initial = false)
 
-        PlayerTheme {
-            Column(modifier = Modifier.fillMaxSize()) {
+        // The tab bar belongs here like it does on every other library page: this
+        // is a page of the library, not a page of More.
+        LibrarySubPage {
             AppHeader(
-                onBack = { goBack() },
+                // The same corners as every library page: the player on the
+                // left, this page's menu behind its title.
+                leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
                 title = "Downloaded Songs",
+                onTitleClick = { go { SongsSortScreen(it, "Downloaded Songs") } },
                 searchAction = { openLibrarySearch(withKeyboard = true) },
-                rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+                rightAction = libraryCornerAction(),
             )
             if (tracks.isEmpty() && !progress.active && bytes == 0L) {
                 EmptyState("Nothing downloaded yet")
-                return@Column
+                return@LibrarySubPage
             }
             ScrollableList(modifier = Modifier.fillMaxSize()) {
                 if (progress.active || paused) {
@@ -137,20 +149,10 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 }
                 if (tracks.isNotEmpty()) {
                     item {
-                        SplitActionRow(
-                            leftIcon = AppIcons.PlayArrow,
-                            leftLabel = "Play",
-                            onLeft = {
-                                App.playback.playQueue(tracks, 0)
-                                go { NowPlayingScreen(it) }
-                            },
-                            rightIcon = AppIcons.Shuffle,
-                            rightLabel = "Shuffle",
-                            onRight = {
-                                App.playback.playQueue(shuffled(tracks), 0)
-                                go { NowPlayingScreen(it) }
-                            },
-                        )
+                        PlayAllRow(AppIcons.Shuffle, "Shuffle") {
+                            App.playback.playQueue(shuffled(tracks), 0)
+                            go { NowPlayingScreen(it) }
+                        }
                     }
                     itemsIndexed(tracks, key = { _, t -> t.id }) { index, track ->
                         TrackRow(
@@ -166,7 +168,6 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                         )
                     }
                 }
-            }
             }
         }
     }
@@ -193,8 +194,8 @@ class DownloadSettingsScreen(
         val progress by App.downloader.progress.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Downloads") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                if (source == null) return@LazyColumn
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
+                if (source == null) return@ScrollableList
                 val mode = source.offlineMode
                 val limit = source.downloadLimit
                 val lyrics = source.wantsLyrics
@@ -280,7 +281,7 @@ class OfflineModeScreen(
         val sources by App.settings.sources.collectAsState(initial = emptyList())
         val current = sources.firstOrNull { it.id == sourceId }?.offlineMode ?: OfflineMode.MANUAL
         ListScreen(onBack = { goBack() }, title = "Offline Mode") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 items(OfflineMode.entries.toList()) { mode ->
                     TextRow(
                         title = offlineModeLabel(mode),
@@ -302,7 +303,7 @@ class DataModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
     override fun Content() {
         val current by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
         ListScreen(onBack = { goBack() }, title = "Data Mode") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 items(DataMode.entries.toList()) { mode ->
                     TextRow(
                         title = dataModeLabel(mode),
@@ -340,7 +341,7 @@ class SizeLimitScreen(
         }
 
         ListScreen(onBack = { goBack() }, title = "Size Limit") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 item { SectionLabel("${formatBytes(free)} free on this phone") }
                 items(options) { bytes ->
                     TextRow(
@@ -367,12 +368,33 @@ class DownloadLibraryScreen(
     @Composable
     override fun Content() {
         val sources by App.settings.sources.collectAsState(initial = emptyList())
-        val current = sources.firstOrNull { it.id == sourceId }?.downloadLibraryId
-        var folders by remember { mutableStateOf<List<com.sublunar.amp.data.MusicFolder>>(emptyList()) }
-        LaunchedEffect(Unit) { folders = App.library.musicFolders() }
+        val source = sources.firstOrNull { it.id == sourceId }
+        val current = source?.downloadLibraryId
+        var folders by remember(sourceId) {
+            mutableStateOf<List<com.sublunar.amp.data.MusicFolder>>(emptyList())
+        }
+        // Asked of the source being edited, not of whatever the app happens to
+        // be browsing: these pages are reachable for every configured source, and
+        // App.library only ever speaks to the active one — so editing a second
+        // server's downloads offered the first server's libraries, and picking
+        // one stored an id that means nothing on the server it was stored for.
+        LaunchedEffect(source?.id, source?.baseUrl) {
+            val s = source ?: return@LaunchedEffect
+            folders = if (s.id == App.source.value.id) {
+                // Already connected — no second client for the same server.
+                App.library.musicFolders()
+            } else {
+                val client = s.toClient()
+                try {
+                    runCatching { client?.getMusicFolders().orEmpty() }.getOrDefault(emptyList())
+                } finally {
+                    client?.close()
+                }
+            }
+        }
 
         ListScreen(onBack = { goBack() }, title = "Download Library") {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 item {
                     TextRow(
                         title = "Current library",
@@ -415,7 +437,7 @@ class ConfirmScreen(
     @Composable
     override fun Content() {
         ListScreen(onBack = { goBack(false) }, title = title) {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
                 item { SectionLabel(message) }
                 item { TextRow(title = confirmLabel) { goBack(true) } }
                 item { TextRow(title = "Cancel") { goBack(false) } }

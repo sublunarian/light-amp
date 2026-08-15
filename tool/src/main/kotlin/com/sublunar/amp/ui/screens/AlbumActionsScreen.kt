@@ -44,13 +44,13 @@ class AlbumActionsScreen(
                 TextRow(title = "Play") {
                     if (list.isNotEmpty()) {
                         App.playback.playQueue(list, 0)
-                        go { NowPlayingScreen(it) }
+                        replaceWithPlayer()
                     }
                 }
                 TextRow(title = "Shuffle") {
                     if (list.isNotEmpty()) {
                         App.playback.playQueue(shuffled(list), 0)
-                        go { NowPlayingScreen(it) }
+                        replaceWithPlayer()
                     }
                 }
                 TextRow(title = "Play Next") {
@@ -87,7 +87,7 @@ class AlbumActionsScreen(
                 }
                 if (album != null && album.artist.isNotBlank()) {
                     TextRow(title = "Go to Artist") {
-                        go { ArtistDetailScreen(it, album.artist) }
+                        openArtist(album.artist, Parent.tab(LibraryTab.ARTISTS))
                     }
                 }
             }

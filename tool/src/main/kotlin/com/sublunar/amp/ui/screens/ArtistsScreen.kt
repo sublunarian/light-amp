@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
+import com.sublunar.amp.data.sortArtists
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ArtistRow
@@ -32,6 +33,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.SplitActionRow
 import com.sublunar.amp.ui.components.listPadding
 import com.sublunar.amp.ui.components.rememberGridAnchor
@@ -41,47 +43,6 @@ import com.sublunar.amp.ui.nSp
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.launch
-
-/** All artists the user has hearted (opened from the Artists tab). */
-class LikedArtistsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
-
-    @Composable
-    override fun Content() {
-        val artists by App.library.likedArtists.collectAsState()
-        val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
-
-        LibrarySubPage {
-            AppHeader(
-                leftAction = HeaderAction(AppIcons.Sort) { go { ArtistsSortScreen(it) } },
-                title = "Liked Artists",
-                // Filled: this is the liked list, and the heart is the way out.
-                secondaryLeftAction = HeaderAction(AppIcons.Favorite) { showAllArtists() },
-                searchAction = { openLibrarySearch(withKeyboard = true) },
-                rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
-            )
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
-                // Kept below the way out rather than instead of it: with nothing
-                // liked yet, that row is the only thing on the page worth
-                // tapping.
-                if (artists.isEmpty()) {
-                    item { EmptyState("No liked artists yet") }
-                }
-                items(artists, key = { it.name }) { artist ->
-                    ArtistRow(
-                        name = artist.name,
-                        subtitle = "${artist.albumCount} albums · ${artist.trackCount} songs",
-                        downloaded = artist.name in downloadedArtists,
-                        onClick = { go { ArtistDetailScreen(it, artist.name) } },
-                        onLongClick = { go { ArtistActionsScreen(it, artist.name) } },
-                    )
-                }
-            }
-        }
-    }
-}
 
 class ArtistDetailScreen(
     sealed: SealedLightActivity,
@@ -138,12 +99,12 @@ class ArtistDetailScreen(
                     { go { AlbumViewScreen(it, forArtist = true) } }
                 },
                 searchAction = { openLibrarySearch(withKeyboard = true) },
-                rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+                rightAction = libraryCornerAction(),
             )
             if (grid) {
                 AlbumGrid(
                     albums = artistAlbums,
-                    onOpen = { album -> go { AlbumDetailScreen(it, album.id) } },
+                    onOpen = { album -> openAlbum(album.id, Parent.Here) },
                     onLongPress = { album -> go { AlbumActionsScreen(it, album.id) } },
                     // One anchor per artist, and one header item — the song
                     // shortcuts spanning the first row.
@@ -171,7 +132,7 @@ class ArtistDetailScreen(
                         coverArtId = album.coverArtId,
                         fallback = AppIcons.Album,
                         downloaded = album.id in downloadedAlbums,
-                        onClick = { go { AlbumDetailScreen(it, album.id) } },
+                        onClick = { openAlbum(album.id, Parent.Here) },
                         onLongClick = { go { AlbumActionsScreen(it, album.id) } },
                     )
                 }
@@ -233,12 +194,6 @@ class ArtistActionsScreen(
     }
 }
 
-/** Back to the full artist list, from wherever in the stack this page sits. */
-private fun SimpleLightScreen<*>.showAllArtists() {
-    LibraryNav.setLiked(LibraryTab.ARTISTS, false)
-    LibraryNav.selectTab(LibraryTab.ARTISTS)
-    popToRoot()
-}
 
 /**
  * An artist's top tracks in popularity order. Deliberately just the top songs —
@@ -271,7 +226,7 @@ class ArtistTopSongsScreen(
                         }
                     },
                     searchAction = { openLibrarySearch(withKeyboard = true) },
-                    rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+                    rightAction = libraryCornerAction(),
                 )
             }
             val list = songs
@@ -288,20 +243,10 @@ class ArtistTopSongsScreen(
                 ) {
                     if (!selection.active) {
                         item {
-                            SplitActionRow(
-                                leftIcon = AppIcons.PlayArrow,
-                                leftLabel = "Play",
-                                onLeft = {
-                                    App.playback.playQueue(list, 0)
-                                    go { NowPlayingScreen(it) }
-                                },
-                                rightIcon = AppIcons.Shuffle,
-                                rightLabel = "Shuffle",
-                                onRight = {
-                                    App.playback.playQueue(shuffled(list), 0)
-                                    go { NowPlayingScreen(it) }
-                                },
-                            )
+                            PlayAllRow(AppIcons.Shuffle, "Shuffle") {
+                                App.playback.playQueue(shuffled(list), 0)
+                                go { NowPlayingScreen(it) }
+                            }
                         }
                     }
                     itemsIndexed(list, key = { _, t -> t.id }) { index, track ->
@@ -353,7 +298,7 @@ class ArtistSongsScreen(
                     onBack = { goBack() },
                     title = name,
                     searchAction = { openLibrarySearch(withKeyboard = true) },
-                    rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+                    rightAction = libraryCornerAction(),
                 )
             }
             LazyColumn(
@@ -366,20 +311,10 @@ class ArtistSongsScreen(
             ) {
                 if (!selection.active) {
                     item {
-                        SplitActionRow(
-                            leftIcon = AppIcons.PlayArrow,
-                            leftLabel = "Play",
-                            onLeft = {
-                                App.playback.playQueue(songs, 0)
-                                go { NowPlayingScreen(it) }
-                            },
-                            rightIcon = AppIcons.Shuffle,
-                            rightLabel = "Shuffle",
-                            onRight = {
-                                App.playback.playQueue(shuffled(songs), 0)
-                                go { NowPlayingScreen(it) }
-                            },
-                        )
+                        PlayAllRow(AppIcons.Shuffle, "Shuffle") {
+                            App.playback.playQueue(shuffled(songs), 0)
+                            go { NowPlayingScreen(it) }
+                        }
                     }
                 }
                 itemsIndexed(songs, key = { _, t -> t.id }) { index, track ->

@@ -10,13 +10,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.data.TagSort
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
+import com.sublunar.amp.data.sortAlbums
+import com.sublunar.amp.data.sortTags
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.ScrollableList
+import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.SplitActionRow
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.TrackRow
@@ -40,27 +44,11 @@ class GenresScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
     @Composable
-    override fun Content() {
-        val genres by App.library.genres.collectAsState()
-
-        LibrarySubPage {
-            AppHeader(
-                onBack = { goBack() },
-                title = "Genres",
-                searchAction = { openLibrarySearch(withKeyboard = true) },
-                rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
-            )
-            ScrollableList(
-                state = rememberListAnchor("genres"),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                if (genres.isEmpty()) item { EmptyState("No genres in this library") }
-                items(genres, key = { it }) { genre ->
-                    TextRow(title = genre) { go { TagSongsScreen(it, genre, byComposer = false) } }
-                }
-            }
-        }
-    }
+    override fun Content() = TagList(
+        title = "Genres",
+        byComposer = false,
+        empty = "No genres in this library",
+    )
 }
 
 class ComposersScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
@@ -70,25 +58,57 @@ class ComposersScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
     @Composable
-    override fun Content() {
-        val composers by App.library.composers.collectAsState()
+    override fun Content() = TagList(
+        title = "Composers",
+        byComposer = true,
+        empty = "No composers in this library",
+    )
+}
 
-        LibrarySubPage {
-            AppHeader(
-                onBack = { goBack() },
-                title = "Composers",
-                searchAction = { openLibrarySearch(withKeyboard = true) },
-                rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
-            )
-            ScrollableList(
-                state = rememberListAnchor("composers"),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                if (composers.isEmpty()) item { EmptyState("No composers in this library") }
-                items(composers, key = { it }) { composer ->
-                    TextRow(title = composer) {
-                        go { TagSongsScreen(it, composer, byComposer = true) }
-                    }
+/**
+ * The shared body of the two tag lists: the same page over a different field.
+ *
+ * A library page in its own right, so there is no back button — the bar below is
+ * how you leave, and the corner it would have taken holds the sort menu instead.
+ */
+@Composable
+private fun SimpleLightScreen<*>.TagList(title: String, byComposer: Boolean, empty: String) {
+    val values by (if (byComposer) App.library.composers else App.library.genres)
+        .collectAsState()
+    val tracks by App.library.tracks.collectAsState()
+    val sort by App.tagSort.collectAsState()
+    val reversed by App.tagSortReversed.collectAsState()
+    // Counted once, for the order and for the rows: counting walks every track
+    // in the library, and only one of the two orders needs it at all.
+    val counts = remember(tracks, sort) {
+        if (sort == TagSort.SONGS) App.library.tagCounts(byComposer) else emptyMap()
+    }
+    val ordered = remember(values, counts, sort, reversed) {
+        sortTags(values, sort, reversed) { counts }
+    }
+
+    LibrarySubPage {
+        AppHeader(
+            leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+            title = title,
+            onTitleClick = { go { TagsSortScreen(it, title) } },
+            searchAction = { openLibrarySearch(withKeyboard = true) },
+            rightAction = libraryCornerAction(),
+        )
+        ScrollableList(
+            state = rememberListAnchor(if (byComposer) "composers" else "genres"),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            if (ordered.isEmpty()) item { EmptyState(empty) }
+            items(ordered, key = { it }) { value ->
+                TextRow(
+                    title = value,
+                    // Empty in name order, so the page stays the clean list of
+                    // words it was: the number is there to explain an order that
+                    // would otherwise look arbitrary, not to decorate the rows.
+                    subtitle = counts[value]?.let { n -> "$n ${if (n == 1) "song" else "songs"}" },
+                ) {
+                    go { TagSongsScreen(it, value, byComposer) }
                 }
             }
         }
@@ -119,27 +139,17 @@ class TagSongsScreen(
                 onBack = { goBack() },
                 title = tag,
                 searchAction = { openLibrarySearch(withKeyboard = true) },
-                rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+                rightAction = libraryCornerAction(),
             )
             ScrollableList(
                 state = rememberListAnchor("tag:$tag", headerCount = 1),
                 modifier = Modifier.fillMaxSize(),
             ) {
                 item {
-                    SplitActionRow(
-                        leftIcon = AppIcons.PlayArrow,
-                        leftLabel = "Play",
-                        onLeft = {
-                            App.playback.playQueue(songs, 0)
-                            go { NowPlayingScreen(it) }
-                        },
-                        rightIcon = AppIcons.Shuffle,
-                        rightLabel = "Shuffle",
-                        onRight = {
-                            App.playback.playQueue(shuffled(songs), 0)
-                            go { NowPlayingScreen(it) }
-                        },
-                    )
+                    PlayAllRow(AppIcons.Shuffle, "Shuffle") {
+                        App.playback.playQueue(shuffled(songs), 0)
+                        go { NowPlayingScreen(it) }
+                    }
                 }
                 if (songs.isEmpty()) item { EmptyState("Nothing here") }
                 itemsIndexed(songs, key = { _, t -> t.id }) { index, track ->
@@ -169,15 +179,21 @@ class CompilationsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
 
     @Composable
     override fun Content() {
-        val albums by App.library.compilations.collectAsState()
+        val all by App.library.compilations.collectAsState()
+        // The same order the album lists are in — a compilation is an album, and
+        // keeping a sort of its own would be one more thing to set twice.
+        val sort by App.albumSort.collectAsState()
+        val reversed by App.albumSortReversed.collectAsState()
+        val albums = remember(all, sort, reversed) { sortAlbums(all, sort, reversed) }
         val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
 
         LibrarySubPage {
             AppHeader(
-                onBack = { goBack() },
+                leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
                 title = "Compilations",
+                onTitleClick = { go { AlbumsSortScreen(it, "Compilations") } },
                 searchAction = { openLibrarySearch(withKeyboard = true) },
-                rightAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+                rightAction = libraryCornerAction(),
             )
             ScrollableList(
                 state = rememberListAnchor("compilations"),
@@ -191,7 +207,9 @@ class CompilationsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                         coverArtId = album.coverArtId,
                         fallback = AppIcons.Album,
                         downloaded = album.id in downloadedAlbums,
-                        onClick = { go { AlbumDetailScreen(it, album.id) } },
+                        // The compilations list is a real parent, so back returns
+                        // to it rather than to the Albums tab.
+                        onClick = { openAlbum(album.id, Parent.Here) },
                         onLongClick = { go { AlbumActionsScreen(it, album.id) } },
                     )
                 }

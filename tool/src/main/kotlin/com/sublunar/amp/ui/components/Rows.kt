@@ -249,18 +249,35 @@ fun ArtistRow(
     onLongClick: (() -> Unit)? = null,
     /** Shows the offline badge — set when every track of the artist's is downloaded. */
     downloaded: Boolean = false,
+    /** The server's picture of them, where it has one — see Artist.imageId. */
+    imageId: String? = null,
 ) {
+    // With covers off the row is a line of text again, at the tighter pitch it
+    // has always had; a picture needs the taller one the track rows use.
+    val covers = !App.hideArtwork.collectAsState().value
     Row(
         modifier = modifier
             .fillMaxWidth()
             // One line, so the rows close up rather than leaving a gap where a
             // second one would have been.
-            .height(px(ROW_SINGLE_H_PX))
+            .height(px(if (covers) ROW_H_PX else ROW_SINGLE_H_PX))
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(modifier = Modifier.width(px(ROW_LEAD_PX))) {
             if (downloaded) AppIcon(AppIcons.Downloaded, size = px(ROW_MARK_PX))
+        }
+        if (covers) {
+            // Round, where an album is square: the shape says which kind of
+            // thing this is before the name is read, and a face in a square
+            // reads as a sleeve that failed to load.
+            AppArtwork(
+                imageId,
+                size = px(ROW_ART_PX),
+                corner = px(ROW_ART_PX) / 2,
+                fallback = AppIcons.RecordVoiceOver,
+            )
+            Spacer(Modifier.width(px(ROW_GAP_PX)))
         }
         Column {
             AppText(

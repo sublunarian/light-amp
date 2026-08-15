@@ -11,6 +11,7 @@ import com.sublunar.amp.data.PendingActions
 import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.PlaylistSort
 import com.sublunar.amp.data.SongSort
+import com.sublunar.amp.data.TagSort
 import com.sublunar.amp.data.sortAlbums
 import com.sublunar.amp.data.sortArtists
 import com.sublunar.amp.data.sortPlaylists
@@ -172,7 +173,7 @@ object App {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             settings = AppSettings(context.dataStore)
             lightContext = context
-            artwork = ArtworkLoader(context.filesDir, serverClient)
+            artwork = ArtworkLoader(context.filesDir, serverClient) { _source.value.id }
             // Whatever was last in use, resolved before anything reads the
             // library — the DAO has to exist before the repository is built.
             val first = runBlocking { settings.activeSource.first() }
@@ -295,8 +296,6 @@ object App {
                     // recomposes on the new source can catch the old data.
                     library.forgetDerived()
                     // Which tabs were showing their liked list is a fact about
-                    // the server you were on — see LibraryNav.clearLiked.
-                    LibraryNav.clearLiked()
                     _source.value = next
                     _dao.value = databaseFor(next).libraryDao()
                 }
@@ -325,9 +324,30 @@ object App {
                 library.syncState.collect { downloader.setSyncing(it.syncing) }
             }
             // Cue up whatever was playing when the app last went away. Waits for
-            // the cache because the saved queue is only ids.
+            // the cache because the saved queue is only ids — and for the player,
+            // which is attached at the end of this very method while this
+            // coroutine is already running on another thread. Restoring without
+            // one silently does nothing and is never retried, so the order of
+            // those two is not something to leave to chance.
             scope.launch {
                 val tracks = library.fullTracks.filter { it.isNotEmpty() }.first()
+                playback.bound.first { it }
+                // And for the client, when this source has one. Restoring builds
+                // the whole queue as audio items up front, and an item's stream
+                // URL is fixed at the moment it is built — so with no client
+                // yet, every one of them gets an empty URL. What that looks like
+                // is the queue and the position restored perfectly and nothing
+                // that will play, until something queues music again and the
+                // items are rebuilt.
+                //
+                // Room answers from disk while the client is still being made
+                // from a DataStore read on another coroutine, so the cache
+                // usually wins that race. A local source never has a client and
+                // must not be waited for.
+                val active = settings.activeSource.filter { it != null }.first()
+                if (active?.kind != SourceKind.LOCAL) {
+                    serverClient.filter { it != null }.first()
+                }
                 playback.restoreState(tracks)
             }
             scope.launch {
@@ -383,10 +403,40 @@ object App {
     val albumSortReversed: StateFlow<Boolean> by lazy {
         settings.albumSortReversed.stateIn(scope, SharingStarted.Eagerly, false)
     }
+    val artistSort: StateFlow<ArtistSort> by lazy {
+        settings.artistSort.stateIn(scope, SharingStarted.Eagerly, ArtistSort.NAME)
+    }
+    val artistSortReversed: StateFlow<Boolean> by lazy {
+        settings.artistSortReversed.stateIn(scope, SharingStarted.Eagerly, false)
+    }
+    /**
+     * Whether each tab is narrowed to what you have liked.
+     *
+     * Warm from boot with the sorts, and for the same reason: they decide what
+     * the first frame of a tab contains, and a placeholder would show the whole
+     * library for a moment before taking most of it away again. One flag per
+     * tab — see AppSettings.
+     */
+    val likedAlbumsOnly: StateFlow<Boolean> by lazy {
+        settings.likedAlbumsOnly.stateIn(scope, SharingStarted.Eagerly, false)
+    }
+    val likedSongsOnly: StateFlow<Boolean> by lazy {
+        settings.likedSongsOnly.stateIn(scope, SharingStarted.Eagerly, false)
+    }
+    val likedArtistsOnly: StateFlow<Boolean> by lazy {
+        settings.likedArtistsOnly.stateIn(scope, SharingStarted.Eagerly, false)
+    }
+
+    val tagSort: StateFlow<TagSort> by lazy {
+        settings.tagSort.stateIn(scope, SharingStarted.Eagerly, TagSort.NAME)
+    }
+    val tagSortReversed: StateFlow<Boolean> by lazy {
+        settings.tagSortReversed.stateIn(scope, SharingStarted.Eagerly, false)
+    }
 
     val sortedSongs: StateFlow<SortedView<Track>> by lazy {
-        combine(library.tracks, songSort, songSortReversed) { list, sort, rev ->
-            val sorted = sortSongs(list, sort, rev)
+        combine(library.tracks, songSort, songSortReversed, likedSongsOnly) { list, sort, rev, liked ->
+            val sorted = sortSongs(list.filter { !liked || it.liked }, sort, rev)
             SortedView(
                 sorted,
                 when (sort) {
@@ -426,8 +476,8 @@ object App {
     }
 
     val sortedAlbums: StateFlow<SortedView<Album>> by lazy {
-        combine(library.albums, albumSort, albumSortReversed) { list, sort, rev ->
-            val sorted = sortAlbums(list, sort, rev)
+        combine(library.albums, albumSort, albumSortReversed, likedAlbumsOnly) { list, sort, rev, liked ->
+            val sorted = sortAlbums(list.filter { !liked || it.liked }, sort, rev)
             // The bucket follows whatever the list is ordered by, so sorting by
             // artist gives an index over artist names rather than no index at all.
             // Both use the same key the sort itself used, or the letters would
@@ -444,8 +494,8 @@ object App {
     }
 
     val sortedArtists: StateFlow<SortedView<Artist>> by lazy {
-        combine(library.artists, settings.artistSort, settings.artistSortReversed) { list, sort, rev ->
-            val sorted = sortArtists(list, sort, rev)
+        combine(library.artists, artistSort, artistSortReversed, likedArtistsOnly) { list, sort, rev, liked ->
+            val sorted = sortArtists(list.filter { !liked || it.liked }, sort, rev)
             SortedView(
                 sorted,
                 if (sort == ArtistSort.NAME) sorted.map { indexLetterOf(sortName(it.name)) } else emptyList(),

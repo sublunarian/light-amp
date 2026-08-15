@@ -119,6 +119,13 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         return restUrl("getCoverArt", listOf("id" to coverArtId))
     }
 
+    /** `getCoverArt` resizes server-side when given a size: the square's edge. */
+    override fun coverArtUrl(coverArtId: String?, maxSizePx: Int): String? {
+        if (coverArtId.isNullOrBlank()) return null
+        if (maxSizePx <= 0) return coverArtUrl(coverArtId)
+        return restUrl("getCoverArt", listOf("id" to coverArtId, "size" to maxSizePx.toString()))
+    }
+
     // --- Requests ------------------------------------------------------------
 
     private suspend fun request(
@@ -197,7 +204,14 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
     override suspend fun getArtistIndex(musicFolderId: String?): List<ArtistRef> {
         val body = request("getArtists", musicFolderParam(musicFolderId))
         return body.artists?.index.orEmpty().flatMap { it.artist }.mapNotNull { dto ->
-            ArtistRef(id = dto.id, name = dto.name ?: return@mapNotNull null)
+            // The artist's own id doubles as a cover id: Navidrome answers
+            // getCoverArt for one with the artist's picture. A server that
+            // doesn't simply has no art to show, which the loader handles.
+            ArtistRef(
+                id = dto.id,
+                name = dto.name ?: return@mapNotNull null,
+                imageId = dto.id,
+            )
         }
     }
 
@@ -252,6 +266,35 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         val params = mutableListOf("id" to songId, "submission" to submission.toString())
         atMs?.let { params.add("time" to it.toString()) }
         request("scrobble", params)
+    }
+
+    /**
+     * Store the queue server-side, where another client can find it.
+     *
+     * The ids repeat as one parameter each, which is how Subsonic takes a list.
+     * An empty queue would be read as "clear it", so the caller decides that
+     * explicitly rather than arriving here with nothing by accident.
+     */
+    override suspend fun savePlayQueue(
+        trackIds: List<String>,
+        currentId: String?,
+        positionMs: Long,
+    ) {
+        if (trackIds.isEmpty()) return
+        val params = trackIds.map { "id" to it } +
+            listOfNotNull(currentId?.let { "current" to it }) +
+            listOf("position" to positionMs.coerceAtLeast(0L).toString())
+        request("savePlayQueue", params)
+    }
+
+    override suspend fun getPlayQueue(): SavedQueue? {
+        // A server that has never been given a queue answers with an error
+        // rather than an empty one, and that is not a failure worth raising to
+        // the caller — it just means there is nothing waiting.
+        val queue = runCatching { request("getPlayQueue").playQueue }.getOrNull() ?: return null
+        val ids = queue.entry.map { it.id }
+        if (ids.isEmpty()) return null
+        return SavedQueue(ids, queue.currentId, queue.position ?: 0L)
     }
 
     /**

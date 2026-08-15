@@ -30,7 +30,24 @@ data class SubsonicBody(
     val artists: ArtistsRootDto? = null,
     val topSongs: TopSongsDto? = null,
     val scanStatus: ScanStatusDto? = null,
+    val playQueue: PlayQueueDto? = null,
 )
+
+/**
+ * getPlayQueue: what this account was last playing, on whichever client saved it.
+ *
+ * `current` is a song id, and servers disagree about its type — so it is decoded
+ * as a raw primitive and read back as text, the same treatment [MusicFolderDto]
+ * needs for the same reason.
+ */
+@Serializable
+data class PlayQueueDto(
+    val current: JsonPrimitive? = null,
+    val position: Long? = null,
+    val entry: List<SongDto> = emptyList(),
+) {
+    val currentId: String? get() = current?.content?.takeIf { it.isNotBlank() }
+}
 
 /** getScanStatus: whether the server is walking its music folders. */
 @Serializable
