@@ -268,6 +268,39 @@ object DlnaCast {
         }
     }
 
+    /**
+     * Whether the server will hand [url] over in byte ranges, and so whether a
+     * renderer can seek inside it at all. Null when the question could not be
+     * answered, so the caller keeps doing whatever it would have done.
+     *
+     * This has to be measured rather than inferred from the format asked for. A
+     * server asked for mp3 when the file is *already* mp3 hands the file over
+     * untouched — seekable, and it ignores a time offset — while the identical
+     * request against a flac original is a live transcode that is neither. Only
+     * the response separates them: a range request against a real file comes
+     * back 206, and against a chunked encode it comes back 200 with the range
+     * quietly ignored.
+     */
+    suspend fun supportsRanges(url: String): Boolean? = withContext(Dispatchers.IO) {
+        try {
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("Range", "bytes=0-11")
+                connectTimeout = HTTP_TIMEOUT_MS
+                readTimeout = HTTP_TIMEOUT_MS
+            }
+            val partial = connection.responseCode == HttpURLConnection.HTTP_PARTIAL
+            // Drained and closed rather than abandoned: a transcode left hanging
+            // on a socket nobody reads is the exact stall this file already had
+            // to be fixed for once.
+            runCatching { connection.inputStream.use { it.read(ByteArray(12)) } }
+            connection.disconnect()
+            partial
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** Container from magic bytes, or null when nothing recognisable was read. */
     internal fun sniffContainer(head: ByteArray, length: Int): String? {
         fun matches(offset: Int, text: String): Boolean {

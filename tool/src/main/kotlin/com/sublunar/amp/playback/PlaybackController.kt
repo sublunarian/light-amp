@@ -190,6 +190,16 @@ class PlaybackController(
     // "rendererId|format" -> stream format actually sent + its MIME type.
     private val castFormats = mutableMapOf<String, Pair<StreamFormat, String>>()
 
+    /**
+     * Whether a track's stream can be seeked, keyed by track and format.
+     *
+     * Per track rather than per format: asking a server for mp3 gets a live
+     * transcode for a flac original and the untouched file for an mp3 one, and
+     * only the second of those can be seeked. Only settled answers are kept, so
+     * a probe that failed is asked again rather than remembered as a no.
+     */
+    private val castSeekable = mutableMapOf<String, Boolean>()
+
     /** What the renderer is playing, and what it has been given to play next. */
     private var castCurrentUrl: String? = null
     private var castNextUrl: String? = null
@@ -1082,6 +1092,18 @@ class PlaybackController(
         castOffsetMs = offset
         _positionMs.value = wanted
         if (offset == 0L && wanted > 0L) {
+            // A stream the server won't serve in ranges cannot be seeked by
+            // anyone, so asking the renderer buys nothing but the four seconds
+            // it takes to notice — which the listener spends hearing the wrong
+            // part of the track. Ask the stream instead, and when it says no,
+            // go straight to the server. Measured per track, because the same
+            // format is a transcode for one file and the file itself for
+            // another; see DlnaCast.supportsRanges.
+            val seekKey = "${track.id}|${format.id}"
+            val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
+            if (seekable == false) {
+                return startCastTrack(renderer, wanted, askServer = true)
+            }
             // Refusing outright is the easy case. The hard one is a renderer
             // that accepts a Seek it can't honour: a live transcode arrives
             // chunked with no length, so there is nothing to jump to and it
@@ -1115,6 +1137,29 @@ class PlaybackController(
     }
 
     /**
+     * Ask the server whether this track's stream can be seeked, and remember it.
+     *
+     * Deliberately **not** the URL the renderer is playing. That one carries the
+     * session identifier, and a second request bearing the same one has Plex
+     * tear the first down — it would answer the question by stopping the music.
+     * Without an identifier the probe gets a transcode of its own, which it
+     * closes immediately, and the answer is the same either way: whether the
+     * server transcodes depends on the file and the format, not on who asked.
+     */
+    private suspend fun probeSeekable(
+        track: Track,
+        format: StreamFormat,
+        key: String,
+    ): Boolean? {
+        val probeUrl = serverClient.value?.streamUrl(
+            track,
+            format,
+            estimateContentLength = false,
+        ) ?: return null
+        return DlnaCast.supportsRanges(probeUrl)?.also { castSeekable[key] = it }
+    }
+
+    /**
      * Hand over the following track once the current one is nearly finished.
      *
      * The renderer opens the queued track's HTTP stream the instant it is given
@@ -1128,9 +1173,9 @@ class PlaybackController(
      * through. Both were seen on the Denon, minutes apart, from this one cause.
      */
     private suspend fun armNextIfDue(renderer: DlnaRenderer) {
-        val total = _durationMs.value ?: 0L
-        // A track of unknown length still gets its hand-off: arming early is
-        // this bug, but never arming at all is a gap on every single track.
+        val total = _durationMs.value
+        // A track of unknown length (zero) still gets its hand-off: arming early
+        // is this bug, but never arming at all is a gap on every single track.
         if (total > 0L && total - _positionMs.value > CAST_PREQUEUE_LEAD_MS) return
         queueNextOnRenderer(renderer)
     }
@@ -1275,8 +1320,9 @@ class PlaybackController(
         var restartAfter = STALLED_POLLS_TO_RESTART
         // A renderer reports STOPPED for a moment while it re-buffers as well as
         // at the end of a track, and the two are indistinguishable from one poll.
-        // Two in a row is: the stream really has ended.
-        var stoppedPolls = 0
+        // Two in a row is: the stream really has ended. Readings that went
+        // unanswered are counted separately — see CastStallCounter.
+        val stall = CastStallCounter()
         while (coroutineContext.isActive && _castRenderer.value?.id == renderer.id) {
             delay(CAST_POLL_MS)
             val position = DlnaCast.position(renderer)
@@ -1302,7 +1348,7 @@ class PlaybackController(
                     // left that way until this track is nearly over.
                     castNextUrl = null
                     castNextArmedFor = null
-                    stoppedPolls = 0
+                    stall.reset()
                     // The renderer has *taken* the queued track but not started
                     // it: for a second or two it reports STOPPED while it opens
                     // the stream, and reports the finished track's position
@@ -1363,56 +1409,54 @@ class PlaybackController(
                     lastPositionMs = position.positionMs
                 }
             }
+            stall.observe(state)
             when (state) {
                 DlnaState.PLAYING -> {
                     settled = true
-                    stoppedPolls = 0
                     _isPlaying.value = true
                 }
-                DlnaState.PAUSED -> {
-                    stoppedPolls = 0
-                    _isPlaying.value = false
+                DlnaState.PAUSED -> _isPlaying.value = false
+                else -> Unit
+            }
+            when {
+                // Played, then stopped: the track ended. Move on. Only readings
+                // the renderer actually gave us count here — going quiet must
+                // never cost a track that was playing perfectly well.
+                settled && stall.stopped >= STOPPED_POLLS_TO_ADVANCE -> {
+                    if (!advanceCast(renderer)) return
+                    settled = false
+                    stall.reset()
+                    startedIndex = -1
+                    restartAfter = STALLED_POLLS_TO_RESTART
                 }
-                DlnaState.STOPPED -> {
-                    stoppedPolls++
-                    when {
-                        // Played, then stopped: the track ended. Move on.
-                        settled && stoppedPolls >= STOPPED_POLLS_TO_ADVANCE -> {
-                            if (!advanceCast(renderer)) return
-                            settled = false
-                            stoppedPolls = 0
-                            startedIndex = -1
-                            restartAfter = STALLED_POLLS_TO_RESTART
-                        }
-                        // Never played at all. This renderer takes the track we
-                        // queue ahead of time, transitions to it — and then sits
-                        // there stopped, for ever. It is why tracks appeared to
-                        // be skipped: the miscounted stops that followed made us
-                        // advance *past* the track it had just loaded, so what
-                        // was really a dead hand-off sounded like a jump. Start
-                        // it ourselves rather than stepping over it.
-                        !settled &&
-                            stoppedPolls >= restartAfter &&
-                            startedIndex != _index.value -> {
-                            startedIndex = _index.value
-                            stoppedPolls = 0
-                            restartAfter = STALLED_POLLS_TO_RESTART
-                            if (!startCastTrack(renderer)) return
-                        }
-                        // Asked again and it still won't play: something is wrong
-                        // with this track rather than with the hand-off, and
-                        // sitting in silence is worse than going on.
-                        !settled &&
-                            stoppedPolls >= restartAfter &&
-                            startedIndex == _index.value -> {
-                            if (!advanceCast(renderer)) return
-                            stoppedPolls = 0
-                            startedIndex = -1
-                            restartAfter = STALLED_POLLS_TO_RESTART
-                        }
-                    }
+                // Never played at all. This renderer takes the track we queue
+                // ahead of time, transitions to it — and then sits there
+                // stopped, for ever. It is why tracks appeared to be skipped:
+                // the miscounted stops that followed made us advance *past* the
+                // track it had just loaded, so what was really a dead hand-off
+                // sounded like a jump. Start it ourselves rather than stepping
+                // over it. A renderer that has stopped answering counts too:
+                // nothing is playing either way, and this is the decision that
+                // can afford to be wrong.
+                !settled &&
+                    stall.notPlaying >= restartAfter &&
+                    startedIndex != _index.value -> {
+                    startedIndex = _index.value
+                    stall.reset()
+                    restartAfter = STALLED_POLLS_TO_RESTART
+                    if (!startCastTrack(renderer)) return
                 }
-                else -> stoppedPolls = 0
+                // Asked again and it still won't play: something is wrong with
+                // this track rather than with the hand-off, and sitting in
+                // silence is worse than going on.
+                !settled &&
+                    stall.notPlaying >= restartAfter &&
+                    startedIndex == _index.value -> {
+                    if (!advanceCast(renderer)) return
+                    stall.reset()
+                    startedIndex = -1
+                    restartAfter = STALLED_POLLS_TO_RESTART
+                }
             }
             // Late enough in the track that the renderer can be handed the next
             // one without the stream going stale before it is wanted.
