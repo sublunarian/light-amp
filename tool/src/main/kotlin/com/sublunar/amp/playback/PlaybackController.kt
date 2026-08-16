@@ -195,6 +195,16 @@ class PlaybackController(
     private var castNextUrl: String? = null
 
     /**
+     * The queue index the renderer's next slot has been armed for — or offered
+     * and refused.
+     *
+     * Arming is attempted from the poll loop now rather than once per track, so
+     * without this a renderer that doesn't implement SetNextAVTransportURI would
+     * be asked again every second for the whole lead window.
+     */
+    private var castNextArmedFor: Int? = null
+
+    /**
      * True once [bind] has attached the audio stack.
      *
      * Restoring the last queue needs a player, and does nothing without one —
@@ -298,7 +308,14 @@ class PlaybackController(
         scope.launch {
             combine(_queue, _index, _repeatMode) { _, _, _ -> Unit }
                 .debounce(CAST_REQUEUE_DEBOUNCE_MS)
-                .collect { _castRenderer.value?.let { queueNextOnRenderer(it) } }
+                .collect {
+                    _castRenderer.value?.let {
+                        // What plays next has changed, so whatever the renderer
+                        // was armed with is stale and it gets to be reconsidered.
+                        castNextArmedFor = null
+                        armNextIfDue(it)
+                    }
+                }
         }
         scope.launch { settings.dataMode.collect { dataMode = it } }
         // The server answering again is the signal to stop pinning playback to
@@ -1050,10 +1067,6 @@ class PlaybackController(
             timeOffsetSeconds = (offset / 1000).toInt(),
             sessionId = sessionIdFor(track.id),
         ) ?: return false
-        castLog(
-            "play ${track.title} fmt=${format.id} offset=${offset}ms " +
-                "len=${track.durationMs}ms url=${castTail(url)}",
-        )
         val started = DlnaCast.play(
             renderer = renderer,
             url = url,
@@ -1094,8 +1107,32 @@ class PlaybackController(
         }
         announceNowPlaying()
         castCurrentUrl = url
-        queueNextOnRenderer(renderer)
+        // SetAVTransportURI leaves the next slot empty, and it stays that way
+        // until this track is nearly over — see armNextIfDue.
+        castNextUrl = null
+        castNextArmedFor = null
         return true
+    }
+
+    /**
+     * Hand over the following track once the current one is nearly finished.
+     *
+     * The renderer opens the queued track's HTTP stream the instant it is given
+     * one — the server logs the request a second after SetNextAVTransportURI,
+     * not when the track eventually starts — and then plays from that same
+     * connection however much later. Handed over at the start of a five-minute
+     * track, the stream sits open and undrained for five minutes with the
+     * server's transcoder writing into it, and by the time the renderer wants it
+     * the connection has rotted: either it yields nothing, and the hand-off
+     * arrives STOPPED, or it yields what was buffered and cuts out part-way
+     * through. Both were seen on the Denon, minutes apart, from this one cause.
+     */
+    private suspend fun armNextIfDue(renderer: DlnaRenderer) {
+        val total = _durationMs.value ?: 0L
+        // A track of unknown length still gets its hand-off: arming early is
+        // this bug, but never arming at all is a gap on every single track.
+        if (total > 0L && total - _positionMs.value > CAST_PREQUEUE_LEAD_MS) return
+        queueNextOnRenderer(renderer)
     }
 
     /**
@@ -1104,11 +1141,22 @@ class PlaybackController(
      * Records the URL under [castNextUrl] so the poller can recognise the
      * hand-off when it happens: the renderer switches on its own, and the only
      * evidence is that GetPositionInfo starts reporting the other URI.
+     *
+     * Call through [armNextIfDue] rather than directly — handing a renderer the
+     * next stream too early is what this whole path had to be rebuilt around.
      */
     private suspend fun queueNextOnRenderer(renderer: DlnaRenderer) {
-        castNextUrl = null
-        val after = nextCastIndex() ?: return
-        val track = _queue.value.getOrNull(after) ?: return
+        val after = nextCastIndex()
+        val track = after?.let { _queue.value.getOrNull(it) }
+        if (after == null || track == null) {
+            castNextUrl = null
+            castNextArmedFor = null
+            return
+        }
+        // Offered once per track. Asking again neither opens a new stream nor
+        // changes the renderer's mind, and each attempt nulls the very field the
+        // hand-off is recognised by until the SOAP call comes back.
+        if (castNextArmedFor == after) return
         val (format, mime) = castFormatFor(renderer, track)
         // Its own id, not the current track's: both transcodes are in flight
         // at once during the hand-off, and Plex tears down whichever one
@@ -1116,7 +1164,9 @@ class PlaybackController(
         val url = serverClient.value
             ?.streamUrl(track, format, estimateContentLength = false, sessionId = sessionIdFor(track.id))
             ?: return
-        castLog("setNext ${track.title} fmt=${format.id} url=${castTail(url)}")
+        if (url == castNextUrl) return
+        castNextArmedFor = after
+        castNextUrl = null
         val queued = DlnaCast.setNext(
             renderer = renderer,
             url = url,
@@ -1209,18 +1259,6 @@ class PlaybackController(
      * finishes — a renderer only ever holds one URI, so gapless hand-off has to
      * be driven from here.
      */
-    /**
-     * TEMPORARY — casting diagnosis. Remove once the Denon's mid-track stops are
-     * understood; see the AmpCast tag in logcat.
-     */
-    private fun castLog(message: String) {
-        android.util.Log.i("AmpCast", message)
-    }
-
-    /** A URL with its query — and so its token — left off. */
-    private fun castTail(url: String?): String =
-        url?.substringBefore("?")?.takeLast(28) ?: "-"
-
     private suspend fun pollRenderer(renderer: DlnaRenderer) {
         var settled = false
         // What the renderer said last time. A position that hasn't moved is not
@@ -1243,13 +1281,6 @@ class PlaybackController(
             delay(CAST_POLL_MS)
             val position = DlnaCast.position(renderer)
             val state = DlnaCast.state(renderer)
-            castLog(
-                "poll state=$state pos=${position?.positionMs} dur=${position?.durationMs} " +
-                    "settled=$settled stopped=$stoppedPolls " +
-                    "track=${_queue.value.getOrNull(_index.value)?.title} " +
-                    "uri=${castTail(position?.trackUri)} current=${castTail(castCurrentUrl)} " +
-                    "next=${castTail(castNextUrl)}",
-            )
             if (position != null) {
                 // The renderer crossed into the track we queued: follow it here
                 // rather than driving it, so nothing interrupts the audio.
@@ -1260,7 +1291,6 @@ class PlaybackController(
                     castNextUrl != castCurrentUrl &&
                     position.trackUri == castNextUrl
                 if (moved) {
-                    castLog("renderer moved to the queued track by itself")
                     nextCastIndex()?.let { _index.value = it }
                     castCurrentUrl = castNextUrl
                     // The queued track was handed over whole, from its start.
@@ -1268,7 +1298,10 @@ class PlaybackController(
                     _durationMs.value = _queue.value.getOrNull(_index.value)?.durationMs
                         ?: _durationMs.value
                     announceNowPlaying()
-                    queueNextOnRenderer(renderer)
+                    // The slot the renderer just consumed is empty again, and is
+                    // left that way until this track is nearly over.
+                    castNextUrl = null
+                    castNextArmedFor = null
                     stoppedPolls = 0
                     // The renderer has *taken* the queued track but not started
                     // it: for a second or two it reports STOPPED while it opens
@@ -1306,7 +1339,6 @@ class PlaybackController(
                 // eighteen minutes into a thirty-seven second song, when the
                 // offset we had seeked to was added on top.
                 val ours = position.trackUri == null || position.trackUri == castCurrentUrl
-                if (!ours) castLog("ignoring a reading for a stream we are not playing")
                 if (ours) {
                     _positionMs.value = position.positionMs + castOffsetMs
                     // The renderer only knows about the piece of the track it was
@@ -1343,15 +1375,9 @@ class PlaybackController(
                 }
                 DlnaState.STOPPED -> {
                     stoppedPolls++
-                    val track = _queue.value.getOrNull(_index.value)
                     when {
                         // Played, then stopped: the track ended. Move on.
                         settled && stoppedPolls >= STOPPED_POLLS_TO_ADVANCE -> {
-                            castLog(
-                                "ADVANCING after $stoppedPolls stopped polls at " +
-                                    "${_positionMs.value}ms of ${_durationMs.value}ms — " +
-                                    "${track?.title}",
-                            )
                             if (!advanceCast(renderer)) return
                             settled = false
                             stoppedPolls = 0
@@ -1368,7 +1394,6 @@ class PlaybackController(
                         !settled &&
                             stoppedPolls >= restartAfter &&
                             startedIndex != _index.value -> {
-                            castLog("queued track never started — starting ${track?.title}")
                             startedIndex = _index.value
                             stoppedPolls = 0
                             restartAfter = STALLED_POLLS_TO_RESTART
@@ -1380,7 +1405,6 @@ class PlaybackController(
                         !settled &&
                             stoppedPolls >= restartAfter &&
                             startedIndex == _index.value -> {
-                            castLog("still will not start — moving past ${track?.title}")
                             if (!advanceCast(renderer)) return
                             stoppedPolls = 0
                             startedIndex = -1
@@ -1390,6 +1414,9 @@ class PlaybackController(
                 }
                 else -> stoppedPolls = 0
             }
+            // Late enough in the track that the renderer can be handed the next
+            // one without the stream going stale before it is wanted.
+            armNextIfDue(renderer)
         }
     }
 
@@ -1713,6 +1740,16 @@ class PlaybackController(
          * failed, not one still getting ready.
          */
         private const val HANDOFF_POLLS_TO_RESTART = 2
+
+        /**
+         * How close to the end of the current track the next one is handed over.
+         *
+         * Long enough for the renderer to open the stream and buffer it — the
+         * Denon takes about three seconds from a cold start — and short enough
+         * that the connection has no time to go stale while it waits. See
+         * [armNextIfDue] for why a stale one is the whole problem.
+         */
+        private const val CAST_PREQUEUE_LEAD_MS = 15_000L
 
         /** Settling time before re-arming the renderer's next track after an edit. */
         private const val CAST_REQUEUE_DEBOUNCE_MS = 400L
