@@ -634,6 +634,7 @@ private fun ArtistsTab(actions: ShellActions) {
     // triggering recomposition — which is why the albums tab kept its switch
     // hidden long after the liked artists had loaded.
     val supportsLikes = App.source.collectAsState().value.supportsLikes
+    val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
     // One request for the server's own artist records, which is where their
     // pictures are — the library's artists come from track tags and have none.
     // Skipped entirely when the pictures are switched off — there is no point
@@ -656,6 +657,7 @@ private fun ArtistsTab(actions: ShellActions) {
                 ArtistRow(
                     name = artist.name,
                     subtitle = "${artist.albumCount} albums · ${artist.trackCount} songs",
+                    downloaded = artist.name in downloadedArtists,
                     imageId = artist.imageId,
                     onClick = { actions.openArtist(artist.name, Parent.Here) },
                     onLongClick = { actions.artistOptions(artist.name) },

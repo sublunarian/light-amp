@@ -256,13 +256,6 @@ const val LIST_TOP_PX = 15
  * An artist row: the same metrics as a track row, minus the cover an artist
  * hasn't got — but keeping the leading slot, so names start on the axis every
  * other list's titles start on.
- *
- * No download mark, unlike the rows that carry one. An artist is only ever
- * "downloaded" when every last track of theirs is, which is rarely true and
- * changes as a single song comes or goes — so the badge spent most of its life
- * absent and the rest of it flickering, saying less about the artist than the
- * empty space did. Where their music actually lives is a question their own
- * page answers.
  */
 @Composable
 fun ArtistRow(
@@ -271,6 +264,8 @@ fun ArtistRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
+    /** Shows the offline badge — set when every track of the artist's is downloaded. */
+    downloaded: Boolean = false,
     /** The server's picture of them, where it has one — see Artist.imageId. */
     imageId: String? = null,
 ) {
@@ -278,6 +273,8 @@ fun ArtistRow(
     // has always had; a picture needs the taller one the track rows use. Artists
     // can lose theirs on their own, without the sleeves going with them.
     val covers = !App.hideArtistImages.collectAsState().value
+    // Read unconditionally — see the note in TrackRow.
+    val marks = !App.hideDownloadIcons.collectAsState().value
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -287,9 +284,11 @@ fun ArtistRow(
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Empty, but still there: it is what keeps a name on the same axis as
-        // the titles in every other list.
-        Spacer(Modifier.width(px(ROW_LEAD_PX)))
+        // The mark's own slot, which is also what keeps a name on the same axis
+        // as the titles in every other list.
+        Box(modifier = Modifier.width(px(ROW_LEAD_PX))) {
+            if (downloaded && marks) AppIcon(AppIcons.Downloaded, size = px(ROW_MARK_PX))
+        }
         if (covers) {
             // Round, where an album is square: the shape says which kind of
             // thing this is before the name is read, and a face in a square
