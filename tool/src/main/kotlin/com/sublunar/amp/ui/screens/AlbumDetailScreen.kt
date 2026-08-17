@@ -19,7 +19,6 @@ import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.LibraryList
-import com.sublunar.amp.ui.components.listSearch
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.NumberedRow
@@ -86,7 +85,7 @@ class AlbumDetailScreen(
                         // below and in the cover art, so a second line here was
                         // repeating what the page already says.
                         title = album?.title ?: "Album",
-                        rightAction = libraryCorner(),
+                        rightAction = libraryCornerAction(),
                         fitTitle = true,
                     )
                 }
@@ -97,11 +96,6 @@ class AlbumDetailScreen(
                     else -> LibraryList(
                         anchor = "album:$albumId",
                         headerCount = if (selection.active) 0 else 1,
-                        // The card is the album — its artwork, its year, its
-                        // length. Only the search row goes.
-                        chromeCount = 0,
-                        onSearch = listSearch { openLibrarySearch(withKeyboard = true) }
-                            .takeIf { !selection.active },
                 modifier = Modifier.fillMaxSize(),
             ) {
                         if (!selection.active && album != null) {

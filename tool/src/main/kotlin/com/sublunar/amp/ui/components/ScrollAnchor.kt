@@ -50,29 +50,14 @@ object ScrollAnchors {
  *
  * [headerCount] is how many rows sit above the content, and may differ between
  * the save and the restore — that's the point.
- *
- * [initialIndex] is where a list with nothing to resume begins. It exists for
- * the inline search field, which sits above row one and is meant to be scrolled
- * past rather than looked at: opening on it would put a keyboard prompt where
- * the library should be. A list that was left at or above its first content row
- * comes back here too, for the same reason.
  */
 @Composable
-fun rememberListAnchor(
-    owner: String,
-    headerCount: Int = 0,
-    initialIndex: Int = 0,
-): LazyListState {
-    // Keyed on initialIndex as well as owner. It is derived from a setting read
-    // off disk, which lands a moment *after* the first composition — so a state
-    // built while the answer was still the default would sit on the search row
-    // this is meant to open below, and whether it did came down to which won the
-    // race. That is what made it inconsistent from one launch to the next.
-    val state = remember(owner, initialIndex) {
+fun rememberListAnchor(owner: String, headerCount: Int = 0): LazyListState {
+    val state = remember(owner) {
         val (index, offset) = ScrollAnchors.load(owner)
         // Only a mid-content anchor keeps its offset; landing back in the header
-        // rows should show them from the top — whichever row that is.
-        if (index <= 0) LazyListState(initialIndex) else LazyListState(index + headerCount, offset)
+        // rows should show them from the top.
+        if (index <= 0) LazyListState() else LazyListState(index + headerCount, offset)
     }
     // Keyed on headerCount too, so a change saves under the old geometry first.
     DisposableEffect(owner, headerCount) {
@@ -96,14 +81,10 @@ fun rememberListAnchor(
  * roughly three times too far down.
  */
 @Composable
-fun rememberGridAnchor(
-    owner: String,
-    headerCount: Int = 0,
-    initialIndex: Int = 0,
-): LazyGridState {
-    val state = remember(owner, initialIndex) {
+fun rememberGridAnchor(owner: String, headerCount: Int = 0): LazyGridState {
+    val state = remember(owner) {
         val (index, offset) = ScrollAnchors.load(owner)
-        if (index <= 0) LazyGridState(initialIndex) else LazyGridState(index + headerCount, offset)
+        if (index <= 0) LazyGridState() else LazyGridState(index + headerCount, offset)
     }
     DisposableEffect(owner, headerCount) {
         onDispose {

@@ -475,18 +475,6 @@ object App {
             .stateIn(scope, SharingStarted.Eagerly, false)
     }
 
-    /**
-     * Search at the top of each list rather than in the header — see
-     * [AppSettings.inlineSearch].
-     *
-     * Hot and eager rather than collected with an initial value: it decides how
-     * many rows sit above the content, and a list that composed on one answer
-     * and settled on the other would open sitting on the field it is meant to
-     * have scrolled past.
-     */
-    val inlineSearch: StateFlow<Boolean> by lazy {
-        settings.inlineSearch.stateIn(scope, SharingStarted.Eagerly, false)
-    }
 
     /**
      * Artists' own pictures off, sleeves untouched — see
@@ -501,7 +489,7 @@ object App {
     /**
      * Rows against the screen's edge, download marks gone — see
      * [AppSettings.hideDownloadIcons]. Hot and eager for the same reason as
-     * [inlineSearch]: it decides a measurement, not a decoration.
+     * it decides a measurement, not a decoration.
      */
     val hideDownloadIcons: StateFlow<Boolean> by lazy {
         settings.hideDownloadIcons.stateIn(scope, SharingStarted.Eagerly, false)

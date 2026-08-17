@@ -21,7 +21,6 @@ import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.LibraryList
-import com.sublunar.amp.ui.components.listSearch
 import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.SplitActionRow
 import com.sublunar.amp.ui.components.TextRow
@@ -93,12 +92,11 @@ private fun SimpleLightScreen<*>.TagList(title: String, byComposer: Boolean, emp
         AppHeader(
             leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
             title = title,
-            onTitleClick = titleMenu { go { TagsSortScreen(it, title) } },
-            rightAction = libraryCorner { go { TagsSortScreen(it, title) } },
+            onTitleClick = { go { TagsSortScreen(it, title) } },
+            rightAction = libraryCornerAction(),
         )
         LibraryList(
             anchor = if (byComposer) "composers" else "genres",
-            onSearch = listSearch { openLibrarySearch(withKeyboard = true) },
             modifier = Modifier.fillMaxSize(),
         ) {
             if (ordered.isEmpty()) item { EmptyState(empty) }
@@ -140,13 +138,12 @@ class TagSongsScreen(
             AppHeader(
                 onBack = { goBack() },
                 title = tag,
-                rightAction = libraryCorner(),
+                rightAction = libraryCornerAction(),
                 fitTitle = true,
             )
             LibraryList(
                 anchor = "tag:$tag",
                 headerCount = 1,
-                onSearch = listSearch { openLibrarySearch(withKeyboard = true) },
                 modifier = Modifier.fillMaxSize(),
             ) {
                 item {
@@ -195,12 +192,11 @@ class CompilationsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
             AppHeader(
                 leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
                 title = "Compilations",
-                onTitleClick = titleMenu { go { AlbumsSortScreen(it, "Compilations") } },
-                rightAction = libraryCorner { go { AlbumsSortScreen(it, "Compilations") } },
+                onTitleClick = { go { AlbumsSortScreen(it, "Compilations") } },
+                rightAction = libraryCornerAction(),
             )
             LibraryList(
                 anchor = "compilations",
-                onSearch = listSearch { openLibrarySearch(withKeyboard = true) },
                 modifier = Modifier.fillMaxSize(),
             ) {
                 if (albums.isEmpty()) item { EmptyState("No compilations in this library") }

@@ -153,13 +153,14 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                     actions = ShellActions(
                         nowPlaying = { go { NowPlayingScreen(it) } },
                         settings = { go { SettingsScreen(it) } },
-                        // Straight to the keyboard, so searching is still one tap
-                        // even though the editor is a screen of its own now.
-                        // Straight to the keyboard: reaching for search from a
-                        // list means you have something to type. The field starts
-                        // empty — the previous results are still underneath, and
-                        // backing out returns to them.
-                        search = { LibraryNav.openSearch(withKeyboard = true) },
+                        // To the page, not straight to the keyboard. Search is a
+                        // destination in the bar now, and every other one of
+                        // those lands you somewhere you can look at — where the
+                        // tab bar is still under your thumb, and the last
+                        // results are still there. The keyboard is a screen of
+                        // its own that covers all of that, including the bar,
+                        // and it is one tap on the field away when it is wanted.
+                        search = { LibraryNav.openSearch() },
                         editSearch = { current ->
                             navigateTo<String?>(
                                 {

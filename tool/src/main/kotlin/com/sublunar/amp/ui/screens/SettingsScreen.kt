@@ -53,7 +53,6 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
         val invert by App.settings.invertColors.collectAsState(initial = false)
         val karaoke by App.settings.karaokeLyrics.collectAsState(initial = true)
         val monochrome by App.settings.monochromeArtwork.collectAsState(initial = true)
-        val inlineSearch by App.inlineSearch.collectAsState()
         val hideArtistImages by App.settings.hideArtistImages.collectAsState(initial = false)
         val hideDownloadIcons by App.hideDownloadIcons.collectAsState()
         val artwork by App.settings.artwork.collectAsState(initial = ArtworkMode.SMALL)
@@ -139,13 +138,6 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                                 App.settings.setHideArtistImages(!hideArtistImages)
                             }
                         }
-                    }
-                }
-                item {
-                    // Search out of the header and into the lists — see
-                    // AppSettings.inlineSearch for what moves where.
-                    ToggleRow("Inline Search", inlineSearch) {
-                        App.scope.launch { App.settings.setInlineSearch(!inlineSearch) }
                     }
                 }
                 item {

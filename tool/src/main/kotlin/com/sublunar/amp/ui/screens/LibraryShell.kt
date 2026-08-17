@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.sublunar.amp.App
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +49,7 @@ import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.ArtistRow
 import com.sublunar.amp.ui.components.INDEX_STRIP_PX
 import com.sublunar.amp.ui.components.ListScrollBar
+import com.sublunar.amp.ui.components.listPadding
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.rememberScrollTarget
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -68,10 +70,6 @@ import com.sublunar.amp.ui.n
 
 import com.sublunar.amp.ui.nSp
 import com.sublunar.amp.ui.px
-import com.sublunar.amp.ui.components.ROW_ACTION_H_PX
-import com.sublunar.amp.ui.components.SearchRow
-import com.sublunar.amp.ui.components.rememberHeaderOpening
-import com.sublunar.amp.ui.components.listSearch
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.sublunar.amp.ui.components.appClickable
 import androidx.compose.foundation.layout.Spacer
@@ -189,7 +187,12 @@ private fun SearchView(
     val listState = rememberListAnchor("search")
 
     Column(Modifier.fillMaxSize()) {
-        SearchHeader(query, onEdit = { actions.editSearch(query) }, onClear = onClear)
+        SearchHeader(
+            query,
+            actions,
+            onEdit = { actions.editSearch(query) },
+            onClear = onClear,
+        )
         Box(modifier = Modifier.weight(1f)) {
         LazyColumn(
             state = listState,
@@ -243,37 +246,62 @@ private fun SearchView(
     }
 }
 
+/**
+ * The search page's header: the query itself in the title's place.
+ *
+ * A page reached from the tab bar keeps that bar's two shortcuts, so the corners
+ * are the player and More exactly as on every other destination — which is the
+ * whole reason this is [AppHeader] with custom title content rather than a row
+ * of its own. What it does *not* do is add a second band under the first with a
+ * box in it: a header reading "Search" over a field reading "Search" says the
+ * same word twice, and the query is already the honest name for a page of
+ * results.
+ *
+ * Clearing moves inside the field, at its right end, since both corners are
+ * spoken for — which is where a text field conventionally keeps it anyway. It
+ * appears only with something to clear. Emptying the field stays on this page:
+ * leaving search is what the bar is for, and clearing used to do both, which
+ * meant you could never simply start a new search from an old one.
+ */
 @Composable
 private fun SearchHeader(
     query: String,
+    actions: ShellActions,
     onEdit: () -> Unit,
     onClear: () -> Unit,
 ) {
-    // Same fixed 160px as AppHeader, so swapping into search doesn't shift the list.
-    val headerHeight = px(HEADER_BAR_PX)
-
-    Row(
-        modifier = Modifier.fillMaxWidth().height(headerHeight).padding(horizontal = n(16)),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AppIcon(AppIcons.Search, size = n(24))
-        Spacer(Modifier.width(n(12)))
-        // Tapping reopens the LP3 keyboard rather than focusing an inline field:
-        // the SDK's editor is full-screen by design, so the query is shown here
-        // and edited there.
-        Box(modifier = Modifier.weight(1f).appClickable(onClick = onEdit)) {
-            if (query.isEmpty()) {
-                AppText("Search", nSp(20), dim = true)
-            } else {
-                AppText(query, nSp(20), maxLines = 1)
+    AppHeader(
+        leftAction = HeaderAction(AppIcons.Waveform, actions.nowPlaying),
+        rightAction = HeaderAction(AppIcons.MoreHoriz, actions.more),
+        titleContent = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AppIcon(AppIcons.Search, size = n(22))
+                Spacer(Modifier.width(n(10)))
+                // Tapping reopens the LP3 keyboard rather than focusing an inline
+                // field: the SDK's editor is full-screen by design, so the query
+                // is shown here and edited there.
+                Box(modifier = Modifier.weight(1f).appClickable(onClick = onEdit)) {
+                    AppText(
+                        text = query.ifEmpty { "Search" },
+                        size = nSp(18),
+                        dim = query.isEmpty(),
+                        maxLines = 1,
+                    )
+                }
+                if (query.isNotEmpty()) {
+                    Spacer(Modifier.width(n(8)))
+                    AppIcon(
+                        AppIcons.Close,
+                        size = n(20),
+                        modifier = Modifier.appClickable(onClick = onClear),
+                    )
+                }
             }
-        }
-        Spacer(Modifier.width(n(12)))
-        // Empties the field and stays here. Leaving search is what the tabs are
-        // for; clearing used to do both, which meant you could never simply start
-        // a new search from an old one.
-        AppIcon(AppIcons.Close, size = n(24), modifier = Modifier.appClickable(onClick = onClear))
-    }
+        },
+    )
 }
 
 /**
@@ -294,30 +322,15 @@ private fun TabHeader(
     // which is already the thing that names what you are looking at.
     //
     val title = tabTitle(tab, likedOnly(tab))
-    val menu = onSort ?: onTitleClick
-    val nowPlaying = HeaderAction(AppIcons.Waveform, actions.nowPlaying)
-    if (App.inlineSearch.collectAsState().value) {
-        // Search has gone into the lists and More back into the tab bar, which
-        // leaves the right corner for the one menu that says how you are looking
-        // at this list — sort, and on the album lists view along with it. Off the
-        // title, which is a label again rather than a control.
-        AppHeader(
-            title = title,
-            leftAction = nowPlaying,
-            fitTitle = true,
-            rightAction = menu?.let { HeaderAction(AppIcons.Sort, it) },
-        )
-    } else {
-        // Search has gone to the tab bar here too, so this is two corner squares
-        // and a title spanning everything between them.
-        AppHeader(
-            title = title,
-            leftAction = nowPlaying,
-            fitTitle = true,
-            onTitleClick = menu,
-            rightAction = HeaderAction(AppIcons.MoreHoriz, actions.more),
-        )
-    }
+    // Search has gone to the tab bar, so this is two corner squares and a title
+    // spanning everything between them.
+    AppHeader(
+        title = title,
+        leftAction = HeaderAction(AppIcons.Waveform, actions.nowPlaying),
+        fitTitle = true,
+        onTitleClick = onSort ?: onTitleClick,
+        rightAction = HeaderAction(AppIcons.MoreHoriz, actions.more),
+    )
 }
 
 /** Whether this tab is currently showing only liked items. */
@@ -379,10 +392,6 @@ private fun AlbumsTab(actions: ShellActions) {
     val needsAccess = !rememberLocalAccess()
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     val grid = App.albumGrid.collectAsState().value
-    // Read here rather than inside either branch: behind an `if` this is a
-    // conditional composable call, and the state it subscribes to stops
-    // triggering recomposition — the same trap the liked switches document.
-    val search = listSearch(actions.search)
     Column(Modifier.fillMaxSize()) {
         TabHeader(
             LibraryTab.ALBUMS,
@@ -394,23 +403,7 @@ private fun AlbumsTab(actions: ShellActions) {
         )
         if (grid) {
             // Its own anchor, separate from the list's: see rememberGridAnchor.
-            val gridState = rememberGridAnchor(
-                "tab:albums/grid",
-                headerCount = if (search != null) 2 else 1,
-                initialIndex = if (search != null) 2 else 0,
-            )
-            // The same wait the lists need: on the first visit after a cold
-            // start there are no covers yet, and a grid told to open at row two
-            // of an empty grid opens at nought and stays. See headerSlack.
-            LaunchedEffect(gridState, search != null) {
-                if (search == null) return@LaunchedEffect
-                snapshotFlow { gridState.layoutInfo.totalItemsCount }.first { it > 2 }
-                if (gridState.firstVisibleItemIndex == 0 &&
-                    gridState.firstVisibleItemScrollOffset == 0
-                ) {
-                    gridState.scrollToItem(2)
-                }
-            }
+            val gridState = rememberGridAnchor("tab:albums/grid", headerCount = 1)
             // No strip and no bar at either width: the covers take the whole
             // screen, which is the reason to be in a grid at all.
             Box(modifier = Modifier.weight(1f)) {
@@ -419,15 +412,7 @@ private fun AlbumsTab(actions: ShellActions) {
                     onOpen = { actions.openAlbum(it.id, Parent.Here) },
                     onLongPress = { actions.albumOptions(it.id) },
                     state = gridState,
-                    // Both header rows are action rows of a known height, so the
-                    // grid needs no measuring to know what to scroll past.
-                    extraBottom = if (search != null) px(ROW_ACTION_H_PX * 2) else 0.dp,
                 ) {
-                    if (search != null) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            SearchRow(search)
-                        }
-                    }
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         RandomAlbumRow(sorted, actions)
                     }
@@ -440,7 +425,6 @@ private fun AlbumsTab(actions: ShellActions) {
                 letters = letters,
                 headerCount = 1,
                 reversed = reversed,
-                onSearch = search,
             ) {
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
                 item { RandomAlbumRow(sorted, actions) }
@@ -501,30 +485,11 @@ private fun ColumnScope.IndexedList(
     letters: List<Char>,
     headerCount: Int,
     reversed: Boolean = false,
-    /**
-     * Opens search. When set, a field is drawn above row one, the list opens
-     * below it, and the A–Z strip grows a magnifier that comes back to it.
-     */
-    onSearch: (() -> Unit)? = null,
-    /** Header rows that scroll away with it — see LibraryList.chromeCount. */
-    chromeCount: Int = headerCount,
     content: LazyListScope.() -> Unit,
 ) {
-    val inline = onSearch != null
-    // The field is a row of the list like any other, so it joins the rows above
-    // the content — which is what the A–Z strip counts to land a jump, and what
-    // the anchor subtracts to store a position in content coordinates.
-    val headers = headerCount + if (inline) 1 else 0
-    // Only the chrome goes; a header the page keeps stays on screen.
-    val opensAt = if (inline) chromeCount + 1 else 0
-    val listState = rememberListAnchor(
-        anchor,
-        headers,
-        initialIndex = opensAt,
-    )
-    val opening = rememberHeaderOpening(listState, opensAt, inline)
+    val listState = rememberListAnchor(anchor, headerCount)
     val scope = rememberCoroutineScope()
-    Box(modifier = Modifier.weight(1f).alpha(if (opening.ready) 1f else 0f)) {
+    Box(modifier = Modifier.weight(1f)) {
         val indexed = letters.isNotEmpty()
         LazyColumn(
             state = listState,
@@ -533,24 +498,18 @@ private fun ColumnScope.IndexedList(
             // it a long album name ran underneath the letters.
             contentPadding = listPadding(
                 end = px(if (indexed) INDEX_STRIP_PX else SCROLLBAR_LANE_PX),
-                // Enough room past the last row for the header block to leave
-                // the screen even when the content alone would not fill it.
-                extraBottom = opening.slack,
             ),
-        ) {
-            if (onSearch != null) item { SearchRow(onSearch) }
-            content()
-        }
-        if (!indexed) ListScrollBar(listState, ignoreLeading = opensAt)
+            content = content,
+        )
+        if (!indexed) ListScrollBar(listState)
         // A descending list keeps its index; the strip just reads Z→A to match.
         if (indexed) {
             AlphabetIndex(
                 letters = letters,
                 target = rememberScrollTarget(listState),
                 scope = scope,
-                headerCount = headers,
+                headerCount = headerCount,
                 reversed = reversed,
-                showSearch = inline,
                 modifier = Modifier.align(Alignment.CenterEnd),
             )
         }
@@ -587,9 +546,6 @@ private fun SongsTab(actions: ShellActions) {
             letters = letters,
             headerCount = if (selection.active) 0 else 1,
             reversed = reversed,
-            // Nothing to search while picking songs — the header is the
-            // selection's own, and the rows above the list go with it.
-            onSearch = listSearch(actions.search).takeIf { !selection.active },
         ) {
             if (!selection.active) {
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
@@ -652,7 +608,6 @@ private fun ArtistsTab(actions: ShellActions) {
             letters = letters,
             headerCount = 0,
             reversed = reversed,
-            onSearch = listSearch(actions.search),
         ) {
             localAccessNotice(needsAccess) { audioPermission?.launch() }
             items(sorted, key = { it.name }) { artist ->
@@ -696,10 +651,6 @@ private fun PlaylistsTab(actions: ShellActions) {
             letters = letters,
             headerCount = if (canCreateEmpty) 1 else 0,
             reversed = reversed,
-            onSearch = listSearch(actions.search),
-            // New Playlist stays: it makes something rather than acting on the
-            // list, so it is the page's own row rather than chrome over it.
-            chromeCount = 0,
         ) {
             if (canCreateEmpty) {
                 item { PlayAllRow(AppIcons.Add, "New Playlist") { actions.newPlaylist() } }
@@ -771,14 +722,10 @@ fun Navbar(
             current == LibraryTab.SONGS,
             scale = navScale(SONGS_DRAWN_PX, TALL_TARGET_PX),
         ) { onSelect(LibraryTab.SONGS) }
-        // The fifth slot belongs to whichever of the two left the header. Under
-        // Inline Search that is More, its corner having gone to the sort menu.
-        // Otherwise it is search — the one thing here you arrive at rather than
-        // browse to, so it sits at the end rather than among the four ways of
-        // looking at the same library.
-        if (App.inlineSearch.collectAsState().value) {
-            NavIcon(AppIcons.MoreHoriz, moreActive, scale = MORE_SCALE) { onMore() }
-        } else if (onSearch != null) {
+        // Search is the fifth destination: the one thing here you arrive at
+        // rather than browse to, so it sits after the four ways of looking at
+        // the same library rather than among them.
+        if (onSearch != null) {
             NavIcon(AppIcons.Search, searchActive, scale = SEARCH_SCALE) { onSearch() }
         }
     }
@@ -872,24 +819,8 @@ private fun navScale(drawnPx: Int, targetPx: Int): Float = targetPx.toFloat() / 
 private const val PLAYLISTS_SCALE = 0.94f
 private const val PLAYLISTS_LIFT_PX = 5
 
-/**
- * The ••• glyph, drawn at the playlist glyph's size.
- *
- * The playlist icon is the bar's reference — the tall ones are trimmed down
- * towards it — so a fifth destination joining the row matches that rather than
- * being trimmed on its own.
- */
-private const val MORE_SCALE = PLAYLISTS_SCALE
 
 /** The magnifier, at the same reference size as the rest of the bar. */
 private const val SEARCH_SCALE = PLAYLISTS_SCALE
 
 
-
-
-
-@Composable
-private fun listPadding(
-    end: androidx.compose.ui.unit.Dp,
-    extraBottom: androidx.compose.ui.unit.Dp = 0.dp,
-) = com.sublunar.amp.ui.components.listPadding(end = end, extraBottom = extraBottom)

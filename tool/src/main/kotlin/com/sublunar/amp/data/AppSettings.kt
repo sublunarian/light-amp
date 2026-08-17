@@ -376,17 +376,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      */
     val artistAlbumGrid: Flow<Boolean> = boolFlow(ARTIST_ALBUM_GRID, false)
 
-    /**
-     * Move search out of the header and into the top of each library list.
-     *
-     * The header button spends a slot on every page for something reached once
-     * a session. A field at the top of the list is where a list would be
-     * searched from anyway, and it scrolls out of the way when it isn't wanted
-     * — lists open below it, and the A–Z strip grows a magnifier so it is
-     * always one tap away. Taking the button back also gives the title the full
-     * width between the two remaining corners.
-     */
-    val inlineSearch: Flow<Boolean> = boolFlow(INLINE_SEARCH, false)
 
     /**
      * Drop the artists' own pictures, keeping every other kind of artwork.
@@ -499,7 +488,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setKaraokeLyrics(value: Boolean) = putBool(KARAOKE_LYRICS, value)
     suspend fun setAlbumGrid(value: Boolean) = putBool(ALBUM_GRID, value)
     suspend fun setArtistAlbumGrid(value: Boolean) = putBool(ARTIST_ALBUM_GRID, value)
-    suspend fun setInlineSearch(value: Boolean) = putBool(INLINE_SEARCH, value)
     suspend fun setHideArtistImages(value: Boolean) = putBool(HIDE_ARTIST_IMAGES, value)
     suspend fun setHideDownloadIcons(value: Boolean) = putBool(HIDE_DOWNLOAD_ICONS, value)
 
@@ -553,7 +541,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val KARAOKE_LYRICS = booleanPreferencesKey("pref.karaokeLyrics")
         private val ALBUM_GRID = booleanPreferencesKey("pref.albumGrid")
         private val ARTIST_ALBUM_GRID = booleanPreferencesKey("pref.artistAlbumGrid")
-        private val INLINE_SEARCH = booleanPreferencesKey("pref.inlineSearch")
         private val HIDE_ARTIST_IMAGES = booleanPreferencesKey("pref.hideArtistImages")
         private val HIDE_DOWNLOAD_ICONS = booleanPreferencesKey("pref.hideDownloadIcons")
         private val MONOCHROME_ARTWORK = booleanPreferencesKey("pref.monochromeArtwork")

@@ -50,28 +50,14 @@ class MoreScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) 
         val composers by App.library.composers.collectAsState()
         val compilations by App.library.compilations.collectAsState()
 
-        // Under Inline Search, More is a destination in the bar and so keeps the
-        // bar — a tab that hides the navigation the moment you reach it is the
-        // one tab you cannot leave the way you arrived. In the classic layout it
-        // is still the library page's own menu, opened from that page's header,
-        // and it covers the bar as a menu should.
-        val inline = App.inlineSearch.collectAsState().value
+        // Covers the tab bar rather than sitting above it: this is the library
+        // page's own menu, opened from its header, and a menu that leaves the
+        // navigation showing underneath reads as another page rather than as
+        // something on top of the one you were on.
         val body: @Composable ColumnScope.() -> Unit = {
             AppHeader(
                 title = "More",
-                // As a destination in the bar, this corner is the player, the
-                // same as on every tab — there is nothing to go "back" to when
-                // you arrived sideways, and the bar itself is the way out.
-                //
-                // In the classic layout it is still a menu pushed from a page,
-                // and it covers the bar: take the back button away there and the
-                // page has no exit at all.
-                leftAction = if (inline) {
-                    HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } }
-                } else {
-                    null
-                },
-                onBack = if (inline) null else ({ goBack() }),
+                onBack = { goBack() },
                 // No search here: this page is a short menu you read rather than
                 // a list you look through, and search belongs to the library
                 // pages it would send you back to anyway.
@@ -127,12 +113,8 @@ class MoreScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) 
             }
         }
 
-        if (App.inlineSearch.collectAsState().value) {
-            LibrarySubPage(moreActive = true, content = body)
-        } else {
-            PlayerTheme {
-                Column(modifier = Modifier.fillMaxSize()) { body() }
-            }
+        PlayerTheme {
+            Column(modifier = Modifier.fillMaxSize()) { body() }
         }
     }
 }

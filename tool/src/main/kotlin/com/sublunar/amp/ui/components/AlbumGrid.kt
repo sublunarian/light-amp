@@ -57,11 +57,6 @@ fun AlbumGrid(
      */
     endInset: Dp = px(LIST_EDGE_PX),
     onLongPress: ((Album) -> Unit)? = null,
-    /**
-     * Scrolling room past the last cover, so a grid shorter than the screen can
-     * still push a header row off the top — see `listPadding`.
-     */
-    extraBottom: Dp = 0.dp,
     header: (LazyGridScope.() -> Unit)? = null,
 ) {
     // Long enough to be worth one. A discography or a shelf of favourites is a
@@ -92,7 +87,7 @@ fun AlbumGrid(
             start = px(LIST_EDGE_PX),
             end = if (furniture) px(GRID_SCROLLBAR_LANE_PX) else endInset,
             top = px(LIST_TOP_PX),
-            bottom = px(LIST_TOP_PX) + extraBottom,
+            bottom = px(LIST_TOP_PX),
         ),
         horizontalArrangement = Arrangement.spacedBy(px(GRID_GAP_PX)),
         verticalArrangement = Arrangement.spacedBy(px(GRID_GAP_PX)),
