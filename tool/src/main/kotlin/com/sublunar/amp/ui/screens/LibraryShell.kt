@@ -232,8 +232,15 @@ private fun SearchView(
                         subtitle = track.artist,
                         coverArtId = track.coverArtId,
                         onClick = {
+                            // Search stays up underneath, unlike the two
+                            // branches above: an artist or an album is a place,
+                            // and going to one lays its tab down as the parent,
+                            // so the results have nowhere left to sit. Playing a
+                            // track pushes the player straight onto this page —
+                            // and back out of the player means back to the
+                            // results you picked from, still typed, still
+                            // scrolled where you left them.
                             App.playback.playQueue(listOf(track), 0)
-                            onClose()
                             actions.nowPlaying()
                         },
                         onLongClick = { actions.trackOptions(track.id, null) },
