@@ -24,6 +24,15 @@ enum class SourceKind {
     PLEX,
 
     /**
+     * A Jellyfin server's music library.
+     *
+     * Closer to Subsonic than Plex is — real favourites, playlists that can be
+     * created empty, a transcoder that produces what it is asked for — but with
+     * no star ratings and no popular songs. See the flags below.
+     */
+    JELLYFIN,
+
+    /**
      * The phone's own music folder — the same files the Light Music app plays.
      *
      * There is no server behind it, so everything that lives on one (likes,
@@ -87,8 +96,16 @@ data class MusicSource(
      * default ("Amp" / "Light Phone III").
      */
     val playerName: String = "",
-    /** Plex's `X-Plex-Token`, from linking or entered by hand. */
+    /** Plex's `X-Plex-Token` or Jellyfin's access token, from signing in. */
     val token: String = "",
+    /**
+     * Whose library this is, on a server that scopes one per user.
+     *
+     * Jellyfin needs it on nearly every call — favourites, play state and which
+     * libraries are even visible are all per user — so it is captured at login
+     * and kept here rather than looked up again each time.
+     */
+    val userId: String = "",
     /** Plex's server id, needed to build the URIs that fill a playlist. */
     val machineIdentifier: String = "",
     /** Subsonic music folder, or null for all of them. */
@@ -131,6 +148,7 @@ data class MusicSource(
     val streamFormats: List<StreamFormat> get() = when (kind) {
         SourceKind.SUBSONIC -> SubsonicClient.STREAM_FORMATS
         SourceKind.PLEX -> PlexClient.STREAM_FORMATS
+        SourceKind.JELLYFIN -> JellyfinClient.STREAM_FORMATS
         SourceKind.LOCAL -> emptyList()
     }
 
@@ -184,6 +202,12 @@ data class MusicSource(
             } else {
                 PlexClient(baseUrl, token, machineIdentifier, playerName.ifBlank { null })
             }
+        SourceKind.JELLYFIN ->
+            if (baseUrl.isBlank() || token.isBlank() || userId.isBlank()) {
+                null
+            } else {
+                JellyfinClient(baseUrl, token, userId, playerName.ifBlank { null })
+            }
     }
 
     /** Null unless this is a Subsonic server with somewhere to point. */
@@ -197,9 +221,13 @@ data class MusicSource(
     // What this kind of source can actually do. Read by the UI so a feature that
     // can't work is absent rather than present and broken: a heart on a local
     // file would write a like nothing can store and nothing can restore.
-    /** Plex has star ratings but no separate favourite, so nothing to sync. */
-    val supportsLikes: Boolean get() = kind == SourceKind.SUBSONIC
-    val supportsRatings: Boolean get() = kind != SourceKind.LOCAL
+    /**
+     * Plex has star ratings but no separate favourite, so nothing for a heart
+     * to sync to; Jellyfin has the favourite but not the stars. The two servers
+     * are missing opposite halves of the same idea.
+     */
+    val supportsLikes: Boolean get() = kind == SourceKind.SUBSONIC || kind == SourceKind.JELLYFIN
+    val supportsRatings: Boolean get() = kind == SourceKind.SUBSONIC || kind == SourceKind.PLEX
     /** The phone keeps its own, as m3u8 files — see [LocalPlaylists]. */
     val supportsPlaylists: Boolean get() = true
 

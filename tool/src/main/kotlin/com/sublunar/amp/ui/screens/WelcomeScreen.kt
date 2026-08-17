@@ -34,6 +34,7 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 fun WelcomeContent(
     onSubsonic: () -> Unit,
     onPlex: () -> Unit,
+    onJellyfin: () -> Unit,
     onLocal: () -> Unit,
 ) {
     PlayerTheme {
@@ -57,6 +58,7 @@ fun WelcomeContent(
 
             SourceChoice("SUBSONIC SERVER", onSubsonic)
             SourceChoice("PLEX SERVER", onPlex)
+            SourceChoice("JELLYFIN SERVER", onJellyfin)
             SourceChoice("MUSIC ON THIS PHONE", onLocal)
 
             Spacer(Modifier.height(1.5f.gridUnitsAsDp()))

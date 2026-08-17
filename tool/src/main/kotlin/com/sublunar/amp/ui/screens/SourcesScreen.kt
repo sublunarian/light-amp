@@ -293,6 +293,9 @@ class AddSourceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 item {
                     PlayAllRow(AppIcons.Add, "Plex Server") { go { PlexLinkScreen(it) } }
                 }
+                item {
+                    PlayAllRow(AppIcons.Add, "Jellyfin Server") { go { JellyfinLinkScreen(it) } }
+                }
                 // Only ever one: it is the phone, and there is only one phone.
                 if (sources.none { it.kind == SourceKind.LOCAL }) {
                     item {
@@ -316,7 +319,8 @@ class AddSourceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
 /** Where a source's music comes from, for the row that names it. */
 private fun subtitleFor(source: MusicSource): String = when (source.kind) {
     SourceKind.LOCAL -> LocalLibrary.FOLDER
-    SourceKind.SUBSONIC, SourceKind.PLEX -> source.baseUrl.ifBlank { "Not connected" }
+    SourceKind.SUBSONIC, SourceKind.PLEX, SourceKind.JELLYFIN ->
+        source.baseUrl.ifBlank { "Not connected" }
 }
 
 /** One source's own settings: what it is called, and how it is reached. */

@@ -115,6 +115,7 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
             BootState.NeedsLogin -> WelcomeContent(
                 onSubsonic = { go { ServerScreen(it, sourceId = null, adding = true) } },
                 onPlex = { go { PlexLinkScreen(it) } },
+                onJellyfin = { go { JellyfinLinkScreen(it) } },
                 onLocal = {
                     App.scope.launch {
                         val local = MusicSource.local()
