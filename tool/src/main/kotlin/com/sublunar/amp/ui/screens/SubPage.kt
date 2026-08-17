@@ -52,7 +52,7 @@ fun SimpleLightScreen<*>.LibrarySubPage(
                 onSearch = { openLibrarySearch() },
                 onNowPlaying = onNowPlaying ?: { go { NowPlayingScreen(it) } },
                 onBrowse = onBrowse ?: { popToRoot() },
-            )
+            )z
         }
     }
 }
