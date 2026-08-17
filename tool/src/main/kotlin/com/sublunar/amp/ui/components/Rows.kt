@@ -560,18 +560,13 @@ fun ScrollableList(
 }
 
 /**
- * Search, where the setting currently keeps it.
+ * Search for the row above row one, or null when it lives in the tab bar.
  *
- * [headerSearch] is null once search has moved into the lists, which is also
- * what widens a page's title: [AppHeader] gives the title everything between
- * the two corner squares as soon as the slot is empty. [listSearch] is the
- * mirror — the action for the row above row one, null while the button is still
- * in the header. Exactly one of the pair is ever non-null.
+ * No header carries it either way now: under Inline Search it is this row, and
+ * without it it is the bar's fifth destination — which is what leaves every
+ * library title the full width between the two corner squares, since [AppHeader]
+ * widens the title as soon as the search slot is empty.
  */
-@Composable
-fun headerSearch(onSearch: () -> Unit): (() -> Unit)? =
-    onSearch.takeIf { !App.inlineSearch.collectAsState().value }
-
 @Composable
 fun listSearch(onSearch: () -> Unit): (() -> Unit)? =
     onSearch.takeIf { App.inlineSearch.collectAsState().value }

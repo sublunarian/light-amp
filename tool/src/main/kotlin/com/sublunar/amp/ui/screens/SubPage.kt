@@ -86,6 +86,9 @@ fun SimpleLightScreen<*>.LibrarySubPage(
                 // page now, and a destination that pushes a copy of itself is a
                 // stack that only grows.
                 onMore = { if (!moreActive) go { MoreScreen(it) } },
+                // The bar is on these pages too, so its search reaches the
+                // library the way the header's used to: activate and unwind.
+                onSearch = { openLibrarySearch(withKeyboard = true) },
             )
         }
     }

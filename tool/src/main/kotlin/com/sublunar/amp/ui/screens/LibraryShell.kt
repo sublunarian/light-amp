@@ -71,7 +71,6 @@ import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.components.ROW_ACTION_H_PX
 import com.sublunar.amp.ui.components.SearchRow
 import com.sublunar.amp.ui.components.rememberHeaderOpening
-import com.sublunar.amp.ui.components.headerSearch
 import com.sublunar.amp.ui.components.listSearch
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.sublunar.amp.ui.components.appClickable
@@ -162,6 +161,8 @@ fun LibraryShell(
                 current = if (searchActive) null else currentTab,
                 onSelect = onSelectTab,
                 onMore = actions.more,
+                onSearch = actions.search,
+                searchActive = searchActive,
             )
         }
     }
@@ -307,12 +308,13 @@ private fun TabHeader(
             rightAction = menu?.let { HeaderAction(AppIcons.Sort, it) },
         )
     } else {
+        // Search has gone to the tab bar here too, so this is two corner squares
+        // and a title spanning everything between them.
         AppHeader(
             title = title,
             leftAction = nowPlaying,
             fitTitle = true,
             onTitleClick = menu,
-            searchAction = actions.search,
             rightAction = HeaderAction(AppIcons.MoreHoriz, actions.more),
         )
     }
@@ -723,6 +725,9 @@ fun Navbar(
     onSelect: (LibraryTab) -> Unit,
     onMore: () -> Unit,
     moreActive: Boolean = false,
+    /** Opens library search — the bar's fifth destination in the classic layout. */
+    onSearch: (() -> Unit)? = null,
+    searchActive: Boolean = false,
 ) {
     // More lives in the header, where it belongs to the page rather than sitting
     // in the bar as a fifth destination. What is left is four tabs, evenly
@@ -766,10 +771,15 @@ fun Navbar(
             current == LibraryTab.SONGS,
             scale = navScale(SONGS_DRAWN_PX, TALL_TARGET_PX),
         ) { onSelect(LibraryTab.SONGS) }
-        // More returns to the bar as a fifth destination once the header has
-        // given its right corner to the sort menu — see TabHeader.
+        // The fifth slot belongs to whichever of the two left the header. Under
+        // Inline Search that is More, its corner having gone to the sort menu.
+        // Otherwise it is search — the one thing here you arrive at rather than
+        // browse to, so it sits at the end rather than among the four ways of
+        // looking at the same library.
         if (App.inlineSearch.collectAsState().value) {
             NavIcon(AppIcons.MoreHoriz, moreActive, scale = MORE_SCALE) { onMore() }
+        } else if (onSearch != null) {
+            NavIcon(AppIcons.Search, searchActive, scale = SEARCH_SCALE) { onSearch() }
         }
     }
 }
@@ -870,6 +880,9 @@ private const val PLAYLISTS_LIFT_PX = 5
  * being trimmed on its own.
  */
 private const val MORE_SCALE = PLAYLISTS_SCALE
+
+/** The magnifier, at the same reference size as the rest of the bar. */
+private const val SEARCH_SCALE = PLAYLISTS_SCALE
 
 
 

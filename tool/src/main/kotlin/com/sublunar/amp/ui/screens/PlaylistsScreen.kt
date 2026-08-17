@@ -33,7 +33,6 @@ import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.LibraryList
-import com.sublunar.amp.ui.components.headerSearch
 import com.sublunar.amp.ui.components.listSearch
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.HeaderAction
@@ -99,7 +98,6 @@ class PlaylistDetailScreen(
                 AppHeader(
                     onBack = { goBack() },
                     title = playlistName,
-                    searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
                     rightAction = libraryCorner(),
                     fitTitle = true,
                 )

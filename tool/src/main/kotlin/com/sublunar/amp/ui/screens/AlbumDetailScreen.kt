@@ -19,7 +19,6 @@ import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.LibraryList
-import com.sublunar.amp.ui.components.headerSearch
 import com.sublunar.amp.ui.components.listSearch
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.HeaderAction
@@ -87,7 +86,6 @@ class AlbumDetailScreen(
                         // below and in the cover art, so a second line here was
                         // repeating what the page already says.
                         title = album?.title ?: "Album",
-                        searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
                         rightAction = libraryCorner(),
                         fitTitle = true,
                     )

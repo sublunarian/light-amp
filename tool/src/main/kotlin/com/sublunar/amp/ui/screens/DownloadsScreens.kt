@@ -35,7 +35,6 @@ import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.LibraryList
-import com.sublunar.amp.ui.components.headerSearch
 import com.sublunar.amp.ui.components.listSearch
 import com.sublunar.amp.ui.n
 import com.thelightphone.sdk.SealedLightActivity
@@ -101,7 +100,6 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
                 title = "Downloaded Songs",
                 onTitleClick = titleMenu { go { SongsSortScreen(it, "Downloaded Songs") } },
-                searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
                 rightAction = libraryCorner { go { SongsSortScreen(it, "Downloaded Songs") } },
                 fitTitle = true,
             )

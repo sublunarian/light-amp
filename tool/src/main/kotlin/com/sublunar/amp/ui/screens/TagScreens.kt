@@ -21,7 +21,6 @@ import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.LibraryList
-import com.sublunar.amp.ui.components.headerSearch
 import com.sublunar.amp.ui.components.listSearch
 import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.SplitActionRow
@@ -95,7 +94,6 @@ private fun SimpleLightScreen<*>.TagList(title: String, byComposer: Boolean, emp
             leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
             title = title,
             onTitleClick = titleMenu { go { TagsSortScreen(it, title) } },
-            searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
             rightAction = libraryCorner { go { TagsSortScreen(it, title) } },
         )
         LibraryList(
@@ -142,7 +140,6 @@ class TagSongsScreen(
             AppHeader(
                 onBack = { goBack() },
                 title = tag,
-                searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
                 rightAction = libraryCorner(),
                 fitTitle = true,
             )
@@ -199,7 +196,6 @@ class CompilationsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                 leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
                 title = "Compilations",
                 onTitleClick = titleMenu { go { AlbumsSortScreen(it, "Compilations") } },
-                searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
                 rightAction = libraryCorner { go { AlbumsSortScreen(it, "Compilations") } },
             )
             LibraryList(

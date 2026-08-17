@@ -29,7 +29,6 @@ import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.LibraryList
-import com.sublunar.amp.ui.components.headerSearch
 import com.sublunar.amp.ui.components.listSearch
 import com.sublunar.amp.ui.components.AlbumGrid
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -103,7 +102,6 @@ class ArtistDetailScreen(
                         { go { AlbumViewScreen(it, forArtist = true) } }
                     },
                 ),
-                searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
                 fitTitle = true,
                 rightAction = libraryCorner(
                     if (App.hideArtwork.collectAsState().value) {
@@ -242,7 +240,6 @@ class ArtistTopSongsScreen(
                             AppText(name, nSp(14), lineHeight = nSp(16), dim = true, maxLines = 1)
                         }
                     },
-                    searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
                     rightAction = libraryCorner(),
                 )
             }
@@ -316,7 +313,6 @@ class ArtistSongsScreen(
                 AppHeader(
                     onBack = { goBack() },
                     title = name,
-                    searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
                     rightAction = libraryCorner(),
                     fitTitle = true,
                 )
