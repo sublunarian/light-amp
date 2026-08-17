@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.DataMode
+import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
@@ -54,6 +55,7 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
         val karaoke by App.settings.karaokeLyrics.collectAsState(initial = true)
         val monochrome by App.settings.monochromeArtwork.collectAsState(initial = true)
         val artwork by App.settings.artwork.collectAsState(initial = ArtworkMode.SMALL)
+        val layoutMode by App.settings.layoutMode.collectAsState(initial = LayoutMode.STANDARD)
         val dataMode by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
         val sources by App.settings.sources.collectAsState(initial = emptyList())
         val sourceNames = sources.joinToString(", ") { it.name }
@@ -126,6 +128,13 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                     ToggleRow("Karaoke Lyrics", karaoke) {
                         App.scope.launch { App.settings.setKaraokeLyrics(!karaoke) }
                     }
+                }
+                item {
+                    TextRow(
+                        title = "Layout",
+                        subtitle = if (layoutMode == LayoutMode.STANDARD) "Standard" else "Simplified",
+                        onClick = { go { LayoutModeScreen(it) } },
+                    )
                 }
 
                 // About lives here rather than on More: it's a page about the
@@ -220,6 +229,38 @@ class SourceDownloadFormatScreen(
                             goBack()
                         },
                         trailing = { if (format == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Choose between standard and simplified layout modes. */
+class LayoutModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
+    @Composable
+    override fun Content() {
+        val current by App.settings.layoutMode.collectAsState(initial = LayoutMode.STANDARD)
+
+        ListScreen(onBack = { goBack() }, title = "Layout") {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
+                items(LayoutMode.entries) { mode ->
+                    val label = when (mode) {
+                        LayoutMode.STANDARD -> "Standard"
+                        LayoutMode.SIMPLIFIED -> "Simplified"
+                    }
+                    val subtitle = when (mode) {
+                        LayoutMode.STANDARD -> "5 buttons (search, browse, now playing)"
+                        LayoutMode.SIMPLIFIED -> "3 buttons (search, browse, now playing)"
+                    }
+                    TextRow(
+                        title = label,
+                        subtitle = subtitle,
+                        onClick = {
+                            App.scope.launch { App.settings.setLayoutMode(mode) }
+                            goBack()
+                        },
+                        trailing = { if (mode == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
                     )
                 }
             }

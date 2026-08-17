@@ -54,6 +54,7 @@ import com.sublunar.amp.data.Album
 import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.SplitActionRow
 import com.sublunar.amp.data.LocalLibrary
+import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.components.SelectionState
@@ -631,6 +632,9 @@ private fun PlaylistsTab(actions: ShellActions) {
     }
 }
 
+/**
+ * Navbar dispatches to either the standard or simplified layout based on the user's preference.
+ */
 @Composable
 fun Navbar(
     current: LibraryTab?,
@@ -640,23 +644,109 @@ fun Navbar(
     showChevron: Boolean = false,
     moreActive: Boolean = false,
 ) {
-    // 3-item tool bar on library root and all subs: left=search, center=current
-    // LibraryTab (with chevron only on root), right=now playing. Left and right
-    // icons sit at the edges; center takes any remaining space.
-     Row(
-         modifier = Modifier
-             .fillMaxWidth()
-             .height(px(BOTTOM_BAR_PX))
-             .padding(horizontal = 0.dp),
-         horizontalArrangement = Arrangement.SpaceBetween,
-         verticalAlignment = Alignment.CenterVertically,
-     ) {
-         NavIcon(AppIcons.Search) { onSearch() }
-         Spacer(Modifier.weight(1f))
-         BrowseCenter(current, showChevron) { onBrowse?.invoke() }
-         Spacer(Modifier.weight(1f))
-         NavIcon(AppIcons.Waveform) { onNowPlaying() }
-     }
+    // Default to STANDARD layout so navbar renders immediately while preference loads
+    val layoutMode by App.settings.layoutMode.collectAsState(initial = LayoutMode.STANDARD)
+
+    when (layoutMode) {
+        LayoutMode.SIMPLIFIED -> SimplifiedNavbar(
+            current = current,
+            onSearch = onSearch,
+            onNowPlaying = onNowPlaying,
+            onBrowse = onBrowse,
+            showChevron = showChevron,
+        )
+        LayoutMode.STANDARD -> StandardNavbar(
+            current = current,
+            onSearch = onSearch,
+            onNowPlaying = onNowPlaying,
+            onBrowse = onBrowse,
+            showChevron = showChevron,
+        )
+    }
+}
+
+/**
+ * Simplified layout: 3-button navbar with Search, Browse (center), and Now Playing.
+ */
+@Composable
+private fun SimplifiedNavbar(
+    current: LibraryTab?,
+    onSearch: () -> Unit,
+    onNowPlaying: () -> Unit,
+    onBrowse: (() -> Unit)? = null,
+    showChevron: Boolean = false,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(px(BOTTOM_BAR_PX))
+            .padding(horizontal = 0.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NavIcon(AppIcons.Search) { onSearch() }
+        Spacer(Modifier.weight(1f))
+        BrowseCenter(current, showChevron = showChevron) { onBrowse?.invoke() }
+        Spacer(Modifier.weight(1f))
+        NavIcon(AppIcons.Waveform) { onNowPlaying() }
+    }
+}
+
+/**
+ * Standard layout: 5-button navbar with separate tabs for Playlists, Artists, Albums,
+ * Songs, and Search. This is the classic light-amp navigation with all library views
+ * directly accessible from the bottom bar.
+ */
+@Composable
+private fun StandardNavbar(
+    current: LibraryTab?,
+    onSearch: () -> Unit,
+    onNowPlaying: () -> Unit,
+    onBrowse: (() -> Unit)? = null,
+    showChevron: Boolean = false,
+) {
+    // All four tabs evenly spaced, with search as a fifth destination.
+    // More lives in the header where it belongs to the page.
+    val source by App.source.collectAsState()
+    
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(px(BOTTOM_BAR_PX))
+            .padding(horizontal = 0.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // A source with no server has nowhere to keep a playlist, so the tab
+        // isn't there to be tapped — see MusicSource.supportsPlaylists.
+        if (source.supportsPlaylists) {
+            NavIconStandard(
+                AppIcons.QueueMusic,
+                current == LibraryTab.PLAYLISTS,
+                scale = PLAYLISTS_SCALE,
+                lift = PLAYLISTS_LIFT_PX,
+            ) { LibraryNav.selectTab(LibraryTab.PLAYLISTS) }
+        }
+        NavIconStandard(
+            AppIcons.RecordVoiceOver,
+            current == LibraryTab.ARTISTS,
+            scale = navScale(ARTISTS_DRAWN_PX, ARTISTS_TARGET_PX),
+        ) { LibraryNav.selectTab(LibraryTab.ARTISTS) }
+        NavIconStandard(
+            AppIcons.AlbumStack,
+            current == LibraryTab.ALBUMS,
+            scale = navScale(ALBUMS_DRAWN_PX, TALL_TARGET_PX),
+        ) { LibraryNav.selectTab(LibraryTab.ALBUMS) }
+        NavIconStandard(
+            AppIcons.MusicNote,
+            current == LibraryTab.SONGS,
+            scale = navScale(SONGS_DRAWN_PX, TALL_TARGET_PX),
+        ) { LibraryNav.selectTab(LibraryTab.SONGS) }
+        // Search is the fifth destination: the one thing here you arrive at
+        // rather than browse to, so it sits after the four ways of looking at
+        // the same library rather than among them.
+        NavIconStandard(AppIcons.Search, false, scale = SEARCH_SCALE) { onSearch() }
+    }
 }
 
 @Composable
@@ -704,6 +794,48 @@ private fun NavIcon(
     }
 }
 
+/**
+ * Standard layout tab icon with scaling and optional lift for visual alignment.
+ * Used in the 5-button standard navbar layout.
+ */
+@Composable
+private fun NavIconStandard(
+    icon: ImageVector,
+    active: Boolean,
+    /** Trims a glyph that draws larger than the rest at the same box size. */
+    scale: Float = 1f,
+    /** Nudges the glyph up inside its tile, in the same px units as everything else. */
+    lift: Int = 0,
+    onClick: () -> Unit,
+) {
+    // The selected tab gets a tile behind it — the same way the queue button
+    // marks itself on the player. Its colour comes from the theme, so Invert
+    // Colors still works.
+    Box(
+        modifier = Modifier
+            .size(px(NAV_TILE_PX))
+            .clip(RoundedCornerShape(px(NAV_TILE_RADIUS_PX)))
+            .then(
+                Modifier,
+            )
+            .appClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        AppIcon(
+            icon = icon,
+            size = px(NAV_ICON_PX) * scale,
+            // Inverted out of the white tile, or — with no tile — simply the
+            // bright one among dimmer neighbours. The secondary grey was too
+            // close to white here to read as a difference at all, so the
+            // unselected glyphs carry an explicit alpha instead.
+            // The tab you are on is simply the bright one; the rest step back.
+            tint = LightThemeTokens.colors.content,
+            modifier = (if (active) Modifier else Modifier.alpha(NAV_DIM_ALPHA))
+                .offset(y = -px(lift)),
+        )
+    }
+}
+
 private const val NAV_TILE_PX = 144
 private const val NAV_TILE_RADIUS_PX = 6
 
@@ -711,6 +843,52 @@ private const val NAV_TILE_RADIUS_PX = 6
 private const val BROWSE_CHEVRON_SIZE = 22
 /** Slight shrink so icon + chevron balance inside the NAV_TILE hit area. */
 private const val BROWSE_ICON_SCALE_WITH_CHEVRON = 0.92f
+
+// --- Standard layout constants ---
+
+/** The tile a selected tab inverts into, and the glyph inside it. */
+private const val NAV_ICON_PX = 114
+
+/** Matches the player's secondary row — the app's one "present but not chosen". */
+private const val NAV_DIM_ALPHA = 0.45f
+
+/**
+ * Bringing the tab glyphs closer to one height.
+ *
+ * A Material icon fills its 24dp viewport differently depending on its shape —
+ * a mic is tall and narrow, a playlist is wide and short, a pair of sleeves goes
+ * corner to corner — so one box size draws wildly different things. At the
+ * shared box the bar ran from 66px (playlists) to 90px (artists), which read as
+ * four icons in three sizes rather than as one row.
+ *
+ * `*_DRAWN_PX` is what each glyph actually drew at that shared box, measured off
+ * the panel; the target is what it should draw instead. Re-measure rather than
+ * guess if a glyph changes.
+ *
+ * The playlist glyph is the reference and is left alone — the tall ones were
+ * what read wrong, and growing the smallest to meet them halfway only moved the
+ * problem onto it.
+ */
+private const val ARTISTS_DRAWN_PX = 90
+// Measured at 89 while the old 0.85 trim was still applied, so untrimmed it is
+// 89 / 0.85 — the others were measured with no scale on them at all.
+private const val ALBUMS_DRAWN_PX = 105
+private const val SONGS_DRAWN_PX = 86
+
+/** Where the tall glyphs land: above the playlist's own 66, well under their 90. */
+private const val TALL_TARGET_PX = 72
+
+/** A mic is the narrowest of them, so it carries a little more height than the rest. */
+private const val ARTISTS_TARGET_PX = 75
+
+private fun navScale(drawnPx: Int, targetPx: Int): Float = targetPx.toFloat() / drawnPx
+
+/** A shade off the reference size, and a shade higher in the tile. Judged by eye. */
+private const val PLAYLISTS_SCALE = 0.94f
+private const val PLAYLISTS_LIFT_PX = 5
+
+/** The magnifier, at the same reference size as the rest of the bar. */
+private const val SEARCH_SCALE = PLAYLISTS_SCALE
 
 
 
