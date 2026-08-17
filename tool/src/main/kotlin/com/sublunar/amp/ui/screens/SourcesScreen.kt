@@ -81,10 +81,6 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
                         )
                     }
                 }
-                item { SectionLabel("Add") }
-                item {
-                    PlayAllRow(AppIcons.Add, "Add Source") { go { AddSourceScreen(it) } }
-                }
             }
         }
     }
