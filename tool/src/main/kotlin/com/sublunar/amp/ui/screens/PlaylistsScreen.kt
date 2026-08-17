@@ -32,6 +32,9 @@ import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ScrollableList
+import com.sublunar.amp.ui.components.LibraryList
+import com.sublunar.amp.ui.components.headerSearch
+import com.sublunar.amp.ui.components.listSearch
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.PlayAllRow
@@ -96,8 +99,9 @@ class PlaylistDetailScreen(
                 AppHeader(
                     onBack = { goBack() },
                     title = playlistName,
-                    searchAction = { openLibrarySearch(withKeyboard = true) },
-                    rightAction = libraryCornerAction(),
+                    searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
+                    rightAction = libraryCorner(),
+                    fitTitle = true,
                 )
             }
             when (val list = tracks.value) {
@@ -120,11 +124,10 @@ class PlaylistDetailScreen(
         var dragOffsetY by remember { mutableStateOf(0f) }
         val rowPx = with(LocalDensity.current) { px(160).toPx() }
 
-        ScrollableList(
-            state = rememberListAnchor(
-                "playlist:$playlistId",
-                headerCount = if (editing) 0 else 2,
-            ),
+        LibraryList(
+            anchor = "playlist:$playlistId",
+            headerCount = if (editing) 0 else 2,
+            onSearch = listSearch { openLibrarySearch(withKeyboard = true) }.takeIf { !editing },
                 modifier = Modifier.fillMaxSize(),
             ) {
             if (!editing) {

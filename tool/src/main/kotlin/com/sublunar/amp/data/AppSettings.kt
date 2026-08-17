@@ -376,6 +376,43 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      */
     val artistAlbumGrid: Flow<Boolean> = boolFlow(ARTIST_ALBUM_GRID, false)
 
+    /**
+     * Move search out of the header and into the top of each library list.
+     *
+     * The header button spends a slot on every page for something reached once
+     * a session. A field at the top of the list is where a list would be
+     * searched from anyway, and it scrolls out of the way when it isn't wanted
+     * — lists open below it, and the A–Z strip grows a magnifier so it is
+     * always one tap away. Taking the button back also gives the title the full
+     * width between the two remaining corners.
+     */
+    val inlineSearch: Flow<Boolean> = boolFlow(INLINE_SEARCH, false)
+
+    /**
+     * Drop the artists' own pictures, keeping every other kind of artwork.
+     *
+     * Separate from Hide Artwork because they are separate things to dislike: a
+     * sleeve is the record's own cover and an artist photo is a publicity shot
+     * the server went and found, and a library where only some artists have one
+     * reads as broken rather than as sparse. With them off the artist rows fall
+     * back to the tighter single-line pitch, exactly as they do with artwork
+     * switched off altogether.
+     */
+    val hideArtistImages: Flow<Boolean> = boolFlow(HIDE_ARTIST_IMAGES, false)
+
+    /**
+     * Stop marking downloaded rows.
+     *
+     * The layout does not move with it. The leading slot the mark sat in stays
+     * exactly where it is, because it is also what keeps every list's titles on
+     * one axis — and it already spends most of its life empty, on every row that
+     * isn't downloaded. Taking the mark away simply makes that the whole time.
+     *
+     * Which songs are downloaded is still answerable: Downloaded Songs is a page
+     * about precisely that, and an album's own page still offers the toggle.
+     */
+    val hideDownloadIcons: Flow<Boolean> = boolFlow(HIDE_DOWNLOAD_ICONS, false)
+
 
     /**
      * Artwork stays grey — the app's own switch over the display workaround.
@@ -462,6 +499,9 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setKaraokeLyrics(value: Boolean) = putBool(KARAOKE_LYRICS, value)
     suspend fun setAlbumGrid(value: Boolean) = putBool(ALBUM_GRID, value)
     suspend fun setArtistAlbumGrid(value: Boolean) = putBool(ARTIST_ALBUM_GRID, value)
+    suspend fun setInlineSearch(value: Boolean) = putBool(INLINE_SEARCH, value)
+    suspend fun setHideArtistImages(value: Boolean) = putBool(HIDE_ARTIST_IMAGES, value)
+    suspend fun setHideDownloadIcons(value: Boolean) = putBool(HIDE_DOWNLOAD_ICONS, value)
 
     suspend fun setMonochromeArtwork(value: Boolean) = putBool(MONOCHROME_ARTWORK, value)
     suspend fun setArtwork(value: ArtworkMode) = putString(ARTWORK, value.name)
@@ -513,6 +553,9 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val KARAOKE_LYRICS = booleanPreferencesKey("pref.karaokeLyrics")
         private val ALBUM_GRID = booleanPreferencesKey("pref.albumGrid")
         private val ARTIST_ALBUM_GRID = booleanPreferencesKey("pref.artistAlbumGrid")
+        private val INLINE_SEARCH = booleanPreferencesKey("pref.inlineSearch")
+        private val HIDE_ARTIST_IMAGES = booleanPreferencesKey("pref.hideArtistImages")
+        private val HIDE_DOWNLOAD_ICONS = booleanPreferencesKey("pref.hideDownloadIcons")
         private val MONOCHROME_ARTWORK = booleanPreferencesKey("pref.monochromeArtwork")
         private val ARTWORK = stringPreferencesKey("pref.artworkMode")
         private val SOURCES = stringPreferencesKey("pref.sources")

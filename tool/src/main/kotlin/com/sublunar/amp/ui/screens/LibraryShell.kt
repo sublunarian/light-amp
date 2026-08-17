@@ -21,6 +21,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -32,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.thelightphone.sdk.rememberPermissionRequestLauncher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.sublunar.amp.data.shuffled
@@ -66,6 +68,11 @@ import com.sublunar.amp.ui.n
 
 import com.sublunar.amp.ui.nSp
 import com.sublunar.amp.ui.px
+import com.sublunar.amp.ui.components.ROW_ACTION_H_PX
+import com.sublunar.amp.ui.components.SearchRow
+import com.sublunar.amp.ui.components.rememberHeaderOpening
+import com.sublunar.amp.ui.components.headerSearch
+import com.sublunar.amp.ui.components.listSearch
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.sublunar.amp.ui.components.appClickable
 import androidx.compose.foundation.layout.Spacer
@@ -284,13 +291,31 @@ private fun TabHeader(
     // Now-playing at the left corner, More at the right where it reads as this
     // page's own menu rather than a fifth tab, and sort folded into the title,
     // which is already the thing that names what you are looking at.
-    AppHeader(
-        title = tabTitle(tab, likedOnly(tab)),
-        leftAction = HeaderAction(AppIcons.Waveform, actions.nowPlaying),
-        onTitleClick = onSort ?: onTitleClick,
-        searchAction = actions.search,
-        rightAction = HeaderAction(AppIcons.MoreHoriz, actions.more),
-    )
+    //
+    val title = tabTitle(tab, likedOnly(tab))
+    val menu = onSort ?: onTitleClick
+    val nowPlaying = HeaderAction(AppIcons.Waveform, actions.nowPlaying)
+    if (App.inlineSearch.collectAsState().value) {
+        // Search has gone into the lists and More back into the tab bar, which
+        // leaves the right corner for the one menu that says how you are looking
+        // at this list — sort, and on the album lists view along with it. Off the
+        // title, which is a label again rather than a control.
+        AppHeader(
+            title = title,
+            leftAction = nowPlaying,
+            fitTitle = true,
+            rightAction = menu?.let { HeaderAction(AppIcons.Sort, it) },
+        )
+    } else {
+        AppHeader(
+            title = title,
+            leftAction = nowPlaying,
+            fitTitle = true,
+            onTitleClick = menu,
+            searchAction = actions.search,
+            rightAction = HeaderAction(AppIcons.MoreHoriz, actions.more),
+        )
+    }
 }
 
 /** Whether this tab is currently showing only liked items. */
@@ -352,6 +377,10 @@ private fun AlbumsTab(actions: ShellActions) {
     val needsAccess = !rememberLocalAccess()
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     val grid = App.albumGrid.collectAsState().value
+    // Read here rather than inside either branch: behind an `if` this is a
+    // conditional composable call, and the state it subscribes to stops
+    // triggering recomposition — the same trap the liked switches document.
+    val search = listSearch(actions.search)
     Column(Modifier.fillMaxSize()) {
         TabHeader(
             LibraryTab.ALBUMS,
@@ -362,6 +391,24 @@ private fun AlbumsTab(actions: ShellActions) {
             onTitleClick = actions.albumView.takeIf { !App.hideArtwork.collectAsState().value },
         )
         if (grid) {
+            // Its own anchor, separate from the list's: see rememberGridAnchor.
+            val gridState = rememberGridAnchor(
+                "tab:albums/grid",
+                headerCount = if (search != null) 2 else 1,
+                initialIndex = if (search != null) 2 else 0,
+            )
+            // The same wait the lists need: on the first visit after a cold
+            // start there are no covers yet, and a grid told to open at row two
+            // of an empty grid opens at nought and stays. See headerSlack.
+            LaunchedEffect(gridState, search != null) {
+                if (search == null) return@LaunchedEffect
+                snapshotFlow { gridState.layoutInfo.totalItemsCount }.first { it > 2 }
+                if (gridState.firstVisibleItemIndex == 0 &&
+                    gridState.firstVisibleItemScrollOffset == 0
+                ) {
+                    gridState.scrollToItem(2)
+                }
+            }
             // No strip and no bar at either width: the covers take the whole
             // screen, which is the reason to be in a grid at all.
             Box(modifier = Modifier.weight(1f)) {
@@ -369,10 +416,16 @@ private fun AlbumsTab(actions: ShellActions) {
                     albums = sorted,
                     onOpen = { actions.openAlbum(it.id, Parent.Here) },
                     onLongPress = { actions.albumOptions(it.id) },
-                    // Its own anchor, separate from the list's: see
-                    // rememberGridAnchor.
-                    state = rememberGridAnchor("tab:albums/grid", headerCount = 1),
+                    state = gridState,
+                    // Both header rows are action rows of a known height, so the
+                    // grid needs no measuring to know what to scroll past.
+                    extraBottom = if (search != null) px(ROW_ACTION_H_PX * 2) else 0.dp,
                 ) {
+                    if (search != null) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            SearchRow(search)
+                        }
+                    }
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         RandomAlbumRow(sorted, actions)
                     }
@@ -385,6 +438,7 @@ private fun AlbumsTab(actions: ShellActions) {
                 letters = letters,
                 headerCount = 1,
                 reversed = reversed,
+                onSearch = search,
             ) {
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
                 item { RandomAlbumRow(sorted, actions) }
@@ -445,11 +499,30 @@ private fun ColumnScope.IndexedList(
     letters: List<Char>,
     headerCount: Int,
     reversed: Boolean = false,
+    /**
+     * Opens search. When set, a field is drawn above row one, the list opens
+     * below it, and the A–Z strip grows a magnifier that comes back to it.
+     */
+    onSearch: (() -> Unit)? = null,
+    /** Header rows that scroll away with it — see LibraryList.chromeCount. */
+    chromeCount: Int = headerCount,
     content: LazyListScope.() -> Unit,
 ) {
-    val listState = rememberListAnchor(anchor, headerCount)
+    val inline = onSearch != null
+    // The field is a row of the list like any other, so it joins the rows above
+    // the content — which is what the A–Z strip counts to land a jump, and what
+    // the anchor subtracts to store a position in content coordinates.
+    val headers = headerCount + if (inline) 1 else 0
+    // Only the chrome goes; a header the page keeps stays on screen.
+    val opensAt = if (inline) chromeCount + 1 else 0
+    val listState = rememberListAnchor(
+        anchor,
+        headers,
+        initialIndex = opensAt,
+    )
+    val opening = rememberHeaderOpening(listState, opensAt, inline)
     val scope = rememberCoroutineScope()
-    Box(modifier = Modifier.weight(1f)) {
+    Box(modifier = Modifier.weight(1f).alpha(if (opening.ready) 1f else 0f)) {
         val indexed = letters.isNotEmpty()
         LazyColumn(
             state = listState,
@@ -458,23 +531,30 @@ private fun ColumnScope.IndexedList(
             // it a long album name ran underneath the letters.
             contentPadding = listPadding(
                 end = px(if (indexed) INDEX_STRIP_PX else SCROLLBAR_LANE_PX),
+                // Enough room past the last row for the header block to leave
+                // the screen even when the content alone would not fill it.
+                extraBottom = opening.slack,
             ),
-            content = content,
-        )
-        if (!indexed) ListScrollBar(listState)
+        ) {
+            if (onSearch != null) item { SearchRow(onSearch) }
+            content()
+        }
+        if (!indexed) ListScrollBar(listState, ignoreLeading = opensAt)
         // A descending list keeps its index; the strip just reads Z→A to match.
         if (indexed) {
             AlphabetIndex(
                 letters = letters,
                 target = rememberScrollTarget(listState),
                 scope = scope,
-                headerCount = headerCount,
+                headerCount = headers,
                 reversed = reversed,
+                showSearch = inline,
                 modifier = Modifier.align(Alignment.CenterEnd),
             )
         }
     }
 }
+
 
 @Composable
 private fun SongsTab(actions: ShellActions) {
@@ -505,6 +585,9 @@ private fun SongsTab(actions: ShellActions) {
             letters = letters,
             headerCount = if (selection.active) 0 else 1,
             reversed = reversed,
+            // Nothing to search while picking songs — the header is the
+            // selection's own, and the rows above the list go with it.
+            onSearch = listSearch(actions.search).takeIf { !selection.active },
         ) {
             if (!selection.active) {
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
@@ -551,10 +634,12 @@ private fun ArtistsTab(actions: ShellActions) {
     // triggering recomposition — which is why the albums tab kept its switch
     // hidden long after the liked artists had loaded.
     val supportsLikes = App.source.collectAsState().value.supportsLikes
-    val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
     // One request for the server's own artist records, which is where their
     // pictures are — the library's artists come from track tags and have none.
-    LaunchedEffect(Unit) { App.library.primeArtistImages() }
+    // Skipped entirely when the pictures are switched off — there is no point
+    // fetching a page of artist records for images nothing is going to draw.
+    val artistImages = !App.hideArtistImages.collectAsState().value
+    LaunchedEffect(artistImages) { if (artistImages) App.library.primeArtistImages() }
     val needsAccess = !rememberLocalAccess()
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     Column(Modifier.fillMaxSize()) {
@@ -564,13 +649,13 @@ private fun ArtistsTab(actions: ShellActions) {
             letters = letters,
             headerCount = 0,
             reversed = reversed,
+            onSearch = listSearch(actions.search),
         ) {
             localAccessNotice(needsAccess) { audioPermission?.launch() }
             items(sorted, key = { it.name }) { artist ->
                 ArtistRow(
                     name = artist.name,
                     subtitle = "${artist.albumCount} albums · ${artist.trackCount} songs",
-                    downloaded = artist.name in downloadedArtists,
                     imageId = artist.imageId,
                     onClick = { actions.openArtist(artist.name, Parent.Here) },
                     onLongClick = { actions.artistOptions(artist.name) },
@@ -607,6 +692,10 @@ private fun PlaylistsTab(actions: ShellActions) {
             letters = letters,
             headerCount = if (canCreateEmpty) 1 else 0,
             reversed = reversed,
+            onSearch = listSearch(actions.search),
+            // New Playlist stays: it makes something rather than acting on the
+            // list, so it is the page's own row rather than chrome over it.
+            chromeCount = 0,
         ) {
             if (canCreateEmpty) {
                 item { PlayAllRow(AppIcons.Add, "New Playlist") { actions.newPlaylist() } }
@@ -675,6 +764,11 @@ fun Navbar(
             current == LibraryTab.SONGS,
             scale = navScale(SONGS_DRAWN_PX, TALL_TARGET_PX),
         ) { onSelect(LibraryTab.SONGS) }
+        // More returns to the bar as a fifth destination once the header has
+        // given its right corner to the sort menu — see TabHeader.
+        if (App.inlineSearch.collectAsState().value) {
+            NavIcon(AppIcons.MoreHoriz, moreActive, scale = MORE_SCALE) { onMore() }
+        }
     }
 }
 
@@ -766,10 +860,21 @@ private fun navScale(drawnPx: Int, targetPx: Int): Float = targetPx.toFloat() / 
 private const val PLAYLISTS_SCALE = 0.94f
 private const val PLAYLISTS_LIFT_PX = 5
 
+/**
+ * The ••• glyph, drawn at the playlist glyph's size.
+ *
+ * The playlist icon is the bar's reference — the tall ones are trimmed down
+ * towards it — so a fifth destination joining the row matches that rather than
+ * being trimmed on its own.
+ */
+private const val MORE_SCALE = PLAYLISTS_SCALE
+
 
 
 
 
 @Composable
-private fun listPadding(end: androidx.compose.ui.unit.Dp) =
-    com.sublunar.amp.ui.components.listPadding(end = end)
+private fun listPadding(
+    end: androidx.compose.ui.unit.Dp,
+    extraBottom: androidx.compose.ui.unit.Dp = 0.dp,
+) = com.sublunar.amp.ui.components.listPadding(end = end, extraBottom = extraBottom)

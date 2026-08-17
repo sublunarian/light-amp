@@ -28,6 +28,9 @@ import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.ScrollableList
+import com.sublunar.amp.ui.components.LibraryList
+import com.sublunar.amp.ui.components.headerSearch
+import com.sublunar.amp.ui.components.listSearch
 import com.sublunar.amp.ui.components.AlbumGrid
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import com.sublunar.amp.ui.components.ActionList
@@ -93,13 +96,22 @@ class ArtistDetailScreen(
                 title = name,
                 // The same list-or-grid menu the album lists have: a
                 // discography is an album list too.
-                onTitleClick = if (App.hideArtwork.collectAsState().value) {
-                    null
-                } else {
-                    { go { AlbumViewScreen(it, forArtist = true) } }
-                },
-                searchAction = { openLibrarySearch(withKeyboard = true) },
-                rightAction = libraryCornerAction(),
+                onTitleClick = titleMenu(
+                    if (App.hideArtwork.collectAsState().value) {
+                        null
+                    } else {
+                        { go { AlbumViewScreen(it, forArtist = true) } }
+                    },
+                ),
+                searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
+                fitTitle = true,
+                rightAction = libraryCorner(
+                    if (App.hideArtwork.collectAsState().value) {
+                        null
+                    } else {
+                        { go { AlbumViewScreen(it, forArtist = true) } }
+                    },
+                ),
             )
             if (grid) {
                 AlbumGrid(
@@ -118,7 +130,12 @@ class ArtistDetailScreen(
                 }
                 return@LibrarySubPage
             }
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            LibraryList(
+                anchor = "artist-albums:$name",
+                headerCount = 1,
+                onSearch = listSearch { openLibrarySearch(withKeyboard = true) },
+                modifier = Modifier.fillMaxSize(),
+            ) {
                 // Liking lives on the artist list's long-press, not here: this
                 // page is the discography, and a heart at the top of it was the
                 // one row that wasn't a way into the music.
@@ -225,21 +242,23 @@ class ArtistTopSongsScreen(
                             AppText(name, nSp(14), lineHeight = nSp(16), dim = true, maxLines = 1)
                         }
                     },
-                    searchAction = { openLibrarySearch(withKeyboard = true) },
-                    rightAction = libraryCornerAction(),
+                    searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
+                    rightAction = libraryCorner(),
                 )
             }
             val list = songs
             when {
                 list == null -> EmptyState("Loading…")
                 list.isEmpty() -> EmptyState("No popular songs")
-                else -> LazyColumn(
-                    state = rememberListAnchor(
-                        "artist-top:$name",
-                        headerCount = if (selection.active) 0 else 1,
-                    ),
+                else -> LibraryList(
+                    anchor = "artist-top:$name",
+                    headerCount = if (selection.active) 0 else 1,
+                    onSearch = listSearch { openLibrarySearch(withKeyboard = true) }
+                        .takeIf { !selection.active },
+                    // No bar on this one before, and adding one is not this
+                    // change's business.
+                    scrollBar = false,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = listPadding(),
                 ) {
                     if (!selection.active) {
                         item {
@@ -297,17 +316,18 @@ class ArtistSongsScreen(
                 AppHeader(
                     onBack = { goBack() },
                     title = name,
-                    searchAction = { openLibrarySearch(withKeyboard = true) },
-                    rightAction = libraryCornerAction(),
+                    searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
+                    rightAction = libraryCorner(),
+                    fitTitle = true,
                 )
             }
-            LazyColumn(
-                state = rememberListAnchor(
-                    "artist-songs:$name",
-                    headerCount = if (selection.active) 0 else 1,
-                ),
+            LibraryList(
+                anchor = "artist-songs:$name",
+                headerCount = if (selection.active) 0 else 1,
+                onSearch = listSearch { openLibrarySearch(withKeyboard = true) }
+                    .takeIf { !selection.active },
+                scrollBar = false,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = listPadding(),
             ) {
                 if (!selection.active) {
                     item {

@@ -33,16 +33,30 @@ import com.thelightphone.sdk.ui.LightThemeTokens
  * height line that never moves, which reads as a border.
  */
 @Composable
-fun BoxScope.ListScrollBar(state: LazyListState) = ListScrollBar(rememberScrollTarget(state))
+fun BoxScope.ListScrollBar(state: LazyListState, ignoreLeading: Int = 0) =
+    ListScrollBar(rememberScrollTarget(state), ignoreLeading = ignoreLeading)
 
 @Composable
-fun BoxScope.ListScrollBar(target: ScrollTarget, lane: Dp = px(SCROLLBAR_LANE_PX)) {
-    val total = target.totalItems
+fun BoxScope.ListScrollBar(
+    target: ScrollTarget,
+    lane: Dp = px(SCROLLBAR_LANE_PX),
+    /**
+     * Leading rows that are not part of the list — the search row and whatever
+     * chrome sits with it.
+     *
+     * A short page can be scrolled exactly far enough to tuck those away, and
+     * counting them put a bar on a page whose own rows all fit: a full-height
+     * line that never really moves, offering to scroll to something that isn't
+     * the list.
+     */
+    ignoreLeading: Int = 0,
+) {
+    val total = target.totalItems - ignoreLeading
     val visible = target.visibleItems
-    if (total == 0 || visible == 0 || visible >= total) return
+    if (total <= 0 || visible == 0 || visible >= total) return
 
     val fraction = (visible.toFloat() / total).coerceAtLeast(MIN_FRACTION)
-    val first = target.firstVisibleIndex.toFloat() / total
+    val first = (target.firstVisibleIndex - ignoreLeading).coerceAtLeast(0).toFloat() / total
     val travel = (first / (1f - fraction).coerceAtLeast(0.0001f)).coerceIn(0f, 1f)
 
     val scope = rememberCoroutineScope()

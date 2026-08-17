@@ -37,6 +37,27 @@ fun SimpleLightScreen<*>.openLibrarySearch(withKeyboard: Boolean = false) {
 fun SimpleLightScreen<*>.libraryCornerAction(): HeaderAction =
     HeaderAction(AppIcons.MoreHoriz) { go { MoreScreen(it) } }
 
+/**
+ * The library's right-hand corner, on a page below the tabs.
+ *
+ * More, until Inline Search puts More back in the tab bar — and the bar is on
+ * these pages too, so keeping it in both places would be the same button twice.
+ * The corner then belongs to this page's own sort-and-view menu, and to nothing
+ * at all on a page that has none.
+ */
+@Composable
+fun SimpleLightScreen<*>.libraryCorner(menu: (() -> Unit)? = null): HeaderAction? =
+    if (App.inlineSearch.collectAsState().value) {
+        menu?.let { HeaderAction(AppIcons.Sort, it) }
+    } else {
+        libraryCornerAction()
+    }
+
+/** A title menu, which Inline Search moves into the corner instead. */
+@Composable
+fun titleMenu(menu: (() -> Unit)?): (() -> Unit)? =
+    menu.takeIf { !App.inlineSearch.collectAsState().value }
+
 @Composable
 fun SimpleLightScreen<*>.LibrarySubPage(
     /** Set by More, which is a tab in its own right rather than a page of one. */
@@ -61,7 +82,10 @@ fun SimpleLightScreen<*>.LibrarySubPage(
                     LibraryNav.selectTab(tab)
                     popToRoot()
                 },
-                onMore = { go { MoreScreen(it) } },
+                // Nothing to open when this *is* More: the bar stays on that
+                // page now, and a destination that pushes a copy of itself is a
+                // stack that only grows.
+                onMore = { if (!moreActive) go { MoreScreen(it) } },
             )
         }
     }

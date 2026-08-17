@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.components.SelectionState
 import com.sublunar.amp.ui.components.ScrollAnchors
@@ -72,18 +73,27 @@ object LibraryNav {
     }
 
     /**
-     * Go to a tab's front page.
+     * Go to a tab.
      *
-     * Tapping a tab is a request to start over there, so the list returns to the
-     * top rather than to wherever it was left — its sort is the only thing that
-     * carries over.
+     * In the classic layout, tapping a tab is a request to start over there: the
+     * list returns to the top rather than to wherever it was left, and its sort
+     * is the only thing that carries over.
+     *
+     * Under Inline Search a tab is somewhere you come back to instead, so it
+     * keeps its place — a library you were halfway down is a worse thing to lose
+     * than it is to re-find. Only the first visit opens at the top. The rows
+     * above the list still go either way: anything left at or above the first
+     * content row is restored below them, so coming back never lands on the
+     * search button. See rememberListAnchor.
      */
     fun selectTab(tab: LibraryTab) {
         closeSearch()
         // A selection belongs to the list it was made in; changing tabs abandons
         // it rather than leaving a stale count waiting on some other page.
         Selections.clearAll()
-        ScrollAnchors.clear("tab:${tab.name.lowercase()}")
+        if (!App.inlineSearch.value) {
+            ScrollAnchors.clear("tab:${tab.name.lowercase()}")
+        }
         currentTab.value = tab
     }
 }

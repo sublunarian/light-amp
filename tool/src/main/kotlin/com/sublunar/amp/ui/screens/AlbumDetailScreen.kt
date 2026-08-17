@@ -18,6 +18,9 @@ import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ScrollableList
+import com.sublunar.amp.ui.components.LibraryList
+import com.sublunar.amp.ui.components.headerSearch
+import com.sublunar.amp.ui.components.listSearch
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.NumberedRow
@@ -84,19 +87,23 @@ class AlbumDetailScreen(
                         // below and in the cover art, so a second line here was
                         // repeating what the page already says.
                         title = album?.title ?: "Album",
-                        searchAction = { openLibrarySearch(withKeyboard = true) },
-                        rightAction = libraryCornerAction(),
+                        searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
+                        rightAction = libraryCorner(),
+                        fitTitle = true,
                     )
                 }
 
                 val list = tracks
                 when {
                     list == null -> Loading()
-                    else -> ScrollableList(
-                        state = rememberListAnchor(
-                            "album:$albumId",
-                            headerCount = if (selection.active) 0 else 1,
-                        ),
+                    else -> LibraryList(
+                        anchor = "album:$albumId",
+                        headerCount = if (selection.active) 0 else 1,
+                        // The card is the album — its artwork, its year, its
+                        // length. Only the search row goes.
+                        chromeCount = 0,
+                        onSearch = listSearch { openLibrarySearch(withKeyboard = true) }
+                            .takeIf { !selection.active },
                 modifier = Modifier.fillMaxSize(),
             ) {
                         if (!selection.active && album != null) {

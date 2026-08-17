@@ -22,6 +22,14 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -31,6 +39,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import com.sublunar.amp.App
 import com.sublunar.amp.ui.n
 import com.sublunar.amp.ui.px
@@ -99,6 +108,10 @@ fun TrackRow(
     selected: Boolean? = null,
 ) {
     val artworkHidden = App.hideArtwork.collectAsState().value
+    // Read here rather than inside the branch below: behind an `if` this stops
+    // subscribing and the marks freeze as they were — the trap the liked
+    // switches document.
+    val marks = !App.hideDownloadIcons.collectAsState().value
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -109,8 +122,11 @@ fun TrackRow(
         // The download mark leads the row, in a slot of its own. Everything after
         // it starts on the same axis whether or not the row is downloaded — and
         // with covers switched off, that axis is where Light puts its titles.
+        // The slot stays whether or not anything is in it: it is what keeps
+        // every list's titles on one axis, and it already spends most of its
+        // life empty on rows that aren't downloaded.
         Box(modifier = Modifier.width(px(ROW_LEAD_PX))) {
-            if (downloaded) AppIcon(AppIcons.Downloaded, size = px(ROW_MARK_PX))
+            if (downloaded && marks) AppIcon(AppIcons.Downloaded, size = px(ROW_MARK_PX))
         }
         if (selected != null) {
             Box(
@@ -184,6 +200,7 @@ const val ROW_GAP_PX = 32
  * Light's own list puts its titles: [LIST_EDGE_PX] of list padding plus this.
  */
 const val ROW_LEAD_PX = 51
+
 private const val ROW_MARK_PX = 33
 /**
  * Smaller than a list row's own furniture, and closer to its label.
@@ -194,7 +211,7 @@ private const val ROW_MARK_PX = 33
  */
 private const val ROW_ACTION_ICON_PX = 57
 private const val ACTION_GAP_PX = 24
-private const val ROW_ACTION_H_PX = 102
+const val ROW_ACTION_H_PX = 102
 
 /** The LP3's panel, in physical pixels — the axis these rows are placed on. */
 private const val SCREEN_W_PX = 1080
@@ -239,6 +256,13 @@ const val LIST_TOP_PX = 15
  * An artist row: the same metrics as a track row, minus the cover an artist
  * hasn't got — but keeping the leading slot, so names start on the axis every
  * other list's titles start on.
+ *
+ * No download mark, unlike the rows that carry one. An artist is only ever
+ * "downloaded" when every last track of theirs is, which is rarely true and
+ * changes as a single song comes or goes — so the badge spent most of its life
+ * absent and the rest of it flickering, saying less about the artist than the
+ * empty space did. Where their music actually lives is a question their own
+ * page answers.
  */
 @Composable
 fun ArtistRow(
@@ -247,14 +271,13 @@ fun ArtistRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
-    /** Shows the offline badge — set when every track of the artist's is downloaded. */
-    downloaded: Boolean = false,
     /** The server's picture of them, where it has one — see Artist.imageId. */
     imageId: String? = null,
 ) {
-    // With covers off the row is a line of text again, at the tighter pitch it
-    // has always had; a picture needs the taller one the track rows use.
-    val covers = !App.hideArtwork.collectAsState().value
+    // With pictures off the row is a line of text again, at the tighter pitch it
+    // has always had; a picture needs the taller one the track rows use. Artists
+    // can lose theirs on their own, without the sleeves going with them.
+    val covers = !App.hideArtistImages.collectAsState().value
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -264,9 +287,9 @@ fun ArtistRow(
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(modifier = Modifier.width(px(ROW_LEAD_PX))) {
-            if (downloaded) AppIcon(AppIcons.Downloaded, size = px(ROW_MARK_PX))
-        }
+        // Empty, but still there: it is what keeps a name on the same axis as
+        // the titles in every other list.
+        Spacer(Modifier.width(px(ROW_LEAD_PX)))
         if (covers) {
             // Round, where an album is square: the shape says which kind of
             // thing this is before the name is read, and a face in a square
@@ -493,14 +516,23 @@ fun NumberedRow(
  * [LIST_EDGE_PX] puts a row's own left edge where the Light music app puts its
  * download mark; the row's leading slot then carries everything after it to the
  * 72px axis its titles sit on.
+ *
+ * [extraBottom] buys scrolling room past the end of the content. A list can only
+ * be scrolled as far as it is long, so a library of three albums could not push
+ * the inline search field off the top however hard it was flung — the field
+ * stayed on screen and the first album never reached the header. This is the
+ * slack that lets a short list scroll like a long one.
  */
 @Composable
-fun listPadding(end: Dp = px(LIST_EDGE_PX)): PaddingValues =
+fun listPadding(
+    end: Dp = px(LIST_EDGE_PX),
+    extraBottom: Dp = 0.dp,
+): PaddingValues =
     PaddingValues(
         start = px(LIST_EDGE_PX),
         end = end,
         top = px(LIST_TOP_PX),
-        bottom = px(LIST_TOP_PX),
+        bottom = px(LIST_TOP_PX) + extraBottom,
     )
 
 
@@ -525,5 +557,185 @@ fun ScrollableList(
             content = content,
         )
         ListScrollBar(state)
+    }
+}
+
+/**
+ * Search, where the setting currently keeps it.
+ *
+ * [headerSearch] is null once search has moved into the lists, which is also
+ * what widens a page's title: [AppHeader] gives the title everything between
+ * the two corner squares as soon as the slot is empty. [listSearch] is the
+ * mirror — the action for the row above row one, null while the button is still
+ * in the header. Exactly one of the pair is ever non-null.
+ */
+@Composable
+fun headerSearch(onSearch: () -> Unit): (() -> Unit)? =
+    onSearch.takeIf { !App.inlineSearch.collectAsState().value }
+
+@Composable
+fun listSearch(onSearch: () -> Unit): (() -> Unit)? =
+    onSearch.takeIf { App.inlineSearch.collectAsState().value }
+
+/**
+ * The search row a library list carries above its first item.
+ *
+ * The same row as Shuffle or Play Random Album, because it does the same kind
+ * of thing: press it and something happens. It is not a text field — the SDK's
+ * editor is full-screen and hosts the keyboard itself, so an inline box would
+ * only ever have been a button drawn to look like somewhere you could type.
+ */
+@Composable
+fun SearchRow(onClick: () -> Unit) {
+    PlayAllRow(AppIcons.Search, "Search", onClick = onClick)
+}
+
+/**
+ * Opens a list below its header rows, and buys the room to do it where there is
+ * none.
+ *
+ * Two things stop a list starting where it should, and both had to be waited for
+ * rather than assumed:
+ *
+ * The rows may not exist yet. On the first visit after a cold start the library
+ * is still loading, and a [LazyListState] told to begin at row two of a list
+ * with no rows begins at nought and stays there — which is exactly why a tab
+ * showed everything on its first opening and hid it on every one after.
+ *
+ * The room may not exist yet either. A list can only be scrolled as far as it is
+ * long, so a short playlist cannot push its own search row off however hard it
+ * is flung. The shortfall is measured, not assumed — a header block is two
+ * action rows on one page and a full album card on another — but granting it is
+ * a padding change, and padding is not in the layout until the next
+ * composition. Scrolling in the same breath scrolls nowhere, which is what left
+ * the short pages showing their search row.
+ *
+ * Returns the slack, zero for any list already long enough to manage unaided.
+ */
+@Composable
+fun rememberHeaderOpening(
+    state: LazyListState,
+    opensAt: Int,
+    enabled: Boolean,
+): HeaderOpening {
+    var slackPx by remember(state, opensAt) { mutableStateOf(0) }
+    var ready by remember(state, opensAt) { mutableStateOf(!enabled || opensAt == 0) }
+    LaunchedEffect(state, opensAt, enabled) {
+        if (!enabled || opensAt == 0) {
+            slackPx = 0
+            ready = true
+            return@LaunchedEffect
+        }
+        try {
+            // There is nothing to scroll to until a row exists to scroll to. On
+            // a page that opens past its whole header the first content row is
+            // the library still loading, so this waits — and the list stays
+            // unpainted while it does, which is the difference between a beat of
+            // background and watching the header rows appear and then leave.
+            //
+            // Bounded, because some pages never get one: an empty playlist, a
+            // library with no albums. Those show their empty state a beat late
+            // rather than never.
+            withTimeoutOrNull(OPEN_TIMEOUT_MS) {
+                snapshotFlow { state.layoutInfo.totalItemsCount }.first { it > opensAt }
+                // Anything already off row nought is where the anchor or the
+                // user put it, and is none of this effect's business.
+                if (state.firstVisibleItemIndex != 0 ||
+                    state.firstVisibleItemScrollOffset != 0
+                ) {
+                    return@withTimeoutOrNull
+                }
+                val info = snapshotFlow { state.layoutInfo }
+                    .first { it.visibleItemsInfo.isNotEmpty() }
+                val visible = info.visibleItemsInfo
+                // Anything that doesn't fit on screen at once has the room.
+                if (visible.size >= info.totalItemsCount) {
+                    val firstContent = visible.firstOrNull { it.index == opensAt }
+                    val contentEnd = visible.last().let { it.offset + it.size }
+                    val needed = if (firstContent == null) 0 else {
+                        (firstContent.offset - info.viewportStartOffset) +
+                            info.viewportEndOffset - contentEnd
+                    }
+                    if (needed > 0) {
+                        slackPx = needed
+                        // Wait for the padding to reach the layout before using it.
+                        snapshotFlow { state.canScrollForward }.first { it }
+                    }
+                }
+                state.scrollToItem(opensAt)
+            }
+        } finally {
+            // Never left unpainted, however the above turned out.
+            ready = true
+        }
+    }
+    return HeaderOpening(with(LocalDensity.current) { slackPx.toDp() }, ready)
+}
+
+/**
+ * What a list needs to open below its header rows: the room, and whether it may
+ * be painted yet.
+ */
+data class HeaderOpening(val slack: Dp, val ready: Boolean)
+
+/** How long a list waits for a row to open on before it gives up and shows. */
+private const val OPEN_TIMEOUT_MS = 800L
+
+/**
+ * A library list that opens below its own search row.
+ *
+ * Wraps what every library page needs to agree on, because getting one of the
+ * four wrong is invisible until you are looking at the wrong row: the row
+ * itself, the extra header it adds to the count the anchor and any index strip
+ * work in, the position a fresh list starts at, and the scrolling slack a list
+ * shorter than the screen needs before it can push the row off the top at all.
+ *
+ * [onSearch] null leaves it a plain [ScrollableList] with search in the header.
+ */
+@Composable
+fun LibraryList(
+    anchor: String,
+    modifier: Modifier = Modifier,
+    headerCount: Int = 0,
+    onSearch: (() -> Unit)? = null,
+    /**
+     * How many of those header rows are chrome, and so scroll away with the
+     * search row.
+     *
+     * All of them by default: Shuffle, Play Random Album and New Playlist are
+     * things you can *do* to a list, and the page opens on the list itself. An
+     * album's card is not one of those — the artwork and the album's details are
+     * what the page is, so an album counts none of its header as chrome and only
+     * the search row goes.
+     */
+    chromeCount: Int = headerCount,
+    /** The right-hand lane and its bar, as the few lists that never had one. */
+    scrollBar: Boolean = true,
+    content: LazyListScope.() -> Unit,
+) {
+    val inline = onSearch != null
+    val headers = headerCount + if (inline) 1 else 0
+    // The search row plus whatever else is chrome. Not [headers]: what the page
+    // keeps on screen is the whole point of the distinction.
+    val opensAt = if (inline) chromeCount + 1 else 0
+    val state = rememberListAnchor(anchor, headers, initialIndex = opensAt)
+    val opening = rememberHeaderOpening(state, opensAt, inline)
+    // Measured and laid out, simply not painted, so the measuring this depends on
+    // still happens.
+    Box(modifier = modifier.alpha(if (opening.ready) 1f else 0f)) {
+        LazyColumn(
+            state = state,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = listPadding(
+                end = if (scrollBar) px(SCROLLBAR_LANE_PX) else px(LIST_EDGE_PX),
+                extraBottom = opening.slack,
+            ),
+        ) {
+            if (onSearch != null) item { SearchRow(onSearch) }
+            content()
+        }
+        // The rows above the content are not the list, so they do not decide
+        // whether it needs a bar — see ignoreLeading.
+        if (scrollBar) ListScrollBar(state, ignoreLeading = opensAt)
     }
 }

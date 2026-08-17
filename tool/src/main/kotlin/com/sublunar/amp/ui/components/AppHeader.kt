@@ -1,6 +1,7 @@
 package com.sublunar.amp.ui.components
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -16,9 +17,19 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.runtime.collectAsState
+import com.sublunar.amp.App
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.runtime.remember
 import com.sublunar.amp.ui.n
 import com.sublunar.amp.ui.nSp
 import com.sublunar.amp.ui.px
+import com.sublunar.amp.ui.pxSp
 
 data class HeaderAction(val icon: ImageVector, val onClick: () -> Unit)
 
@@ -42,6 +53,50 @@ private const val SEARCH_TO_NOW_PLAYING_PX = 120
 
 /** Nudge that puts the back chevron on the same axis as the other edge controls. */
 private val BACK_ICON_BIAS = px(15)
+
+/**
+ * A header's title, dropped a size only when the full one will not fit.
+ *
+ * Measured rather than inferred from the length: the face is proportional, so
+ * two titles of the same character count are nothing like the same width, and
+ * the only honest test is to lay the string out and ask. It is measured in the
+ * very style it will be drawn in ([appTextStyle]) — measuring in a near-enough
+ * style is answering the question about a different string — and in the room
+ * actually left after whatever shares the slot.
+ *
+ * Measured rather than drawn-then-corrected: laying it out large, noticing the
+ * overflow and recomposing smaller would show one frame of the wrong size on
+ * every title that needs shrinking.
+ *
+ * The smaller size is the player's title-card size, so the two places in the app
+ * that show a long name agree with each other.
+ */
+@Composable
+private fun HeaderTitle(title: String, fit: Boolean, roomPx: Int) {
+    val full = nSp(20)
+    val style = appTextStyle(full, role = TextRole.Subheading, align = TextAlign.Center)
+    val measurer = rememberTextMeasurer()
+    val fits = !fit || roomPx <= 0 || remember(title, roomPx, style) {
+        !measurer.measure(
+            AnnotatedString(title),
+            style = style,
+            maxLines = 1,
+            constraints = Constraints(maxWidth = roomPx),
+        ).hasVisualOverflow
+    }
+    AppText(
+        title,
+        if (fits) full else pxSp(SUBPAGE_TITLE_PX),
+        lineHeight = if (fits) TextUnit.Unspecified else pxSp(SUBPAGE_TITLE_LINE_PX),
+        role = TextRole.Subheading,
+        maxLines = 1,
+        align = TextAlign.Center,
+    )
+}
+
+/** The size a title that will not fit drops to — the player's title card. */
+private const val SUBPAGE_TITLE_PX = 45
+private const val SUBPAGE_TITLE_LINE_PX = 54
 
 /**
  * Header height in LP3 pixels — 160px, the same 4 grid units as the bottom bars.
@@ -85,6 +140,13 @@ fun AppHeader(
      * you are looking at.
      */
     onTitleClick: (() -> Unit)? = null,
+    /**
+     * Let a title that will not fit drop to a smaller size rather than being cut.
+     *
+     * Library pages only, and off by default: elsewhere the titles are the app's
+     * own short words, where a second size would be variation without a reason.
+     */
+    fitTitle: Boolean = false,
 ) {
     // Left and right slots are 160px squares, so their hit boxes match the
     // transport's and the icons land on the shared 80px axis. The right slot
@@ -137,26 +199,24 @@ fun AppHeader(
         }
         Spacer(Modifier.width(leadingSpacer).height(headerHeight))
 
-        Box(
+        BoxWithConstraints(
             modifier = Modifier.weight(1f).fillMaxHeight(),
             contentAlignment = Alignment.Center,
         ) {
+            val room = constraints.maxWidth
             when {
                 titleContent != null -> titleContent()
                 title != null && onTitleClick != null -> Row(
                     modifier = Modifier.appClickable(onClick = onTitleClick),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    AppText(
-                        title,
-                        nSp(20),
-                        role = TextRole.Subheading,
-                        maxLines = 1,
-                        align = TextAlign.Center,
-                    )
+                    // The chevron sits beside the title and takes width from it,
+                    // so the fit is judged against what is left rather than the
+                    // whole slot.
+                    HeaderTitle(title, fitTitle, room - with(LocalDensity.current) { n(22).roundToPx() })
                     AppIcon(AppIcons.ArrowDropDown, size = n(22))
                 }
-                title != null -> AppText(title, nSp(20), role = TextRole.Subheading, maxLines = 1, align = TextAlign.Center)
+                title != null -> HeaderTitle(title, fitTitle, room)
                 else -> {}
             }
         }

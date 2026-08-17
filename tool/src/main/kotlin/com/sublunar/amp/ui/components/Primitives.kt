@@ -224,6 +224,32 @@ private val DEVICE_WEIGHTS = listOf(
 private fun onDeviceWeight(requested: FontWeight): FontWeight =
     DEVICE_WEIGHTS.firstOrNull { it.weight >= requested.weight } ?: FontWeight.Black
 
+/**
+ * The style [AppText] draws with, exposed so it can also be *measured* with.
+ *
+ * Anything deciding whether a string fits has to lay it out in the same face,
+ * size, weight and tracking it will be drawn in — a decision made against a
+ * near-enough style is a decision about a different string. See the header's
+ * fitted title.
+ */
+@Composable
+fun appTextStyle(
+    size: TextUnit,
+    lineHeight: TextUnit = TextUnit.Unspecified,
+    role: TextRole = TextRole.Copy,
+    weight: FontWeight? = null,
+    align: TextAlign? = null,
+): androidx.compose.ui.text.TextStyle {
+    val base = role.style()
+    return base.copy(
+        fontSize = size,
+        lineHeight = if (lineHeight != TextUnit.Unspecified) lineHeight else size * 1.25f,
+        fontWeight = onDeviceWeight(weight ?: base.fontWeight ?: FontWeight.Normal),
+        letterSpacing = trackingFor(base, size),
+        textAlign = align ?: TextAlign.Unspecified,
+    )
+}
+
 @Composable
 fun AppText(
     text: String,
@@ -239,14 +265,7 @@ fun AppText(
     align: TextAlign? = null,
     overflow: TextOverflow = TextOverflow.Ellipsis,
 ) {
-    val base = role.style()
-    val style = base.copy(
-        fontSize = size,
-        lineHeight = if (lineHeight != TextUnit.Unspecified) lineHeight else size * 1.25f,
-        fontWeight = onDeviceWeight(weight ?: base.fontWeight ?: FontWeight.Normal),
-        letterSpacing = trackingFor(base, size),
-        textAlign = align ?: TextAlign.Unspecified,
-    )
+    val style = appTextStyle(size, lineHeight, role, weight, align)
     Text(
         text = text,
         modifier = if (dim) modifier.alpha(0.5f) else modifier,

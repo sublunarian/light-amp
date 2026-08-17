@@ -34,6 +34,9 @@ import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.ScrollableList
+import com.sublunar.amp.ui.components.LibraryList
+import com.sublunar.amp.ui.components.headerSearch
+import com.sublunar.amp.ui.components.listSearch
 import com.sublunar.amp.ui.n
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
@@ -97,15 +100,20 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 // left, this page's menu behind its title.
                 leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
                 title = "Downloaded Songs",
-                onTitleClick = { go { SongsSortScreen(it, "Downloaded Songs") } },
-                searchAction = { openLibrarySearch(withKeyboard = true) },
-                rightAction = libraryCornerAction(),
+                onTitleClick = titleMenu { go { SongsSortScreen(it, "Downloaded Songs") } },
+                searchAction = headerSearch { openLibrarySearch(withKeyboard = true) },
+                rightAction = libraryCorner { go { SongsSortScreen(it, "Downloaded Songs") } },
+                fitTitle = true,
             )
             if (tracks.isEmpty() && !progress.active && bytes == 0L) {
                 EmptyState("Nothing downloaded yet")
                 return@LibrarySubPage
             }
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            LibraryList(
+                anchor = "downloaded-songs",
+                onSearch = listSearch { openLibrarySearch(withKeyboard = true) },
+                modifier = Modifier.fillMaxSize(),
+            ) {
                 if (progress.active || paused) {
                     item {
                         // Separate from pause: one stops for now, the other throws

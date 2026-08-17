@@ -53,6 +53,9 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
         val invert by App.settings.invertColors.collectAsState(initial = false)
         val karaoke by App.settings.karaokeLyrics.collectAsState(initial = true)
         val monochrome by App.settings.monochromeArtwork.collectAsState(initial = true)
+        val inlineSearch by App.inlineSearch.collectAsState()
+        val hideArtistImages by App.settings.hideArtistImages.collectAsState(initial = false)
+        val hideDownloadIcons by App.hideDownloadIcons.collectAsState()
         val artwork by App.settings.artwork.collectAsState(initial = ArtworkMode.SMALL)
         val dataMode by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
         val sources by App.settings.sources.collectAsState(initial = emptyList())
@@ -125,6 +128,33 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                 item {
                     ToggleRow("Karaoke Lyrics", karaoke) {
                         App.scope.launch { App.settings.setKaraokeLyrics(!karaoke) }
+                    }
+                }
+                item {
+                    // Only offered while there is artwork to single out: with
+                    // Hide Artwork on, the artists have already lost theirs.
+                    if (artwork != ArtworkMode.NONE) {
+                        ToggleRow("Hide Artist Photos", hideArtistImages) {
+                            App.scope.launch {
+                                App.settings.setHideArtistImages(!hideArtistImages)
+                            }
+                        }
+                    }
+                }
+                item {
+                    // Search out of the header and into the lists — see
+                    // AppSettings.inlineSearch for what moves where.
+                    ToggleRow("Inline Search", inlineSearch) {
+                        App.scope.launch { App.settings.setInlineSearch(!inlineSearch) }
+                    }
+                }
+                item {
+                    // The marks go; the layout does not move with them — see
+                    // AppSettings.hideDownloadIcons.
+                    ToggleRow("Hide Download Icons", hideDownloadIcons) {
+                        App.scope.launch {
+                            App.settings.setHideDownloadIcons(!hideDownloadIcons)
+                        }
                     }
                 }
 
