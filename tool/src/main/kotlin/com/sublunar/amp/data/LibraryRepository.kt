@@ -19,6 +19,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
@@ -104,7 +105,20 @@ class LibraryRepository(
      */
     val downloadFiles: StateFlow<List<DownloadFile>> =
         observing { it.observeDownloads() }
+            .onEach { downloadsLoaded.value = true }
             .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Whether [downloadFiles] has heard from the database yet.
+     *
+     * It seeds as an empty list, and an empty list is also a perfectly ordinary
+     * answer — so "no downloads" and "not asked yet" are the same value and
+     * cannot be told apart by reading it. Anything that decides between a local
+     * file and a stream has to know which it is looking at: deciding while this
+     * is false streams tracks that are sitting on the disk, and the choice is
+     * baked into the queue and never revisited. See PlaybackController.
+     */
+    val downloadsLoaded: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
     /** Track ids with a completed download. */
     val downloadedTrackIds: StateFlow<Set<String>> =

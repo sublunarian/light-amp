@@ -242,7 +242,12 @@ class PlaybackController(
         // While casting, the renderer is the source of truth for these — the local
         // player sits paused and would otherwise report position 0 / not-playing
         // straight over the cast state.
-        scope.launch { p.isPlaying.collect { if (!isCasting) _isPlaying.value = it } }
+        scope.launch {
+            p.isPlaying.collect {
+                if (!isCasting) _isPlaying.value = it
+                watchGap(it)
+            }
+        }
         // A server-seeked stream starts at 0:00 of a shorter file, so both
         // readouts are shifted back into the track's own timeline.
         scope.launch { p.positionMs.collect { if (!isCasting) _positionMs.value = it + streamOffsetMs } }
@@ -292,6 +297,7 @@ class PlaybackController(
                 if (isCasting) return@collect
                 if (idx >= 0 && idx != _index.value) {
                     _index.value = idx
+                    logTrackSource("index")
                     // A new track is a fresh stream from its own beginning.
                     streamOffsetMs = 0
                     // A new track is a new session too, or Plex sees the same
@@ -327,7 +333,12 @@ class PlaybackController(
                     }
                 }
         }
-        scope.launch { settings.dataMode.collect { dataMode = it } }
+        scope.launch {
+            settings.dataMode.collect {
+                dataMode = it
+                reresolveQueue("dataMode")
+            }
+        }
         // The server answering again is the signal to stop pinning playback to
         // local files; the next track resolves normally.
         scope.launch {
@@ -339,7 +350,12 @@ class PlaybackController(
                 }
             }
         }
-        scope.launch { Connectivity.wifiConnected.collect { onWifi = it } }
+        scope.launch {
+            Connectivity.wifiConnected.collect {
+                onWifi = it
+                reresolveQueue("wifi")
+            }
+        }
         // Shared with the library rather than queried again here — one read of
         // the downloads table feeds both. It also fixes a subtler thing: this
         // used to resolve `dao` once, at bind, and so stayed subscribed to
@@ -354,6 +370,7 @@ class PlaybackController(
                         row.trackId to (file to StreamFormat.fromId(row.format))
                     }
                 }.toMap()
+                reresolveQueue("downloads")
             }
         }
         // Mirror the system media volume so the fader reflects it (and the
@@ -443,6 +460,19 @@ class PlaybackController(
      */
     suspend fun restoreState(library: List<Track>) {
         if (player == null || _queue.value.isNotEmpty()) return
+        // Wait for the downloads to be known before deciding anything.
+        //
+        // Every track resolves to a file or a URL exactly once, when the queue
+        // is built, and the answer is then fixed for as long as that queue
+        // lives. Deciding before the database has answered means deciding with
+        // no downloads on record, so a fully downloaded library restores as a
+        // queue of streams — which on a bad connection stalls for a socket
+        // timeout per track, and offline never plays at all.
+        //
+        // Bounded: a database that never answers must not cost the restore.
+        withTimeoutOrNull(DOWNLOADS_READY_TIMEOUT_MS) {
+            App.library.downloadsLoaded.first { it }
+        }
         val localIds = settings.savedQueueIds.first()
         val saved = if (localIds.isNotEmpty()) {
             SavedQueue(
@@ -475,6 +505,8 @@ class PlaybackController(
             nowPlayingId = null
             // Start position goes in at prepare time: seekTo() clamps to the
             // duration, which is still unknown this early, so it would land on 0.
+            queuedSources = tracks.map { it.source() }
+            logQueueSources("restore", queuedSources)
             p.setMediaQueueAt(tracks.map { it.toAudioItem() }, index, position)
             _index.value = index
             // Deliberately not p.play(): restoring should cue the track up, not
@@ -563,6 +595,7 @@ class PlaybackController(
     }
 
     fun togglePlayPause() {
+        logTransport("togglePlayPause")
         val renderer = _castRenderer.value
         if (renderer != null) {
             val wasPlaying = _isPlaying.value
@@ -580,6 +613,7 @@ class PlaybackController(
     }
 
     fun play() {
+        logTransport("play")
         val renderer = _castRenderer.value
         if (renderer != null) {
             _isPlaying.value = true
@@ -592,6 +626,7 @@ class PlaybackController(
     }
 
     fun pause() {
+        logTransport("pause")
         val renderer = _castRenderer.value
         if (renderer != null) {
             _isPlaying.value = false
@@ -1464,6 +1499,173 @@ class PlaybackController(
         }
     }
 
+    /**
+     * TEMPORARY — Bluetooth gap diagnosis. Remove once the car is understood;
+     * see the AmpGap tag in logcat.
+     *
+     * Measures the thing actually complained about: the silence. The player
+     * reports `isPlaying = false` while it buffers, so false-then-true with the
+     * user never having touched pause is exactly a gap you could hear, and the
+     * time between the two is how long it lasted.
+     *
+     * A gap that ends on a different track is the one that matters — a car head
+     * unit of a certain age tears down its A2DP stream across any silence and
+     * takes seconds to re-acquire, which would turn a small gap here into a long
+     * one there. Where the track came from is logged beside it, because a
+     * streamed track is a live transcode starting from nothing where a
+     * downloaded one is a local file, and that is the likeliest reason for a gap
+     * to exist at all.
+     */
+    private var silenceSinceMs = 0L
+    private var silenceFromIndex = -1
+    private var silenceFromTitle = ""
+
+    private fun watchGap(playing: Boolean) {
+        if (isCasting) return
+        if (!playing) {
+            // First false of a run: later ones are the same silence continuing.
+            if (silenceSinceMs == 0L) {
+                silenceSinceMs = System.currentTimeMillis()
+                silenceFromIndex = _index.value
+                silenceFromTitle = _queue.value.getOrNull(_index.value)?.title.orEmpty()
+            }
+            return
+        }
+        val began = silenceSinceMs
+        silenceSinceMs = 0L
+        if (began == 0L) return
+        val gap = System.currentTimeMillis() - began
+        val track = _queue.value.getOrNull(_index.value)
+        val moved = _index.value != silenceFromIndex
+        android.util.Log.i(
+            "AmpGap",
+            "silence ${gap}ms ${if (moved) "BETWEEN tracks" else "mid-track"} — " +
+                "\"$silenceFromTitle\" → \"${track?.title.orEmpty()}\" " +
+                "src=${playedFrom(track)} fmt=${effectiveFormat().id} " +
+                "wifi=$onWifi mode=$dataMode",
+        )
+    }
+
+    /**
+     * What the player was actually given for this track.
+     *
+     * Asks [source] rather than re-deriving it: the first version of this
+     * guessed from "is there a downloaded copy", which is only half of the
+     * decision — a download is abandoned for a better stream on Wi-Fi or under
+     * Make it Hurt — so it could report "downloaded" for a track being streamed.
+     * That is the difference between a network problem and a local one, which is
+     * the whole question here, so it is read from the decision itself.
+     */
+    private fun playedFrom(track: Track?): String = when (val src = track?.source()) {
+        null -> "-"
+        is LightAudioSource.FileSource -> "file"
+        is LightAudioSource.UrlSource -> "url"
+        else -> src::class.simpleName.orEmpty()
+    }
+
+    /**
+     * TEMPORARY — with the gap log. Says whether a silence was asked for.
+     *
+     * The captured stalls showed the AudioTrack going to `paused` and then
+     * `stopped` with nothing in the app obviously asking, so the two cases have
+     * to be told apart: a transport call logged here immediately before a gap is
+     * the app's doing, and a gap with no such line is the audio path stalling
+     * underneath it.
+     */
+    private fun logTransport(what: String) {
+        android.util.Log.i("AmpGap", "transport $what")
+    }
+
+    /**
+     * TEMPORARY — what the player was handed, said out loud at every track start.
+     *
+     * A stream that cannot be reached does not fail: the player sits in
+     * BUFFERING at position zero indefinitely, which looks from the outside
+     * exactly like an app that has stopped working. Whether a track resolved to
+     * a file or a URL is therefore the first thing worth knowing, and it is not
+     * visible anywhere in the UI.
+     */
+    private fun logTrackSource(reason: String) {
+        val track = _queue.value.getOrNull(_index.value) ?: return
+        android.util.Log.i(
+            "AmpGap",
+            "start[$reason] \"${track.title}\" src=${playedFrom(track)} " +
+                "hasDownload=${localFiles.containsKey(track.id)} " +
+                "fmt=${effectiveFormat().id} wifi=$onWifi mode=$dataMode " +
+                "offlineLatched=$forceOffline downloads=${localFiles.size}",
+        )
+    }
+
+    /**
+     * TEMPORARY — what the queue was *actually* built from.
+     *
+     * Not the same question as [playedFrom], which re-runs the decision now: the
+     * queue holds whatever was decided when it was built, and the two disagree
+     * exactly when this bug bites. Counting them is what makes a queue of
+     * streams-for-downloaded-tracks visible instead of invisible.
+     */
+    private fun logQueueSources(reason: String, items: List<LightAudioSource>) {
+        val urls = items.count { it is LightAudioSource.UrlSource }
+        android.util.Log.i(
+            "AmpGap",
+            "queue[$reason] ${items.size} items — $urls url / ${items.size - urls} file, " +
+                "downloads=${localFiles.size} wifi=$onWifi mode=$dataMode",
+        )
+    }
+
+    /**
+     * Rebuild the queue's sources when the answer to "file or stream?" may have
+     * changed.
+     *
+     * That question is answered per track by [source], and until now it was
+     * answered exactly once — when the queue was built — and then frozen into
+     * it. Everything the answer depends on can move while that same queue is
+     * still playing: Wi-Fi goes away, a download finishes, the data mode
+     * changes. A queue built on Wi-Fi therefore went on asking the network for
+     * tracks that were by then sitting on the disk, which offline means stalling
+     * for a socket timeout on every one of them, and looks from the outside like
+     * an app that has simply stopped working.
+     *
+     * The playing item is deliberately left alone. Replacing it would restart
+     * the track under the listener, which is a worse thing to do than letting
+     * one track finish on the source it began with — everything after it is
+     * corrected, which is where the stalls were.
+     */
+    private fun reresolveQueue(reason: String) {
+        val p = player ?: return
+        if (isCasting) return
+        val tracks = _queue.value
+        if (tracks.isEmpty()) return
+        val current = _index.value.coerceIn(0, tracks.lastIndex)
+        // Nothing to say unless something actually moves — this runs on every
+        // download that completes, and most of them change no answers at all.
+        val rebuilt = tracks.map { it.source() }
+        if (rebuilt == queuedSources) return
+        queuedSources = rebuilt
+        val changed = rebuilt.count { it is LightAudioSource.UrlSource }
+        android.util.Log.i(
+            "AmpGap",
+            "requeue[$reason] $changed url / ${rebuilt.size - changed} file " +
+                "(current $current left as is)",
+        )
+        // ExoPlayer's looper is Main and it enforces that — see restoreState.
+        scope.launch(Dispatchers.Main.immediate) {
+            if (current > 0) {
+                p.replaceRange(0, current, tracks.subList(0, current).map { it.toAudioItem() })
+            }
+            if (current + 1 <= tracks.lastIndex) {
+                p.replaceRange(
+                    current + 1,
+                    tracks.size,
+                    tracks.subList(current + 1, tracks.size).map { it.toAudioItem() },
+                )
+            }
+        }
+    }
+
+    /** What the queue was last built from, so a no-op rebuild stays a no-op. */
+    private var queuedSources: List<LightAudioSource> = emptyList()
+
     /** Move to the next queue entry on the renderer; false when the queue ends. */
     private suspend fun advanceCast(renderer: DlnaRenderer): Boolean {
         val next = when (_repeatMode.value) {
@@ -1487,6 +1689,9 @@ class PlaybackController(
         lastScrobbledId = null
         // Keep the local player loaded even while casting, so switching back to
         // this device resumes instantly instead of re-preparing the queue.
+        val sources = tracks.map { it.source() }
+        queuedSources = sources
+        logQueueSources("setQueue", sources)
         p.setMediaQueue(tracks.map { it.toAudioItem() }, startIndex)
         _index.value = startIndex
         // A new queue plays from the start of whatever it opens on. Any offset
@@ -1496,6 +1701,7 @@ class PlaybackController(
         // collector can't be relied on to clear it: it only fires when the index
         // *changes*, and a new queue often starts on the same one.
         streamOffsetMs = 0
+        logTrackSource("queue")
         // Picking something new to play is reason enough to try the server again.
         streamFailed.clear()
         // Right from the first frame, rather than whenever the stream gets round
@@ -1800,6 +2006,9 @@ class PlaybackController(
         private const val CAST_STOP_TIMEOUT_MS = 1_500L
 
         /** How often the queue snapshot is written while playing. */
+        /** How long a restore waits to learn what is downloaded before deciding. */
+        private const val DOWNLOADS_READY_TIMEOUT_MS = 4_000L
+
         private const val SAVE_STATE_INTERVAL_MS = 5_000L
         private const val SAVE_STATE_TIMEOUT_MS = 1_000L
 
