@@ -91,6 +91,13 @@ enum class LibraryTab(val title: String) {
     ALBUMS("Albums"),
 }
 
+internal fun iconFor(tab: LibraryTab): ImageVector = when (tab) {
+    LibraryTab.PLAYLISTS -> AppIcons.QueueMusic
+    LibraryTab.ARTISTS -> AppIcons.RecordVoiceOver
+    LibraryTab.SONGS -> AppIcons.MusicNote
+    LibraryTab.ALBUMS -> AppIcons.AlbumStack
+}
+
 class ShellActions(
     val nowPlaying: () -> Unit,
     val settings: () -> Unit,
@@ -98,6 +105,7 @@ class ShellActions(
     /** Opens the full-screen LP3 keyboard to edit the search query. */
     val editSearch: (String) -> Unit,
     val more: () -> Unit,
+    val browse: () -> Unit,
     /**
      * Each takes the page back should land on — a tab list is the parent of what
      * it opens, while a search result is a jump and names the hierarchy it
@@ -125,7 +133,6 @@ class ShellActions(
 @Composable
 fun LibraryShell(
     currentTab: LibraryTab,
-    onSelectTab: (LibraryTab) -> Unit,
     searchActive: Boolean,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
@@ -153,8 +160,10 @@ fun LibraryShell(
             }
             Navbar(
                 current = if (searchActive) null else currentTab,
-                onSelect = onSelectTab,
-                onMore = actions.more,
+                onSearch = actions.search,
+                onNowPlaying = actions.nowPlaying,
+                onBrowse = actions.browse,
+                showChevron = !searchActive,
             )
         }
     }
@@ -269,9 +278,8 @@ private fun SearchHeader(
 }
 
 /**
- * The header every tab shares: sort at the left corner, search and now-playing at
- * the right, and — when the setting puts it there — the liked/all switch in the
- * mirror of the search slot.
+ * The header every tab shares: sort folded into the title (with chevron when
+ * applicable), search, and More at the right. Now-playing moved to bottom bar.
  */
 @Composable
 private fun TabHeader(
@@ -281,14 +289,11 @@ private fun TabHeader(
     /** Makes the title a menu — list or grid, on the album lists. */
     onTitleClick: (() -> Unit)? = null,
 ) {
-    // Now-playing at the left corner, More at the right where it reads as this
-    // page's own menu rather than a fifth tab, and sort folded into the title,
-    // which is already the thing that names what you are looking at.
+    // More at the right where it reads as this page's own menu.
+    // Sort is on the title. Bottom bar provides now-playing access.
     AppHeader(
         title = tabTitle(tab, likedOnly(tab)),
-        leftAction = HeaderAction(AppIcons.Waveform, actions.nowPlaying),
         onTitleClick = onSort ?: onTitleClick,
-        searchAction = actions.search,
         rightAction = HeaderAction(AppIcons.MoreHoriz, actions.more),
     )
 }
@@ -629,142 +634,85 @@ private fun PlaylistsTab(actions: ShellActions) {
 @Composable
 fun Navbar(
     current: LibraryTab?,
-    onSelect: (LibraryTab) -> Unit,
-    onMore: () -> Unit,
+    onSearch: () -> Unit,
+    onNowPlaying: () -> Unit,
+    onBrowse: (() -> Unit)? = null,
+    showChevron: Boolean = false,
     moreActive: Boolean = false,
 ) {
-    // More lives in the header, where it belongs to the page rather than sitting
-    // in the bar as a fifth destination. What is left is four tabs, evenly
-    // spaced: pushed to the edges as the five were, four icons drift apart and
-    // stop reading as a row.
-    Row(
+    // 3-item tool bar on library root and all subs: left=search, center=current
+    // LibraryTab (with chevron only on root), right=now playing. Left and right
+    // icons sit at the edges; center takes any remaining space.
+     Row(
+         modifier = Modifier
+             .fillMaxWidth()
+             .height(px(BOTTOM_BAR_PX))
+             .padding(horizontal = 0.dp),
+         horizontalArrangement = Arrangement.SpaceBetween,
+         verticalAlignment = Alignment.CenterVertically,
+     ) {
+         NavIcon(AppIcons.Search) { onSearch() }
+         Spacer(Modifier.weight(1f))
+         BrowseCenter(current, showChevron) { onBrowse?.invoke() }
+         Spacer(Modifier.weight(1f))
+         NavIcon(AppIcons.Waveform) { onNowPlaying() }
+     }
+}
+
+@Composable
+private fun BrowseCenter(
+    tab: LibraryTab?,
+    showChevron: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
         modifier = Modifier
-            .fillMaxWidth()
-            // Matches the LP3's stock bottom bar: 4 grid units = 160px exactly,
-            // no top margin. No vertical padding, so icons centre on 80px.
-            .height(px(BOTTOM_BAR_PX))
-            .padding(horizontal = 0.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically,
+            .size(px(NAV_TILE_PX))
+            .clip(RoundedCornerShape(px(NAV_TILE_RADIUS_PX)))
+            .appClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        // A source with no server has nowhere to keep a playlist, so the tab
-        // isn't there to be tapped — see MusicSource.supportsPlaylists.
-        if (App.source.collectAsState().value.supportsPlaylists) {
-            // Near enough the glyph's own size to still be the reference the
-            // others are brought down towards, but trimmed and lifted slightly:
-            // it sat a shade large and a shade low against its neighbours.
-            NavIcon(
-                AppIcons.QueueMusic,
-                current == LibraryTab.PLAYLISTS,
-                scale = PLAYLISTS_SCALE,
-                lift = PLAYLISTS_LIFT_PX,
-            ) { onSelect(LibraryTab.PLAYLISTS) }
+        val icon = tab?.let { iconFor(it) } ?: AppIcons.AlbumStack
+        val scale = if (showChevron && tab != null) BROWSE_ICON_SCALE_WITH_CHEVRON else 1f
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AppIcon(icon = icon, size = n(28) * scale)
+            if (showChevron && tab != null) {
+                Spacer(Modifier.width(n(4)))
+                AppIcon(AppIcons.ArrowDropDown, size = n(BROWSE_CHEVRON_SIZE))
+            }
         }
-        NavIcon(
-            AppIcons.RecordVoiceOver,
-            current == LibraryTab.ARTISTS,
-            scale = navScale(ARTISTS_DRAWN_PX, ARTISTS_TARGET_PX),
-        ) { onSelect(LibraryTab.ARTISTS) }
-        NavIcon(
-            AppIcons.AlbumStack,
-            current == LibraryTab.ALBUMS,
-            scale = navScale(ALBUMS_DRAWN_PX, TALL_TARGET_PX),
-        ) { onSelect(LibraryTab.ALBUMS) }
-        NavIcon(
-            AppIcons.MusicNote,
-            current == LibraryTab.SONGS,
-            scale = navScale(SONGS_DRAWN_PX, TALL_TARGET_PX),
-        ) { onSelect(LibraryTab.SONGS) }
     }
 }
 
 @Composable
 private fun NavIcon(
     icon: ImageVector,
-    active: Boolean,
-    /** Trims a glyph that draws larger than the rest at the same box size. */
-    scale: Float = 1f,
-    /** Nudges the glyph up inside its tile, in the same px units as everything else. */
-    lift: Int = 0,
     onClick: () -> Unit,
 ) {
-    // The selected tab gets a tile behind it — the same way the queue button
-    // marks itself on the player. Its colour comes from the theme, so Invert
-    // Colors still works.
     Box(
         modifier = Modifier
             .size(px(NAV_TILE_PX))
             .clip(RoundedCornerShape(px(NAV_TILE_RADIUS_PX)))
-            .then(
-                Modifier,
-            )
             .appClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         AppIcon(
             icon = icon,
-            size = px(NAV_ICON_PX) * scale,
-            // Inverted out of the white tile, or — with no tile — simply the
-            // bright one among dimmer neighbours. The secondary grey was too
-            // close to white here to read as a difference at all, so the
-            // unselected glyphs carry an explicit alpha instead.
-            // The tab you are on is simply the bright one; the rest step back.
+            size = n(28),
             tint = LightThemeTokens.colors.content,
-            modifier = (if (active) Modifier else Modifier.alpha(NAV_DIM_ALPHA))
-                .offset(y = -px(lift)),
         )
     }
 }
 
-/**
- * The tile a selected tab inverts into, and the glyph inside it.
- *
- * The glyph is close to the size it was before tabs gained a tile — shrinking it
- * to fit inside one made the whole bar read as smaller than the app around it.
- * The tile stays *under* [BOTTOM_BAR_PX]: at 162 it was taller than the bar
- * itself, which is what made the bar look as though it had grown.
- */
 private const val NAV_TILE_PX = 144
 private const val NAV_TILE_RADIUS_PX = 6
-private const val NAV_ICON_PX = 114
 
-/** Matches the player's secondary row — the app's one "present but not chosen". */
-private const val NAV_DIM_ALPHA = 0.45f
+/** Chevron shown next to type icon only on the library root. Match top-bar chevron (n(22)). */
+private const val BROWSE_CHEVRON_SIZE = 22
+/** Slight shrink so icon + chevron balance inside the NAV_TILE hit area. */
+private const val BROWSE_ICON_SCALE_WITH_CHEVRON = 0.92f
 
-/**
- * Bringing the tab glyphs closer to one height.
- *
- * A Material icon fills its 24dp viewport differently depending on its shape —
- * a mic is tall and narrow, a playlist is wide and short, a pair of sleeves goes
- * corner to corner — so one box size draws wildly different things. At the
- * shared box the bar ran from 66px (playlists) to 90px (artists), which read as
- * four icons in three sizes rather than as one row.
- *
- * `*_DRAWN_PX` is what each glyph actually drew at that shared box, measured off
- * the panel; the target is what it should draw instead. Re-measure rather than
- * guess if a glyph changes.
- *
- * The playlist glyph is the reference and is left alone — the tall ones were
- * what read wrong, and growing the smallest to meet them halfway only moved the
- * problem onto it.
- */
-private const val ARTISTS_DRAWN_PX = 90
-// Measured at 89 while the old 0.85 trim was still applied, so untrimmed it is
-// 89 / 0.85 — the others were measured with no scale on them at all.
-private const val ALBUMS_DRAWN_PX = 105
-private const val SONGS_DRAWN_PX = 86
 
-/** Where the tall glyphs land: above the playlist's own 66, well under their 90. */
-private const val TALL_TARGET_PX = 72
-
-/** A mic is the narrowest of them, so it carries a little more height than the rest. */
-private const val ARTISTS_TARGET_PX = 75
-
-private fun navScale(drawnPx: Int, targetPx: Int): Float = targetPx.toFloat() / drawnPx
-
-/** A shade off the reference size, and a shade higher in the tile. Judged by eye. */
-private const val PLAYLISTS_SCALE = 0.94f
-private const val PLAYLISTS_LIFT_PX = 5
 
 
 

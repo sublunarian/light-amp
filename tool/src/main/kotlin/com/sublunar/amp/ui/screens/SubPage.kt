@@ -16,12 +16,7 @@ import com.thelightphone.sdk.SimpleLightScreen
 
 /**
  * Chrome for every library sub-page (album, artist, playlist, liked, …): the
- * page's own content with the library tab bar kept underneath it, so navigation
- * never disappears just because the user drilled in.
- *
- * Tapping a tab records the choice in [LibraryNav] and unwinds the whole stack
- * back to the root screen, which hosts the shell — that's what makes the tabs
- * work from any depth rather than only one level down.
+ * page's own content with the library bottom bar kept underneath it.
  */
 /**
  * Open library search from a sub-page: the search field lives in the shell's
@@ -41,6 +36,8 @@ fun SimpleLightScreen<*>.libraryCornerAction(): HeaderAction =
 fun SimpleLightScreen<*>.LibrarySubPage(
     /** Set by More, which is a tab in its own right rather than a page of one. */
     moreActive: Boolean = false,
+    onNowPlaying: (() -> Unit)? = null,
+    onBrowse: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     PlayerTheme {
@@ -48,20 +45,13 @@ fun SimpleLightScreen<*>.LibrarySubPage(
             Box(modifier = Modifier.weight(1f)) {
                 Column(modifier = Modifier.fillMaxSize()) { content() }
             }
-            // The tab that led here stays lit, so drilling Artists → artist →
-            // album still reads as "you are in Artists" until a tab is tapped.
-            // Unless no tab led here at all: a page opened as a peer of the tabs
-            // lights none of them, and nor does anything opened from one.
             val current by LibraryNav.currentTab.collectAsState()
             val offTab by LibraryNav.offTab.collectAsState()
             Navbar(
                 current = if (moreActive || offTab) null else current,
-                moreActive = moreActive,
-                onSelect = { tab ->
-                    LibraryNav.selectTab(tab)
-                    popToRoot()
-                },
-                onMore = { go { MoreScreen(it) } },
+                onSearch = { openLibrarySearch() },
+                onNowPlaying = onNowPlaying ?: { go { NowPlayingScreen(it) } },
+                onBrowse = onBrowse ?: { popToRoot() },
             )
         }
     }

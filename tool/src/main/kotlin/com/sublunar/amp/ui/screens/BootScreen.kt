@@ -143,7 +143,6 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                 val searchQuery by viewModel.searchQuery.collectAsState()
                 LibraryShell(
                     currentTab = tab,
-                    onSelectTab = { LibraryNav.selectTab(it) },
                     searchActive = searchActive,
                     searchQuery = searchQuery,
                     onSearchQueryChange = { viewModel.setSearchQuery(it) },
@@ -175,6 +174,7 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                             )
                         },
                         more = { go { MoreScreen(it) } },
+                        browse = { go { TypePickerScreen(it) } },
                         openAlbum = { id, parent -> openAlbum(id, parent) },
                         openArtist = { name, parent -> openArtist(name, parent) },
                         openPlaylist = { id, name -> go { PlaylistDetailScreen(it, id, name) } },
