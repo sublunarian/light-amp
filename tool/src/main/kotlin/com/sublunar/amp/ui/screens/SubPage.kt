@@ -32,14 +32,27 @@ fun SimpleLightScreen<*>.openLibrarySearch(withKeyboard: Boolean = false) {
     popToRoot()
 }
 
-/** More sits in every library page's right-hand corner — see LibraryShell. */
+/**
+ * More sits in every library page's right-hand corner — see LibraryShell.
+ *
+ * [page] is what More carries up: the corner is drawn by the page itself, so
+ * this is where the menu learns whose view, sort and filter it is showing.
+ */
 @Composable
-fun SimpleLightScreen<*>.libraryCornerAction(): HeaderAction =
-    HeaderAction(AppIcons.MoreHoriz) { go { MoreScreen(it) } }
+fun SimpleLightScreen<*>.libraryCornerAction(
+    page: LibraryPage,
+    /** Only where the page's name isn't a constant — see [MoreScreen]. */
+    pageTitle: String? = null,
+): HeaderAction =
+    HeaderAction(AppIcons.MoreHoriz) { go { MoreScreen(it, page, pageTitle) } }
 
 
 @Composable
 fun SimpleLightScreen<*>.LibrarySubPage(
+    /** Which page this is, for the More the bar below opens — see [MoreScreen]. */
+    page: LibraryPage,
+    /** Only where the page's name isn't a constant — see [MoreScreen]. */
+    pageTitle: String? = null,
     /** Set by More, which is a tab in its own right rather than a page of one. */
     moreActive: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
@@ -65,7 +78,7 @@ fun SimpleLightScreen<*>.LibrarySubPage(
                 // Nothing to open when this *is* More: the bar stays on that
                 // page now, and a destination that pushes a copy of itself is a
                 // stack that only grows.
-                onMore = { if (!moreActive) go { MoreScreen(it) } },
+                onMore = { if (!moreActive) go { MoreScreen(it, page, pageTitle) } },
                 // The bar is on these pages too, so its search reaches the
                 // library the way the header's used to: activate and unwind.
                 onSearch = { openLibrarySearch() },

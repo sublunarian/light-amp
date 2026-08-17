@@ -20,7 +20,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.runtime.collectAsState
 import com.sublunar.amp.App
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
@@ -133,14 +132,6 @@ fun AppHeader(
      */
     secondaryLeftAction: HeaderAction? = null,
     /**
-     * Makes the title itself a menu — a chevron appears beside it to say so.
-     *
-     * Used by the album lists to choose list or grid: the header has no room
-     * for a fourth button, and the title is already the thing that names what
-     * you are looking at.
-     */
-    onTitleClick: (() -> Unit)? = null,
-    /**
      * Let a title that will not fit drop to a smaller size rather than being cut.
      *
      * Library pages only, and off by default: elsewhere the titles are the app's
@@ -206,16 +197,10 @@ fun AppHeader(
             val room = constraints.maxWidth
             when {
                 titleContent != null -> titleContent()
-                title != null && onTitleClick != null -> Row(
-                    modifier = Modifier.appClickable(onClick = onTitleClick),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // The chevron sits beside the title and takes width from it,
-                    // so the fit is judged against what is left rather than the
-                    // whole slot.
-                    HeaderTitle(title, fitTitle, room - with(LocalDensity.current) { n(22).roundToPx() })
-                    AppIcon(AppIcons.ArrowDropDown, size = n(22))
-                }
+                // The title names the page and does nothing else. It used to
+                // open a menu, marked by a chevron beside it — an affordance
+                // small enough to miss, for one of three scattered ways into
+                // what is now a single list of rows on More.
                 title != null -> HeaderTitle(title, fitTitle, room)
                 else -> {}
             }

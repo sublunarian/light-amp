@@ -101,7 +101,8 @@ class ShellActions(
     val search: () -> Unit,
     /** Opens the full-screen LP3 keyboard to edit the search query. */
     val editSearch: (String) -> Unit,
-    val more: () -> Unit,
+    /** More carries the showing page's modifiers up with it — see [LibraryPage]. */
+    val more: (LibraryPage) -> Unit,
     /**
      * Each takes the page back should land on — a tab list is the parent of what
      * it opens, while a search result is a jump and names the hierarchy it
@@ -110,12 +111,6 @@ class ShellActions(
     val openAlbum: (String, Parent) -> Unit,
     val openArtist: (String, Parent) -> Unit,
     val openPlaylist: (String, String) -> Unit,
-    val albumsSort: () -> Unit,
-    /** The album lists' own list-or-grid menu, opened from the title. */
-    val albumView: () -> Unit,
-    val songsSort: () -> Unit,
-    val artistsSort: () -> Unit,
-    val playlistsSort: () -> Unit,
     val trackOptions: (String, SelectionState?) -> Unit,
     /** Opens the bulk-action sheet for a multi-selection. */
     val selectionActions: (List<Track>, SelectionState) -> Unit,
@@ -158,7 +153,9 @@ fun LibraryShell(
             Navbar(
                 current = if (searchActive) null else currentTab,
                 onSelect = onSelectTab,
-                onMore = actions.more,
+                onMore = {
+                    actions.more(if (searchActive) LibraryPage.SEARCH else currentTab.page)
+                },
                 onSearch = actions.search,
                 searchActive = searchActive,
             )
@@ -279,7 +276,7 @@ private fun SearchHeader(
 ) {
     AppHeader(
         leftAction = HeaderAction(AppIcons.Waveform, actions.nowPlaying),
-        rightAction = HeaderAction(AppIcons.MoreHoriz, actions.more),
+        rightAction = HeaderAction(AppIcons.MoreHoriz) { actions.more(LibraryPage.SEARCH) },
         titleContent = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -317,28 +314,31 @@ private fun SearchHeader(
  * mirror of the search slot.
  */
 @Composable
-private fun TabHeader(
-    tab: LibraryTab,
-    onSort: (() -> Unit)?,
-    actions: ShellActions,
-    /** Makes the title a menu — list or grid, on the album lists. */
-    onTitleClick: (() -> Unit)? = null,
-) {
-    // Now-playing at the left corner, More at the right where it reads as this
-    // page's own menu rather than a fifth tab, and sort folded into the title,
-    // which is already the thing that names what you are looking at.
+private fun TabHeader(tab: LibraryTab, actions: ShellActions) {
+    // Now-playing at the left corner and More at the right, where it reads as
+    // this page's own menu rather than a fifth tab. Nothing is folded into the
+    // title: it used to open the sort menu, which was a gesture with nothing to
+    // announce it and one of three different ways into the three things that
+    // are now rows on More. The title names the page and no more than that.
     //
-    val title = tabTitle(tab, likedOnly(tab))
     // Search has gone to the tab bar, so this is two corner squares and a title
     // spanning everything between them.
     AppHeader(
-        title = title,
+        title = tabTitle(tab, likedOnly(tab)),
         leftAction = HeaderAction(AppIcons.Waveform, actions.nowPlaying),
         fitTitle = true,
-        onTitleClick = onSort ?: onTitleClick,
-        rightAction = HeaderAction(AppIcons.MoreHoriz, actions.more),
+        rightAction = HeaderAction(AppIcons.MoreHoriz) { actions.more(tab.page) },
     )
 }
+
+/** The tab, as the page whose modifiers More shows. */
+val LibraryTab.page: LibraryPage
+    get() = when (this) {
+        LibraryTab.ALBUMS -> LibraryPage.ALBUMS
+        LibraryTab.SONGS -> LibraryPage.SONGS
+        LibraryTab.ARTISTS -> LibraryPage.ARTISTS
+        LibraryTab.PLAYLISTS -> LibraryPage.PLAYLISTS
+    }
 
 /** Whether this tab is currently showing only liked items. */
 @Composable
@@ -400,14 +400,7 @@ private fun AlbumsTab(actions: ShellActions) {
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     val grid = App.albumGrid.collectAsState().value
     Column(Modifier.fillMaxSize()) {
-        TabHeader(
-            LibraryTab.ALBUMS,
-            actions.albumsSort,
-            actions,
-            // Only where there is a choice to make: with covers off there is no
-            // grid to switch to.
-            onTitleClick = actions.albumView.takeIf { !App.hideArtwork.collectAsState().value },
-        )
+        TabHeader(LibraryTab.ALBUMS, actions)
         if (grid) {
             // Its own anchor, separate from the list's: see rememberGridAnchor.
             val gridState = rememberGridAnchor("tab:albums/grid", headerCount = 1)
@@ -546,7 +539,7 @@ private fun SongsTab(actions: ShellActions) {
                 actions.selectionActions(selection.pick(sorted) { it.id }, selection)
             }
         } else {
-            TabHeader(LibraryTab.SONGS, actions.songsSort, actions)
+            TabHeader(LibraryTab.SONGS, actions)
         }
         IndexedList(
             anchor = "tab:songs",
@@ -609,7 +602,7 @@ private fun ArtistsTab(actions: ShellActions) {
     val needsAccess = !rememberLocalAccess()
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     Column(Modifier.fillMaxSize()) {
-        TabHeader(LibraryTab.ARTISTS, actions.artistsSort, actions)
+        TabHeader(LibraryTab.ARTISTS, actions)
         IndexedList(
             anchor = "tab:artists",
             letters = letters,
@@ -652,7 +645,7 @@ private fun PlaylistsTab(actions: ShellActions) {
     // stayed composed through the switch would sit on an empty list for ever.
     LaunchedEffect(source.id) { App.library.refreshPlaylists() }
     Column(Modifier.fillMaxSize()) {
-        TabHeader(LibraryTab.PLAYLISTS, actions.playlistsSort, actions)
+        TabHeader(LibraryTab.PLAYLISTS, actions)
         IndexedList(
             anchor = "tab:playlists",
             letters = letters,

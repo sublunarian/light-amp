@@ -66,6 +66,7 @@ class AlbumViewScreen(
         App.scope.launch {
             if (forArtist) App.settings.setArtistAlbumGrid(grid) else App.settings.setAlbumGrid(grid)
         }
-        goBack()
+        // Reported, so the More that pushed this closes with it — see MoreScreen.
+        goBack(Unit)
     }
 }

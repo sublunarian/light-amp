@@ -69,7 +69,7 @@ class AlbumDetailScreen(
 
         val selection = rememberSelection("album:$albumId")
 
-        LibrarySubPage {
+        LibrarySubPage(LibraryPage.ALBUM, album?.title) {
             run {
                 if (selection.active) {
                     SelectionHeader(selection) {
@@ -85,7 +85,7 @@ class AlbumDetailScreen(
                         // below and in the cover art, so a second line here was
                         // repeating what the page already says.
                         title = album?.title ?: "Album",
-                        rightAction = libraryCornerAction(),
+                        rightAction = libraryCornerAction(LibraryPage.ALBUM, album?.title),
                         fitTitle = true,
                     )
                 }

@@ -88,12 +88,12 @@ private fun SimpleLightScreen<*>.TagList(title: String, byComposer: Boolean, emp
         sortTags(values, sort, reversed) { counts }
     }
 
-    LibrarySubPage {
+    val page = if (byComposer) LibraryPage.COMPOSERS else LibraryPage.GENRES
+    LibrarySubPage(page) {
         AppHeader(
             leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
             title = title,
-            onTitleClick = { go { TagsSortScreen(it, title) } },
-            rightAction = libraryCornerAction(),
+            rightAction = libraryCornerAction(page),
         )
         LibraryList(
             anchor = if (byComposer) "composers" else "genres",
@@ -134,11 +134,11 @@ class TagSongsScreen(
         }
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
 
-        LibrarySubPage {
+        LibrarySubPage(LibraryPage.TAG_SONGS, tag) {
             AppHeader(
                 onBack = { goBack() },
                 title = tag,
-                rightAction = libraryCornerAction(),
+                rightAction = libraryCornerAction(LibraryPage.TAG_SONGS, tag),
                 fitTitle = true,
             )
             LibraryList(
@@ -188,12 +188,11 @@ class CompilationsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
         val albums = remember(all, sort, reversed) { sortAlbums(all, sort, reversed) }
         val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
 
-        LibrarySubPage {
+        LibrarySubPage(LibraryPage.COMPILATIONS) {
             AppHeader(
                 leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
                 title = "Compilations",
-                onTitleClick = { go { AlbumsSortScreen(it, "Compilations") } },
-                rightAction = libraryCornerAction(),
+                rightAction = libraryCornerAction(LibraryPage.COMPILATIONS),
             )
             LibraryList(
                 anchor = "compilations",

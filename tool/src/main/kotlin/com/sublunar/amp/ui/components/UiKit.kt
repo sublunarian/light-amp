@@ -198,12 +198,20 @@ fun TextRow(
     /** Sits before the text, for a row that needs saying what it opens. */
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit,
+    /**
+     * Null for a row that states something rather than opening it — a setting
+     * with only one possible value, which More still shows so the page's
+     * modifiers all read alike. It doesn't take a press, and its title is
+     * lightened to say so before the press is tried.
+     */
+    onClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .slowLongPress(onClick = onClick, onLongPress = onLongClick)
+            .let {
+                if (onClick == null) it else it.slowLongPress(onClick, onLongPress = onLongClick)
+            }
             .padding(horizontal = 1.5f.gridUnitsAsDp(), vertical = 0.6f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -212,7 +220,13 @@ fun TextRow(
             Spacer(Modifier.width(1f.gridUnitsAsDp()))
         }
         Column(modifier = Modifier.weight(1f)) {
-            LightText(text = title, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            LightText(
+                text = title,
+                variant = LightTextVariant.Copy,
+                lighten = onClick == null,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             if (!subtitle.isNullOrBlank()) {
                 LightText(text = subtitle, variant = LightTextVariant.Detail, lighten = true, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }

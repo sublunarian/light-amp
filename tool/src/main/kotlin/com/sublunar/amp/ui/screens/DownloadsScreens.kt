@@ -92,14 +92,13 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
 
         // The tab bar belongs here like it does on every other library page: this
         // is a page of the library, not a page of More.
-        LibrarySubPage {
+        LibrarySubPage(LibraryPage.DOWNLOADS) {
             AppHeader(
                 // The same corners as every library page: the player on the
                 // left, this page's menu behind its title.
                 leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
                 title = "Downloaded Songs",
-                onTitleClick = { go { SongsSortScreen(it, "Downloaded Songs") } },
-                rightAction = libraryCornerAction(),
+                rightAction = libraryCornerAction(LibraryPage.DOWNLOADS),
                 fitTitle = true,
             )
             if (tracks.isEmpty() && !progress.active && bytes == 0L) {

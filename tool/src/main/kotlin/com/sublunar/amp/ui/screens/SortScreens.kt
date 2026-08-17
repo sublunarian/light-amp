@@ -3,7 +3,6 @@ package com.sublunar.amp.ui.screens
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -19,9 +18,7 @@ import com.sublunar.amp.data.TagSort
 import com.sublunar.amp.data.descendingByNature
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
-import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.ListScreen
-import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.n
@@ -39,45 +36,68 @@ private val PLAYLIST_SORT_OPTIONS =
 private val TAG_SORT_OPTIONS = TagSort.entries.toList()
 
 /**
- * What a tab's menu calls itself: the name of the page it was opened from,
- * narrowing and all, so the menu and the list behind it agree.
+ * The page a sort menu belongs to, named under the menu's own heading.
+ *
+ * The menu says what it is — "Sort by" — and the line under it says what is
+ * being sorted, exactly as Filter and View do. It used to take the page's name
+ * as its whole title, which read correctly back when the page's own title was
+ * the way in. Reached from a More that is already named after the page, that
+ * put the same name on two screens in a row and never once said what the menu
+ * was for.
+ *
+ * Carries the narrowing with it, so sorting a filtered list says so.
  */
 @Composable
-private fun sortMenuTitle(tab: LibraryTab): String = tabTitle(tab, likedOnly(tab))
+private fun sortedPage(tab: LibraryTab): String = tabTitle(tab, likedOnly(tab))
 
 /**
- * The liked toggle, in the menu header's corner.
+ * All, or only the ones you kept.
  *
- * The only narrowing the app has, so a labelled section holding one row was
- * more furniture than the thing deserved — and a heart says "these are the ones
- * you kept" in a way no row of text does. Filled when it is on; the page's own
- * title says so too, underneath.
+ * Liked is the only narrowing the app has. It used to be a heart in the sort
+ * menu's corner, which said what it was set to only by being filled — and only
+ * once you had opened a menu about something else. As a page of two rows it
+ * says which one is in effect, and More says so without opening anything.
  */
-@Composable
-private fun SimpleLightScreen<*>.likedToggle(tab: LibraryTab): HeaderAction? {
-    if (!App.source.collectAsState().value.supportsLikes) return null
-    val on = likedOnly(tab)
-    // Nothing liked yet, nothing to narrow to: a heart here would only ever
-    // empty the page. It stays while the narrowing is *on*, though — unliking
-    // the last one must not strand you on an empty list with the way out gone.
-    val any = when (tab) {
-        LibraryTab.ALBUMS -> App.library.likedAlbums.collectAsState().value.isNotEmpty()
-        LibraryTab.SONGS -> App.library.likedTracks.collectAsState().value.isNotEmpty()
-        LibraryTab.ARTISTS -> App.library.likedArtists.collectAsState().value.isNotEmpty()
-        LibraryTab.PLAYLISTS -> false
+class FilterScreen(
+    sealed: SealedLightActivity,
+    private val tab: LibraryTab,
+) : SimpleLightScreen<Unit>(sealed) {
+    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
+        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+
+    @Composable
+    override fun Content() {
+        val liked = likedOnly(tab)
+        ListScreen(onBack = { goBack() }, title = "Filter", subtitle = tab.title) {
+            ScrollableList(modifier = Modifier.fillMaxSize()) {
+                item { Choice("All", chosen = !liked) { choose(false) } }
+                item { Choice("Liked", chosen = liked) { choose(true) } }
+            }
+        }
     }
-    if (!on && !any) return null
-    return HeaderAction(if (on) AppIcons.Favorite else AppIcons.FavoriteBorder) {
+
+    @Composable
+    private fun Choice(label: String, chosen: Boolean, onClick: () -> Unit) {
+        TextRow(
+            title = label,
+            onClick = onClick,
+            trailing = { if (chosen) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
+        )
+    }
+
+    private fun choose(liked: Boolean) {
         App.scope.launch {
             when (tab) {
-                LibraryTab.ALBUMS -> App.settings.setLikedAlbumsOnly(!on)
-                LibraryTab.SONGS -> App.settings.setLikedSongsOnly(!on)
-                LibraryTab.ARTISTS -> App.settings.setLikedArtistsOnly(!on)
+                LibraryTab.ALBUMS -> App.settings.setLikedAlbumsOnly(liked)
+                LibraryTab.SONGS -> App.settings.setLikedSongsOnly(liked)
+                LibraryTab.ARTISTS -> App.settings.setLikedArtistsOnly(liked)
                 LibraryTab.PLAYLISTS -> Unit
             }
         }
-        // Back to the list it just changed — the point of the tap.
-        goBack()
+        // Back to the list it just changed — the point of the tap. More, which
+        // pushed this, closes itself on the result so the list is what appears.
+        goBack(Unit)
     }
 }
 
@@ -85,9 +105,13 @@ private fun SimpleLightScreen<*>.likedToggle(tab: LibraryTab): HeaderAction? {
  * Shared body for every "Sort by" menu.
  *
  * Picking a different option applies it and closes; tapping the already-selected
- * option flips the sort direction and also closes, so either way a tap takes you
- * straight back to the reordered list. The arrow beside the selected option shows
- * which direction is in effect when the menu is reopened.
+ * option flips the sort direction and also closes, so either way one tap is the
+ * whole interaction. The arrow beside the selected option shows which direction
+ * is in effect when the menu is reopened.
+ *
+ * Closing lands wherever the menu was opened from — the list, for the title
+ * tap, or More, which is a panel of modifiers you may well want to set two of
+ * before going back to look at the result.
  */
 @Composable
 private fun <T> SortOptions(
@@ -99,20 +123,11 @@ private fun <T> SortOptions(
     onSelect: (T) -> Unit,
     onFlip: () -> Unit,
     onBack: () -> Unit,
-    /**
-     * The page this menu was opened from — it keeps that name, because a menu
-     * that renames the header says less about where you are, not more.
-     */
-    title: String = "Sort by",
-    /** The liked toggle, for the tabs that have one. */
-    action: HeaderAction? = null,
-    /** Rows above the sort options — see AlbumsSortScreen. */
-    extra: (LazyListScope.() -> Unit)? = null,
+    /** The page being sorted, named under the heading — see [sortedPage]. */
+    page: String?,
 ) {
-    ListScreen(onBack = onBack, title = title, rightAction = action) {
+    ListScreen(onBack = onBack, title = "Sort by", subtitle = page) {
         ScrollableList(modifier = Modifier.fillMaxSize()) {
-            extra?.invoke(this)
-            if (extra != null) item { SectionLabel("Sort by") }
             items(options) { option ->
                 val selected = option == current
                 TextRow(
@@ -163,52 +178,18 @@ class AlbumsSortScreen(
                 // part-way down at something you never chose. Sorting is a
                 // request to look at the shelf afresh.
                 ScrollAnchors.clear("tab:albums", "albums")
-                goBack()
+                goBack(Unit)
             },
             onFlip = {
                 App.scope.launch { App.settings.setAlbumSortReversed(!reversed) }
                 ScrollAnchors.clear("tab:albums", "albums")
-                goBack()
+                goBack(Unit)
             },
             onBack = { goBack() },
-            title = pageTitle ?: sortMenuTitle(LibraryTab.ALBUMS),
-            action = if (pageTitle == null) likedToggle(LibraryTab.ALBUMS) else null,
-            extra = if (pageTitle == null) viewRows() else null,
+            page = pageTitle ?: sortedPage(LibraryTab.ALBUMS),
         )
     }
 
-    /**
-     * List or grid, folded in under the sort options.
-     *
-     * Compact has no separate button for either — the title is the one menu for
-     * "how am I looking at this", and both questions belong in it. Absent with
-     * artwork off, where a grid of nothing is not a choice, and absent in the
-     * classic layout, which keeps its own picker.
-     */
-    @Composable
-    private fun viewRows(): (LazyListScope.() -> Unit)? {
-        val grid = App.albumGrid.collectAsState().value
-        if (App.hideArtwork.collectAsState().value) return null
-        return {
-            item { SectionLabel("View") }
-            item { ViewChoice("List", chosen = !grid) { chooseView(false) } }
-            item { ViewChoice("Grid", chosen = grid) { chooseView(true) } }
-        }
-    }
-
-    @Composable
-    private fun ViewChoice(label: String, chosen: Boolean, onClick: () -> Unit) {
-        TextRow(
-            title = label,
-            onClick = onClick,
-            trailing = { if (chosen) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
-        )
-    }
-
-    private fun chooseView(grid: Boolean) {
-        App.scope.launch { App.settings.setAlbumGrid(grid) }
-        goBack()
-    }
 }
 
 class SongsSortScreen(
@@ -236,16 +217,15 @@ class SongsSortScreen(
                 // part-way down at something you never chose. Sorting is a
                 // request to look at the shelf afresh.
                 ScrollAnchors.clear("tab:songs")
-                goBack()
+                goBack(Unit)
             },
             onFlip = {
                 App.scope.launch { App.settings.setSongSortReversed(!reversed) }
                 ScrollAnchors.clear("tab:songs")
-                goBack()
+                goBack(Unit)
             },
             onBack = { goBack() },
-            title = pageTitle ?: sortMenuTitle(LibraryTab.SONGS),
-            action = if (pageTitle == null) likedToggle(LibraryTab.SONGS) else null,
+            page = pageTitle ?: sortedPage(LibraryTab.SONGS),
         )
     }
 }
@@ -275,16 +255,15 @@ class ArtistsSortScreen(
                 // part-way down at something you never chose. Sorting is a
                 // request to look at the shelf afresh.
                 ScrollAnchors.clear("tab:artists")
-                goBack()
+                goBack(Unit)
             },
             onFlip = {
                 App.scope.launch { App.settings.setArtistSortReversed(!reversed) }
                 ScrollAnchors.clear("tab:artists")
-                goBack()
+                goBack(Unit)
             },
             onBack = { goBack() },
-            title = pageTitle ?: sortMenuTitle(LibraryTab.ARTISTS),
-            action = if (pageTitle == null) likedToggle(LibraryTab.ARTISTS) else null,
+            page = pageTitle ?: sortedPage(LibraryTab.ARTISTS),
         )
     }
 }
@@ -310,15 +289,15 @@ class PlaylistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>
                 // part-way down at something you never chose. Sorting is a
                 // request to look at the shelf afresh.
                 ScrollAnchors.clear("tab:playlists")
-                goBack()
+                goBack(Unit)
             },
             onFlip = {
                 App.scope.launch { App.settings.setPlaylistSortReversed(!reversed) }
                 ScrollAnchors.clear("tab:playlists")
-                goBack()
+                goBack(Unit)
             },
             onBack = { goBack() },
-            title = sortMenuTitle(LibraryTab.PLAYLISTS),
+            page = sortedPage(LibraryTab.PLAYLISTS),
         )
     }
 }
@@ -348,17 +327,17 @@ class TagsSortScreen(
             reversed = reversed,
             label = ::tagSortLabel,
             naturallyDescending = { it.descendingByNature },
-            title = pageTitle ?: "Sort by",
+            page = pageTitle,
             onSelect = { option ->
                 App.scope.launch {
                     App.settings.setTagSort(option)
                     App.settings.setTagSortReversed(false)
                 }
-                goBack()
+                goBack(Unit)
             },
             onFlip = {
                 App.scope.launch { App.settings.setTagSortReversed(!reversed) }
-                goBack()
+                goBack(Unit)
             },
             onBack = { goBack() },
         )

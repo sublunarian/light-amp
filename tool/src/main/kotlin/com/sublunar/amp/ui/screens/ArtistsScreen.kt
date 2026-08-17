@@ -88,19 +88,14 @@ class ArtistDetailScreen(
 
         val grid = App.artistAlbumGrid.collectAsState().value
 
-        LibrarySubPage {
+        LibrarySubPage(LibraryPage.ARTIST, name) {
             AppHeader(
                 onBack = { goBack() },
                 title = name,
-                // The same list-or-grid menu the album lists have: a
-                // discography is an album list too.
-                onTitleClick = if (App.hideArtwork.collectAsState().value) {
-                        null
-                    } else {
-                        { go { AlbumViewScreen(it, forArtist = true) } }
-                    },
                 fitTitle = true,
-                rightAction = libraryCornerAction(),
+                // List or grid is a row on More now, with the rest of what can
+                // be changed about how this page looks.
+                rightAction = libraryCornerAction(LibraryPage.ARTIST, name),
             )
             if (grid) {
                 AlbumGrid(
@@ -216,7 +211,7 @@ class ArtistTopSongsScreen(
 
         val selection = rememberSelection("artist-top:$name")
 
-        LibrarySubPage {
+        LibrarySubPage(LibraryPage.ARTIST_POPULAR) {
             if (selection.active) {
                 SelectionHeader(selection) {
                     openSelectionActions(selection.pick(songs.orEmpty()) { it.id }, selection)
@@ -230,7 +225,7 @@ class ArtistTopSongsScreen(
                             AppText(name, nSp(14), lineHeight = nSp(16), dim = true, maxLines = 1)
                         }
                     },
-                    rightAction = libraryCornerAction(),
+                    rightAction = libraryCornerAction(LibraryPage.ARTIST_POPULAR),
                 )
             }
             val list = songs
@@ -292,7 +287,7 @@ class ArtistSongsScreen(
 
         val selection = rememberSelection("artist-songs:$name")
 
-        LibrarySubPage {
+        LibrarySubPage(LibraryPage.ARTIST_SONGS, name) {
             if (selection.active) {
                 SelectionHeader(selection) {
                     openSelectionActions(selection.pick(songs) { it.id }, selection)
@@ -301,7 +296,7 @@ class ArtistSongsScreen(
                 AppHeader(
                     onBack = { goBack() },
                     title = name,
-                    rightAction = libraryCornerAction(),
+                    rightAction = libraryCornerAction(LibraryPage.ARTIST_SONGS, name),
                     fitTitle = true,
                 )
             }

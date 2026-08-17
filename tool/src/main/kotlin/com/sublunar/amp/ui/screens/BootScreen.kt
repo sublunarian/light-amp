@@ -176,15 +176,10 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                                 },
                             )
                         },
-                        more = { go { MoreScreen(it) } },
+                        more = { page -> go { MoreScreen(it, page) } },
                         openAlbum = { id, parent -> openAlbum(id, parent) },
                         openArtist = { name, parent -> openArtist(name, parent) },
                         openPlaylist = { id, name -> go { PlaylistDetailScreen(it, id, name) } },
-                        albumsSort = { go { AlbumsSortScreen(it) } },
-                        albumView = { go { AlbumViewScreen(it) } },
-                        songsSort = { go { SongsSortScreen(it) } },
-                        artistsSort = { go { ArtistsSortScreen(it) } },
-                        playlistsSort = { go { PlaylistsSortScreen(it) } },
                         trackOptions = { id, selection -> openTrackActions(id, selection) },
                         selectionActions = { tracks, selection ->
                             openSelectionActions(tracks, selection)

@@ -75,7 +75,7 @@ class PlaylistDetailScreen(
 
         val selection = rememberSelection("playlist:$playlistId")
 
-        LibrarySubPage {
+        LibrarySubPage(LibraryPage.PLAYLIST, playlistName) {
             if (selection.active) {
                 SelectionHeader(
                     selection = selection,
@@ -97,7 +97,7 @@ class PlaylistDetailScreen(
                 AppHeader(
                     onBack = { goBack() },
                     title = playlistName,
-                    rightAction = libraryCornerAction(),
+                    rightAction = libraryCornerAction(LibraryPage.PLAYLIST, playlistName),
                     fitTitle = true,
                 )
             }

@@ -89,6 +89,43 @@ object LibraryNav {
 }
 
 /**
+ * Which library page More was opened over.
+ *
+ * More carries the modifiers — view, sort, filter — of the list underneath it,
+ * so it has to be told which list that is. Both ways in already know: the
+ * header's corner is drawn by the page itself, and the tab bar's ··· is drawn
+ * by that page's own chrome.
+ *
+ * A page identity rather than the settings themselves. More reads those live
+ * when it draws, so a sort changed and stepped back from shows what it now is,
+ * rather than the snapshot taken when the page below last composed.
+ */
+enum class LibraryPage {
+    /** The four tabs. */
+    ALBUMS,
+    SONGS,
+    ARTISTS,
+    PLAYLISTS,
+
+    /** Results, which are the library in its own order. */
+    SEARCH,
+
+    /** Pages whose order is the record's, the playlist's, or the server's. */
+    ALBUM,
+    ARTIST,
+    ARTIST_SONGS,
+    ARTIST_POPULAR,
+    PLAYLIST,
+    TAG_SONGS,
+
+    /** Peers of the tabs, reached from More, that carry a tab's sort. */
+    GENRES,
+    COMPOSERS,
+    COMPILATIONS,
+    DOWNLOADS,
+}
+
+/**
  * Push a screen that returns no result. A single-parameter helper so the
  * trailing-lambda call site (`go { SomeScreen(it) }`) reads cleanly — the raw
  * [navigateTo] takes an optional result callback as its last parameter, which
