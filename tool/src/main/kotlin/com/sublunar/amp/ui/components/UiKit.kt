@@ -194,6 +194,16 @@ fun TextRow(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    /**
+     * How many lines the subtitle may take.
+     *
+     * One by default, because most subtitles are a name or a count — an artist,
+     * "3 songs", a format — and letting those wrap would make a list of rows
+     * ragged to no purpose. Raised where the subtitle is a sentence explaining
+     * what the row does, which is a different job: there the words are the
+     * point, and a clipped explanation explains nothing.
+     */
+    subtitleLines: Int = 1,
     onLongClick: (() -> Unit)? = null,
     /** Sits before the text, for a row that needs saying what it opens. */
     leading: (@Composable () -> Unit)? = null,
@@ -228,7 +238,13 @@ fun TextRow(
                 overflow = TextOverflow.Ellipsis,
             )
             if (!subtitle.isNullOrBlank()) {
-                LightText(text = subtitle, variant = LightTextVariant.Detail, lighten = true, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                LightText(
+                    text = subtitle,
+                    variant = LightTextVariant.Detail,
+                    lighten = true,
+                    maxLines = subtitleLines,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         if (trailing != null) trailing()

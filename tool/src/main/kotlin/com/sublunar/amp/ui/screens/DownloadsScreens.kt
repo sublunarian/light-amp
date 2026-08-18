@@ -61,6 +61,13 @@ fun dataModeLabel(mode: DataMode): String = when (mode) {
     DataMode.WIFI_ONLY -> "WiFi Only"
 }
 
+/**
+ * Room for the longest of the six explanations below to wrap rather than be cut
+ * off mid-sentence. Two lines covers them all at the widest of these screens'
+ * layouts; the cap stays so a row can't grow without bound if one is reworded.
+ */
+private const val MODE_DETAIL_LINES = 2
+
 private fun dataModeDetail(mode: DataMode): String = when (mode) {
     DataMode.MAKE_IT_HURT -> "Stream on cellular even when a download would do"
     DataMode.LOW_DATA -> "Off Wi-Fi, play the download rather than streaming"
@@ -291,7 +298,9 @@ class OfflineModeScreen(
                 items(OfflineMode.entries.toList()) { mode ->
                     TextRow(
                         title = offlineModeLabel(mode),
+                        // A sentence, not a label — see TextRow.subtitleLines.
                         subtitle = offlineModeDetail(mode),
+                        subtitleLines = MODE_DETAIL_LINES,
                         onClick = {
                             App.scope.launch { App.settings.setSourceOfflineMode(sourceId, mode) }
                             goBack()
@@ -313,7 +322,9 @@ class DataModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                 items(DataMode.entries.toList()) { mode ->
                     TextRow(
                         title = dataModeLabel(mode),
+                        // A sentence, not a label — see TextRow.subtitleLines.
                         subtitle = dataModeDetail(mode),
+                        subtitleLines = MODE_DETAIL_LINES,
                         onClick = {
                             App.scope.launch { App.settings.setDataMode(mode) }
                             goBack()
