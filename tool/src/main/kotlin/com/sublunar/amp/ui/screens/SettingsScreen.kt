@@ -163,7 +163,7 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                 }
                 item {
                     TextRow(
-                        title = "Layout",
+                        title = "Library Layout",
                         subtitle = if (layoutMode == LayoutMode.STANDARD) "Standard" else "Simplified",
                         onClick = { go { LayoutModeScreen(it) } },
                     )
@@ -274,7 +274,7 @@ class LayoutModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
     override fun Content() {
         val current by App.settings.layoutMode.collectAsState(initial = LayoutMode.SIMPLIFIED)
 
-        ListScreen(onBack = { goBack() }, title = "Layout") {
+        ListScreen(onBack = { goBack() }, title = "Library Layout") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
                 items(LayoutMode.entries) { mode ->
                     val label = when (mode) {
