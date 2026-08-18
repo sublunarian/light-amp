@@ -1,6 +1,6 @@
 # Amp
 
-**(A)nother (M)usic (P)layer**, for the Light Phone III.
+**A music player**, for the Light Phone III.
 
 Plays your own library — a Subsonic server, Plex, or files on the phone — and is
 built on Light's SDK, so it looks like it belongs there.
