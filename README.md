@@ -31,9 +31,6 @@ built on Light's SDK, so it looks like it belongs there.
 - Cast to a DLNA speaker or receiver.
 - Artwork can be turned off completely.
 
-I use it as my only music player, on a library of about 8,000 tracks with 50GB
-downloaded.
-
 ## Installing
 
 USB debugging needs to be on: **Settings → Developer options → Allow USB
