@@ -177,6 +177,13 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                             )
                         },
                         more = { page -> go { MoreScreen(it, page) } },
+                        browse = {
+                            if (searchActive) {
+                                viewModel.closeSearch()
+                            } else {
+                                go { TypePickerScreen(it) }
+                            }
+                        },
                         openAlbum = { id, parent -> openAlbum(id, parent) },
                         openArtist = { name, parent -> openArtist(name, parent) },
                         openPlaylist = { id, name -> go { PlaylistDetailScreen(it, id, name) } },

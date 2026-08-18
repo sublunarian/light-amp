@@ -58,6 +58,7 @@ import com.sublunar.amp.data.Album
 import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.SplitActionRow
 import com.sublunar.amp.data.LocalLibrary
+import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.components.SelectionState
@@ -95,6 +96,13 @@ enum class LibraryTab(val title: String) {
     ALBUMS("Albums"),
 }
 
+internal fun iconFor(tab: LibraryTab): ImageVector = when (tab) {
+    LibraryTab.PLAYLISTS -> AppIcons.QueueMusic
+    LibraryTab.ARTISTS -> AppIcons.RecordVoiceOver
+    LibraryTab.SONGS -> AppIcons.MusicNote
+    LibraryTab.ALBUMS -> AppIcons.AlbumStack
+}
+
 class ShellActions(
     val nowPlaying: () -> Unit,
     val settings: () -> Unit,
@@ -103,6 +111,8 @@ class ShellActions(
     val editSearch: (String) -> Unit,
     /** More carries the showing page's modifiers up with it — see [LibraryPage]. */
     val more: (LibraryPage) -> Unit,
+    /** Simplified's centre button: pick which library you are looking at. */
+    val browse: () -> Unit,
     /**
      * Each takes the page back should land on — a tab list is the parent of what
      * it opens, while a search result is a jump and names the hierarchy it
@@ -158,6 +168,8 @@ fun LibraryShell(
                 },
                 onSearch = actions.search,
                 searchActive = searchActive,
+                onNowPlaying = actions.nowPlaying,
+                onBrowse = actions.browse,
             )
         }
     }
@@ -309,9 +321,8 @@ private fun SearchHeader(
 }
 
 /**
- * The header every tab shares: sort at the left corner, search and now-playing at
- * the right, and — when the setting puts it there — the liked/all switch in the
- * mirror of the search slot.
+ * The header every tab shares: sort folded into the title (with chevron when
+ * applicable), search, and More at the right. Now-playing moved to bottom bar.
  */
 @Composable
 private fun TabHeader(tab: LibraryTab, actions: ShellActions) {
@@ -322,10 +333,12 @@ private fun TabHeader(tab: LibraryTab, actions: ShellActions) {
     // are now rows on More. The title names the page and no more than that.
     //
     // Search has gone to the tab bar, so this is two corner squares and a title
-    // spanning everything between them.
+    // spanning everything between them. Under Simplified the bar holds the
+    // player itself, so the corner goes back to the title.
+    val simplified = App.layoutMode.collectAsState().value == LayoutMode.SIMPLIFIED
     AppHeader(
         title = tabTitle(tab, likedOnly(tab)),
-        leftAction = HeaderAction(AppIcons.Waveform, actions.nowPlaying),
+        leftAction = if (simplified) null else HeaderAction(AppIcons.Waveform, actions.nowPlaying),
         fitTitle = true,
         rightAction = HeaderAction(AppIcons.MoreHoriz) { actions.more(tab.page) },
     )
@@ -670,6 +683,12 @@ private fun PlaylistsTab(actions: ShellActions) {
     }
 }
 
+/**
+ * The bottom bar, in whichever shape the Layout setting asks for.
+ *
+ * Both shapes take the same handlers and each uses what it needs, so a caller
+ * doesn't have to know which one is showing — see [AppSettings.layoutMode].
+ */
 @Composable
 fun Navbar(
     current: LibraryTab?,
@@ -679,16 +698,64 @@ fun Navbar(
     /** Opens library search — the bar's fifth destination in the classic layout. */
     onSearch: (() -> Unit)? = null,
     searchActive: Boolean = false,
+    /** Simplified keeps the player in the bar rather than the header's corner. */
+    onNowPlaying: (() -> Unit)? = null,
+    /** Simplified's centre tile: which library you are looking at. */
+    onBrowse: (() -> Unit)? = null,
 ) {
-    // More lives in the header, where it belongs to the page rather than sitting
-    // in the bar as a fifth destination. What is left is four tabs, evenly
-    // spaced: pushed to the edges as the five were, four icons drift apart and
-    // stop reading as a row.
+    // Read from the eager state rather than the preference Flow: the bar is on
+    // every screen, and collecting the Flow fresh each time means a frame of
+    // the wrong bar before the stored answer arrives.
+    val simplified = App.layoutMode.collectAsState().value == LayoutMode.SIMPLIFIED
+    if (simplified && onSearch != null && onNowPlaying != null && onBrowse != null) {
+        SimplifiedNavbar(current, onSearch, onNowPlaying, onBrowse, showChevron = !searchActive)
+    } else {
+        StandardNavbar(current, onSelect, onSearch, searchActive)
+    }
+}
+
+/**
+ * Simplified layout: 3-button navbar with Search, Browse (center), and Now Playing.
+ */
+@Composable
+private fun SimplifiedNavbar(
+    current: LibraryTab?,
+    onSearch: () -> Unit,
+    onNowPlaying: () -> Unit,
+    onBrowse: (() -> Unit)? = null,
+    showChevron: Boolean = false,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            // Matches the LP3's stock bottom bar: 4 grid units = 160px exactly,
-            // no top margin. No vertical padding, so icons centre on 80px.
+            .height(px(BOTTOM_BAR_PX))
+            .padding(horizontal = 0.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NavTile(AppIcons.Search) { onSearch() }
+        Spacer(Modifier.weight(1f))
+        BrowseCenter(current, showChevron = showChevron) { onBrowse?.invoke() }
+        Spacer(Modifier.weight(1f))
+        NavTile(AppIcons.Waveform) { onNowPlaying() }
+    }
+}
+
+/**
+ * Standard layout: 5-button navbar with separate tabs for Playlists, Artists, Albums,
+ * Songs, and Search. This is the classic light-amp navigation with all library views
+ * directly accessible from the bottom bar.
+ */
+@Composable
+private fun StandardNavbar(
+    current: LibraryTab?,
+    onSelect: (LibraryTab) -> Unit,
+    onSearch: (() -> Unit)?,
+    searchActive: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
             .height(px(BOTTOM_BAR_PX))
             .padding(horizontal = 0.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -697,26 +764,23 @@ fun Navbar(
         // A source with no server has nowhere to keep a playlist, so the tab
         // isn't there to be tapped — see MusicSource.supportsPlaylists.
         if (App.source.collectAsState().value.supportsPlaylists) {
-            // Near enough the glyph's own size to still be the reference the
-            // others are brought down towards, but trimmed and lifted slightly:
-            // it sat a shade large and a shade low against its neighbours.
             NavIcon(
                 AppIcons.QueueMusic,
                 current == LibraryTab.PLAYLISTS,
                 scale = PLAYLISTS_SCALE,
                 lift = PLAYLISTS_LIFT_PX,
-            ) { onSelect(LibraryTab.PLAYLISTS) }
+            ) { LibraryNav.selectTab(LibraryTab.PLAYLISTS) }
         }
         NavIcon(
             AppIcons.RecordVoiceOver,
             current == LibraryTab.ARTISTS,
             scale = navScale(ARTISTS_DRAWN_PX, ARTISTS_TARGET_PX),
-        ) { onSelect(LibraryTab.ARTISTS) }
+        ) { LibraryNav.selectTab(LibraryTab.ARTISTS) }
         NavIcon(
             AppIcons.AlbumStack,
             current == LibraryTab.ALBUMS,
             scale = navScale(ALBUMS_DRAWN_PX, TALL_TARGET_PX),
-        ) { onSelect(LibraryTab.ALBUMS) }
+        ) { LibraryNav.selectTab(LibraryTab.ALBUMS) }
         NavIcon(
             AppIcons.MusicNote,
             current == LibraryTab.SONGS,
@@ -731,6 +795,56 @@ fun Navbar(
     }
 }
 
+@Composable
+private fun BrowseCenter(
+    tab: LibraryTab?,
+    showChevron: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(px(NAV_TILE_PX))
+            .clip(RoundedCornerShape(px(NAV_TILE_RADIUS_PX)))
+            .appClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        val icon = tab?.let { iconFor(it) } ?: AppIcons.AlbumStack
+        val scale = if (showChevron && tab != null) BROWSE_ICON_SCALE_WITH_CHEVRON else 1f
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AppIcon(icon = icon, size = n(28) * scale)
+            if (showChevron && tab != null) {
+                Spacer(Modifier.width(n(4)))
+                AppIcon(AppIcons.ArrowDropDown, size = n(BROWSE_CHEVRON_SIZE))
+            }
+        }
+    }
+}
+
+/** A bar button with no tab behind it — Simplified's search and player. */
+@Composable
+private fun NavTile(
+    icon: ImageVector,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(px(NAV_TILE_PX))
+            .clip(RoundedCornerShape(px(NAV_TILE_RADIUS_PX)))
+            .appClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        AppIcon(
+            icon = icon,
+            size = n(28),
+            tint = LightThemeTokens.colors.content,
+        )
+    }
+}
+
+/**
+ * Standard layout tab icon with scaling and optional lift for visual alignment.
+ * Used in the 5-button standard navbar layout.
+ */
 @Composable
 private fun NavIcon(
     icon: ImageVector,
@@ -769,16 +883,17 @@ private fun NavIcon(
     }
 }
 
-/**
- * The tile a selected tab inverts into, and the glyph inside it.
- *
- * The glyph is close to the size it was before tabs gained a tile — shrinking it
- * to fit inside one made the whole bar read as smaller than the app around it.
- * The tile stays *under* [BOTTOM_BAR_PX]: at 162 it was taller than the bar
- * itself, which is what made the bar look as though it had grown.
- */
 private const val NAV_TILE_PX = 144
 private const val NAV_TILE_RADIUS_PX = 6
+
+/** Chevron shown next to type icon only on the library root. Match top-bar chevron (n(22)). */
+private const val BROWSE_CHEVRON_SIZE = 22
+/** Slight shrink so icon + chevron balance inside the NAV_TILE hit area. */
+private const val BROWSE_ICON_SCALE_WITH_CHEVRON = 0.92f
+
+// --- Standard layout constants ---
+
+/** The tile a selected tab inverts into, and the glyph inside it. */
 private const val NAV_ICON_PX = 114
 
 /** Matches the player's secondary row — the app's one "present but not chosen". */
@@ -819,8 +934,9 @@ private fun navScale(drawnPx: Int, targetPx: Int): Float = targetPx.toFloat() / 
 private const val PLAYLISTS_SCALE = 0.94f
 private const val PLAYLISTS_LIFT_PX = 5
 
-
 /** The magnifier, at the same reference size as the rest of the bar. */
 private const val SEARCH_SCALE = PLAYLISTS_SCALE
+
+
 
 
