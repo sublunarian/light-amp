@@ -235,7 +235,12 @@ object App {
                     !mono && artwork != ArtworkMode.NONE
                 }.collect { LightDisplayColor.enabled = it }
             }
-            library.onSyncFailed = { reportServerReachable(false) }
+            // A refused login is not the server being gone. Marking it
+            // unreachable narrows the library to downloads, which on a source
+            // with none blanks a perfectly good cached library and explains
+            // nothing — the credentials are stale, and the rows are still there
+            // to browse until they are renewed.
+            library.onSyncFailed = { authFailure -> if (!authFailure) reportServerReachable(false) }
 
             // One client per source, of whichever kind that source is. Keyed on
             // the whole record so a changed token or address rebuilds it.
@@ -290,6 +295,9 @@ object App {
                     // recover.
                     playback.stop()
                     downloader.clearQueue()
+                    // A sync for the source being left has nothing to tell us,
+                    // and its failure would be reported against the new one.
+                    library.cancelSync()
                     // Popular songs, the playlists, the search index and the
                     // artist ids are all keyed by name rather than by source, so
                     // they answer for the wrong server until they're dropped.

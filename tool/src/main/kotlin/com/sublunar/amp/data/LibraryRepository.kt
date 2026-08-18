@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -132,6 +133,31 @@ class LibraryRepository(
 
     private val offline: StateFlow<Boolean> =
         offlineOnly.stateIn(scope, SharingStarted.Eagerly, false)
+
+    init {
+        // Sweep every library as it is opened, not only when a sync succeeds.
+        //
+        // A track whose album is not in the same database is never something
+        // this app wrote on purpose: the local scan replaces both tables
+        // together, a sync writes an album before its tracks, and
+        // getAlbumTracks only fetches for an album already present. So an orphan
+        // is always debris — in practice another source's songs, left by a sync
+        // that was still finishing when the source changed under it.
+        //
+        // Doing it here rather than inside the sync is what makes it reachable:
+        // the sync only prunes when the server answers, so a library behind an
+        // expired login kept showing another server's music with no way to clear
+        // it. Opening it is enough now.
+        scope.launch {
+            daos.filterNotNull().collect { d ->
+                val orphans = runCatching { d.orphanedTrackCount() }.getOrDefault(0)
+                if (orphans > 0) {
+                    android.util.Log.w("AmpSync", "dropping $orphans orphaned track(s) on open")
+                    runCatching { d.deleteOrphanedTracks() }
+                }
+            }
+        }
+    }
 
     private val allTracks: StateFlow<List<Track>> =
         observing { it.observeTracks() }.map { rows -> rows.map { row -> row.toTrack() } }
@@ -618,6 +644,19 @@ class LibraryRepository(
         syncMutex.withLock { runSync(musicFolderId) }
     }
 
+    /**
+     * Drop whatever is in flight, because it is for a source we have left.
+     *
+     * The writes are already pinned to the database they started with, so this
+     * is not what keeps them apart — it stops the app spending a fetch, and a
+     * failure, on a server the user is no longer looking at. A sync that fails
+     * after the switch would otherwise report *this* source as unreachable.
+     */
+    fun cancelSync() {
+        syncJob?.cancel()
+        syncJob = null
+    }
+
     /** The actual scoped sync (null = all libraries); callers serialize via [syncMutex]. */
     /**
      * A sync failure in words the person holding the phone can act on.
@@ -629,6 +668,20 @@ class LibraryRepository(
      * with the app or the login, and without saying so the only visible symptom
      * is a Sync button that flashes and does nothing.
      */
+    /**
+     * Whether a failure was the server turning us away rather than not being
+     * there at all.
+     *
+     * The difference matters: an unreachable server means the library can only
+     * show what is downloaded, while a refused login means the library is fine
+     * and the credentials are stale. Treating the second as the first hides a
+     * perfectly good cached library and says nothing about why.
+     */
+    private fun isAuthFailure(e: Exception): Boolean {
+        val code = Regex("""\b(\d{3})\b""").find(e.message.orEmpty())?.value?.toIntOrNull()
+        return code == 401 || code == 403
+    }
+
     private fun syncErrorMessage(e: Exception): String {
         val code = Regex("""\b(\d{3})\b""").find(e.message.orEmpty())?.value?.toIntOrNull()
         return when {
@@ -672,6 +725,13 @@ class LibraryRepository(
             return
         }
         val client = serverClient.value ?: return
+        // Pinned for the run, exactly as the client is. `dao` is a property that
+        // re-reads whichever database is current, so a source switched while
+        // this was in flight moved the writes onto the new source's database
+        // while the fetches carried on against the old server — one server's
+        // albums and tracks landing in another's library. Both ends of a sync
+        // now belong to the source it started for.
+        val dao = daos.value ?: return
         _syncState.value = _syncState.value.copy(syncing = true, error = null, phase = "Connecting")
         try {
             // "All libraries" has to be fanned out per folder and merged: an
@@ -713,6 +773,21 @@ class LibraryRepository(
                 if (staleAlbumIds.isNotEmpty()) {
                     staleAlbumIds.forEach { dao.deleteTracksForAlbum(it) }
                     dao.deleteAlbums(staleAlbumIds.toList())
+                }
+                // And the tracks that belong to no album here at all. The prune
+                // above only reaches albums this library knows, so a song
+                // written in by something else — a sync for another source that
+                // was still finishing when the source changed under it — is
+                // never considered, and never leaves. It shows up in Artists and
+                // Songs, mixed in with this library's own, while Albums looks
+                // perfectly clean because its album row was never written.
+                //
+                // Guarded by the same empty-result rule as the album prune: this
+                // only runs where the server did answer with albums.
+                val orphans = dao.orphanedTrackCount()
+                if (orphans > 0) {
+                    android.util.Log.w("AmpSync", "dropping $orphans track(s) belonging to no album here")
+                    dao.deleteOrphanedTracks()
                 }
             }
 
@@ -770,7 +845,7 @@ class LibraryRepository(
                 syncing = false,
                 error = syncErrorMessage(e),
             )
-            onSyncFailed?.invoke()
+            onSyncFailed?.invoke(isAuthFailure(e))
         }
     }
 
@@ -825,7 +900,12 @@ class LibraryRepository(
      * rather than a dependency so the repository doesn't have to know about either.
      */
     var onSyncSucceeded: (() -> Unit)? = null
-    var onSyncFailed: (() -> Unit)? = null
+    /**
+     * Called when a sync gives up. The flag is true when the server answered and
+     * refused us — see [isAuthFailure]; the caller must not read that as the
+     * server being unreachable.
+     */
+    var onSyncFailed: ((authFailure: Boolean) -> Unit)? = null
 
     private suspend fun fetchAndStoreSongs(
         client: MusicServer,

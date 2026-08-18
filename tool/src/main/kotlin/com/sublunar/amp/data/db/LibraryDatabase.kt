@@ -128,6 +128,21 @@ interface LibraryDao {
     @Query("DELETE FROM tracks WHERE albumId = :albumId")
     suspend fun deleteTracksForAlbum(albumId: String)
 
+    /**
+     * Tracks belonging to no album this library holds.
+     *
+     * Pruning walks the albums it knows about, so a track whose album row was
+     * never written is invisible to it — and stays for good, because every later
+     * sync asks the same album-shaped question. That is what a cross-source
+     * write leaves behind: another server's songs, with none of its albums, in a
+     * library that has no idea they are there.
+     */
+    @Query("SELECT COUNT(*) FROM tracks WHERE albumId IS NOT NULL AND albumId NOT IN (SELECT id FROM albums)")
+    suspend fun orphanedTrackCount(): Int
+
+    @Query("DELETE FROM tracks WHERE albumId IS NOT NULL AND albumId NOT IN (SELECT id FROM albums)")
+    suspend fun deleteOrphanedTracks()
+
     @Query("SELECT * FROM tracks WHERE id IN (:ids)")
     suspend fun tracksByIds(ids: List<String>): List<TrackEntity>
 
