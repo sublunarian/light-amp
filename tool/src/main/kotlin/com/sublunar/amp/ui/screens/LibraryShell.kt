@@ -911,21 +911,31 @@ private fun SimplifiedNavbar(
     onBrowse: (() -> Unit)?,
     searchActive: Boolean,
 ) {
+    val artworkEdge = px(EDGE_GLYPH_PX)
+    // The end glyphs line up with that edge — the left one's left edge, the
+    // right one's right edge, each the same distance in. They are centred in
+    // boxes of the bar's own height, so the padding is that distance less the
+    // slack the glyph already has inside its box; the two differ because the
+    // two glyphs are drawn at different sizes.
+    val tile = px(BOTTOM_BAR_PX)
+    val librarySlack = (tile - px(NAV_ICON_PX) * navScale(LIBRARY_DRAWN_PX, TALL_TARGET_PX)) / 2
+    val playerSlack = (tile - px(NAV_ICON_PX) * NOW_PLAYING_SCALE) / 2
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(px(BOTTOM_BAR_PX))
-            .padding(horizontal = 0.dp),
+            .padding(
+                start = (artworkEdge - librarySlack).coerceAtLeast(0.dp),
+                end = (artworkEdge - playerSlack).coerceAtLeast(0.dp),
+            ),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Each sits where the standard layout already puts it: the player at
-        // the left, as in every header's corner, and search at the right, where
-        // it is the last thing in the tab bar.
         // Exactly one of these is where you are. The library covers the index
-        // and everything reached from it, which is everything the bar can be
+        // and everything reached from it, which is everything this bar can be
         // seen over that isn't search — the player is a screen of its own and
-        // hides this bar entirely, so it is never the lit one.
+        // hides the bar entirely, so it is never the lit one.
+        //
         //
         // The library at the left, always drawn as the library. It used to show
         // whichever tab you were on with a chevron beside it, which made it a
@@ -935,6 +945,7 @@ private fun SimplifiedNavbar(
             AppIcons.LibraryMusic,
             active = !searchActive,
             scale = navScale(LIBRARY_DRAWN_PX, TALL_TARGET_PX),
+            box = BOTTOM_BAR_PX,
         ) { onBrowse?.invoke() }
         Spacer(Modifier.weight(1f))
         NavTile(AppIcons.Search, active = searchActive) { onSearch() }
@@ -942,7 +953,12 @@ private fun SimplifiedNavbar(
         // The player at the right: the one thing in this bar that isn't
         // somewhere to browse, and under this layout the bar is the only route
         // to it.
-        NavTile(AppIcons.Waveform, active = false, scale = NOW_PLAYING_SCALE) { onNowPlaying() }
+        NavTile(
+            AppIcons.Waveform,
+            active = false,
+            scale = NOW_PLAYING_SCALE,
+            box = BOTTOM_BAR_PX,
+        ) { onNowPlaying() }
     }
 }
 
@@ -1047,11 +1063,13 @@ private fun NavTile(
     active: Boolean = false,
     /** Trims a glyph that draws larger than the rest at the same box size. */
     scale: Float = SEARCH_SCALE,
+    /** The square the glyph centres in, and the size of its tap target. */
+    box: Int = NAV_TILE_PX,
     onClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier
-            .size(px(NAV_TILE_PX))
+            .size(px(box))
             .clip(RoundedCornerShape(px(NAV_TILE_RADIUS_PX)))
             .appClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -1129,6 +1147,15 @@ private const val TALL_TARGET_PX = 72
 private const val ARTISTS_TARGET_PX = 75
 
 private fun navScale(drawnPx: Int, targetPx: Int): Float = targetPx.toFloat() / drawnPx
+
+/**
+ * How far the outer edge of a glyph sits from the screen's edge, for the bars
+ * that stand against them — the simplified nav bar, and the queue's shuffle and
+ * repeat. A pixel inside where a list row's artwork begins (LIST_EDGE_PX plus a
+ * row's 1.5-unit inset comes to 81), taken to the round number, which is also
+ * half the bar's height.
+ */
+const val EDGE_GLYPH_PX = 80
 
 /** A shade off the reference size, and a shade higher in the tile. Judged by eye. */
 private const val PLAYLISTS_SCALE = 0.94f

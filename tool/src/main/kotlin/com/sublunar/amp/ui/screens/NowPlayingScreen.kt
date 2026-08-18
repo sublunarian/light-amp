@@ -55,6 +55,7 @@ import com.sublunar.amp.App
 import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.LyricsRepository
+import com.sublunar.amp.data.LastSection
 import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.PlayerTheme
@@ -155,6 +156,24 @@ class NowPlayingScreen(
     /** Set only by callers that deliberately want the queue, e.g. full-screen art. */
     openOnQueue: Boolean = false,
 ) : SimpleLightScreen<Unit>(sealed) {
+
+    /**
+     * The player is the third of the bar's destinations, so it says so while it
+     * is up and hands the section back on the way out — see [LastSection].
+     *
+     * On the way out rather than leaving it set: what is revealed underneath is
+     * a library page or the results, and only this screen knows the moment it
+     * stops being the one showing.
+     */
+    override fun willShow() {
+        LibraryNav.record(LastSection.NOW_PLAYING)
+    }
+
+    override fun willHide() {
+        LibraryNav.record(
+            if (LibraryNav.searchActive.value) LastSection.SEARCH else LastSection.LIBRARY,
+        )
+    }
 
     init {
         // Opening Now Playing always lands on the playback controls. The view is
@@ -654,7 +673,15 @@ class NowPlayingScreen(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
-                    .height(px(HEADER_BAR_PX)),
+                    .height(px(HEADER_BAR_PX))
+                    // Both glyphs' outer edges land where the simplified nav
+                    // bar's do — see EDGE_GLYPH_PX. Their slots are the bar's
+                    // own square, so the inset is that distance less the slack
+                    // the glyph already has inside one.
+                    .padding(
+                        horizontal = px(EDGE_GLYPH_PX) -
+                            (px(HEADER_BAR_PX) - px(QUEUE_TOGGLE_ICON_PX)) / 2,
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 HeaderSlot {
