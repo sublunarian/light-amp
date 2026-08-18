@@ -112,7 +112,9 @@ fun SimpleLightScreen<*>.LibrarySubPage(
                 // was showing — see LibraryNav.returnToLibrary.
                 onNowPlaying = { go { NowPlayingScreen(it) } },
                 onBrowse = {
-                    LibraryNav.returnToLibrary()
+                    // The button goes to the top of the library, however deep
+                    // this page is; back is what walks up one level at a time.
+                    LibraryNav.openLibraryIndex()
                     popToRoot()
                 },
             )

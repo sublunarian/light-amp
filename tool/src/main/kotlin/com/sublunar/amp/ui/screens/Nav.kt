@@ -104,11 +104,17 @@ object LibraryNav {
      * of it is the plain "back to the library" above.
      */
     fun pressLibrary() {
+        // Not on the library: come back to it, as you left it.
         if (searchActive.value) {
             closeSearch()
             return
         }
-        libraryIndex.value = !libraryIndex.value
+        // Already on it: go to the top. Not a toggle — a second press used to
+        // flip back down to the page you had just come up from, so the button
+        // undid itself and never settled anywhere. From the list it now does
+        // nothing you can see, which is the honest answer to "take me to the
+        // list" when the list is what you are looking at.
+        libraryIndex.value = true
     }
 
     /**
