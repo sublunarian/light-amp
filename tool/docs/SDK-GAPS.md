@@ -59,7 +59,7 @@ wants and the SDK owns the service.
   media3 type reaches the public API.
 
 **Why it hasn't been adopted yet.** The cost is not the capability line; it is
-that four of the seven additions under *Smaller asks* live in
+that most of the additions under *Smaller asks* live in
 `LightAudioPlayer.kt`, and that is the file detached audio rewrote:
 
 | | |
@@ -167,13 +167,19 @@ protocol.
 
 ## Smaller asks
 
-Not workarounds — just things that were missing and are trivial to add. All seven
-are already written as small additions to the SDK; see
-[SDK-PATCHES.md](SDK-PATCHES.md).
+Not workarounds — just things that were missing and are trivial to add. All of
+them are already written as small additions to the SDK; see
+[SDK-PATCHES.md](SDK-PATCHES.md), which counts eight and is the authority — the
+table below names the ones worth arguing for individually, not the whole set.
 
-None of the seven had been implemented upstream as of 2026-08-18, checked
-against `upstream/main` at `522f94d`. Adopting a newer SDK does not shrink this
-list; it only moves where the patches have to be re-applied.
+Eleven of them are the queue-editing, volume, repeat and queue-restore members
+`LightAudioPlayer` doesn't forward, listed together in SDK-PATCHES §4. They are
+the reason adopting detached audio is a migration rather than a swap: upstream's
+player is the smaller one, so taking it means re-adding all eleven.
+
+None had been implemented upstream as of 2026-08-18, checked against
+`upstream/main` at `522f94d`. Adopting a newer SDK does not shrink this list; it
+only moves where the patches have to be re-applied.
 
 | Gap | Why |
 |---|---|

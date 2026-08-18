@@ -3,11 +3,11 @@
 Amp needs some changes to `sdk/client` in Light's repository. They fall into
 two groups, and the difference matters.
 
-**Additions** (§1–7) are small, self-contained and would be reasonable in the SDK
+**Additions** (§1–8) are small, self-contained and would be reasonable in the SDK
 as it stands. Every one is marked in the source with
 `SDK PATCH (additive, upstreamable)`.
 
-**Workarounds** (§8–12) exist only because there is no supported route. Every one
+**Workarounds** (§9–13) exist only because there is no supported route. Every one
 is marked `SPIKE` or `TEMPORARY`, carries revert instructions in its own comment,
 and must come out before a tool is submitted. What each is standing in for is
 explained in [SDK-GAPS.md](SDK-GAPS.md).
@@ -17,6 +17,34 @@ To find them all in a checkout:
 ```bash
 grep -rn "SDK PATCH\|SPIKE\|TEMPORARY" sdk/ tool/src
 ```
+
+### Counted, not remembered
+
+This list undercounted for a while: it named three of the additions to
+`LightAudioPlayer` and missed eleven more, which made the whole patch set look
+about half its real size. Anyone planning to drop the patches — which is what
+submitting a tool means — would have planned against the wrong number.
+
+The way to check, rather than trust the prose, is to compare the public surface
+against upstream and confirm nothing on any upstream branch already provides it:
+
+```bash
+git fetch upstream
+diff <(grep -oE "^\s{4}(fun|val|var|suspend fun) [a-zA-Z]+" \
+        sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt | sort -u) \
+     <(git show upstream/main:sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt \
+        | grep -oE "^\s{4}(fun|val|var|suspend fun) [a-zA-Z]+" | sort -u)
+```
+
+"Differs from `upstream/main`" is not the same as "we wrote it" — upstream moves,
+and this copy is pinned. A member is ours only if no upstream branch has it:
+
+```bash
+git branch -r --list 'upstream/*' | tr -d ' ' \
+  | xargs -I{} git grep -l "fun replaceRange" {} -- '*/LightAudioPlayer.kt'
+```
+
+Last counted 2026-08-18 against `upstream/main` at `522f94d`.
 
 ---
 
@@ -57,7 +85,30 @@ Also the right way to re-request a stream at a new offset: removing and
 re-adding the playing item moves the player's current index twice, which any
 listener reads as a track change.
 
-### 4. `buildDatabase` — `fallbackToDestructiveMigration`
+### 4. The rest of `LightAudioPlayer`
+
+Eleven more members, all additive, none present on any upstream branch. They are
+grouped here rather than given a section each because they are one thing: the
+player the SDK ships can start a queue and move through it, and a music tool also
+has to *edit* that queue, restore it, and be driven by the phone's own controls.
+
+| Member | Why a music tool needs it |
+|---|---|
+| `addItems`, `addItemAt` | Play Next and Add to Queue. Rebuilding the queue to append to it loses the playing item's position. |
+| `removeItem`, `moveItem` | The queue editor — remove a track, drag one up. |
+| `seekToIndex` | Tapping a row in the queue. |
+| `setMediaQueueAt(items, index, positionMs)` | Restoring a saved queue mid-track. The position has to go in at prepare time: `seekTo` clamps to a duration that isn't known yet, so it lands on 0. |
+| `deviceVolume`, `setSystemVolume` | The hardware rocker, which a tool has to service itself while casting — see `PlaybackController.handleVolumeKey`. |
+| `repeatMode` | Repeat off / all / one. |
+| `pauseAtEndOfMediaItems` | Stopping cleanly at the end of a track rather than rolling into the next. |
+| `skipSilence` | Gapless-ish playback of albums recorded without gaps. |
+
+None of them is novel — every one is a `Player` method or property that media3
+already exposes and the SDK does not forward. That is also why they would survive
+the detached-audio migration: upstream's detached player holds a `Player`, and
+both `ExoPlayer` and `MediaController` implement it. See SDK-GAPS.md.
+
+### 5. `buildDatabase` — `fallbackToDestructiveMigration`
 
 A tool can't reach Room except through this helper (`android.content.Context` is
 a blocked import), so it can't register migrations or a fallback. Without one,
@@ -65,7 +116,7 @@ shipping any schema change crashes every existing install on launch. Recreating
 the tables is the right default: a tool's Room database is a rebuildable cache of
 server state, not the system of record.
 
-### 5. Splash icon centring
+### 6. Splash icon centring
 
 `sdk/client/src/main/res/drawable/loading_text_icon.xml` — the "loading…"
 glyphs sit at y≈96 in a 240-unit viewport whose centre is 120, so the word
@@ -75,7 +126,7 @@ reverting is deleting the group.
 
 ---
 
-### 6. `setHandleAudioBecomingNoisy(true)`
+### 7. `setHandleAudioBecomingNoisy(true)`
 
 One line on the `ExoPlayer.Builder`, and the default is wrong for anything that
 plays audio: without it, Bluetooth disconnecting or headphones being unplugged
@@ -85,7 +136,7 @@ leaves playback running out of the phone's speaker. Media3 handles the
 A tool cannot do this for itself — it needs a `BroadcastReceiver`, and
 `android.content` is blocked.
 
-### 7. `LightAudioPlayer.isCurrentItemSeekable`
+### 8. `LightAudioPlayer.isCurrentItemSeekable`
 
 Whether the stream that actually arrived can be seeked within — true for a file
 or any response carrying a length and byte ranges, false for a live chunked
@@ -103,30 +154,30 @@ position readout insists the seek landed.
 Each of these is described in full — what it's standing in for, and how to
 remove it — in [SDK-GAPS.md](SDK-GAPS.md). In brief:
 
-### 8. `audio/LightMediaService.kt` + manifest
+### 9. `audio/LightMediaService.kt` + manifest
 
 Foreground `MediaSessionService` so audio survives the screen going off.
 Also declares `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_MEDIA_PLAYBACK`.
 
-### 9. `transfer/LightTransferService.kt` + manifest
+### 10. `transfer/LightTransferService.kt` + manifest
 
 `dataSync` foreground service so downloads aren't throttled ~9× when the tool is
 backgrounded.
 
-### 10. `LightActivity` — volume key pass-through
+### 11. `LightActivity` — volume key pass-through
 
 Lets hardware volume keys reach the system so the media session can route them,
 which is what makes the rocker control a cast renderer rather than a silent
 local player.
 
-### 11. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
+### 12. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
 
 Switches LightOS's device-wide greyscale filter off while the tool is in front.
 Needs `WRITE_SECURE_SETTINGS`, declared in the `debug` and `release` manifest
 overlays but never in `src/main` — the plugin validates `src/main` only, so it
 cannot reach a submitted build.
 
-### 12. `cast/DlnaCast.kt`
+### 13. `cast/DlnaCast.kt`
 
 SSDP discovery and SOAP control, written by hand because the sandbox blocks the
 libraries that would normally do this.
@@ -170,5 +221,5 @@ this finds every one of them:
 grep -rn "SPIKE\|TEMPORARY" sdk/ tool/src
 ```
 
-The additions in §1–7 are a separate conversation with Light: they are useful to
+The additions in §1–8 are a separate conversation with Light: they are useful to
 any tool, not just this one, and are written to be upstreamable as they stand.
