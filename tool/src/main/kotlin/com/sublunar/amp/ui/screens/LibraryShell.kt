@@ -467,6 +467,23 @@ private fun LazyListScope.localAccessNotice(needed: Boolean, onAsk: () -> Unit) 
     item { PlayAllRow(AppIcons.Smartphone, "Allow Music Access", onClick = onAsk) }
 }
 
+/**
+ * Why the last sync gave up, at the top of the list it left behind.
+ *
+ * Without it the only sign is a list that is shorter than it should be, or
+ * empty — and the message lived on the source's own page under Settings, which
+ * is the last place anyone looks when the library is the thing that seems
+ * broken. A refused login in particular now leaves the cached rows in place, so
+ * this may sit above a library that looks perfectly fine and is simply no
+ * longer being updated.
+ *
+ * Tapping goes to Settings, which is the way to the source that needs fixing.
+ */
+private fun LazyListScope.syncErrorNotice(error: String?, onOpen: () -> Unit) {
+    if (error.isNullOrBlank()) return
+    item { PlayAllRow(AppIcons.CloudOff, error, onClick = onOpen) }
+}
+
 @Composable
 private fun AlbumsTab(actions: ShellActions) {
     val view by App.sortedAlbums.collectAsState()
@@ -482,6 +499,7 @@ private fun AlbumsTab(actions: ShellActions) {
     // hidden long after the liked albums had loaded.
     val supportsLikes = App.source.collectAsState().value.supportsLikes
     val needsAccess = !rememberLocalAccess()
+    val syncError = App.library.syncState.collectAsState().value.error
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     val grid = App.albumGrid.collectAsState().value
     Column(Modifier.fillMaxSize()) {
@@ -512,6 +530,7 @@ private fun AlbumsTab(actions: ShellActions) {
                 reversed = reversed,
             ) {
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
+                syncErrorNotice(syncError, actions.settings)
                 item { RandomAlbumRow(sorted, actions) }
                 items(sorted, key = { it.id }) { album ->
                     TrackRow(
@@ -616,6 +635,7 @@ private fun SongsTab(actions: ShellActions) {
     // hidden long after the liked tracks had loaded.
     val supportsLikes = App.source.collectAsState().value.supportsLikes
     val needsAccess = !rememberLocalAccess()
+    val syncError = App.library.syncState.collectAsState().value.error
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
 
     Column(Modifier.fillMaxSize()) {
@@ -634,6 +654,7 @@ private fun SongsTab(actions: ShellActions) {
         ) {
             if (!selection.active) {
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
+                syncErrorNotice(syncError, actions.settings)
                 item {
                     PlayAllRow(AppIcons.Shuffle, "Shuffle") {
                         App.playback.playQueue(shuffled(sorted), 0)
@@ -685,6 +706,7 @@ private fun ArtistsTab(actions: ShellActions) {
     val artistImages = !App.hideArtistImages.collectAsState().value
     LaunchedEffect(artistImages) { if (artistImages) App.library.primeArtistImages() }
     val needsAccess = !rememberLocalAccess()
+    val syncError = App.library.syncState.collectAsState().value.error
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     Column(Modifier.fillMaxSize()) {
         TabHeader(LibraryTab.ARTISTS, actions)
