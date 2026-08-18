@@ -6,6 +6,7 @@ import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.Artist
 import com.sublunar.amp.data.ArtworkMode
+import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.ArtistSort
 import com.sublunar.amp.data.PendingActions
 import com.sublunar.amp.data.Playlist
@@ -473,6 +474,17 @@ object App {
     val artistAlbumGrid: StateFlow<Boolean> by lazy {
         combine(settings.artistAlbumGrid, hideArtwork) { grid, hidden -> grid && !hidden }
             .stateIn(scope, SharingStarted.Eagerly, false)
+    }
+
+    /**
+     * Which shape the bottom bar takes — see [AppSettings.layoutMode].
+     *
+     * Eager, like its neighbours, because the bar is drawn on every screen: read
+     * as a plain preference Flow it would show the standard bar for a frame on
+     * the way to every page, on a phone set to the simplified one.
+     */
+    val layoutMode: StateFlow<LayoutMode> by lazy {
+        settings.layoutMode.stateIn(scope, SharingStarted.Eagerly, LayoutMode.STANDARD)
     }
 
 

@@ -73,6 +73,13 @@ enum class SongSort { TITLE, ARTIST, DATE_ADDED, RECENTLY_PLAYED, MOST_PLAYED, R
 enum class ArtistSort { NAME, MOST_PLAYED }
 enum class PlaylistSort { RECENTLY_UPDATED, NAME, DATE_CREATED }
 
+enum class LayoutMode {
+    /** Standard layout with 5 buttons: Search, Browse with chevron, Now Playing. */
+    STANDARD,
+    /** Simplified layout with 3 buttons: Search, Browse, Now Playing. */
+    SIMPLIFIED,
+}
+
 /**
  * Ordering for the genre and composer lists, which are bare tag values.
  *
@@ -357,6 +364,9 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     val invertColors: Flow<Boolean> = boolFlow(INVERT_COLORS, false)
     val karaokeLyrics: Flow<Boolean> = boolFlow(KARAOKE_LYRICS, true)
 
+    /** Whether to use the simplified or standard layout mode. */
+    val layoutMode: Flow<LayoutMode> = enumFlow(LAYOUT_MODE, LayoutMode.STANDARD)
+
     /**
      * Show album lists as a wall of covers instead of a column of titles.
      *
@@ -494,6 +504,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setMonochromeArtwork(value: Boolean) = putBool(MONOCHROME_ARTWORK, value)
     suspend fun setArtwork(value: ArtworkMode) = putString(ARTWORK, value.name)
     suspend fun setDownloadsPaused(value: Boolean) = putBool(DOWNLOADS_PAUSED, value)
+    suspend fun setLayoutMode(value: LayoutMode) = putString(LAYOUT_MODE, value.name)
 
     // --- helpers -------------------------------------------------------------
 
@@ -545,6 +556,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val HIDE_DOWNLOAD_ICONS = booleanPreferencesKey("pref.hideDownloadIcons")
         private val MONOCHROME_ARTWORK = booleanPreferencesKey("pref.monochromeArtwork")
         private val ARTWORK = stringPreferencesKey("pref.artworkMode")
+        private val LAYOUT_MODE = stringPreferencesKey("pref.layoutMode")
         private val SOURCES = stringPreferencesKey("pref.sources")
         private val ACTIVE_SOURCE = stringPreferencesKey("pref.activeSource")
 
