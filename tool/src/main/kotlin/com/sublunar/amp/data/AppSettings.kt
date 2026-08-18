@@ -85,13 +85,13 @@ enum class LastSection { LIBRARY, SEARCH, NOW_PLAYING }
 /**
  * How the bottom bar is arranged, and what that implies for the pages above it.
  *
- * [SIMPLIFIED] is what a fresh install gets. Three buttons is the shape the
- * phone itself uses, and the library it opens onto holds more than the four
- * tabs ever did — the tag lists and the liked lists are on it rather than
- * behind a menu.
+ * [SIMPLIFIED] is the default and the one the setting describes the absence of:
+ * "Expanded Library Navbar", off. Three buttons is the shape the phone itself
+ * uses, and the library one of them opens holds more than the four tabs ever
+ * did — the tag lists and the liked lists are on it rather than behind a menu.
  */
 enum class LayoutMode {
-    /** The four library tabs along the bar, with search as a fifth. */
+    /** Expanded: the four library tabs along the bar, with search as a fifth. */
     STANDARD,
 
     /** Library, the player and search — the library being a page of its own. */

@@ -162,11 +162,19 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                     }
                 }
                 item {
-                    TextRow(
-                        title = "Library Layout",
-                        subtitle = if (layoutMode == LayoutMode.STANDARD) "Standard" else "Simplified",
-                        onClick = { go { LayoutModeScreen(it) } },
-                    )
+                    // On spreads the library across the bar — the four tabs and
+                    // search. Off is the three the phone itself uses, and is
+                    // what a fresh install gets: the library becomes a page
+                    // rather than a row of tabs. Phrased as the thing switching
+                    // it on does, like its neighbours.
+                    val expanded = layoutMode == LayoutMode.STANDARD
+                    ToggleRow("Expanded Library Navbar", expanded) {
+                        App.scope.launch {
+                            App.settings.setLayoutMode(
+                                if (expanded) LayoutMode.SIMPLIFIED else LayoutMode.STANDARD,
+                            )
+                        }
+                    }
                 }
 
                 // About lives here rather than on More: it's a page about the
@@ -268,39 +276,6 @@ class SourceDownloadFormatScreen(
     }
 }
 
-/** Choose between standard and simplified layout modes. */
-class LayoutModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-    @Composable
-    override fun Content() {
-        val current by App.settings.layoutMode.collectAsState(initial = LayoutMode.SIMPLIFIED)
-
-        ListScreen(onBack = { goBack() }, title = "Library Layout") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
-                items(LayoutMode.entries) { mode ->
-                    val label = when (mode) {
-                        LayoutMode.STANDARD -> "Standard"
-                        LayoutMode.SIMPLIFIED -> "Simplified"
-                    }
-                    // What each one actually is, rather than what the first
-                    // sketch of them was: the bar's contents, in its order.
-                    val subtitle = when (mode) {
-                        LayoutMode.STANDARD -> "Playlists, artists, albums, songs, search"
-                        LayoutMode.SIMPLIFIED -> "Library, search, now playing"
-                    }
-                    TextRow(
-                        title = label,
-                        subtitle = subtitle,
-                        onClick = {
-                            App.scope.launch { App.settings.setLayoutMode(mode) }
-                            goBack()
-                        },
-                        trailing = { if (mode == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 fun ToggleRow(label: String, value: Boolean, onToggle: () -> Unit) {
