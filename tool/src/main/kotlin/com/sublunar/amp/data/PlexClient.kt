@@ -271,6 +271,18 @@ class PlexClient(
      * source only the original file and MP3 — the formats it cannot serve are
      * absent rather than silently swapped.
      */
+    override suspend fun prepareStream(
+        songId: String,
+        format: StreamFormat,
+        sessionId: String?,
+    ): Boolean {
+        // Nothing to decide without a session to decide for: the stream URL
+        // leaves the identifier off in that case too, and Plex only enforces
+        // this against sessions it is tracking.
+        if (sessionId.isNullOrBlank()) return true
+        return sendChecked("/music/:/transcode/universal/decision", transcodeParams(songId, format, 0, sessionId))
+    }
+
     override fun streamUrl(
         songId: String,
         format: StreamFormat,
@@ -278,8 +290,27 @@ class PlexClient(
         estimateContentLength: Boolean,
         sessionId: String?,
     ): String {
+        val query = transcodeParams(songId, format, timeOffsetSeconds, sessionId)
+            .joinToString("&") { (k, v) -> "$k=${enc(v)}" }
+        return baseUrl.trimEnd('/') + "/music/:/transcode/universal/start.mp3?$query"
+    }
+
+    /**
+     * What a transcode request is made of — asked for twice, and the two have to
+     * match.
+     *
+     * [prepareStream] settles the decision for a session and the stream then
+     * claims it, so anything that differs between the two describes a different
+     * playback and leaves the stream without a decision of its own.
+     */
+    private fun transcodeParams(
+        songId: String,
+        format: StreamFormat,
+        timeOffsetSeconds: Int,
+        sessionId: String?,
+    ): List<Pair<String, String>> {
         val original = format == StreamFormat.RAW
-        val params = buildList {
+        return buildList {
             add("path" to "/library/metadata/$songId")
             add("mediaIndex" to "0")
             add("partIndex" to "0")
@@ -300,8 +331,6 @@ class PlexClient(
             add("X-Plex-Token" to token)
             identityHeaders.forEach { (k, v) -> add(k to v) }
         }
-        val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
-        return baseUrl.trimEnd('/') + "/music/:/transcode/universal/start.mp3?$query"
     }
 
     /**

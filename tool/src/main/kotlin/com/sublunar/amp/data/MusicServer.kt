@@ -114,6 +114,26 @@ interface MusicServer {
         sessionId: String? = null,
     ): String = streamUrl(track.id, format, timeOffsetSeconds, estimateContentLength, sessionId)
 
+    /**
+     * Settle whatever the server needs settling before it will serve a stream.
+     *
+     * Most servers need nothing and the default says so. Plex is the exception:
+     * the stream URL claims its Media Decision Engine, and Plex holds a client
+     * to that claim — a session it knows about with no decision recorded is
+     * refused the transcode outright, as a bare 400 on the media request. See
+     * [PlexClient.prepareStream].
+     *
+     * Called with the same [sessionId] the stream URL carries, so the answer
+     * applies to the request that follows. Returns false when the server
+     * refused; playback is attempted anyway, since a server that won't decide
+     * may still serve.
+     */
+    suspend fun prepareStream(
+        songId: String,
+        format: StreamFormat,
+        sessionId: String?,
+    ): Boolean = true
+
     fun coverArtUrl(coverArtId: String?): String?
 
     /**

@@ -600,7 +600,9 @@ class PlaybackController(
         }
         val p = player ?: return
         val wasPlaying = _isPlaying.value
-        if (wasPlaying) p.pause() else p.play()
+        // Resuming needs the server's decision first, exactly as [play] does —
+        // this is the button that actually starts a restored queue.
+        if (wasPlaying) p.pause() else withStreamDecision { p.play() }
         reportTimeline(if (wasPlaying) TimelineState.PAUSED else TimelineState.PLAYING)
     }
 
@@ -612,8 +614,37 @@ class PlaybackController(
             reportTimeline(TimelineState.PLAYING)
             return
         }
-        player?.play()
+        // The decision first, then the sound — see MusicServer.prepareStream.
+        // Starting the player before it is settled is what left a restored
+        // queue dead: the stream went out with no decision behind it and came
+        // back 400, which then took the whole library offline.
+        withStreamDecision { player?.play() }
         reportTimeline(TimelineState.PLAYING)
+    }
+
+    /**
+     * Run [start] once the server has agreed to serve the current track.
+     *
+     * Only for a streamed track: a file on the phone has no server to ask, and
+     * making it wait would put a round trip in front of playing something that
+     * is already here. Bounded, and it starts anyway on a timeout or a refusal —
+     * a server that won't decide may still serve, and a silent player is the
+     * worse failure.
+     */
+    private fun withStreamDecision(start: () -> Unit) {
+        val track = currentTrack.value
+        val source = queuedSources.getOrNull(_index.value)
+        val client = serverClient.value
+        if (track == null || client == null || source !is LightAudioSource.UrlSource) {
+            start()
+            return
+        }
+        scope.launch {
+            withTimeoutOrNull(STREAM_DECISION_TIMEOUT_MS) {
+                client.prepareStream(track.id, effectiveFormat(), sessionIdFor(track.id))
+            }
+            withContext(Dispatchers.Main.immediate) { start() }
+        }
     }
 
     fun pause() {
@@ -1812,6 +1843,13 @@ class PlaybackController(
          * transcode's duration is its own estimate.
          */
         private const val IGNORED_OFFSET_SLACK_MS = 3_000L
+
+        /** Long enough for the player to be reporting the stream, not the request. */
+        /**
+         * How long to wait for Plex to settle a transcode decision before
+         * starting anyway. Short: this sits between the tap and the sound.
+         */
+        private const val STREAM_DECISION_TIMEOUT_MS = 2_000L
 
         /** Long enough for the player to be reporting the stream, not the request. */
         private const val SEEK_VERIFY_MS = 900L
