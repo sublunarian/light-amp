@@ -7,6 +7,10 @@ supported route, and each would come out the moment there is one.
 They are listed here in the order they'd matter to any music tool, not just this
 one. The first two are the ones that make a music player a music player.
 
+**The first has since been answered upstream** — see the note under it. The
+workaround is still what ships, because adopting the official route is a real
+piece of work rather than a switch, and that work is costed below.
+
 ---
 
 ## 1. Background audio
@@ -30,6 +34,52 @@ in the tool at all; it already just calls `play()`.
 **Revert:** delete `LightMediaService.kt`, the `mediaSession` field and
 `appContext` in `LightAudioPlayer`, and the service plus two permissions from
 `sdk/client/src/main/AndroidManifest.xml`.
+
+### Upstream shipped this (checked 2026-08-18)
+
+`feat: detached audio playback` — upstream `71f7283`, merged as PR #148 on
+2026-08-05, after the SDK copy vendored here. It is the supported route this
+section asked for, and close to the shape asked for: the tool declares what it
+wants and the SDK owns the service.
+
+- `newPlayer(playback = LightAudioPlayback.Detached)` returns a handle backed
+  by a `MediaController` against an SDK-owned `MediaSessionService`, rather
+  than an in-process ExoPlayer. Both modes share one public surface for queue,
+  transport, position, metadata and errors.
+- Opted into with `capabilities = ["detached-audio"]` in `lighttool.toml`. The
+  Gradle plugin expands that one entry into the foreground-service permissions,
+  the service declaration, and a meta-data marker. The SDK checks the *marker*
+  at runtime, not the permission, because any transitive dependency can
+  contribute a permission and none of them says what the tool asked for.
+- `release()` disconnects the handle without stopping playback; a reconnecting
+  player finds a live session, awaits readiness, and reuses a non-empty queue
+  rather than replacing it. The service stops itself 60 seconds after playback
+  pauses with no handle open.
+- Failures surface as SDK-owned `LightAudioError` values in both modes, so no
+  media3 type reaches the public API.
+
+**Why it hasn't been adopted yet.** The cost is not the capability line; it is
+that four of the seven additions under *Smaller asks* live in
+`LightAudioPlayer.kt`, and that is the file detached audio rewrote:
+
+| | |
+|---|---|
+| This copy | 528 lines |
+| Upstream | 360 lines |
+| Differing | 456 lines |
+| `onPlaybackError`, `replaceRange`, `setHandleAudioBecomingNoisy`, `isCurrentItemSeekable` present upstream | none of them |
+
+So adopting it means re-applying four patches onto a substantially rewritten
+file whose internals moved from an in-process player to a controller. Two of
+those patches — `replaceRange` and `isCurrentItemSeekable` — reach into player
+internals that may not survive a controller boundary at all, and
+`PlaybackController` leans on both: the first for the gapless cast hand-off,
+the second for the seek fallback. Neither has been tried against the detached
+path.
+
+Nothing here is a reason not to do it. It is a reason to do it deliberately,
+with the background, cast hand-off and download-throttling cases all re-tested
+on the device, rather than as a one-line change.
 
 ---
 
@@ -121,6 +171,10 @@ Not workarounds — just things that were missing and are trivial to add. All se
 are already written as small additions to the SDK; see
 [SDK-PATCHES.md](SDK-PATCHES.md).
 
+None of the seven had been implemented upstream as of 2026-08-18, checked
+against `upstream/main` at `522f94d`. Adopting a newer SDK does not shrink this
+list; it only moves where the patches have to be re-applied.
+
 | Gap | Why |
 |---|---|
 | `popToRoot()` | A tool with a tab bar visible on nested screens has to be able to unwind to the root. Without it, tapping a tab three levels deep can only go back one. |
@@ -137,7 +191,9 @@ Not gaps in the API but decisions above it:
 
 **Physical button mapping.** The LP3's side buttons and dimmer wheel are behind
 a LightOS token trust-gate. A side-loaded tool cannot bind them, and no patch to
-the SDK changes that — it is enforced on the OS side.
+the SDK changes that — it is enforced on the OS side. Upstream's key-forwarding
+work (PR #114) does not change this: `onKeyDown`, `onKeyUp` and `onKeyMultiple`
+are already identical here and upstream, and the gate is not an API gap.
 
 **The stock Music tool's library.** LightOS keeps it in `com.lightos` private
 storage, unreadable by any tool, and its contents do not appear in MediaStore
