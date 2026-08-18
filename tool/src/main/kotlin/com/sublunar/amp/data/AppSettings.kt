@@ -82,10 +82,19 @@ enum class PlaylistSort { RECENTLY_UPDATED, NAME, DATE_CREATED }
  */
 enum class LastSection { LIBRARY, SEARCH, NOW_PLAYING }
 
+/**
+ * How the bottom bar is arranged, and what that implies for the pages above it.
+ *
+ * [SIMPLIFIED] is what a fresh install gets. Three buttons is the shape the
+ * phone itself uses, and the library it opens onto holds more than the four
+ * tabs ever did — the tag lists and the liked lists are on it rather than
+ * behind a menu.
+ */
 enum class LayoutMode {
-    /** Standard layout with 5 buttons: Search, Browse with chevron, Now Playing. */
+    /** The four library tabs along the bar, with search as a fifth. */
     STANDARD,
-    /** Simplified layout with 3 buttons: Search, Browse, Now Playing. */
+
+    /** Library, the player and search — the library being a page of its own. */
     SIMPLIFIED,
 }
 
@@ -374,7 +383,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     val karaokeLyrics: Flow<Boolean> = boolFlow(KARAOKE_LYRICS, true)
 
     /** Whether to use the simplified or standard layout mode. */
-    val layoutMode: Flow<LayoutMode> = enumFlow(LAYOUT_MODE, LayoutMode.STANDARD)
+    val layoutMode: Flow<LayoutMode> = enumFlow(LAYOUT_MODE, LayoutMode.SIMPLIFIED)
 
     /** Where the app was when it was last closed — see [LastSection]. */
     val lastSection: Flow<LastSection> = enumFlow(LAST_SECTION, LastSection.LIBRARY)

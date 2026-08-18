@@ -57,7 +57,7 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
         val hideArtistImages by App.settings.hideArtistImages.collectAsState(initial = false)
         val hideDownloadIcons by App.hideDownloadIcons.collectAsState()
         val artwork by App.settings.artwork.collectAsState(initial = ArtworkMode.SMALL)
-        val layoutMode by App.settings.layoutMode.collectAsState(initial = LayoutMode.STANDARD)
+        val layoutMode by App.settings.layoutMode.collectAsState(initial = LayoutMode.SIMPLIFIED)
         val dataMode by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
         // Nothing to download when the audio is already on the phone — see
         // MusicSource.supportsDownloads.
@@ -272,7 +272,7 @@ class SourceDownloadFormatScreen(
 class LayoutModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val current by App.settings.layoutMode.collectAsState(initial = LayoutMode.STANDARD)
+        val current by App.settings.layoutMode.collectAsState(initial = LayoutMode.SIMPLIFIED)
 
         ListScreen(onBack = { goBack() }, title = "Layout") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
@@ -281,9 +281,11 @@ class LayoutModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                         LayoutMode.STANDARD -> "Standard"
                         LayoutMode.SIMPLIFIED -> "Simplified"
                     }
+                    // What each one actually is, rather than what the first
+                    // sketch of them was: the bar's contents, in its order.
                     val subtitle = when (mode) {
-                        LayoutMode.STANDARD -> "5 buttons (search, browse, now playing)"
-                        LayoutMode.SIMPLIFIED -> "3 buttons (search, browse, now playing)"
+                        LayoutMode.STANDARD -> "Playlists, artists, albums, songs, search"
+                        LayoutMode.SIMPLIFIED -> "Library, search, now playing"
                     }
                     TextRow(
                         title = label,

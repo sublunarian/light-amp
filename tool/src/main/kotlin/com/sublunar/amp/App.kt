@@ -484,7 +484,7 @@ object App {
      * the way to every page, on a phone set to the simplified one.
      */
     val layoutMode: StateFlow<LayoutMode> by lazy {
-        settings.layoutMode.stateIn(scope, SharingStarted.Eagerly, LayoutMode.STANDARD)
+        settings.layoutMode.stateIn(scope, SharingStarted.Eagerly, LayoutMode.SIMPLIFIED)
     }
 
 
