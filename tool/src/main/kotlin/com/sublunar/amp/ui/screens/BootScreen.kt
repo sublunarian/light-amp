@@ -14,6 +14,9 @@ import androidx.lifecycle.viewModelScope
 import com.sublunar.amp.App
 import kotlinx.coroutines.flow.first
 import com.sublunar.amp.data.LayoutMode
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.filterNotNull
+import com.sublunar.amp.data.LastSection
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.ui.PlayerTheme
 import com.thelightphone.sdk.InitialScreen
@@ -27,6 +30,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** How long to wait for the restored queue before giving up on the player. */
+private const val RESTORE_PLAYER_MS = 2_000L
 
 sealed interface BootState {
     data object Loading : BootState
@@ -142,13 +148,25 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                         },
                     )
                 }
-                // Simplified's first page is the library index: the middle
-                // button is where everything starts from, and landing on a tab
-                // would be landing part-way in. Once per run — see
-                // LibraryNav.landOnLibraryIndex.
+                // Reopen where the app was left: one of the bar's three
+                // destinations, never the page beneath it — see LastSection.
+                // Once per run, guarded by LibraryNav, because this composable
+                // re-enters every time a pushed screen pops off it.
                 LaunchedEffect(Unit) {
-                    if (App.settings.layoutMode.first() == LayoutMode.SIMPLIFIED) {
-                        LibraryNav.landOnLibraryIndex()
+                    if (!LibraryNav.claimFirstLanding()) return@LaunchedEffect
+                    when (App.settings.lastSection.first()) {
+                        LastSection.SEARCH -> LibraryNav.openSearch()
+                        LastSection.NOW_PLAYING -> {
+                            // The queue is restored asynchronously, so wait a
+                            // moment for it rather than opening a player with
+                            // nothing in it. If nothing arrives, the library is
+                            // the honest place to land.
+                            val track = withTimeoutOrNull(RESTORE_PLAYER_MS) {
+                                App.playback.currentTrack.filterNotNull().first()
+                            }
+                            if (track != null) go { NowPlayingScreen(it) } else openLibrary()
+                        }
+                        LastSection.LIBRARY -> openLibrary()
                     }
                 }
                 val libraryIndex by LibraryNav.libraryIndex.collectAsState()
@@ -192,7 +210,7 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                         more = { page -> go { MoreScreen(it, page) } },
                         // Simplified's centre button: the library index, which
                         // also drops search if that is what is showing.
-                        browse = { LibraryNav.openLibraryIndex() },
+                        browse = { LibraryNav.pressLibrary() },
                         genres = { openLibraryPage { GenresScreen(it) } },
                         composers = { openLibraryPage { ComposersScreen(it) } },
                         openAlbum = { id, parent -> openAlbum(id, parent) },
@@ -209,6 +227,16 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                     ),
                 )
             }
+        }
+    }
+
+    /**
+     * The library's own front page: the index under Simplified, and under the
+     * standard layout the tab that was current, which is all it has.
+     */
+    private suspend fun openLibrary() {
+        if (App.settings.layoutMode.first() == LayoutMode.SIMPLIFIED) {
+            LibraryNav.libraryIndex.value = true
         }
     }
 

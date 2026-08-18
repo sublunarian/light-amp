@@ -73,6 +73,15 @@ enum class SongSort { TITLE, ARTIST, DATE_ADDED, RECENTLY_PLAYED, MOST_PLAYED, R
 enum class ArtistSort { NAME, MOST_PLAYED }
 enum class PlaylistSort { RECENTLY_UPDATED, NAME, DATE_CREATED }
 
+/**
+ * Which of the bar's three destinations was last showing.
+ *
+ * Only these three, not the page under them: a record you were reading is
+ * somewhere within the library, and reopening the app there rather than at the
+ * library itself is landing you part-way into something you have since left.
+ */
+enum class LastSection { LIBRARY, SEARCH, NOW_PLAYING }
+
 enum class LayoutMode {
     /** Standard layout with 5 buttons: Search, Browse with chevron, Now Playing. */
     STANDARD,
@@ -367,6 +376,9 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     /** Whether to use the simplified or standard layout mode. */
     val layoutMode: Flow<LayoutMode> = enumFlow(LAYOUT_MODE, LayoutMode.STANDARD)
 
+    /** Where the app was when it was last closed — see [LastSection]. */
+    val lastSection: Flow<LastSection> = enumFlow(LAST_SECTION, LastSection.LIBRARY)
+
     /**
      * Show album lists as a wall of covers instead of a column of titles.
      *
@@ -505,6 +517,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setArtwork(value: ArtworkMode) = putString(ARTWORK, value.name)
     suspend fun setDownloadsPaused(value: Boolean) = putBool(DOWNLOADS_PAUSED, value)
     suspend fun setLayoutMode(value: LayoutMode) = putString(LAYOUT_MODE, value.name)
+    suspend fun setLastSection(value: LastSection) = putString(LAST_SECTION, value.name)
 
     // --- helpers -------------------------------------------------------------
 
@@ -557,6 +570,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val MONOCHROME_ARTWORK = booleanPreferencesKey("pref.monochromeArtwork")
         private val ARTWORK = stringPreferencesKey("pref.artworkMode")
         private val LAYOUT_MODE = stringPreferencesKey("pref.layoutMode")
+        private val LAST_SECTION = stringPreferencesKey("pref.lastSection")
         private val SOURCES = stringPreferencesKey("pref.sources")
         private val ACTIVE_SOURCE = stringPreferencesKey("pref.activeSource")
 

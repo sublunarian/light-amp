@@ -1,5 +1,8 @@
 package com.sublunar.amp.ui.screens
 
+import kotlinx.coroutines.launch
+import com.sublunar.amp.data.LastSection
+import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.components.SelectionState
 import com.sublunar.amp.ui.components.ScrollAnchors
@@ -46,6 +49,7 @@ object LibraryNav {
      */
     fun openSearch(withKeyboard: Boolean = false) {
         searchActive.value = true
+        record(LastSection.SEARCH)
         if (withKeyboard) pendingKeyboard.value = true
     }
 
@@ -71,6 +75,43 @@ object LibraryNav {
     }
 
     /**
+     * Back to the library as you left it — the bar's middle button.
+     *
+     * Deliberately not [openLibraryIndex]: the button means "the library",
+     * and the library is whichever page you were last reading, scrolled where
+     * you left it, not a menu you have to walk through again. Only a cold start
+     * opens on the index, because then there is no page to go back to. The way
+     * *up* to the index is the back arrow in a tab's header.
+     *
+     * So this only drops search, if that is what is covering the library; the
+     * tab and every scroll position are left exactly as they were.
+     */
+    fun returnToLibrary() {
+        closeSearch()
+    }
+
+    /**
+     * The bar's middle button, pressed while the shell itself is showing.
+     *
+     * One press is "the library" and lands on the page you were last reading.
+     * A second, now that you are already there, is a press with nowhere left to
+     * go — so it means the step up, to the index. Pressing again comes back
+     * down to the page, which makes the button a way between the two rather
+     * than a dead tap on one of them.
+     *
+     * Search is the exception and is only ever left, never toggled into: it
+     * covers the library rather than being part of it, so the first press out
+     * of it is the plain "back to the library" above.
+     */
+    fun pressLibrary() {
+        if (searchActive.value) {
+            closeSearch()
+            return
+        }
+        libraryIndex.value = !libraryIndex.value
+    }
+
+    /**
      * Open on the index, once, when the app starts under Simplified.
      *
      * Guarded here rather than by a composition effect's key: the root screen
@@ -82,10 +123,16 @@ object LibraryNav {
      */
     private var landed = false
 
-    fun landOnLibraryIndex() {
-        if (landed) return
+    /**
+     * True once, for whoever settles the opening destination.
+     *
+     * The caller decides what that destination is — see BootScreen, which
+     * restores whichever of the bar's three the app was last left on.
+     */
+    fun claimFirstLanding(): Boolean {
+        if (landed) return false
         landed = true
-        libraryIndex.value = true
+        return true
     }
 
     fun setQuery(query: String) {
@@ -101,6 +148,19 @@ object LibraryNav {
      */
     fun closeSearch() {
         searchActive.value = false
+        record(LastSection.LIBRARY)
+    }
+
+    /**
+     * Note where the app is, so it can reopen there.
+     *
+     * Silent until the app has booted: these run from navigation that can fire
+     * before the settings store exists, and where the app reopens is not worth
+     * a crash on the way in.
+     */
+    internal fun record(section: LastSection) {
+        if (!App.isReady) return
+        App.scope.launch { App.settings.setLastSection(section) }
     }
 
     /** Empty the field without leaving the page — what the X in it means. */

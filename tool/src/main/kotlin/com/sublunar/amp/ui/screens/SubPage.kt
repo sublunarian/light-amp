@@ -107,11 +107,12 @@ fun SimpleLightScreen<*>.LibrarySubPage(
                 // library the way the header's used to: activate and unwind.
                 onSearch = { openLibrarySearch() },
                 // Simplified puts the player and the library in the bar. From
-                // a sub-page the library means the index, the same as it does
-                // from a tab — so unwind to the shell and show it there.
+                // a sub-page the library means the page this one was opened
+                // from, so unwind to the shell and leave it showing whatever it
+                // was showing — see LibraryNav.returnToLibrary.
                 onNowPlaying = { go { NowPlayingScreen(it) } },
                 onBrowse = {
-                    LibraryNav.openLibraryIndex()
+                    LibraryNav.returnToLibrary()
                     popToRoot()
                 },
             )
