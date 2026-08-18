@@ -19,7 +19,7 @@ built on Light's SDK, so it looks like it belongs there.
 
 ## Features
 
-- Subsonic (Navidrome, Airsonic, Gonic), Plex, and/or local files on the phone.
+- Subsonic (Navidrome, Airsonic, Gonic), Plex, Jellyfin and/or local files on the phone.
 - Bandcamp [speaks Subsonic](https://blog.bandcamp.com/2026/07/16/discover-improvements-and-subsonic-implementation/)
   now, so you can use Amp without hosting anything.
 - Offline downloads, by album, track, or everything you've liked.
