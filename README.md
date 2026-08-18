@@ -6,10 +6,10 @@ Plays your own library — a Subsonic server, Plex, or files on the phone — an
 built on Light's SDK, so it looks like it belongs there.
 
 <p align="center">
+  <img src="docs/screenshots/albums.png" width="24%" alt="All albums, with the A–Z index">
   <img src="docs/screenshots/now-playing.png" width="24%" alt="Now playing">
   <img src="docs/screenshots/lyrics.png" width="24%" alt="Synced lyrics">
   <img src="docs/screenshots/artist.png" width="24%" alt="An artist's albums">
-  <img src="docs/screenshots/albums.png" width="24%" alt="All albums, with the A–Z index">
 </p>
 
 > Side-load only for now. The tool store isn't open yet.
