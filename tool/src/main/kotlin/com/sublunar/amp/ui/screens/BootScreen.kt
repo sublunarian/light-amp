@@ -12,6 +12,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.sublunar.amp.App
+import kotlinx.coroutines.flow.first
+import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.ui.PlayerTheme
 import com.thelightphone.sdk.InitialScreen
@@ -140,11 +142,22 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                         },
                     )
                 }
+                // Simplified's first page is the library index: the middle
+                // button is where everything starts from, and landing on a tab
+                // would be landing part-way in. Once per run — see
+                // LibraryNav.landOnLibraryIndex.
+                LaunchedEffect(Unit) {
+                    if (App.settings.layoutMode.first() == LayoutMode.SIMPLIFIED) {
+                        LibraryNav.landOnLibraryIndex()
+                    }
+                }
+                val libraryIndex by LibraryNav.libraryIndex.collectAsState()
                 val searchActive by viewModel.searchActive.collectAsState()
                 val searchQuery by viewModel.searchQuery.collectAsState()
                 LibraryShell(
                     currentTab = tab,
                     onSelectTab = { LibraryNav.selectTab(it) },
+                    libraryIndex = libraryIndex,
                     searchActive = searchActive,
                     searchQuery = searchQuery,
                     onSearchQueryChange = { viewModel.setSearchQuery(it) },
@@ -177,13 +190,11 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                             )
                         },
                         more = { page -> go { MoreScreen(it, page) } },
-                        browse = {
-                            if (searchActive) {
-                                viewModel.closeSearch()
-                            } else {
-                                go { TypePickerScreen(it) }
-                            }
-                        },
+                        // Simplified's centre button: the library index, which
+                        // also drops search if that is what is showing.
+                        browse = { LibraryNav.openLibraryIndex() },
+                        genres = { openLibraryPage { GenresScreen(it) } },
+                        composers = { openLibraryPage { ComposersScreen(it) } },
                         openAlbum = { id, parent -> openAlbum(id, parent) },
                         openArtist = { name, parent -> openArtist(name, parent) },
                         openPlaylist = { id, name -> go { PlaylistDetailScreen(it, id, name) } },

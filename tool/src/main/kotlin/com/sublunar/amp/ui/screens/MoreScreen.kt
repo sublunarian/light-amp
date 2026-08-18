@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.BuildConfig
+import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.PlaylistSort
 import com.sublunar.amp.data.descendingByNature
 import com.sublunar.amp.ui.PlayerTheme
@@ -69,7 +70,12 @@ class MoreScreen(
         // composition, where a @Composable can't be called.
         val view = viewOf(page)
         val sort = sortOf(page)
-        val filter = filterOf(page)
+        // Under Simplified both of these have moved onto the library page: the
+        // liked lists are entries there rather than a filter over a tab, and
+        // the pages this used to lead to are on it too. What is left here is
+        // what this menu is actually for — how the page in front of you looks.
+        val simplified = App.layoutMode.collectAsState().value == LayoutMode.SIMPLIFIED
+        val filter = if (simplified) null else filterOf(page)
 
         // Covers the tab bar rather than sitting above it: this is the library
         // page's own menu, opened from its header, and a menu that leaves the
@@ -112,7 +118,9 @@ class MoreScreen(
                 // list, the compilations, what's on the phone. They were the
                 // whole of this page before the modifiers arrived, and they are
                 // still what "more" means once the modifiers have their say.
-                item { TextRow(title = "More") { go { MorePagesScreen(it) } } }
+                if (!simplified) {
+                    item { TextRow(title = "More") { go { MorePagesScreen(it) } } }
+                }
             }
         }
 
@@ -154,10 +162,11 @@ private fun defaultTitle(page: LibraryPage): String = when (page) {
     LibraryPage.ARTISTS -> tabTitle(LibraryTab.ARTISTS, likedOnly(LibraryTab.ARTISTS))
     LibraryPage.PLAYLISTS -> LibraryTab.PLAYLISTS.title
     LibraryPage.SEARCH -> "Search"
+    LibraryPage.LIBRARY -> "Library"
     LibraryPage.GENRES -> "Genres"
     LibraryPage.COMPOSERS -> "Composers"
     LibraryPage.COMPILATIONS -> "Compilations"
-    LibraryPage.DOWNLOADS -> "Downloaded Songs"
+    LibraryPage.DOWNLOADS -> "Downloads"
     LibraryPage.ARTIST_POPULAR -> "Popular Songs"
     // Named after a record, a person, a playlist or a tag, so the page hands
     // its own title over — see MoreScreen.pageTitle.
@@ -225,7 +234,7 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
     LibraryPage.SONGS, LibraryPage.DOWNLOADS -> {
         val sort by App.songSort.collectAsState()
         val reversed by App.songSortReversed.collectAsState()
-        val from = if (page == LibraryPage.DOWNLOADS) "Downloaded Songs" else null
+        val from = if (page == LibraryPage.DOWNLOADS) "Downloads" else null
         sortable(songSortLabel(sort), sort.descendingByNature, reversed) {
             SongsSortScreen(it, from)
         }
@@ -263,6 +272,8 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
     LibraryPage.ARTIST_POPULAR -> PageSetting("Plays")
     LibraryPage.PLAYLIST -> PageSetting("Playlist order")
     LibraryPage.TAG_SONGS, LibraryPage.SEARCH -> PageSetting("Library order")
+    // A menu of places, in the order the app lists them.
+    LibraryPage.LIBRARY -> PageSetting("Fixed")
 }
 
 /** A changeable order, with the arrow the sort menus use for its direction. */
@@ -353,15 +364,6 @@ class MorePagesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 if (composers.isNotEmpty()) {
                     item {
                         TextRow(title = "Composers") { openLibraryPage { ComposersScreen(it) } }
-                    }
-                }
-                // Nothing to download when the audio is already on the phone —
-                // see MusicSource.supportsDownloads.
-                if (source.supportsDownloads) {
-                    item {
-                        TextRow(title = "Downloaded Songs") {
-                            openLibraryPage { DownloadsScreen(it) }
-                        }
                     }
                 }
             }

@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.HistoryEdu
+import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Dehaze
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -95,8 +97,17 @@ object AppIcons {
     val Waveform = WaveformSymbol
     val Lyrics = Icons.Filled.Lyrics
 
-    /** Leaving Now Playing goes back to the library, so the button says so. */
+    /**
+     * Leaving Now Playing goes back to the library, so the button says so — and
+     * the simplified bar's middle button, which is that same library.
+     */
     val LibraryMusic = Icons.Filled.LibraryMusic
+
+    /** Genres, on the library index: a tag is what a genre is. */
+    val Genre = Icons.Filled.LocalOffer
+
+    /** Composers, on the library index — written, rather than performed. */
+    val Composer = Icons.Filled.HistoryEdu
     val Sort = Icons.AutoMirrored.Filled.Sort
     val Favorite = Icons.Filled.Favorite
     val FavoriteBorder = Icons.Filled.FavoriteBorder

@@ -51,6 +51,43 @@ object LibraryNav {
 
     val pendingKeyboard = MutableStateFlow(false)
 
+    /**
+     * The library index — the simplified layout's middle button.
+     *
+     * A state of the shell rather than a screen, because the thing it opens
+     * *onto* is a tab, and tabs are states too: there is no stack to push
+     * Albums on top of a page with. So the index takes the shell's place the
+     * way search does, a tab replaces it when one is chosen, and that tab's
+     * header carries a back arrow that brings the index back. A page that is a
+     * real screen — a genre, the composers — pushes over the top and leaves
+     * this set, so backing out of it lands here too.
+     */
+    val libraryIndex = MutableStateFlow(false)
+
+    /** Show the index, leaving whatever was showing. */
+    fun openLibraryIndex() {
+        closeSearch()
+        libraryIndex.value = true
+    }
+
+    /**
+     * Open on the index, once, when the app starts under Simplified.
+     *
+     * Guarded here rather than by a composition effect's key: the root screen
+     * leaves composition whenever a screen is pushed over it and re-enters when
+     * that screen pops, so a `LaunchedEffect(Unit)` there runs again on every
+     * return. Coming back from the keyboard with a query typed, that landed you
+     * on the index with search closed — the results were one tap away and
+     * looked like the search had been thrown away.
+     */
+    private var landed = false
+
+    fun landOnLibraryIndex() {
+        if (landed) return
+        landed = true
+        libraryIndex.value = true
+    }
+
     fun setQuery(query: String) {
         searchQuery.value = query
         searchActive.value = true
@@ -80,6 +117,8 @@ object LibraryNav {
      */
     fun selectTab(tab: LibraryTab) {
         closeSearch()
+        // Choosing from the index is leaving it — see [libraryIndex].
+        libraryIndex.value = false
         // A selection belongs to the list it was made in; changing tabs abandons
         // it rather than leaving a stale count waiting on some other page.
         Selections.clearAll()
@@ -109,6 +148,9 @@ enum class LibraryPage {
 
     /** Results, which are the library in its own order. */
     SEARCH,
+
+    /** The simplified layout's index of everything there is to browse. */
+    LIBRARY,
 
     /** Pages whose order is the record's, the playlist's, or the server's. */
     ALBUM,

@@ -59,6 +59,9 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
         val artwork by App.settings.artwork.collectAsState(initial = ArtworkMode.SMALL)
         val layoutMode by App.settings.layoutMode.collectAsState(initial = LayoutMode.STANDARD)
         val dataMode by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
+        // Nothing to download when the audio is already on the phone — see
+        // MusicSource.supportsDownloads.
+        val source by App.source.collectAsState()
         val sources by App.settings.sources.collectAsState(initial = emptyList())
         val sourceNames = sources.joinToString(", ") { it.name }
         val config by App.settings.serverConfig.collectAsState(initial = null)
@@ -75,6 +78,13 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                         subtitle = dataModeLabel(dataMode),
                         onClick = { go { DataModeScreen(it) } },
                     )
+                }
+                // What is already on the phone. A page of songs, but reached
+                // from here rather than from the library: it is about storage —
+                // how much is used, what to clear — which is the question this
+                // screen answers, and the songs are how you answer it.
+                if (source.supportsDownloads) {
+                    item { TextRow(title = "Downloads") { go { DownloadsScreen(it) } } }
                 }
                 // Everything about a source that is set once — its address, its
                 // quality, what it downloads. Switching *between* them stays on

@@ -9,6 +9,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.HeaderAction
@@ -26,6 +27,36 @@ fun SimpleLightScreen<*>.openLibrarySearch(withKeyboard: Boolean = false) {
     LibraryNav.openSearch(withKeyboard)
     popToRoot()
 }
+
+/** True while the simplified layout is the one in use. */
+@Composable
+fun simplifiedLayout(): Boolean =
+    App.layoutMode.collectAsState().value == LayoutMode.SIMPLIFIED
+
+/**
+ * Back out of a page opened from the simplified layout's library index.
+ *
+ * Only under Simplified, and for the same reason the corner is free there: the
+ * standard layout keeps the player in that slot and leaves by the tab bar,
+ * which these pages sit alongside rather than under.
+ */
+@Composable
+fun SimpleLightScreen<*>.libraryBackAction(): (() -> Unit)? =
+    if (simplifiedLayout()) ({ goBack() }) else null
+
+/**
+ * The player in a header's left corner — the standard layout only.
+ *
+ * Simplified keeps the player in the bottom bar, so a second one directly above
+ * it is one too many, and the title takes the corner's width back instead.
+ */
+@Composable
+fun SimpleLightScreen<*>.nowPlayingCorner(): HeaderAction? =
+    if (App.layoutMode.collectAsState().value == LayoutMode.SIMPLIFIED) {
+        null
+    } else {
+        HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } }
+    }
 
 /**
  * More sits in every library page's right-hand corner — see LibraryShell.
@@ -75,8 +106,14 @@ fun SimpleLightScreen<*>.LibrarySubPage(
                 // The bar is on these pages too, so its search reaches the
                 // library the way the header's used to: activate and unwind.
                 onSearch = { openLibrarySearch() },
+                // Simplified puts the player and the library in the bar. From
+                // a sub-page the library means the index, the same as it does
+                // from a tab — so unwind to the shell and show it there.
                 onNowPlaying = { go { NowPlayingScreen(it) } },
-                onBrowse = { popToRoot() },
+                onBrowse = {
+                    LibraryNav.openLibraryIndex()
+                    popToRoot()
+                },
             )
         }
     }

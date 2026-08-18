@@ -91,7 +91,8 @@ private fun SimpleLightScreen<*>.TagList(title: String, byComposer: Boolean, emp
     val page = if (byComposer) LibraryPage.COMPOSERS else LibraryPage.GENRES
     LibrarySubPage(page) {
         AppHeader(
-            leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+            leftAction = nowPlayingCorner(),
+            onBack = libraryBackAction(),
             title = title,
             rightAction = libraryCornerAction(page),
         )
@@ -190,7 +191,8 @@ class CompilationsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
 
         LibrarySubPage(LibraryPage.COMPILATIONS) {
             AppHeader(
-                leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
+                leftAction = nowPlayingCorner(),
+                onBack = libraryBackAction(),
                 title = "Compilations",
                 rightAction = libraryCornerAction(LibraryPage.COMPILATIONS),
             )

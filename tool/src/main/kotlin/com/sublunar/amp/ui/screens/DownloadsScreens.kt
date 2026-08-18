@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.data.DataMode
 import com.sublunar.amp.data.OfflineMode
 import com.sublunar.amp.data.SourceKind
@@ -90,20 +91,21 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
         val progress by App.downloader.progress.collectAsState()
         val paused by App.settings.downloadsPaused.collectAsState(initial = false)
 
-        // The tab bar belongs here like it does on every other library page: this
-        // is a page of the library, not a page of More.
-        LibrarySubPage(LibraryPage.DOWNLOADS) {
+        // No tab bar and no menu: this is reached from Settings, and it is a
+        // page about storage rather than a way of browsing the library. Back
+        // returns to the settings it was opened from, which is the only route
+        // in. Its order still follows the song lists' — see App.songSort — it
+        // simply isn't set from here any more.
+        PlayerTheme {
+            Column(modifier = Modifier.fillMaxSize()) {
             AppHeader(
-                // The same corners as every library page: the player on the
-                // left, this page's menu behind its title.
-                leftAction = HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } },
-                title = "Downloaded Songs",
-                rightAction = libraryCornerAction(LibraryPage.DOWNLOADS),
+                onBack = { goBack() },
+                title = "Downloads",
                 fitTitle = true,
             )
             if (tracks.isEmpty() && !progress.active && bytes == 0L) {
                 EmptyState("Nothing downloaded yet")
-                return@LibrarySubPage
+                return@Column
             }
             LibraryList(
                 anchor = "downloaded-songs",
@@ -171,6 +173,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                         )
                     }
                 }
+            }
             }
         }
     }
