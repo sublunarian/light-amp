@@ -115,6 +115,9 @@ class PlaylistDetailScreen(
         val editing = selection.active
         var draggingIndex by remember { mutableStateOf<Int?>(null) }
         var dragOffsetY by remember { mutableStateOf(0f) }
+        // Normally just the dragged row, but grabbing the handle of a row that's
+        // part of a multi-row selection carries the whole selection along with it.
+        var draggingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
         val rowPx = with(LocalDensity.current) { px(160).toPx() }
 
         LibraryList(
@@ -133,7 +136,7 @@ class PlaylistDetailScreen(
                 item { PlayAllRow(AppIcons.Dehaze, "Edit") { selection.begin() } }
             }
             itemsIndexed(list, key = { i, t -> "$i-${t.id}" }) { index, track ->
-                val isDragging = index == draggingIndex
+                val isDragging = track.id in draggingIds
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -189,7 +192,16 @@ class PlaylistDetailScreen(
                         size = n(20),
                         modifier = Modifier.pointerInput(list.size) {
                             detectDragGestures(
-                                onDragStart = { draggingIndex = index; dragOffsetY = 0f },
+                                onDragStart = {
+                                    draggingIndex = index
+                                    dragOffsetY = 0f
+                                    draggingIds =
+                                        if (track.id in selection.selected && selection.count > 1) {
+                                            selection.selected
+                                        } else {
+                                            setOf(track.id)
+                                        }
+                                },
                                 onDrag = { change, amount ->
                                     change.consume()
                                     dragOffsetY += amount.y
@@ -199,12 +211,17 @@ class PlaylistDetailScreen(
                                     if (from != null) {
                                         val target = (from + (dragOffsetY / rowPx).roundToInt())
                                             .coerceIn(0, list.lastIndex)
-                                        if (target != from) reorder(from, target)
+                                        if (target != from) reorderGroup(target, draggingIds)
                                     }
                                     draggingIndex = null
                                     dragOffsetY = 0f
+                                    draggingIds = emptySet()
                                 },
-                                onDragCancel = { draggingIndex = null; dragOffsetY = 0f },
+                                onDragCancel = {
+                                    draggingIndex = null
+                                    dragOffsetY = 0f
+                                    draggingIds = emptySet()
+                                },
                             )
                         },
                     )
@@ -247,10 +264,22 @@ class PlaylistDetailScreen(
         }
     }
 
-    private fun reorder(from: Int, to: Int) {
+    /**
+     * Move [ids] as a block to [target]: pull them out in their current relative
+     * order, then reinsert them at [target] read against what's left. For a lone
+     * dragged row this is the familiar single-row reorder (`target` is exactly
+     * where it lands); for a multi-row selection the whole set rides along
+     * together, so moving one selected row moves them all.
+     */
+    private fun reorderGroup(target: Int, ids: Set<String>) {
         val current = tracks.value ?: return
-        if (from !in current.indices || to !in current.indices || from == to) return
-        val newList = current.toMutableList().apply { add(to, removeAt(from)) }
+        if (ids.isEmpty()) return
+        val moving = current.filter { it.id in ids }
+        if (moving.isEmpty() || moving.size == current.size) return
+        val remaining = current.filterNot { it.id in ids }
+        val insertAt = target.coerceIn(0, remaining.size)
+        val newList = remaining.toMutableList().apply { addAll(insertAt, moving) }
+        if (newList == current) return
         tracks.value = newList
         App.scope.launch {
             App.library.reorderPlaylist(playlistId, newList.map { it.id })
