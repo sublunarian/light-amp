@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -51,6 +52,11 @@ import kotlinx.coroutines.launch
 // A thicker bar than the Now Playing tab underline (3px): it has to read at a
 // glance across the full row width while a finger is on top of the handle.
 private const val DROP_LINE_HEIGHT_PX = 9
+
+// Faint enough that the check bubble reads clearly on top of it, but present
+// enough that an album cover is still recognizable behind the handful of
+// tracks it applies to — the whole point is telling albums apart at a glance.
+private const val EDIT_ARTWORK_ALPHA = 0.35f
 
 class PlaylistDetailScreen(
     sealed: SealedLightActivity,
@@ -180,6 +186,13 @@ class PlaylistDetailScreen(
                         if (editing) {
                             val checked = track.id in selection.selected
                             Box(Modifier.size(px(128)), contentAlignment = Alignment.Center) {
+                                // Dimmed cover behind the bubble, so a run of same-artist
+                                // rows still reads as "this many albums" while selecting.
+                                AppArtwork(
+                                    track.coverArtId,
+                                    size = px(128),
+                                    modifier = Modifier.alpha(EDIT_ARTWORK_ALPHA),
+                                )
                                 AppIcon(
                                     if (checked) AppIcons.Selected else AppIcons.Unselected,
                                     size = n(26),
