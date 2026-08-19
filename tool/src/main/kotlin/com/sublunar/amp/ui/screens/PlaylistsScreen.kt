@@ -1,6 +1,7 @@
 package com.sublunar.amp.ui.screens
 
 import android.view.KeyEvent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +47,10 @@ import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightThemeTokens
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
+
+// A thicker bar than the Now Playing tab underline (3px): it has to read at a
+// glance across the full row width while a finger is on top of the handle.
+private const val DROP_LINE_HEIGHT_PX = 9
 
 class PlaylistDetailScreen(
     sealed: SealedLightActivity,
@@ -119,6 +124,11 @@ class PlaylistDetailScreen(
         // part of a multi-row selection carries the whole selection along with it.
         var draggingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
         val rowPx = with(LocalDensity.current) { px(160).toPx() }
+        // Where the drag would land right now, so the line can track a finger
+        // that hasn't lifted yet — null beforeId means "at the very bottom".
+        val dropTarget: DropTarget? = draggingIndex?.let { from ->
+            dropTargetFor(list, draggingIds, dragRowTarget(list, from, dragOffsetY, rowPx))
+        }
 
         LibraryList(
             anchor = "playlist:$playlistId",
@@ -137,97 +147,129 @@ class PlaylistDetailScreen(
             }
             itemsIndexed(list, key = { i, t -> "$i-${t.id}" }) { index, track ->
                 val isDragging = track.id in draggingIds
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(px(160))
-                        .zIndex(if (isDragging) 1f else 0f)
-                        .graphicsLayer { translationY = if (isDragging) dragOffsetY else 0f }
-                        .rowClickable(
-                            onClick = {
-                                if (editing) {
-                                    selection.toggle(track.id)
-                                } else {
-                                    App.playback.playQueue(list, index)
-                                    go { NowPlayingScreen(it) }
-                                }
-                            },
-                            onLongClick = {
-                                if (editing) return@rowClickable
-                                go {
-                                    TrackActionsScreen(
-                                        it, track.id,
-                                        onSelect = { selection.begin(track.id) },
-                                        onRemoveFromPlaylist = { removeSong(index) },
-                                    )
-                                }
-                            },
-                        ),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (editing) {
-                        val checked = track.id in selection.selected
-                        Box(Modifier.size(px(128)), contentAlignment = Alignment.Center) {
-                            AppIcon(
-                                if (checked) AppIcons.Selected else AppIcons.Unselected,
-                                size = n(26),
-                                tint = if (checked) {
-                                    LightThemeTokens.colors.content
-                                } else {
-                                    LightThemeTokens.colors.contentSecondary
-                                },
-                            )
-                        }
-                    } else {
-                        AppArtwork(track.coverArtId, size = px(128))
-                    }
-                    Spacer(Modifier.width(n(15)))
-                    Column(Modifier.weight(1f)) {
-                        AppText(track.title, nSp(18), lineHeight = nSp(22), maxLines = 1)
-                        AppText(track.artist, nSp(15), lineHeight = nSp(19), dim = true, maxLines = 1)
-                    }
-                    // Drag the handle to reorder the song within the playlist.
-                    if (editing) AppIcon(
-                        AppIcons.Dehaze,
-                        size = n(20),
-                        modifier = Modifier.pointerInput(list.size) {
-                            detectDragGestures(
-                                onDragStart = {
-                                    draggingIndex = index
-                                    dragOffsetY = 0f
-                                    draggingIds =
-                                        if (track.id in selection.selected && selection.count > 1) {
-                                            selection.selected
-                                        } else {
-                                            setOf(track.id)
-                                        }
-                                },
-                                onDrag = { change, amount ->
-                                    change.consume()
-                                    dragOffsetY += amount.y
-                                },
-                                onDragEnd = {
-                                    val from = draggingIndex
-                                    if (from != null) {
-                                        val target = (from + (dragOffsetY / rowPx).roundToInt())
-                                            .coerceIn(0, list.lastIndex)
-                                        if (target != from) reorderGroup(target, draggingIds)
+                Column(Modifier.fillMaxWidth()) {
+                    if (dropTarget?.beforeId == track.id) DropIndicatorLine()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(px(160))
+                            .zIndex(if (isDragging) 1f else 0f)
+                            .graphicsLayer { translationY = if (isDragging) dragOffsetY else 0f }
+                            .rowClickable(
+                                onClick = {
+                                    if (editing) {
+                                        selection.toggle(track.id)
+                                    } else {
+                                        App.playback.playQueue(list, index)
+                                        go { NowPlayingScreen(it) }
                                     }
-                                    draggingIndex = null
-                                    dragOffsetY = 0f
-                                    draggingIds = emptySet()
                                 },
-                                onDragCancel = {
-                                    draggingIndex = null
-                                    dragOffsetY = 0f
-                                    draggingIds = emptySet()
+                                onLongClick = {
+                                    if (editing) return@rowClickable
+                                    go {
+                                        TrackActionsScreen(
+                                            it, track.id,
+                                            onSelect = { selection.begin(track.id) },
+                                            onRemoveFromPlaylist = { removeSong(index) },
+                                        )
+                                    }
                                 },
-                            )
-                        },
-                    )
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (editing) {
+                            val checked = track.id in selection.selected
+                            Box(Modifier.size(px(128)), contentAlignment = Alignment.Center) {
+                                AppIcon(
+                                    if (checked) AppIcons.Selected else AppIcons.Unselected,
+                                    size = n(26),
+                                    tint = if (checked) {
+                                        LightThemeTokens.colors.content
+                                    } else {
+                                        LightThemeTokens.colors.contentSecondary
+                                    },
+                                )
+                            }
+                        } else {
+                            AppArtwork(track.coverArtId, size = px(128))
+                        }
+                        Spacer(Modifier.width(n(15)))
+                        Column(Modifier.weight(1f)) {
+                            AppText(track.title, nSp(18), lineHeight = nSp(22), maxLines = 1)
+                            AppText(track.artist, nSp(15), lineHeight = nSp(19), dim = true, maxLines = 1)
+                        }
+                        // Drag the handle to reorder the song within the playlist.
+                        if (editing) AppIcon(
+                            AppIcons.Dehaze,
+                            size = n(20),
+                            modifier = Modifier.pointerInput(list.size) {
+                                detectDragGestures(
+                                    onDragStart = {
+                                        draggingIndex = index
+                                        dragOffsetY = 0f
+                                        draggingIds =
+                                            if (track.id in selection.selected && selection.count > 1) {
+                                                selection.selected
+                                            } else {
+                                                setOf(track.id)
+                                            }
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        dragOffsetY += amount.y
+                                    },
+                                    onDragEnd = {
+                                        val from = draggingIndex
+                                        if (from != null) {
+                                            val target = dragRowTarget(list, from, dragOffsetY, rowPx)
+                                            if (target != from) reorderGroup(target, draggingIds)
+                                        }
+                                        draggingIndex = null
+                                        dragOffsetY = 0f
+                                        draggingIds = emptySet()
+                                    },
+                                    onDragCancel = {
+                                        draggingIndex = null
+                                        dragOffsetY = 0f
+                                        draggingIds = emptySet()
+                                    },
+                                )
+                            },
+                        )
+                    }
                 }
             }
+            if (dropTarget != null && dropTarget.beforeId == null) {
+                item { DropIndicatorLine() }
+            }
         }
+    }
+
+    private data class DropTarget(val beforeId: String?)
+
+    /** Where row [from] would land right now, clamped to the list's bounds. */
+    private fun dragRowTarget(list: List<Track>, from: Int, dragOffsetY: Float, rowPx: Float): Int =
+        (from + (dragOffsetY / rowPx).roundToInt()).coerceIn(0, list.lastIndex)
+
+    /**
+     * The remaining (non-moving) row that [target] would land in front of, or a
+     * null id meaning "at the very end" — the same split [reorderGroup] uses to
+     * insert the block, kept here so the preview line never disagrees with where
+     * the drop will actually go.
+     */
+    private fun dropTargetFor(list: List<Track>, ids: Set<String>, target: Int): DropTarget {
+        val remaining = list.filterNot { it.id in ids }
+        return DropTarget(remaining.getOrNull(target.coerceIn(0, remaining.size))?.id)
+    }
+
+    @Composable
+    private fun DropIndicatorLine() {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(px(DROP_LINE_HEIGHT_PX))
+                .background(LightThemeTokens.colors.content),
+        )
     }
 
     @Composable
