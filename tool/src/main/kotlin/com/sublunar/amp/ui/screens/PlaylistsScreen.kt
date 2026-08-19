@@ -66,7 +66,14 @@ class PlaylistDetailScreen(
 
     // Held on the screen instance so local edits (remove / reorder) survive the
     // push/pop of the track-options sheet without a fresh server round-trip.
-    private val tracks = mutableStateOf<List<Track>?>(null)
+    private val entries = mutableStateOf<List<PlaylistEntry>?>(null)
+
+    // A playlist can contain the same song twice on purpose (see
+    // LocalPlaylists.add), so selection/drag/reorder can't key off track.id --
+    // two rows would select and move as one. Each row gets its own synthetic
+    // key instead, assigned once on load and carried through local edits.
+    private var nextEntryKey = 0
+    private fun newEntryKey(): String = "e${nextEntryKey++}"
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
@@ -75,8 +82,8 @@ class PlaylistDetailScreen(
     @Composable
     override fun Content() {
         LaunchedEffect(playlistId) {
-            if (tracks.value == null) {
-                tracks.value = App.library.playlistTracks(playlistId)
+            if (entries.value == null) {
+                entries.value = App.library.playlistTracks(playlistId).map { PlaylistEntry(newEntryKey(), it) }
             }
         }
 
@@ -95,7 +102,7 @@ class PlaylistDetailScreen(
                     },
                     onConfirm = {
                         openSelectionActions(
-                            selection.pick(tracks.value.orEmpty()) { it.id },
+                            selection.pick(entries.value.orEmpty()) { it.key }.map { it.track },
                             selection,
                         )
                     },
@@ -108,7 +115,7 @@ class PlaylistDetailScreen(
                     fitTitle = true,
                 )
             }
-            when (val list = tracks.value) {
+            when (val list = entries.value) {
                 null -> Centered("Loading…")
                 else -> if (list.isEmpty()) Centered("Empty playlist") else TrackList(list, selection)
             }
@@ -121,19 +128,22 @@ class PlaylistDetailScreen(
      * with it, and splitting them would mean two toggles competing for the same
      * corner of a header that has no spare room.
      */
+    /** One playlist row: [key] is a synthetic per-row id (see [entries]); [track] is what it shows. */
+    private data class PlaylistEntry(val key: String, val track: Track)
+
     @Composable
-    private fun TrackList(list: List<Track>, selection: SelectionState) {
+    private fun TrackList(list: List<PlaylistEntry>, selection: SelectionState) {
         val editing = selection.active
         var draggingIndex by remember { mutableStateOf<Int?>(null) }
         var dragOffsetY by remember { mutableStateOf(0f) }
         // Normally just the dragged row, but grabbing the handle of a row that's
         // part of a multi-row selection carries the whole selection along with it.
-        var draggingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+        var draggingKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
         val rowPx = with(LocalDensity.current) { px(160).toPx() }
         // Where the drag would land right now, so the line can track a finger
-        // that hasn't lifted yet — null beforeId means "at the very bottom".
+        // that hasn't lifted yet — null beforeKey means "at the very bottom".
         val dropTarget: DropTarget? = draggingIndex?.let { from ->
-            DropTarget(dropAnchor(list, from, draggingIds, dragRowTarget(list, from, dragOffsetY, rowPx)))
+            DropTarget(dropAnchor(list, from, draggingKeys, dragRowTarget(list, from, dragOffsetY, rowPx)))
         }
 
         LibraryList(
@@ -144,17 +154,18 @@ class PlaylistDetailScreen(
             if (!editing) {
                 item {
                     PlayAllRow(AppIcons.Shuffle, "Shuffle") {
-                        App.playback.playQueue(shuffled(list), 0)
+                        App.playback.playQueue(shuffled(list.map { it.track }), 0)
                         go { NowPlayingScreen(it) }
                     }
                 }
                 // Same glyph as the handles it reveals, so the row says what it does.
                 item { PlayAllRow(AppIcons.Dehaze, "Edit") { selection.begin() } }
             }
-            itemsIndexed(list, key = { i, t -> "$i-${t.id}" }) { index, track ->
-                val isDragging = track.id in draggingIds
+            itemsIndexed(list, key = { _, e -> e.key }) { index, entry ->
+                val track = entry.track
+                val isDragging = entry.key in draggingKeys
                 Column(Modifier.fillMaxWidth()) {
-                    if (dropTarget?.beforeId == track.id) DropIndicatorLine()
+                    if (dropTarget?.beforeKey == entry.key) DropIndicatorLine()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -164,9 +175,9 @@ class PlaylistDetailScreen(
                             .rowClickable(
                                 onClick = {
                                     if (editing) {
-                                        selection.toggle(track.id)
+                                        selection.toggle(entry.key)
                                     } else {
-                                        App.playback.playQueue(list, index)
+                                        App.playback.playQueue(list.map { it.track }, index)
                                         go { NowPlayingScreen(it) }
                                     }
                                 },
@@ -175,7 +186,7 @@ class PlaylistDetailScreen(
                                     go {
                                         TrackActionsScreen(
                                             it, track.id,
-                                            onSelect = { selection.begin(track.id) },
+                                            onSelect = { selection.begin(entry.key) },
                                             onRemoveFromPlaylist = { removeSong(index) },
                                         )
                                     }
@@ -184,7 +195,7 @@ class PlaylistDetailScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         if (editing) {
-                            val checked = track.id in selection.selected
+                            val checked = entry.key in selection.selected
                             Box(Modifier.size(px(128)), contentAlignment = Alignment.Center) {
                                 // Dimmed cover behind the bubble, so a run of same-artist
                                 // rows still reads as "this many albums" while selecting.
@@ -220,11 +231,11 @@ class PlaylistDetailScreen(
                                     onDragStart = {
                                         draggingIndex = index
                                         dragOffsetY = 0f
-                                        draggingIds =
-                                            if (track.id in selection.selected && selection.count > 1) {
+                                        draggingKeys =
+                                            if (entry.key in selection.selected && selection.count > 1) {
                                                 selection.selected
                                             } else {
-                                                setOf(track.id)
+                                                setOf(entry.key)
                                             }
                                     },
                                     onDrag = { change, amount ->
@@ -235,16 +246,16 @@ class PlaylistDetailScreen(
                                         val from = draggingIndex
                                         if (from != null) {
                                             val target = dragRowTarget(list, from, dragOffsetY, rowPx)
-                                            reorderGroup(dropAnchor(list, from, draggingIds, target), draggingIds)
+                                            reorderGroup(dropAnchor(list, from, draggingKeys, target), draggingKeys)
                                         }
                                         draggingIndex = null
                                         dragOffsetY = 0f
-                                        draggingIds = emptySet()
+                                        draggingKeys = emptySet()
                                     },
                                     onDragCancel = {
                                         draggingIndex = null
                                         dragOffsetY = 0f
-                                        draggingIds = emptySet()
+                                        draggingKeys = emptySet()
                                     },
                                 )
                             },
@@ -252,16 +263,16 @@ class PlaylistDetailScreen(
                     }
                 }
             }
-            if (dropTarget != null && dropTarget.beforeId == null) {
+            if (dropTarget != null && dropTarget.beforeKey == null) {
                 item { DropIndicatorLine() }
             }
         }
     }
 
-    private data class DropTarget(val beforeId: String?)
+    private data class DropTarget(val beforeKey: String?)
 
     /** Where row [from] would land right now, clamped to the list's bounds. */
-    private fun dragRowTarget(list: List<Track>, from: Int, dragOffsetY: Float, rowPx: Float): Int =
+    private fun dragRowTarget(list: List<PlaylistEntry>, from: Int, dragOffsetY: Float, rowPx: Float): Int =
         (from + (dragOffsetY / rowPx).roundToInt()).coerceIn(0, list.lastIndex)
 
     /**
@@ -278,11 +289,11 @@ class PlaylistDetailScreen(
      * Used for both the preview line and the actual drop ([reorderGroup]), so
      * the two can never disagree about where the drag will land.
      */
-    private fun dropAnchor(list: List<Track>, from: Int, ids: Set<String>, target: Int): String? {
+    private fun dropAnchor(list: List<PlaylistEntry>, from: Int, keys: Set<String>, target: Int): String? {
         val soloRemaining = list.filterIndexed { i, _ -> i != from }
-        val anchorId = soloRemaining.getOrNull(target.coerceIn(0, soloRemaining.size))?.id
-        val anchorIndex = anchorId?.let { id -> list.indexOfFirst { it.id == id } } ?: list.size
-        return list.drop(anchorIndex).firstOrNull { it.id !in ids }?.id
+        val anchorKey = soloRemaining.getOrNull(target.coerceIn(0, soloRemaining.size))?.key
+        val anchorIndex = anchorKey?.let { key -> list.indexOfFirst { it.key == key } } ?: list.size
+        return list.drop(anchorIndex).firstOrNull { it.key !in keys }?.key
     }
 
     @Composable
@@ -303,9 +314,9 @@ class PlaylistDetailScreen(
     }
 
     private fun removeSong(index: Int) {
-        val current = tracks.value ?: return
+        val current = entries.value ?: return
         if (index !in current.indices) return
-        tracks.value = current.toMutableList().apply { removeAt(index) }
+        entries.value = current.toMutableList().apply { removeAt(index) }
         App.scope.launch {
             App.library.removeFromPlaylistAt(playlistId, index)
             App.library.refreshPlaylists()
@@ -317,38 +328,38 @@ class PlaylistDetailScreen(
      * per-index endpoint would shift every index behind each removal, and one
      * request can't half-apply.
      */
-    private fun removeSongs(ids: Set<String>) {
-        val current = tracks.value ?: return
-        if (ids.isEmpty()) return
-        val remaining = current.filterNot { it.id in ids }
+    private fun removeSongs(keys: Set<String>) {
+        val current = entries.value ?: return
+        if (keys.isEmpty()) return
+        val remaining = current.filterNot { it.key in keys }
         if (remaining.size == current.size) return
-        tracks.value = remaining
+        entries.value = remaining
         App.scope.launch {
-            App.library.reorderPlaylist(playlistId, remaining.map { it.id })
+            App.library.reorderPlaylist(playlistId, remaining.map { it.track.id })
             App.library.refreshPlaylists()
         }
     }
 
     /**
-     * Move [ids] as a block to just in front of [beforeId] (or the very end,
+     * Move [keys] as a block to just in front of [beforeKey] (or the very end,
      * when null): pull them out in their current relative order, then reinsert
      * them there. For a lone dragged row this is the familiar single-row
      * reorder; for a multi-row selection the whole set rides along together,
      * so moving one selected row moves them all.
      */
-    private fun reorderGroup(beforeId: String?, ids: Set<String>) {
-        val current = tracks.value ?: return
-        if (ids.isEmpty()) return
-        val moving = current.filter { it.id in ids }
+    private fun reorderGroup(beforeKey: String?, keys: Set<String>) {
+        val current = entries.value ?: return
+        if (keys.isEmpty()) return
+        val moving = current.filter { it.key in keys }
         if (moving.isEmpty() || moving.size == current.size) return
-        val remaining = current.filterNot { it.id in ids }
-        val insertAt = beforeId?.let { id -> remaining.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
+        val remaining = current.filterNot { it.key in keys }
+        val insertAt = beforeKey?.let { key -> remaining.indexOfFirst { it.key == key } }?.takeIf { it >= 0 }
             ?: remaining.size
         val newList = remaining.toMutableList().apply { addAll(insertAt, moving) }
         if (newList == current) return
-        tracks.value = newList
+        entries.value = newList
         App.scope.launch {
-            App.library.reorderPlaylist(playlistId, newList.map { it.id })
+            App.library.reorderPlaylist(playlistId, newList.map { it.track.id })
             App.library.refreshPlaylists()
         }
     }
