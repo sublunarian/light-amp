@@ -56,7 +56,7 @@ private const val DROP_LINE_HEIGHT_PX = 9
 // Faint enough that the check bubble reads clearly on top of it, but present
 // enough that an album cover is still recognizable behind the handful of
 // tracks it applies to — the whole point is telling albums apart at a glance.
-private const val EDIT_ARTWORK_ALPHA = 0.35f
+private const val EDIT_ARTWORK_ALPHA = 0.55f
 
 class PlaylistDetailScreen(
     sealed: SealedLightActivity,
