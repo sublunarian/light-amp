@@ -712,6 +712,7 @@ class LibraryRepository(
             LocalPlaylists.reorder(id, orderedSongIds)
         } else {
             runCatching { serverClient.value?.reorderPlaylist(id, orderedSongIds) }
+                .onFailure { android.util.Log.w("AmpSync", "reorderPlaylist($id) failed: ${it.message}", it) }
         }
     }
 
