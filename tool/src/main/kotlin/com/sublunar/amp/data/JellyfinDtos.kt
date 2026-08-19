@@ -58,6 +58,14 @@ data class JellyfinItem(
     @SerialName("ArtistItems") val artistItems: List<JellyfinNamed> = emptyList(),
     @SerialName("Genres") val genres: List<String> = emptyList(),
     /**
+     * Everyone credited on the track, composers among them.
+     *
+     * Jellyfin has no composer field of its own: a composer is a person with
+     * [JellyfinPerson.type] "Composer", and the list only arrives when "People"
+     * is asked for — see FIELDS.
+     */
+    @SerialName("People") val people: List<JellyfinPerson> = emptyList(),
+    /**
      * Which images the item actually has.
      *
      * Jellyfin serves an image URL for any id whether or not one exists —
@@ -83,6 +91,13 @@ data class JellyfinItem(
 data class JellyfinNamed(
     @SerialName("Id") val id: String = "",
     @SerialName("Name") val name: String = "",
+)
+
+/** A credited person; [type] is Jellyfin's PersonType — "Composer" and friends. */
+@Serializable
+data class JellyfinPerson(
+    @SerialName("Name") val name: String = "",
+    @SerialName("Type") val type: String = "",
 )
 
 @Serializable

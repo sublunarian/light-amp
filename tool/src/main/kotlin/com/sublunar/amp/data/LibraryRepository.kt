@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.data.db.AlbumEntity
 import com.sublunar.amp.data.db.DownloadFile
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.LikedArtistEntity
@@ -126,11 +127,6 @@ class LibraryRepository(
         downloadFiles.map { rows -> rows.mapTo(HashSet()) { it.trackId } }
             .stateIn(scope, SharingStarted.Eagerly, emptySet())
 
-    /** Total size of the downloads on disk. */
-    val downloadedBytes: StateFlow<Long> =
-        downloadFiles.map { rows -> rows.sumOf { it.bytes } }
-            .stateIn(scope, SharingStarted.Eagerly, 0L)
-
     private val offline: StateFlow<Boolean> =
         offlineOnly.stateIn(scope, SharingStarted.Eagerly, false)
 
@@ -159,13 +155,59 @@ class LibraryRepository(
         }
     }
 
-    private val allTracks: StateFlow<List<Track>> =
+    /**
+     * Every cached track, whichever library it belongs to.
+     *
+     * The one mapping of the table; [allTracks] narrows this rather than
+     * observing again, so choosing a library costs a filter and not a second
+     * scan of ten thousand rows. Downloads read from here — what is on the disk
+     * is on the disk regardless of which library is being browsed.
+     */
+    private val trackRows: StateFlow<List<Track>> =
         observing { it.observeTracks() }.map { rows -> rows.map { row -> row.toTrack() } }
             .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
+    /** Which of the server's libraries is chosen, or null for all of them. */
+    private val selectedLibrary: StateFlow<String?> =
+        libraryId.stateIn(scope, SharingStarted.Eagerly, null)
+
+    /**
+     * The chosen library's albums, filtered out of the cache rather than fetched.
+     *
+     * Every library the source has stays cached at once, and choosing one is a
+     * filter over what is already here — so switching works with no server at
+     * all, which is the whole point: the alternative was to empty the cache and
+     * re-sync, and offline that emptied it and stopped.
+     *
+     * A row with no library recorded shows under every one. It predates the
+     * column and there is nothing to file it under; hiding it would lose a
+     * library that is sitting right there until the next sync says otherwise.
+     */
+    /** The album table as stored, library tags and all. */
+    private val albumRows: StateFlow<List<AlbumEntity>> =
+        observing { it.observeAlbums() }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+
     private val allAlbums: StateFlow<List<Album>> =
-        observing { it.observeAlbums() }.map { rows -> rows.map { row -> row.toAlbum() } }
-            .stateIn(scope, SharingStarted.Eagerly, emptyList())
+        combine(albumRows, selectedLibrary) { rows, library ->
+            rows.asSequence()
+                .filter { library == null || it.libraryId == null || it.libraryId == library }
+                .map { it.toAlbum() }
+                .toList()
+        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * And its songs, which are the ones on those albums.
+     *
+     * A track carries no library of its own — it belongs to whichever library
+     * its record does, and one column is one thing to keep in step instead of
+     * two. A track with no album at all is kept: the sync prunes those (see
+     * runSync), so one still here is a row nothing has spoken for yet.
+     */
+    private val allTracks: StateFlow<List<Track>> =
+        combine(trackRows, allAlbums) { rows, albums ->
+            val visible = albums.mapTo(HashSet()) { it.id }
+            rows.filter { it.albumId == null || it.albumId in visible }
+        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     /**
      * The whole cached library, ignoring the offline view filter.
@@ -176,6 +218,41 @@ class LibraryRepository(
      * has already fetched — the queue comes out empty and downloads stop dead.
      */
     val fullTracks: StateFlow<List<Track>> get() = allTracks
+
+    /** The same libraries' albums — see [downloadableTracks]. */
+    val downloadableAlbums: StateFlow<List<Album>> =
+        combine(albumRows, settings.activeSource) { rows, source ->
+            val hidden = source?.hiddenLibraryIds?.filterNotNull()?.toSet().orEmpty()
+            rows.asSequence()
+                .filter { hidden.isEmpty() || it.libraryId == null || it.libraryId !in hidden }
+                .map { it.toAlbum() }
+                .toList()
+        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Everything in the libraries kept on the Sources page — what the downloader
+     * works from.
+     *
+     * Downloads used to have a library setting of their own, which restated a
+     * choice already made a level up and could disagree with it. Hiding a
+     * library there says you are not interested in it; fetching it anyway, in
+     * the background, onto a phone with a size limit, is not a reading of that.
+     *
+     * Not [allTracks]: that narrows to the one library being browsed, and what
+     * to *keep* is a wider question than what to look at right now.
+     */
+    val downloadableTracks: StateFlow<List<Track>> =
+        combine(trackRows, albumRows, settings.activeSource) { rows, albums, source ->
+            val hidden = source?.hiddenLibraryIds?.filterNotNull()?.toSet().orEmpty()
+            if (hidden.isEmpty()) {
+                rows
+            } else {
+                val allowed = albums.asSequence()
+                    .filter { it.libraryId == null || it.libraryId !in hidden }
+                    .mapTo(HashSet()) { it.id }
+                rows.filter { it.albumId == null || it.albumId in allowed }
+            }
+        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
     val fullAlbums: StateFlow<List<Album>> get() = allAlbums
 
     /**
@@ -239,7 +316,7 @@ class LibraryRepository(
 
     private fun artistSizes(list: List<Track>): Map<String, Int> {
         if (artistSizesFor === list) return artistSizes
-        artistSizes = list.groupingBy { it.albumArtist.ifBlank { it.artist } }.eachCount()
+        artistSizes = list.flatMap { it.albumArtistNames() }.groupingBy { it }.eachCount()
         artistSizesFor = list
         return artistSizes
     }
@@ -258,8 +335,10 @@ class LibraryRepository(
             val byId = trackIndex(list)
             val have = HashMap<String, Int>()
             for (row in rows) {
-                val artist = byId[row.trackId]?.let { it.albumArtist.ifBlank { it.artist } } ?: continue
-                have[artist] = (have[artist] ?: 0) + 1
+                val credits = byId[row.trackId]?.albumArtistNames() ?: continue
+                for (artist in credits) {
+                    have[artist] = (have[artist] ?: 0) + 1
+                }
             }
             have.entries.mapNotNullTo(mutableSetOf()) { (artist, n) ->
                 artist.takeIf { sizes[artist] == n }
@@ -280,7 +359,10 @@ class LibraryRepository(
 
     /** Downloaded tracks, newest first — the Downloads page. */
     val downloads: Flow<List<Track>> =
-        combine(downloadFiles, allTracks) { rows, library ->
+        // Every library's, not the chosen one's: this page is about what is on
+        // the phone, and a file does not stop being downloaded because you are
+        // looking at a different library.
+        combine(downloadFiles, trackRows) { rows, library ->
             val byId = trackIndex(library)
             // Sorted here rather than in SQL: this flow is cold, so the ordering
             // is done when the Downloads page is open instead of on every read
@@ -305,34 +387,19 @@ class LibraryRepository(
     private fun tracksFlowOf(select: (Track) -> String): Flow<List<String>> =
         tracks.map { list ->
             list.asSequence()
-                .flatMap { splitTag(select(it)) }
+                .flatMap { splitTagValues(select(it)) }
                 .distinct()
                 .sortedBy { nameKey(it) }
                 .toList()
         }
 
-    /**
-     * One tag, several values.
-     *
-     * Navidrome joins multi-valued tags with a comma or a semicolon, so "Jazz;
-     * Soul" is two genres rather than one oddly named one.
-     */
-    private fun splitTag(raw: String): List<String> =
-        raw.split(',', ';')
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-
-    /** Albums the server marks as compilations. */
-    val compilations: StateFlow<List<Album>> =
-        albums.map { list -> list.filter { it.compilation } }
-            .stateIn(scope, SharingStarted.Lazily, emptyList())
 
     /** Everything tagged with [genre], as tracks. */
     fun tracksWithGenre(genre: String): List<Track> =
-        tracks.value.filter { track -> splitTag(track.genre).any { it.equals(genre, true) } }
+        tracks.value.filter { track -> splitTagValues(track.genre).any { it.equals(genre, true) } }
 
     fun tracksWithComposer(composer: String): List<Track> =
-        tracks.value.filter { track -> splitTag(track.composer).any { it.equals(composer, true) } }
+        tracks.value.filter { track -> splitTagValues(track.composer).any { it.equals(composer, true) } }
 
     /**
      * How many songs carry each value of one tag — what the tag lists sort by
@@ -344,14 +411,22 @@ class LibraryRepository(
     fun tagCounts(byComposer: Boolean): Map<String, Int> {
         val counts = mutableMapOf<String, Int>()
         tracks.value.forEach { track ->
-            splitTag(if (byComposer) track.composer else track.genre).forEach { value ->
+            splitTagValues(if (byComposer) track.composer else track.genre).forEach { value ->
                 counts[value] = (counts[value] ?: 0) + 1
             }
         }
         return counts
     }
 
-    private val likedArtistNames: StateFlow<Set<String>> =
+    /**
+     * The artists starred on the server.
+     *
+     * Deliberately not derived from [artists], which narrows with the offline
+     * view and the chosen library: whether you have starred someone is not a
+     * fact about what is on screen. The downloader reads this for that reason —
+     * see App.topUpDownloads.
+     */
+    val likedArtistNames: StateFlow<Set<String>> =
         observing { it.observeLikedArtists() }.map { names -> names.toSet() }
             .stateIn(scope, SharingStarted.Eagerly, emptySet())
 
@@ -420,8 +495,40 @@ class LibraryRepository(
 
 
     // Playlists are fetched live from the server (not cached in Room).
+    /**
+     * Membership cache backing [downloadedPlaylistIds].
+     *
+     * `getPlaylists` — Subsonic's and Plex's alike — never returns a playlist's
+     * songs, only its metadata, so the download badge in the playlist list has
+     * nothing to compare against until something calls [playlistTracks] once per
+     * playlist. [primePlaylistTrackIds] does that filling for the list itself.
+     */
+    private val _playlistTrackIds = MutableStateFlow<Map<String, List<String>>>(emptyMap())
+
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
-    val playlists: StateFlow<List<Playlist>> = _playlists
+
+    /**
+     * The playlists as the UI should see them — narrowed offline, as the other
+     * three lists are.
+     *
+     * A playlist whose membership isn't known stays visible: no server returns
+     * songs with the list (see [_playlistTrackIds]), so an empty [Playlist.trackIds]
+     * means "not asked yet" far more often than it means "empty". Hiding those
+     * would take away playlists that are downloaded and playable, which is worse
+     * than leaving one showing that turns out to have nothing in it.
+     */
+    val playlists: StateFlow<List<Playlist>> =
+        combine(_playlists, _playlistTrackIds, downloadedTrackIds, offline) {
+                list, membership, downloaded, offlineOnlyNow ->
+            if (!offlineOnlyNow) {
+                list
+            } else {
+                list.filter { playlist ->
+                    val ids = membership[playlist.id] ?: playlist.trackIds
+                    ids.isEmpty() || ids.any { it in downloaded }
+                }
+            }
+        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
      /**
      * Re-read the playlists, keeping the last known set when the server can't be
@@ -480,6 +587,9 @@ class LibraryRepository(
      */
     suspend fun playlistTracks(id: String): List<Track> {
         val tracks = fetchPlaylistTracks(id)
+        // Cached below at full membership, then narrowed on the way out: the
+        // badge needs to know what the playlist *is*, the page needs to show
+        // what it can actually play.
         // An empty answer is not cached. It means either a genuinely empty
         // playlist or a fetch that failed — and this path can't tell them apart,
         // where the one below can. Kept, it would satisfy primePlaylistTrackIds'
@@ -488,7 +598,8 @@ class LibraryRepository(
         if (tracks.isNotEmpty()) {
             _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
         }
-        return tracks
+        val downloaded = downloadedTrackIds.value
+        return if (offline.value) tracks.filter { it.id in downloaded } else tracks
     }
 
     private suspend fun fetchPlaylistTracks(id: String): List<Track> {
@@ -499,16 +610,6 @@ class LibraryRepository(
         val ids = (_playlists.value.firstOrNull { it.id == id } ?: return emptyList()).trackIds
         return getTracksByIds(ids)
     }
-
-    /**
-     * Membership cache backing [downloadedPlaylistIds].
-     *
-     * `getPlaylists` — Subsonic's and Plex's alike — never returns a playlist's
-     * songs, only its metadata, so the download badge in the playlist list has
-     * nothing to compare against until something calls [playlistTracks] once per
-     * playlist. [primePlaylistTrackIds] does that filling for the list itself.
-     */
-    private val _playlistTrackIds = MutableStateFlow<Map<String, List<String>>>(emptyMap())
 
     /**
      * Fills the membership cache for [id] if it isn't already known.
@@ -627,12 +728,21 @@ class LibraryRepository(
      * Switch to [musicFolderId]: cancel any in-flight sync, clear the cache, and
      * re-sync just that library. Serialized through [syncMutex] so a background
      * sync can't interleave and re-leak the previous library's rows.
+     *
+     * **Nothing is thrown away.** Every library the source has stays cached
+     * side by side, tagged with where it came from, and choosing one filters the
+     * cache — see [allAlbums]. This used to clear and re-fetch, which needs a
+     * server: offline it emptied the library and left it empty, with the
+     * downloaded files still on the disk and nothing pointing at them.
+     *
+     * The sync that follows is a refresh, not the thing that makes the switch
+     * work. It failing — or never running, because there is no signal — leaves
+     * the chosen library showing whatever was last cached for it.
      */
     suspend fun switchLibrary(musicFolderId: String?) {
         syncJob?.cancelAndJoin()
         val job = scope.launch {
             syncMutex.withLock {
-                clearCache()
                 runSync(musicFolderId)
             }
         }
@@ -719,11 +829,17 @@ class LibraryRepository(
     }
 
     private suspend fun runSync(musicFolderId: String?, allowRepoint: Boolean = true) {
+        val source = settings.activeSource.first()
         // The phone's own music has no server to ask; it is read off the disk.
-        if (settings.activeSource.first()?.kind == SourceKind.LOCAL) {
+        if (source?.kind == SourceKind.LOCAL) {
             runLocalScan()
             return
         }
+        // A build that changed how a track is read has to refill the cache once,
+        // because the incremental filter below can only see what the *server*
+        // changed — see MusicSource.parserGeneration.
+        val refillForParser =
+            source != null && source.parserGeneration != TRACK_PARSER_GENERATION
         val client = serverClient.value ?: return
         // Pinned for the run, exactly as the client is. `dao` is a property that
         // re-reads whichever database is current, so a source switched while
@@ -746,14 +862,22 @@ class LibraryRepository(
             val starred = folderIds.map { client.getStarred(it) }.mergeStarred()
 
             _syncState.value = _syncState.value.copy(phase = "Fetching albums")
-            val serverAlbums = folderIds.flatMap { client.getAllAlbums(it) }
-                .distinctBy { it.id }
-                .map { it.copy(liked = it.id in starred.albumIds) }
+            // Which folder each album came from is kept, not merged away: it is
+            // written onto the row so that switching library later is a filter
+            // over the cache rather than a fetch — see AlbumEntity.libraryId.
+            // An album in two folders keeps the first, as distinctBy always did.
+            val fetched = folderIds
+                .flatMap { folder -> client.getAllAlbums(folder).map { it to folder } }
+                .distinctBy { (album, _) -> album.id }
+            val serverAlbums = fetched.map { (album, _) ->
+                album.copy(liked = album.id in starred.albumIds)
+            }
+            val libraryOf = fetched.associate { (album, folder) -> album.id to folder }
             val serverAlbumById = serverAlbums.associateBy { it.id }
 
             val cached = dao.allAlbumsSnapshot().associateBy { it.id }
 
-            dao.upsertAlbums(serverAlbums.map { it.toEntity() })
+            dao.upsertAlbums(serverAlbums.map { it.toEntity(libraryOf[it.id]) })
 
             // Prune albums (and their tracks) that no longer exist on the server —
             // but never on an empty result.
@@ -769,7 +893,18 @@ class LibraryRepository(
             if (serverAlbums.isEmpty()) {
                 android.util.Log.w("AmpSync", "returned no albums; keeping ${cached.size} cached")
             } else {
-                val staleAlbumIds = cached.keys - serverAlbumById.keys
+                // Only within the library that was just fetched. Syncing one
+                // folder says nothing about what is in the others, and pruning
+                // against its answer would delete every album belonging to the
+                // rest — which is what made switching library a re-download.
+                // Rows with no library recorded are left alone: they predate
+                // this and no fetch can speak for them.
+                val inScope = if (musicFolderId == null) {
+                    cached
+                } else {
+                    cached.filterValues { it.libraryId == musicFolderId }
+                }
+                val staleAlbumIds = inScope.keys - serverAlbumById.keys
                 if (staleAlbumIds.isNotEmpty()) {
                     staleAlbumIds.forEach { dao.deleteTracksForAlbum(it) }
                     dao.deleteAlbums(staleAlbumIds.toList())
@@ -798,7 +933,7 @@ class LibraryRepository(
             // against the album cache then skips them forever and the library never
             // recovers. Checking the real per-album track count makes it self-heal.
             val cachedTrackCounts = dao.trackCountsByAlbum().associate { it.albumId to it.tracks }
-            val toFetch = serverAlbums.filter { album ->
+            val toFetch = if (refillForParser) serverAlbums else serverAlbums.filter { album ->
                 val prev = cached[album.id]
                 val cachedCount = cachedTrackCounts[album.id] ?: 0
                 prev == null ||
@@ -823,6 +958,12 @@ class LibraryRepository(
             dao.replaceTrackLikes(starred.songIds.toList())
 
             dao.replaceLikedArtists(starred.artistNames.map { LikedArtistEntity(it) })
+
+            // Only now: a run that threw part-way leaves the old number in place
+            // so the refill is attempted again rather than being marked done.
+            if (refillForParser && source != null) {
+                settings.setParserGeneration(source.id, TRACK_PARSER_GENERATION)
+            }
 
             _syncState.value = SyncState(
                 syncing = false,
@@ -1016,11 +1157,25 @@ class LibraryRepository(
     /** An album's tracks, from cache when present, otherwise fetched and cached. */
     suspend fun getAlbumTracks(albumId: String): List<Track> {
         val cached = dao.tracksForAlbum(albumId).map { it.toTrack() }
-        if (cached.isNotEmpty()) return cached.sortedWith(TRACK_ORDER)
+        if (cached.isNotEmpty()) return narrowedToDownloads(cached).sortedWith(TRACK_ORDER)
         val client = serverClient.value ?: return emptyList()
         val fresh = client.getAlbumTracks(albumId)
         dao.upsertTracks(fresh.map { it.toEntity() })
-        return fresh.sortedWith(TRACK_ORDER)
+        return narrowedToDownloads(fresh).sortedWith(TRACK_ORDER)
+    }
+
+    /**
+     * What of these will actually play, offline; all of them otherwise.
+     *
+     * The lists narrow to the downloads when there is no server — see [tracks] —
+     * and a record's own page has to say the same thing. Showing the whole track
+     * listing there offered eleven songs and played four, and which four was
+     * only discoverable by tapping them.
+     */
+    private fun narrowedToDownloads(tracks: List<Track>): List<Track> {
+        if (!offline.value) return tracks
+        val downloaded = downloadedTrackIds.value
+        return tracks.filter { it.id in downloaded }
     }
 
     /**
@@ -1054,7 +1209,7 @@ class LibraryRepository(
 
     /** All tracks for an artist, from cache, ordered by album then track. */
     fun tracksForArtist(name: String): List<Track> =
-        tracks.value.filter { (it.albumArtist.ifBlank { it.artist }) == name }
+        tracks.value.filter { name in it.albumArtistNames() }
             .sortedWith(compareBy({ it.album.lowercase() }, { it.discNumber ?: 0 }, { it.trackNumber ?: 0 }))
 
     /**
@@ -1083,7 +1238,7 @@ class LibraryRepository(
     /** An artist's albums as a discography: oldest release first, undated last. */
     fun albumsForArtist(name: String): List<Album> {
         val albumIds = tracks.value
-            .filter { (it.albumArtist.ifBlank { it.artist }) == name }
+            .filter { name in it.albumArtistNames() }
             .mapNotNull { it.albumId }
             .toSet()
         return albums.value.filter { it.id in albumIds }.sortedWith(RELEASE_ORDER)
@@ -1270,7 +1425,8 @@ class LibraryRepository(
         liked: Set<String>,
         images: Map<String, String>,
     ): List<Artist> =
-        list.groupBy { it.albumArtist.ifBlank { it.artist } }
+        list.flatMap { track -> track.albumArtistNames().map { it to track } }
+            .groupBy({ it.first }, { it.second })
             .map { (name, ts) ->
                 Artist(
                     name = name,
@@ -1300,6 +1456,26 @@ class LibraryRepository(
         /** How long Sync Now will wait on a server scan before syncing anyway. */
         private const val SCAN_WAIT_MS = 30_000L
         private const val SCAN_POLL_MS = 1_500L
+
+        /**
+         * Bump when a change to how a track is *parsed* means the cached rows
+         * are wrong — not when the server's own data changes, which the
+         * ordinary incremental sync already catches.
+         *
+         * 1: album artist and composer were read from Subsonic field names that
+         * do not exist. The base Child object has no `albumArtist` and no
+         * `composer`; those are OpenSubsonic's `displayAlbumArtist` and
+         * `displayComposer`. So every cached track had the track artist as its
+         * album artist — which put every "feat." guest in the Artists list —
+         * and no composer at all, which kept the Composers page hidden.
+         *
+         * 2: an album credited to several artists was stored as the one joined
+         * string the server sent ("Johann Sebastian Bach; Glenn Gould"), which
+         * made a compound artist that owned a single record. The credit now
+         * comes from OpenSubsonic's structured `artists`, joined with the
+         * separator Track.albumArtistNames splits on.
+         */
+        const val TRACK_PARSER_GENERATION = 2
 
         private const val SYNC_WRITE_BATCH = 40
         private const val SYNC_CONCURRENCY = 6

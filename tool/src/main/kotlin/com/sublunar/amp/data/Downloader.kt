@@ -5,6 +5,7 @@ import com.sublunar.amp.data.db.DownloadEntity
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.transfer.LightTransferService
 import com.sublunar.amp.data.db.LibraryDao
+import com.sublunar.amp.data.db.toTrack
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -280,6 +281,39 @@ class Downloader(
     }
 
     /**
+     * Fetch the words for downloads that have none.
+     *
+     * [reindexFromDisk] can rebuild a download row from the file on disk, but the
+     * lyrics were only ever in the database — so a schema bump leaves an offline
+     * track with its audio and no words, and nothing else would ever fetch them:
+     * the track counts as downloaded, so it is never queued again. This is the
+     * one part of a wiped table the disk cannot answer for.
+     *
+     * A track whose words are nowhere stores a blank rather than staying null, so
+     * it is asked about once and not on every launch afterwards. Blank parses to
+     * nothing downstream, which is what an absent lyric already did — see
+     * LyricsRepository.resolve.
+     *
+     * Capped per run: a large offline library would otherwise be thousands of
+     * requests in one go, and there is no hurry — what is left comes back on the
+     * next sync.
+     */
+    suspend fun refillMissingLyrics() {
+        val source = settings.activeSource.first() ?: return
+        val client = serverClient.value ?: return
+        val ids = dao.downloadsMissingLyrics(LYRICS_REFILL_PER_RUN)
+        if (ids.isEmpty()) return
+        val wantKaraoke = settings.karaokeLyrics.first()
+        val tracks = dao.tracksByIds(ids).associateBy { it.id }
+        for (id in ids) {
+            val track = tracks[id]?.toTrack() ?: continue
+            val row = dao.download(id) ?: continue
+            val words = runCatching { fetchLyrics(client, track, wantKaraoke) }.getOrNull()
+            dao.upsertDownload(row.copy(lyrics = words.orEmpty()))
+        }
+    }
+
+    /**
      * Queue whatever the current [OfflineMode] implies. Safe to call repeatedly —
      * already-downloaded tracks are skipped, so this just tops up.
      */
@@ -296,7 +330,7 @@ class Downloader(
             playlistTracks +
             allTracks.filter { it.albumId in likedAlbumIds } +
             allTracks.filter {
-                it.albumArtist.ifBlank { it.artist } in likedArtistNames
+                it.albumArtistNames().any { name -> name in likedArtistNames }
             }
         val wanted = when (settings.activeSource.first()?.offlineMode ?: OfflineMode.MANUAL) {
             OfflineMode.MANUAL -> return
@@ -312,6 +346,9 @@ class Downloader(
         const val PAUSE_POLL_MS = 1_000L
 
         /** First retry after a failed transfer; doubles up to [RETRY_MAX_MS]. */
+        /** How many lyric refills one pass will attempt — see refillMissingLyrics. */
+        private const val LYRICS_REFILL_PER_RUN = 200
+
         private const val RETRY_BASE_MS = 2_000L
         private const val RETRY_MAX_MS = 60_000L
     }
@@ -370,9 +407,9 @@ class Downloader(
         // was in any case only ever being weighed against one source's usage.
         val source = settings.activeSource.first()
         val format = source?.downloadFormat ?: StreamFormat.DEFAULT
-        val wantLyrics = source?.wantsLyrics ?: true
         val wantKaraoke = settings.karaokeLyrics.first()
-        val limit = source?.downloadLimit ?: AppSettings.DEFAULT_DOWNLOAD_LIMIT
+        // One budget for the tool, not one per source — see AppSettings.downloadLimit.
+        val limit = settings.downloadLimit.first()
         var completed = 0
 
         while (true) {
@@ -395,7 +432,14 @@ class Downloader(
 
             // Re-checked every track: the budget moves as files land, and the
             // user can lower the limit while a queue is running.
-            if (dao.downloadedBytes() >= limit) {
+            //
+            // Measured across every source, because the budget covers all of
+            // them. Against this source's table alone, two sources could each
+            // fill to the limit and take twice it between them — which is the
+            // arithmetic that made the limit worth moving out of the sources in
+            // the first place. Read off the disk for the same reason: a table
+            // can only ever answer for its own source.
+            if (store.usedBytesEverywhere() >= limit) {
                 lock.withLock {
                     manualQueue.clear()
                     autoQueue.clear()
@@ -447,7 +491,10 @@ class Downloader(
             if (file != null) {
                 // The sleeve is part of having the record offline.
                 runCatching { App.artwork.prefetch(next.coverArtId) }
-                val lyrics = if (wantLyrics) fetchLyrics(client, next, wantKaraoke) else null
+                // Always: the words are a few kilobytes beside a song, and an
+                // offline track without them is the one place they cannot be
+                // fetched on demand.
+                val lyrics = fetchLyrics(client, next, wantKaraoke)
                 dao.upsertDownload(
                     DownloadEntity(
                         trackId = next.id,

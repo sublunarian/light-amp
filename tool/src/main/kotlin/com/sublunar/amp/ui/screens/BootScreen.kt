@@ -84,18 +84,6 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
-    /**
-     * This screen *is* the tabs, so while it shows, no page that isn't a tab
-     * does — see [LibraryNav.offTab].
-     *
-     * The SDK's own hook rather than a composition effect: it fires on the way
-     * back down as well (goBack and popToRoot both announce the screen they
-     * reveal), which is every path that can leave a standalone page.
-     */
-    override fun willShow() {
-        LibraryNav.offTab.value = false
-    }
-
     override fun onScreenDestroy() {
         App.shutdown()
     }
@@ -134,20 +122,6 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
             )
             BootState.Ready -> {
                 val tab by viewModel.currentTab.collectAsState()
-                // A header's search button goes straight to typing, wherever it
-                // was pressed — the sub-page that requested it has usually been
-                // unwound by the time this runs, so the root does the pushing.
-                val wantsKeyboard by LibraryNav.pendingKeyboard.collectAsState()
-                LaunchedEffect(wantsKeyboard) {
-                    if (!wantsKeyboard) return@LaunchedEffect
-                    LibraryNav.pendingKeyboard.value = false
-                    navigateTo<String?>(
-                        { TextEntryScreen(it, title = "Search", submitLabel = "SEARCH") },
-                        resultCallback = { text ->
-                            if (text != null) viewModel.setSearchQuery(text)
-                        },
-                    )
-                }
                 // Reopen where the app was left: one of the bar's three
                 // destinations, never the page beneath it — see LastSection.
                 // Once per run, guarded by LibraryNav, because this composable
@@ -172,47 +146,57 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
                 val libraryIndex by LibraryNav.libraryIndex.collectAsState()
                 val searchActive by viewModel.searchActive.collectAsState()
                 val searchQuery by viewModel.searchQuery.collectAsState()
+                // The SDK's full-screen editor, which is what Simplified uses
+                // for search — see the actions below. A local rather than a
+                // ShellActions member because two of them open the same thing.
+                val openSearchEditor: (String) -> Unit = { current ->
+                    navigateTo<String?>(
+                        {
+                            TextEntryScreen(
+                                it,
+                                title = "Search",
+                                initial = current,
+                                submitLabel = "SEARCH",
+                            )
+                        },
+                        resultCallback = { text ->
+                            if (text != null) viewModel.setSearchQuery(text)
+                        },
+                    )
+                }
                 LibraryShell(
                     currentTab = tab,
-                    onSelectTab = { LibraryNav.selectTab(it) },
+                    onSelectTab = { LibraryNav.tapTab(it) },
                     libraryIndex = libraryIndex,
                     searchActive = searchActive,
                     searchQuery = searchQuery,
                     onSearchQueryChange = { viewModel.setSearchQuery(it) },
                     onSearchClose = { viewModel.closeSearch() },
-                    onSearchClear = { LibraryNav.clearSearch() },
                     actions = ShellActions(
                         nowPlaying = { go { NowPlayingScreen(it) } },
                         settings = { go { SettingsScreen(it) } },
-                        // To the page, not straight to the keyboard. Search is a
-                        // destination in the bar now, and every other one of
-                        // those lands you somewhere you can look at — where the
-                        // tab bar is still under your thumb, and the last
-                        // results are still there. The keyboard is a screen of
-                        // its own that covers all of that, including the bar,
-                        // and it is one tap on the field away when it is wanted.
-                        search = { LibraryNav.openSearch() },
-                        editSearch = { current ->
-                            navigateTo<String?>(
-                                {
-                                    TextEntryScreen(
-                                        it,
-                                        title = "Search",
-                                        initial = current,
-                                        submitLabel = "SEARCH",
-                                    )
-                                },
-                                resultCallback = { text ->
-                                    if (text != null) viewModel.setSearchQuery(text)
-                                },
-                            )
+                        // Simplified gets the SDK's own full-screen editor, the
+                        // way it always did: its bar is the phone's own three
+                        // buttons, and the inline keyboard belongs to the layout
+                        // that puts a magnifier in the header. Expanded goes
+                        // straight to typing on the page itself — the list stays
+                        // underneath until something is actually typed.
+                        search = {
+                            if (App.layoutMode.value == LayoutMode.SIMPLIFIED) {
+                                LibraryNav.openSearch()
+                                openSearchEditor("")
+                            } else {
+                                LibraryNav.openSearch(withKeyboard = true)
+                            }
                         },
+                        // The header field on the search page, which under
+                        // Simplified reopens that same editor rather than
+                        // raising the inline keyboard.
+                        editSearch = { current -> openSearchEditor(current) },
                         more = { page -> go { MoreScreen(it, page) } },
                         // Simplified's centre button: the library index, which
                         // also drops search if that is what is showing.
                         browse = { LibraryNav.pressLibrary() },
-                        genres = { openLibraryPage { GenresScreen(it) } },
-                        composers = { openLibraryPage { ComposersScreen(it) } },
                         openAlbum = { id, parent -> openAlbum(id, parent) },
                         openArtist = { name, parent -> openArtist(name, parent) },
                         openPlaylist = { id, name -> go { PlaylistDetailScreen(it, id, name) } },

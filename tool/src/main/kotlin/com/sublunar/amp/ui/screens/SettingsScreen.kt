@@ -2,13 +2,14 @@ package com.sublunar.amp.ui.screens
 
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.data.AppSettings
+import com.sublunar.amp.data.formatBytes
 import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.DataMode
 import com.sublunar.amp.data.LayoutMode
@@ -57,7 +58,10 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
         val hideArtistImages by App.settings.hideArtistImages.collectAsState(initial = false)
         val hideDownloadIcons by App.hideDownloadIcons.collectAsState()
         val artwork by App.settings.artwork.collectAsState(initial = ArtworkMode.SMALL)
-        val layoutMode by App.settings.layoutMode.collectAsState(initial = LayoutMode.SIMPLIFIED)
+        val layoutMode by App.settings.layoutMode.collectAsState(initial = LayoutMode.STANDARD)
+        val downloadLimit by App.settings.downloadLimit.collectAsState(
+            initial = AppSettings.DEFAULT_DOWNLOAD_LIMIT,
+        )
         val dataMode by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
         // Nothing to download when the audio is already on the phone — see
         // MusicSource.supportsDownloads.
@@ -85,6 +89,15 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                 // screen answers, and the songs are how you answer it.
                 if (source.supportsDownloads) {
                     item { TextRow(title = "Downloads") { go { DownloadsScreen(it) } } }
+                    // Beside Downloads rather than inside a source: one budget
+                    // for the phone, which is the thing that runs out of room.
+                    item {
+                        TextRow(
+                            title = "Storage Limit",
+                            subtitle = formatBytes(downloadLimit),
+                            onClick = { go { SizeLimitScreen(it) } },
+                        )
+                    }
                 }
                 // Everything about a source that is set once — its address, its
                 // quality, what it downloads. Switching *between* them stays on
@@ -137,11 +150,6 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                     }
                 }
                 item {
-                    ToggleRow("Karaoke Lyrics", karaoke) {
-                        App.scope.launch { App.settings.setKaraokeLyrics(!karaoke) }
-                    }
-                }
-                item {
                     // Only offered while there is artwork to single out: with
                     // Hide Artwork on, the artists have already lost theirs.
                     if (artwork != ArtworkMode.NONE) {
@@ -162,18 +170,24 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                     }
                 }
                 item {
-                    // On spreads the library across the bar — the four tabs and
-                    // search. Off is the three the phone itself uses, and is
-                    // what a fresh install gets: the library becomes a page
-                    // rather than a row of tabs. Phrased as the thing switching
-                    // it on does, like its neighbours.
-                    val expanded = layoutMode == LayoutMode.STANDARD
-                    ToggleRow("Expanded Library Navbar", expanded) {
+                    // On is the three buttons the phone itself uses, with the
+                    // library as a page rather than a row of tabs. Off — the
+                    // default, and what a fresh install gets — spreads the four
+                    // tabs across the bar. Phrased as the thing switching it on
+                    // does, like its neighbours.
+                    val simplified = layoutMode == LayoutMode.SIMPLIFIED
+                    ToggleRow("Simplified Library View", simplified) {
                         App.scope.launch {
                             App.settings.setLayoutMode(
-                                if (expanded) LayoutMode.SIMPLIFIED else LayoutMode.STANDARD,
+                                if (simplified) LayoutMode.STANDARD else LayoutMode.SIMPLIFIED,
                             )
                         }
+                    }
+                }
+
+                item {
+                    ToggleRow("Karaoke Lyrics", karaoke) {
+                        App.scope.launch { App.settings.setKaraokeLyrics(!karaoke) }
                     }
                 }
 

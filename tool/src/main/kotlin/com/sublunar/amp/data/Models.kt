@@ -31,6 +31,64 @@ data class Track(
     val streamPath: String = "",
 )
 
+/**
+ * Every album artist a track is credited to.
+ *
+ * A record with more than one arrives as a single string — "Johann Sebastian
+ * Bach; Glenn Gould" — because that is what both the tag and the server's
+ * display field are, so a client that reads it whole invents a compound artist
+ * that exists on exactly one record. Each name is its own artist, and a record
+ * counts toward all of them.
+ *
+ * Split on the semicolon **only**. A comma sits inside plenty of single names —
+ * "Earth, Wind & Fire", "Emerson, Lake & Palmer", "Crosby, Stills & Nash" — and
+ * splitting on it would tear those into artists who never existed. (The tag
+ * lists take the opposite view: see LibraryRepository.splitTag, where a comma
+ * really does separate two genres.)
+ */
+fun Track.albumArtistNames(): List<String> {
+    val raw = albumArtist.ifBlank { artist }
+    val names = raw.split(';').map { it.trim() }.filter { it.isNotEmpty() }
+    return names.ifEmpty { listOfNotNull(raw.takeIf { it.isNotBlank() }) }
+}
+
+/**
+ * The one to show where only one will fit — a record's first credit, which is
+ * the one it is filed under everywhere else.
+ */
+fun Track.primaryAlbumArtist(): String =
+    albumArtistNames().firstOrNull() ?: albumArtist.ifBlank { artist }
+
+/**
+ * One tag field, split into the values it actually holds.
+ *
+ * Navidrome joins a multi-valued tag with a comma or a semicolon, so "Jazz; Soul"
+ * is two genres rather than one oddly named one. Unlike an artist credit — see
+ * [albumArtistNames] — a comma here really is a separator, because a genre or a
+ * composer is a single name and not a band called "Earth, Wind & Fire".
+ */
+fun splitTagValues(raw: String): List<String> =
+    raw.split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+
+/**
+ * What a library list has been narrowed to. Blank means "not narrowed".
+ *
+ * The two are independent and combine: a genre *and* a composer leaves what
+ * carries both, which is the only reading that lets either be set without
+ * silently clearing the other.
+ */
+data class TagFilter(val genre: String = "", val composer: String = "") {
+    val isEmpty: Boolean get() = genre.isEmpty() && composer.isEmpty()
+}
+
+/** Whether this track carries [value] as one of its genres. */
+fun Track.hasGenre(value: String): Boolean =
+    splitTagValues(genre).any { it.equals(value, ignoreCase = true) }
+
+/** Whether this track carries [value] as one of its composers. */
+fun Track.hasComposer(value: String): Boolean =
+    splitTagValues(composer).any { it.equals(value, ignoreCase = true) }
+
 /** An album as listed by the server (songs are fetched separately on demand). */
 data class Album(
     val id: String,
@@ -50,8 +108,6 @@ data class Album(
     /** Navidrome star rating 1–5, or 0 when unrated. */
     val rating: Int = 0,
     val genre: String = "",
-    /** A record by several artists — "Various Artists" and its kin. */
-    val compilation: Boolean = false,
 )
 
 /** Derived client-side by grouping tracks; the server is album-centric. */

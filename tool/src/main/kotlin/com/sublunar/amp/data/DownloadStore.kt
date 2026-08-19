@@ -160,17 +160,43 @@ class DownloadStore(
     fun freeBytes(): Long = runCatching { StatFs(root.absolutePath).availableBytes }.getOrDefault(0L)
 
     /**
+     * Everything the tool has downloaded, across every source, read off the disk.
+     *
+     * The disk rather than the downloads table: the table lives in the active
+     * source's database and can only ever answer for that one, where the budget
+     * this is weighed against covers the whole phone. Files are the truth here
+     * anyway — a row without its file is not using any storage.
+     */
+    fun usedBytesEverywhere(): Long =
+        allRoots().sumOf { root ->
+            root.listFiles().orEmpty()
+                .filter { it.isFile && !it.name.endsWith(PART_SUFFIX) }
+                .sumOf { it.length() }
+        }
+
+    /**
      * The largest limit the user may choose.
      *
      * The SDK imposes no quota of its own — downloads go to ordinary app-private
-     * storage — so the real constraint is leaving the phone usable. That means a
-     * fraction of what's *currently* free (so the cap falls as the device fills)
-     * with an absolute ceiling on top, and never below the default so the setting
-     * can't collapse to nothing on a full device.
+     * storage — so the real constraint is leaving the phone usable: a fraction
+     * of what the tool could occupy, with an absolute ceiling on top.
+     *
+     * What it *could* occupy is the free space **plus what it is already
+     * holding**, because that space is its own — filling it is what put it
+     * there. Measured against free space alone, a phone with 56GB downloaded
+     * and 10GB spare offered a maximum of 7GB: an invitation to delete almost
+     * everything, on a screen that never mentions deleting anything.
+     *
+     * Never below what is already downloaded, either. A cap under the current
+     * usage cannot be shown as the state the user is in, and choosing it would
+     * silently mean "throw away the difference".
      */
     fun maxSelectableBytes(): Long {
-        val share = (freeBytes() * FREE_SPACE_SHARE).toLong()
-        return share.coerceAtMost(ABSOLUTE_CEILING).coerceAtLeast(AppSettings.DEFAULT_DOWNLOAD_LIMIT)
+        val used = usedBytesEverywhere()
+        val share = ((freeBytes() + used) * FREE_SPACE_SHARE).toLong()
+        return share.coerceAtMost(ABSOLUTE_CEILING)
+            .coerceAtLeast(used)
+            .coerceAtLeast(AppSettings.DEFAULT_DOWNLOAD_LIMIT)
     }
 
     companion object {

@@ -12,7 +12,6 @@ import com.sublunar.amp.data.PendingActions
 import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.PlaylistSort
 import com.sublunar.amp.data.SongSort
-import com.sublunar.amp.data.TagSort
 import com.sublunar.amp.data.sortAlbums
 import com.sublunar.amp.data.sortArtists
 import com.sublunar.amp.data.sortPlaylists
@@ -20,7 +19,6 @@ import com.sublunar.amp.data.sortSongs
 import com.sublunar.amp.data.sortName
 import com.sublunar.amp.data.titleKey
 import com.sublunar.amp.ui.components.indexLetterOf
-import com.sublunar.amp.ui.screens.LibraryNav
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -33,8 +31,12 @@ import com.sublunar.amp.data.Downloader
 import com.sublunar.amp.data.LibraryRepository
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
+import com.sublunar.amp.data.TagFilter
+import com.sublunar.amp.data.hasComposer
+import com.sublunar.amp.data.hasGenre
 import com.sublunar.amp.data.SourceLibrary
 import com.sublunar.amp.data.db.LibraryDao
+import com.sublunar.amp.data.db.toTrack
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.db.LibraryDatabase
 import com.sublunar.amp.playback.PlaybackController
@@ -117,6 +119,34 @@ object App {
     }
 
     /**
+     * Every downloaded track on the phone, source by source.
+     *
+     * Each source keeps its own database, and the app only ever has one of them
+     * open as *the* library — so nothing else can answer this. Read directly
+     * here rather than through LibraryRepository, which is built around whichever
+     * source is active and rightly so: everywhere else in the app, a track you
+     * can see is a track you can play.
+     *
+     * Which is exactly what these are not. The page that shows this is an
+     * inventory of what the phone is holding; playing them would mean resolving
+     * files and streams through a source that isn't the current one, and the
+     * page names no source at all until you have more than one.
+     *
+     * A download whose track row is missing — the library cache cleared, no sync
+     * since — is left out. Its bytes are still counted in the storage figure,
+     * which is read off the disk.
+     */
+    suspend fun downloadsBySource(): List<Pair<String, List<Track>>> =
+        settings.sources.first().mapNotNull { source ->
+            val dao = databaseFor(source).libraryDao()
+            val ids = runCatching { dao.downloadedIds() }.getOrDefault(emptyList())
+            if (ids.isEmpty()) return@mapNotNull null
+            val tracks = runCatching { dao.tracksByIds(ids).map { it.toTrack() } }
+                .getOrDefault(emptyList())
+            if (tracks.isEmpty()) null else source.name to tracks
+        }
+
+    /**
      * Drop a source's cached library and downloaded audio.
      *
      * Called when the user removes it: "remove" has to mean the storage goes too,
@@ -177,6 +207,12 @@ object App {
             artwork = ArtworkLoader(context.filesDir, serverClient) { _source.value.id }
             // Whatever was last in use, resolved before anything reads the
             // library — the DAO has to exist before the repository is built.
+            // Before anything reads the layout: an install that predates the
+            // default flip keeps Simplified — see AppSettings.migrateLayoutDefault.
+            runBlocking { settings.migrateLayoutDefault() }
+            // The download budget became one for the whole tool; carry the
+            // largest of the old per-source ones up to it.
+            runBlocking { settings.migrateDownloadLimit() }
             val first = runBlocking { settings.activeSource.first() }
                 ?: MusicSource(AppSettings.LEGACY_SOURCE_ID, SourceKind.SUBSONIC, "Server")
             _source.value = first
@@ -206,6 +242,9 @@ object App {
                     // Fresh library rows are also the first chance to work out
                     // which album a reindexed download belongs to.
                     runCatching { dao().backfillDownloadAlbums() }
+                    // ...and the first chance to put back the words a rebuilt
+                    // download row lost, which the files themselves don't carry.
+                    runCatching { downloader.refillMissingLyrics() }
                     topUpDownloads()
                 }
             }
@@ -436,16 +475,50 @@ object App {
         settings.likedArtistsOnly.stateIn(scope, SharingStarted.Eagerly, false)
     }
 
-    val tagSort: StateFlow<TagSort> by lazy {
-        settings.tagSort.stateIn(scope, SharingStarted.Eagerly, TagSort.NAME)
+    /**
+     * Which tag each list is narrowed to, as one value so the views below stay
+     * inside `combine`'s five-flow form.
+     *
+     * Blank means "all of it", which is the absence of a filter rather than a
+     * tag that happens to be named nothing.
+     */
+    val songsTagFilter: StateFlow<TagFilter> by lazy {
+        combine(settings.songsGenre, settings.songsComposer) { g, c -> TagFilter(g, c) }
+            .stateIn(scope, SharingStarted.Eagerly, TagFilter())
     }
-    val tagSortReversed: StateFlow<Boolean> by lazy {
-        settings.tagSortReversed.stateIn(scope, SharingStarted.Eagerly, false)
+    val albumsTagFilter: StateFlow<TagFilter> by lazy {
+        combine(settings.albumsGenre, settings.albumsComposer) { g, c -> TagFilter(g, c) }
+            .stateIn(scope, SharingStarted.Eagerly, TagFilter())
+    }
+
+    /**
+     * The albums a tag filter leaves standing, or null when nothing is filtered.
+     *
+     * An album carries one genre of its own and no composer at all, so the
+     * question is really about its songs: an album is a Bach album because Bach
+     * wrote what is on it. Derived from the tracks for that reason, which also
+     * guarantees every value the picker offers actually leads somewhere.
+     */
+    val albumsMatchingTags: StateFlow<Set<String>?> by lazy {
+        combine(library.tracks, albumsTagFilter) { tracks, filter ->
+            if (filter.isEmpty) return@combine null
+            tracks.asSequence()
+                .filter { filter.genre.isEmpty() || it.hasGenre(filter.genre) }
+                .filter { filter.composer.isEmpty() || it.hasComposer(filter.composer) }
+                .mapNotNull { it.albumId }
+                .toSet()
+        }.stateIn(scope, SharingStarted.Eagerly, null)
     }
 
     val sortedSongs: StateFlow<SortedView<Track>> by lazy {
-        combine(library.tracks, songSort, songSortReversed, likedSongsOnly) { list, sort, rev, liked ->
-            val sorted = sortSongs(list.filter { !liked || it.liked }, sort, rev)
+        combine(library.tracks, songSort, songSortReversed, likedSongsOnly, songsTagFilter) {
+                list, sort, rev, liked, tags ->
+            val narrowed = list.asSequence()
+                .filter { !liked || it.liked }
+                .filter { tags.genre.isEmpty() || it.hasGenre(tags.genre) }
+                .filter { tags.composer.isEmpty() || it.hasComposer(tags.composer) }
+                .toList()
+            val sorted = sortSongs(narrowed, sort, rev)
             SortedView(
                 sorted,
                 when (sort) {
@@ -492,7 +565,7 @@ object App {
      * the way to every page, on a phone set to the simplified one.
      */
     val layoutMode: StateFlow<LayoutMode> by lazy {
-        settings.layoutMode.stateIn(scope, SharingStarted.Eagerly, LayoutMode.SIMPLIFIED)
+        settings.layoutMode.stateIn(scope, SharingStarted.Eagerly, LayoutMode.STANDARD)
     }
 
 
@@ -516,8 +589,10 @@ object App {
     }
 
     val sortedAlbums: StateFlow<SortedView<Album>> by lazy {
-        combine(library.albums, albumSort, albumSortReversed, likedAlbumsOnly) { list, sort, rev, liked ->
-            val sorted = sortAlbums(list.filter { !liked || it.liked }, sort, rev)
+        combine(library.albums, albumSort, albumSortReversed, likedAlbumsOnly, albumsMatchingTags) {
+                list, sort, rev, liked, tagged ->
+            val narrowed = list.filter { (!liked || it.liked) && (tagged == null || it.id in tagged) }
+            val sorted = sortAlbums(narrowed, sort, rev)
             // The bucket follows whatever the list is ordered by, so sorting by
             // artist gives an index over artist names rather than no index at all.
             // Both use the same key the sort itself used, or the letters would
@@ -564,28 +639,31 @@ object App {
 
         // Only ever download from the library chosen in download settings.
         //
-        // The Room cache holds just the library being browsed — switching library
-        // clears and re-syncs it — so when the download library is a *different*
-        // one there is nothing legitimate here to enumerate. Downloading whatever
-        // happens to be in view instead is how a "Music Library" setting quietly
-        // filled up with tracks from another library. Better to fetch nothing than
-        // the wrong thing. (null means "follow whatever the app is browsing", which
-        // is what the picker offers, so that case always proceeds.)
-        val chosen = settings.activeSource.first()?.downloadLibraryId
-        if (chosen != null && chosen != settings.libraryId.first()) return
-
-        // The unfiltered library: `library.tracks` hides everything not yet
-        // downloaded whenever the offline view is on, which would reduce this to
-        // "download what is already downloaded".
-        val tracks = library.fullTracks.value
+        // Which libraries this covers is the Sources page's "Shown on" setting,
+        // not one of its own — see LibraryRepository.downloadableTracks. That
+        // also means the cache no longer has to be scoped to one library for
+        // this to be safe: every library is cached at once now, each row tagged
+        // with where it came from.
+        //
+        // Not `library.tracks`: that hides everything not yet downloaded while
+        // the offline view is on, which would reduce this to "download what is
+        // already downloaded".
+        val tracks = library.downloadableTracks.value
         if (tracks.isEmpty()) return
         val playlistTrackIds = library.playlists.value.flatMap { it.trackIds }.toSet()
         downloader.applyAutoMode(
             allTracks = tracks,
             likedTracks = tracks.filter { it.liked },
-            likedAlbumIds = library.fullAlbums.value.filter { it.liked }.map { it.id }.toSet(),
+            // Both scoped as `tracks` above is. Albums came from the *browsed*
+            // library, so a liked record in another one was invisible here; the
+            // artists came from `library.artists`, which narrows with the offline
+            // view — so once offline, "liked artists" meant only the ones already
+            // downloaded, and the mode quietly stopped fetching the rest.
+            likedAlbumIds = library.downloadableAlbums.value
+                .filter { it.liked }
+                .mapTo(HashSet()) { it.id },
             playlistTracks = tracks.filter { it.id in playlistTrackIds },
-            likedArtistNames = library.artists.value.filter { it.liked }.map { it.name }.toSet(),
+            likedArtistNames = library.likedArtistNames.value,
         )
     }
 

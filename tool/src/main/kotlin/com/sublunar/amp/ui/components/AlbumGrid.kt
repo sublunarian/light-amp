@@ -24,9 +24,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.collectAsState
-import com.sublunar.amp.App
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp

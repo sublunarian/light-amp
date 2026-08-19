@@ -53,7 +53,16 @@ data class AlbumEntity(
     /** Navidrome star rating, 0 when unrated. */
     val rating: Int = 0,
     val genre: String = "",
-    val compilation: Boolean = false,
+    /**
+     * Which of the server's libraries this album came from — a Subsonic music
+     * folder, or null where the server has only one (or the row predates this).
+     *
+     * Recorded so switching library is a filter over the cache rather than a
+     * fetch. It used to be clear-and-re-sync, which cannot work with no server
+     * to sync from: offline, the switch emptied the library and left it empty
+     * while the downloaded files sat on disk. See LibraryRepository.allAlbums.
+     */
+    val libraryId: String? = null,
 )
 
 /**
@@ -254,6 +263,15 @@ interface LibraryDao {
     @Query("SELECT * FROM downloads WHERE trackId = :trackId")
     suspend fun download(trackId: String): DownloadEntity?
 
+    /**
+     * Downloads with no words stored — see [Downloader.refillMissingLyrics].
+     *
+     * Ids only, deliberately: selecting the lyrics column across every row is
+     * exactly what blows the CursorWindow, as the projection above explains.
+     */
+    @Query("SELECT trackId FROM downloads WHERE lyrics IS NULL LIMIT :limit")
+    suspend fun downloadsMissingLyrics(limit: Int): List<String>
+
     @Query("SELECT IFNULL(SUM(bytes), 0) FROM downloads")
     suspend fun downloadedBytes(): Long
 
@@ -303,7 +321,7 @@ interface LibraryDao {
         LikedArtistEntity::class,
         DownloadEntity::class,
     ],
-    version = 7,
+    version = 9,
     exportSchema = false,
 )
 abstract class LibraryDatabase : RoomDatabase() {
@@ -369,10 +387,10 @@ fun AlbumEntity.toAlbum(): Album = Album(
     liked = liked,
     rating = rating,
     genre = genre,
-    compilation = compilation,
 )
 
-fun Album.toEntity(): AlbumEntity = AlbumEntity(
+fun Album.toEntity(libraryId: String? = null): AlbumEntity = AlbumEntity(
+    libraryId = libraryId,
     id = id,
     title = title,
     artist = artist,
@@ -387,5 +405,4 @@ fun Album.toEntity(): AlbumEntity = AlbumEntity(
     liked = liked,
     rating = rating,
     genre = genre,
-    compilation = compilation,
 )

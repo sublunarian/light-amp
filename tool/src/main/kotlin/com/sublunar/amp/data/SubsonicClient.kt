@@ -189,7 +189,24 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         // album they have no version field of their own — so clean them with the
         // parent album's, which this response already includes.
         val albumName = body.album?.let { albumTitle(it.name ?: it.title, it.version) }
-        return body.album?.song.orEmpty().map { it.toTrack(albumName) }
+        // The record's own artist, taken from the same parent. AlbumID3.artist
+        // is the album artist by definition, where a song Child's albumArtist is
+        // whatever the file happened to carry — so this is the authoritative
+        // answer for every track on the album, and the one the app files them
+        // under. Without it a track whose file has no ALBUMARTIST tag fell back
+        // to its own artist, which is what gave every guest on a "feat." credit
+        // a row of their own in the Artists list.
+        val albumArtist = body.album?.let { a ->
+            // Joined here, with the separator the app splits on, so a record
+            // credited to more than one artist comes apart again cleanly —
+            // see Track.albumArtistNames.
+            a.artists.mapNotNull { it.name?.trim()?.takeIf(String::isNotEmpty) }
+                .takeIf { it.isNotEmpty() }
+                ?.joinToString("; ")
+                ?: a.displayArtist?.takeIf { it.isNotBlank() }
+                ?: a.artist
+        }
+        return body.album?.song.orEmpty().map { it.toTrack(albumName, albumArtist) }
     }
 
     override suspend fun getStarred(musicFolderId: String?): Starred {
@@ -408,7 +425,6 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         lastPlayedMs = parseInstantMs(played),
         rating = userRating ?: 0,
         genre = genre.orEmpty(),
-        compilation = isCompilation ?: compilation ?: false,
     )
 
     /**
@@ -446,14 +462,24 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         return y * 10_000L + (date?.month ?: 0) * 100L + (date?.day ?: 0)
     }
 
-    private fun SongDto.toTrack(albumName: String? = null): Track {
+    private fun SongDto.toTrack(
+        albumName: String? = null,
+        albumArtistName: String? = null,
+    ): Track {
         val coverId = coverArt ?: albumId ?: id
         return Track(
             id = id,
             title = title ?: "Unknown Title",
             artist = artist ?: "Unknown Artist",
             album = albumName ?: album ?: "Unknown Album",
-            albumArtist = albumArtist ?: artist ?: "Unknown Artist",
+            // The album's answer first — see getAlbumTracks. The track's own
+            // artist is the last resort rather than the second, because it is
+            // the one value here that is known not to be an album artist.
+            albumArtist = albumArtistName
+                ?: displayAlbumArtist?.takeIf { it.isNotBlank() }
+                ?: albumArtist
+                ?: artist
+                ?: "Unknown Artist",
             albumId = albumId,
             coverArtId = coverId,
             durationMs = (duration ?: 0).toLong() * 1000L,
@@ -465,7 +491,7 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
             liked = starred != null,
             rating = userRating ?: 0,
             genre = genre.orEmpty(),
-            composer = composer.orEmpty(),
+            composer = displayComposer?.takeIf { it.isNotBlank() } ?: composer.orEmpty(),
         )
     }
 

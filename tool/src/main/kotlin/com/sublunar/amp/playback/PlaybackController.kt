@@ -65,6 +65,14 @@ class PlaybackController(
 ) {
     private var player: LightAudioPlayer? = null
 
+    /**
+     * Whether anything has actually played since the queue last reached its end.
+     *
+     * Tells a finished queue apart from one that was merely cued up — see
+     * [rewindIfQueueFinished].
+     */
+    private var hasPlayed = false
+
     private val _queue = MutableStateFlow<List<Track>>(emptyList())
     val queue: StateFlow<List<Track>> = _queue
 
@@ -225,6 +233,48 @@ class PlaybackController(
     private val _bound = MutableStateFlow(false)
     val bound: StateFlow<Boolean> = _bound
 
+    /**
+     * A finished queue goes back to its first track and stays stopped.
+     *
+     * ExoPlayer leaves a queue that has run out parked on the last song at its
+     * very end, so the next press of play replays that song rather than the
+     * record — and the player sits showing the last track as if it were about to
+     * start. Winding back to the top says what actually happened: this is over,
+     * and here is where it begins again.
+     *
+     * Repeat is not this function's business: with TRACK or QUEUE the player
+     * loops and never reaches an end to notice.
+     *
+     * The SDK does not surface `STATE_ENDED` — see LightAudioPlayer, which keeps
+     * it to itself — so this reads the same evidence Media3 would: playback
+     * stopped, on the last item, with the position at its duration. The slack is
+     * small enough that pausing by hand a second from the end is not mistaken
+     * for the queue running out.
+     *
+     * [hasPlayed] is the other half of that inference and the important half: a
+     * queue is only finished if it ran. Restoring cues the last track up and
+     * pauses (see [restoreState]), which is a stop at the end of the last item
+     * without a note having been played — and rewinding *that* would throw away
+     * the track the app was reopened to continue.
+     */
+    private fun rewindIfQueueFinished(p: LightAudioPlayer) {
+        if (isCasting) return
+        if (!hasPlayed) return
+        if (_repeatMode.value != RepeatMode.OFF) return
+        val last = _queue.value.lastIndex
+        if (last < 0 || _index.value != last) return
+        val duration = p.durationMs.value
+        if (duration <= 0L) return
+        if (p.positionMs.value < duration - QUEUE_END_SLACK_MS) return
+        // Paused first: a seek out of the ended state with playWhenReady still
+        // true starts the queue over from the top instead of waiting there.
+        p.pause()
+        p.seekToIndex(0)
+        _index.value = 0
+        _positionMs.value = 0L
+        hasPlayed = false
+    }
+
     /** Attach the audio stack from the current activity. Idempotent per process. */
     fun bind(audio: LightAudio) {
         if (player != null) return
@@ -242,7 +292,17 @@ class PlaybackController(
         // While casting, the renderer is the source of truth for these — the local
         // player sits paused and would otherwise report position 0 / not-playing
         // straight over the cast state.
-        scope.launch { p.isPlaying.collect { if (!isCasting) _isPlaying.value = it } }
+        scope.launch {
+            p.isPlaying.collect { playing ->
+                if (isCasting) return@collect
+                _isPlaying.value = playing
+                if (playing) {
+                    hasPlayed = true
+                } else if (hasPlayed) {
+                    rewindIfQueueFinished(p)
+                }
+            }
+        }
         // A server-seeked stream starts at 0:00 of a shorter file, so both
         // readouts are shifted back into the track's own timeline.
         scope.launch { p.positionMs.collect { if (!isCasting) _positionMs.value = it + streamOffsetMs } }
@@ -1843,6 +1903,9 @@ class PlaybackController(
          * transcode's duration is its own estimate.
          */
         private const val IGNORED_OFFSET_SLACK_MS = 3_000L
+
+        /** How near the end still counts as having reached it. */
+        private const val QUEUE_END_SLACK_MS = 1_000L
 
         /** Long enough for the player to be reporting the stream, not the request. */
         /**

@@ -2,7 +2,6 @@ package com.sublunar.amp.ui.screens
 
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -14,7 +13,6 @@ import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.ArtistSort
 import com.sublunar.amp.data.PlaylistSort
 import com.sublunar.amp.data.SongSort
-import com.sublunar.amp.data.TagSort
 import com.sublunar.amp.data.descendingByNature
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
@@ -33,7 +31,6 @@ private val SONG_SORT_OPTIONS = SongSort.entries.toList()
 private val ARTIST_SORT_OPTIONS = ArtistSort.entries.toList()
 private val PLAYLIST_SORT_OPTIONS =
     listOf(PlaylistSort.NAME, PlaylistSort.DATE_CREATED, PlaylistSort.RECENTLY_UPDATED)
-private val TAG_SORT_OPTIONS = TagSort.entries.toList()
 
 /**
  * The page a sort menu belongs to, named under the menu's own heading.
@@ -58,9 +55,21 @@ private fun sortedPage(tab: LibraryTab): String = tabTitle(tab, likedOnly(tab))
  * once you had opened a menu about something else. As a page of two rows it
  * says which one is in effect, and More says so without opening anything.
  */
-class FilterScreen(
+/**
+ * Narrow a list to one genre, or to one composer.
+ *
+ * The values offered are the library's own — see LibraryRepository.genres — so
+ * every one of them leads somewhere rather than to an empty page, which is what
+ * the browsable tag lists this replaced could not promise. "All" comes first and
+ * clears the narrowing.
+ *
+ * Genre and composer are separate settings and combine, so picking a composer
+ * leaves a genre already chosen alone.
+ */
+class TagFilterScreen(
     sealed: SealedLightActivity,
     private val tab: LibraryTab,
+    private val byComposer: Boolean,
 ) : SimpleLightScreen<Unit>(sealed) {
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
@@ -68,11 +77,22 @@ class FilterScreen(
 
     @Composable
     override fun Content() {
-        val liked = likedOnly(tab)
-        ListScreen(onBack = { goBack() }, title = "Filter", subtitle = tab.title) {
+        val values by (if (byComposer) App.library.composers else App.library.genres)
+            .collectAsState()
+        val filter = tagFilter(tab)
+        val current = if (byComposer) filter.composer else filter.genre
+        ListScreen(
+            onBack = { goBack() },
+            title = if (byComposer) "Composer" else "Genre",
+            subtitle = tab.title,
+        ) {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                item { Choice("All", chosen = !liked) { choose(false) } }
-                item { Choice("Liked", chosen = liked) { choose(true) } }
+                item { Choice("All", chosen = current.isEmpty()) { choose("") } }
+                items(values) { value ->
+                    Choice(value, chosen = value.equals(current, ignoreCase = true)) {
+                        choose(value)
+                    }
+                }
             }
         }
     }
@@ -86,17 +106,18 @@ class FilterScreen(
         )
     }
 
-    private fun choose(liked: Boolean) {
+    private fun choose(value: String) {
         App.scope.launch {
-            when (tab) {
-                LibraryTab.ALBUMS -> App.settings.setLikedAlbumsOnly(liked)
-                LibraryTab.SONGS -> App.settings.setLikedSongsOnly(liked)
-                LibraryTab.ARTISTS -> App.settings.setLikedArtistsOnly(liked)
-                LibraryTab.PLAYLISTS -> Unit
+            when {
+                tab == LibraryTab.ALBUMS && byComposer -> App.settings.setAlbumsComposer(value)
+                tab == LibraryTab.ALBUMS -> App.settings.setAlbumsGenre(value)
+                tab == LibraryTab.SONGS && byComposer -> App.settings.setSongsComposer(value)
+                tab == LibraryTab.SONGS -> App.settings.setSongsGenre(value)
+                else -> Unit
             }
         }
-        // Back to the list it just changed — the point of the tap. More, which
-        // pushed this, closes itself on the result so the list is what appears.
+        // A narrowed list is the point of the tap, so leave with the answer —
+        // as the sort pickers do. See MoreScreen.change.
         goBack(Unit)
     }
 }
@@ -151,8 +172,6 @@ private fun <T> SortOptions(
 
 class AlbumsSortScreen(
     sealed: SealedLightActivity,
-    /** Set when opened from a page that isn't the tab — see LibraryShell. */
-    private val pageTitle: String? = null,
 ) : SimpleLightScreen<Unit>(sealed) {
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
@@ -186,7 +205,7 @@ class AlbumsSortScreen(
                 goBack(Unit)
             },
             onBack = { goBack() },
-            page = pageTitle ?: sortedPage(LibraryTab.ALBUMS),
+            page = sortedPage(LibraryTab.ALBUMS),
         )
     }
 
@@ -302,48 +321,6 @@ class PlaylistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>
     }
 }
 
-/**
- * Sort menu for the genre and composer lists.
- *
- * No scroll anchor to clear: neither list is deep enough to be left part-way
- * down, and they have no A–Z strip whose buckets would go stale.
- */
-class TagsSortScreen(
-    sealed: SealedLightActivity,
-    /** The page this menu was opened from, which it keeps as its own name. */
-    private val pageTitle: String? = null,
-) : SimpleLightScreen<Unit>(sealed) {
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
-
-    @Composable
-    override fun Content() {
-        val current by App.tagSort.collectAsState()
-        val reversed by App.tagSortReversed.collectAsState()
-        SortOptions(
-            options = TAG_SORT_OPTIONS,
-            current = current,
-            reversed = reversed,
-            label = ::tagSortLabel,
-            naturallyDescending = { it.descendingByNature },
-            page = pageTitle,
-            onSelect = { option ->
-                App.scope.launch {
-                    App.settings.setTagSort(option)
-                    App.settings.setTagSortReversed(false)
-                }
-                goBack(Unit)
-            },
-            onFlip = {
-                App.scope.launch { App.settings.setTagSortReversed(!reversed) }
-                goBack(Unit)
-            },
-            onBack = { goBack() },
-        )
-    }
-}
-
 fun artistSortLabel(sort: ArtistSort): String = when (sort) {
     ArtistSort.NAME -> "Name"
     ArtistSort.MOST_PLAYED -> "Plays"
@@ -355,7 +332,3 @@ fun playlistSortLabel(sort: PlaylistSort): String = when (sort) {
     PlaylistSort.RECENTLY_UPDATED -> "Recently Updated"
 }
 
-fun tagSortLabel(sort: TagSort): String = when (sort) {
-    TagSort.NAME -> "Name"
-    TagSort.SONGS -> "Songs"
-}

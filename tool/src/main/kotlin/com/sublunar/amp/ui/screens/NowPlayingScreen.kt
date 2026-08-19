@@ -61,7 +61,6 @@ import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AppArtwork
 import com.sublunar.amp.ui.components.AppHeader
-import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppProgressBar
@@ -644,6 +643,14 @@ class NowPlayingScreen(
                     // Not the track — that one is on screen already, in the row
                     // marked as playing. This says which page you are on.
                     title = "Queue",
+                    // Where in it you are. Only with something playing: a queue
+                    // with nothing current has no "of" to answer, and "0 of 12"
+                    // would be a position no row is at.
+                    subtitle = if (index in queue.indices) {
+                        "${index + 1} of ${queue.size}"
+                    } else {
+                        null
+                    },
                 )
             }
             val listState = rememberLazyListState()
@@ -714,6 +721,8 @@ class NowPlayingScreen(
         showTitle: Boolean = true,
         /** A plain page title in the card's place — the queue's own name. */
         title: String? = null,
+        /** A second line under [title], at the weight the card's own second line uses. */
+        subtitle: String? = null,
     ) {
         Row(
             modifier = Modifier
@@ -731,13 +740,27 @@ class NowPlayingScreen(
             // Balances the right-hand square, so the pair centres on the screen.
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 if (title != null) {
-                    AppText(
-                        title,
-                        nSp(20),
-                        role = TextRole.Subheading,
-                        maxLines = 1,
-                        align = TextAlign.Center,
-                    )
+                    // A column even with nothing under it, so a title that
+                    // gains a second line doesn't shift up as it arrives.
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        AppText(
+                            title,
+                            nSp(20),
+                            role = TextRole.Subheading,
+                            maxLines = 1,
+                            align = TextAlign.Center,
+                        )
+                        if (subtitle != null) {
+                            AppText(
+                                subtitle,
+                                pxSp(QUEUE_SUBTITLE_PX),
+                                lineHeight = pxSp(QUEUE_SUBTITLE_LINE_PX),
+                                dim = true,
+                                maxLines = 1,
+                                align = TextAlign.Center,
+                            )
+                        }
+                    }
                 } else {
                     TitleCard(current.title, current.artist)
                 }
@@ -1238,6 +1261,10 @@ private const val PLAY_BOX_PX = 138      // 80px of ink
 private const val SEEK_BOX_PX = 114      // 57px
 private const val SECONDARY_BOX_PX = 54  // 40px
 private const val HEADER_ICON_PX = 66
+
+/** The queue header's second line — the card's own second line, which it sits beside. */
+private const val QUEUE_SUBTITLE_PX = 36
+private const val QUEUE_SUBTITLE_LINE_PX = 42
 
 /**
  * Shuffle and repeat at the foot of the queue, sized off the Light music app's

@@ -17,13 +17,10 @@ import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
-import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.LibraryList
 import com.sublunar.amp.ui.components.AppText
-import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.NumberedRow
 import com.sublunar.amp.ui.components.SelectionHeader
-import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.nSp
 import com.thelightphone.sdk.SealedLightActivity
@@ -105,7 +102,9 @@ class AlbumDetailScreen(
                             NumberedRow(
                                 number = track.trackNumber ?: (index + 1),
                                 title = track.title,
-                                durationMs = track.durationMs,
+                                // The track's own credit, not the record's —
+                                // which is what makes a guest on one song visible.
+                                subtitle = track.artist,
                                 current = current?.id == track.id,
                                 selected = if (selection.active) track.id in selection.selected else null,
                                 onClick = {

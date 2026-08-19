@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.sublunar.amp.App
+import com.sublunar.amp.data.primaryAlbumArtist
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.ListScreen
@@ -187,7 +188,8 @@ class TrackActionsScreen(
                 // This sheet is opened from anywhere — a list, the queue, the
                 // player — so neither destination has a parent on the stack:
                 // both name the walk that leads to them.
-                val artist = track.albumArtist.ifBlank { track.artist }
+                // One destination, so the record's first credit — see primaryAlbumArtist.
+                val artist = track.primaryAlbumArtist()
                 if (track.albumId != null) {
                     TextRow(title = "Go to Album") {
                         openAlbum(track.albumId, Parent.artist(artist))

@@ -1,13 +1,13 @@
 package com.sublunar.amp.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
@@ -22,13 +22,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.sublunar.amp.App
 import androidx.compose.runtime.mutableStateOf
@@ -39,9 +37,18 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.sublunar.amp.data.shuffled
+import com.sublunar.amp.data.TagFilter
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AlphabetIndex
+import com.sublunar.amp.ui.components.CORNER_ICON_PX
 import com.sublunar.amp.ui.components.HEADER_BAR_PX
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.clearText
+import com.sublunar.amp.ui.components.ROW_LEAD_PX
+import com.sublunar.amp.ui.components.ROW_GAP_PX
+import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
+import com.sublunar.amp.ui.components.ROW_TITLE_PX
+import com.sublunar.amp.ui.components.ROW_ACTION_ICON_PX
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
@@ -59,7 +66,6 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import com.sublunar.amp.ui.components.AlbumGrid
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.ui.components.PlayAllRow
-import com.sublunar.amp.ui.components.SplitActionRow
 import com.sublunar.amp.data.LocalLibrary
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.SourceKind
@@ -71,12 +77,9 @@ import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.n
-
-import com.sublunar.amp.ui.nSp
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.ui.LightThemeTokens
-import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.sublunar.amp.ui.components.appClickable
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
@@ -112,15 +115,13 @@ class ShellActions(
     val nowPlaying: () -> Unit,
     val settings: () -> Unit,
     val search: () -> Unit,
-    /** Opens the full-screen LP3 keyboard to edit the search query. */
+    /** The SDK's full-screen editor — Simplified's way of typing a query. */
     val editSearch: (String) -> Unit,
+    /** Opens the full-screen LP3 keyboard to edit the search query. */
     /** More carries the showing page's modifiers up with it — see [LibraryPage]. */
     val more: (LibraryPage) -> Unit,
     /** Simplified's centre button: the library index — see [LibraryNav]. */
     val browse: () -> Unit,
-    /** The two tag lists, opened from that index as peers of the tabs. */
-    val genres: () -> Unit,
-    val composers: () -> Unit,
     /**
      * Each takes the page back should land on — a tab list is the parent of what
      * it opens, while a search result is a jump and names the hierarchy it
@@ -149,7 +150,6 @@ fun LibraryShell(
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
     onSearchClose: () -> Unit,
-    onSearchClear: () -> Unit,
     actions: ShellActions,
 ) {
     PlayerTheme {
@@ -160,20 +160,25 @@ fun LibraryShell(
                         searchQuery,
                         onSearchQueryChange,
                         onSearchClose,
-                        onSearchClear,
+                        currentTab,
                         actions,
                     )
                 } else if (libraryIndex) {
                     LibraryIndex(actions)
-                } else when (currentTab) {
-                    LibraryTab.ALBUMS -> AlbumsTab(actions)
-                    LibraryTab.SONGS -> SongsTab(actions)
-                    LibraryTab.ARTISTS -> ArtistsTab(actions)
-                    LibraryTab.PLAYLISTS -> PlaylistsTab(actions)
+                } else {
+                    TabContent(currentTab, actions)
                 }
             }
+            // The keyboard takes the bottom of the screen while typing, and the
+            // bar underneath it would be both unreachable and a second row of
+            // controls under the one in use. Return brings it back.
+            if (!LibraryNav.typing.collectAsState().value) {
             Navbar(
-                current = if (searchActive || libraryIndex) null else currentTab,
+                // Search keeps the tab it was started from lit. It is not a
+                // destination of its own — it borrows the list in front of you
+                // and hands it back on the way out, so unlighting the tab would
+                // say you had left somewhere you never left.
+                current = if (libraryIndex) null else currentTab,
                 onSelect = onSelectTab,
                 onMore = {
                     actions.more(if (searchActive) LibraryPage.SEARCH else currentTab.page)
@@ -183,6 +188,7 @@ fun LibraryShell(
                 onNowPlaying = actions.nowPlaying,
                 onBrowse = actions.browse,
             )
+            }
         }
     }
 }
@@ -195,43 +201,88 @@ fun LibraryShell(
  * and tapping it reopens the editor, rather than being an inline field driving
  * the system IME.
  */
+/**
+ * One of the four tab lists, with or without the header it normally carries.
+ *
+ * Search borrows the body without the header — see [SearchView].
+ */
+@Composable
+private fun TabContent(tab: LibraryTab, actions: ShellActions, header: Boolean = true) {
+    when (tab) {
+        LibraryTab.ALBUMS -> AlbumsTab(actions, header)
+        LibraryTab.SONGS -> SongsTab(actions, header)
+        LibraryTab.ARTISTS -> ArtistsTab(actions, header)
+        LibraryTab.PLAYLISTS -> PlaylistsTab(actions, header)
+    }
+}
+
 @Composable
 private fun SearchView(
     query: String,
     onQueryChange: (String) -> Unit,
     onClose: () -> Unit,
-    onClear: () -> Unit,
+    /** The list search was started from — what it shows until something is typed. */
+    tab: LibraryTab,
     actions: ShellActions,
 ) {
+    val typing by LibraryNav.typing.collectAsState()
+    // While the keyboard is up the field is the query: the keyboard writes into
+    // this state and the results below follow it keystroke by keystroke, rather
+    // than waiting for a submitted string to come back from another screen.
+    val state = rememberTextFieldState(query)
+    val live = if (typing) state.text.toString() else query
+    LaunchedEffect(live, typing) { if (typing) onQueryChange(live) }
+
     val library by App.library.tracks.collectAsState()
-    val results = remember(query, library.size) { App.library.search(query) }
+    val results = remember(live, library.size) { App.library.search(live) }
     val listState = rememberListAnchor("search")
 
-    // The field sits at the top of the results rather than under the header, so
-    // it goes away as you scroll into them — it has done its job by then. That
-    // puts it inside the list's padding, which is also what lines its left edge
-    // up with the artwork on every row below it.
-    //
-    // The list therefore keeps equal margins and the rows take the scrollbar's
-    // lane back individually, rather than the field inheriting a right margin
-    // several times its left one.
+    // The rows take the scrollbar's lane back individually, so the list itself
+    // keeps equal margins.
     val lane = px(SCROLLBAR_LANE_PX) - px(LIST_EDGE_PX)
     Column(Modifier.fillMaxSize()) {
-        SearchHeader(actions)
+        // One header in both states. Return only puts the keyboard away — the
+        // query stays where it was typed, with the results scrolling under it,
+        // so committing a search doesn't move the thing you just wrote.
+        SearchHeader(
+            query = live,
+            onEdit = {
+                // Simplified never raises the inline keyboard: its search is the
+                // SDK's own screen, and the two would be different ways of
+                // typing the same query on the same phone.
+                if (App.layoutMode.value == LayoutMode.SIMPLIFIED) {
+                    actions.editSearch(live)
+                } else {
+                    LibraryNav.typing.value = true
+                }
+            },
+            onCancel = {
+                // The cross abandons the search rather than just the keyboard:
+                // back to the list it was started from, as if it never happened.
+                // Including the query — an abandoned search that turned up again
+                // half-typed the next time would be the app remembering the one
+                // thing you just said you were finished with.
+                state.clearText()
+                onQueryChange("")
+                LibraryNav.typing.value = false
+                onClose()
+            },
+            onMenu = { actions.more(LibraryPage.SEARCH) },
+        )
         Box(modifier = Modifier.weight(1f)) {
+        // Nothing typed yet, so nothing to show but what was already there. The
+        // keyboard opening is not itself a search: emptying the screen the
+        // moment it appears would throw away the list you were looking at to
+        // make room for no answer at all.
+        if (live.isBlank()) {
+            TabContent(tab, actions, header = false)
+        } else {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = listPadding(end = px(LIST_EDGE_PX)),
         ) {
-            item {
-                SearchField(
-                    query,
-                    onEdit = { actions.editSearch(query) },
-                    onClear = onClear,
-                )
-            }
-            if (query.isNotBlank() && results.isEmpty) {
+            if (live.isNotBlank() && results.isEmpty) {
                 item { EmptyState("No results") }
             }
             if (results.artists.isNotEmpty()) {
@@ -284,26 +335,89 @@ private fun SearchView(
         }
         ListScrollBar(listState)
         }
+        }
+        if (typing) SearchKeyboard(state) { LibraryNav.typing.value = false }
     }
 }
 
 /**
- * The search page's header: the page's name, in the corners every page uses.
+ * The search page's header: the query, and a way out.
  *
- * "Search" rather than the query. The page is called search whether or not
- * anything has been typed into it, and the query has a field of its own below
- * — see [SearchField] — which says it in the place you would go to change it.
+ * The same header whether or not the keyboard is up. Return commits the search
+ * and puts the keyboard away, but the field stays exactly where it was and the
+ * results scroll underneath it — a query that jumped somewhere else the moment
+ * you finished typing it would be the app moving the thing you were looking at.
+ *
+ * Laid out on the same axes as everything else on the page: the magnifier sits
+ * where the lists' own field puts it (the list's edge inset plus a row's lead,
+ * which is where every cover and glyph below starts). The cross takes the full
+ * 160px corner every other page gives its menu, so the button under your thumb
+ * is in the same place here as everywhere else.
  */
 @Composable
-private fun SearchHeader(actions: ShellActions) {
-    val simplified = App.layoutMode.collectAsState().value == LayoutMode.SIMPLIFIED
-    AppHeader(
-        leftAction = if (simplified) null else HeaderAction(AppIcons.Waveform, actions.nowPlaying),
-        title = "Search",
-        fitTitle = true,
-        rightAction = HeaderAction(AppIcons.MoreHoriz) { actions.more(LibraryPage.SEARCH) },
-    )
+private fun SearchHeader(
+    query: String,
+    onEdit: () -> Unit,
+    onCancel: () -> Unit,
+    onMenu: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(px(HEADER_BAR_PX)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .appClickable(onClick = onEdit),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.width(px(SEARCH_AXIS_PX)))
+            AppIcon(AppIcons.Search, size = px(SEARCH_GLYPH_PX))
+            Spacer(Modifier.width(px(ROW_GAP_PX)))
+            Box(modifier = Modifier.weight(1f)) {
+                AppText(
+                    // The placeholder is the same word the field carries on the
+                    // lists, so starting to type reads as continuing, not as
+                    // arriving somewhere new.
+                    text = query.ifEmpty { "Search" },
+                    size = pxSp(SEARCH_TEXT_PX),
+                    lineHeight = pxSp(ROW_TITLE_LINE_PX),
+                    maxLines = 1,
+                )
+            }
+        }
+        // The cross takes the slot the magnifier had on the tab this came from,
+        // so the button that leaves search is where the button that entered it
+        // was — and the page's own menu keeps the corner it has everywhere else.
+        // Both slots are AppHeader's: an 80px square hard against the 160px one.
+        Box(
+            modifier = Modifier
+                .width(px(SEARCH_SLOT_PX))
+                .fillMaxHeight()
+                .appClickable(onClick = onCancel),
+            contentAlignment = Alignment.Center,
+        ) {
+            AppIcon(AppIcons.Close, size = px(SEARCH_GLYPH_PX))
+        }
+        Box(
+            modifier = Modifier
+                .size(px(HEADER_BAR_PX))
+                .appClickable(onClick = onMenu),
+            contentAlignment = Alignment.Center,
+        ) {
+            AppIcon(AppIcons.Sort, size = px(CORNER_ICON_PX))
+        }
+    }
 }
+
+/** AppHeader's inner slot, which the cross now stands in. */
+private const val SEARCH_SLOT_PX = 80
+
+/** Where the search glyph sits, on the axis the list's own field uses. */
+private const val SEARCH_AXIS_PX = LIST_EDGE_PX + ROW_LEAD_PX
 
 /**
  * The query, drawn the way the LP3's own keyboard screen draws it: a line of
@@ -318,74 +432,15 @@ private fun SearchHeader(actions: ShellActions) {
  * leaving search is what the bar is for, and clearing used to do both, which
  * meant you could never start a new search from an old one.
  */
-@Composable
-private fun SearchField(query: String, onEdit: () -> Unit, onClear: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(px(SEARCH_FIELD_PX))
-            // The list's padding puts the item at the screen's edge margin; a
-            // row then insets its own contents by this much again, which is
-            // where the artwork on every row below starts. The field takes the
-            // same inset so its left edge lines up with them — and the same on
-            // the right, so the two margins match.
-            .padding(horizontal = 1.5f.gridUnitsAsDp()),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .appClickable(onClick = onEdit),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AppIcon(AppIcons.Search, size = px(SEARCH_GLYPH_PX))
-            Spacer(Modifier.width(n(10)))
-            Box(modifier = Modifier.weight(1f)) {
-                AppText(
-                    text = query.ifEmpty { "Search" },
-                    size = pxSp(SEARCH_TEXT_PX),
-                    dim = query.isEmpty(),
-                    maxLines = 1,
-                )
-            }
-            if (query.isNotEmpty()) {
-                Spacer(Modifier.width(n(8)))
-                AppIcon(
-                    AppIcons.Close,
-                    size = px(SEARCH_CLEAR_PX),
-                    modifier = Modifier.appClickable(onClick = onClear),
-                )
-            }
-        }
-        // The rule the keyboard screen draws under its own field, at the weight
-        // the app uses for every other hairline.
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(px(SEARCH_RULE_PX))
-                .background(LightThemeTokens.colors.content),
-        )
-    }
-}
-
 /**
- * The field's band, its text, and its two glyphs — in the same px units the
- * rows use, so they can be read against ROW_TITLE_PX (54) and its neighbours
- * rather than against a scale of their own.
- *
- * The text sits above a row's title: this is the thing the page is about, and
- * at the row size it read as one more entry in the list under it.
+ * The search header's type and glyph, in the same px units the rows use — so
+ * they read against ROW_TITLE_PX (54) and its neighbours rather than against a
+ * scale of their own, and the header matches the rows beneath it.
  */
-private const val SEARCH_FIELD_PX = 120
-private const val SEARCH_TEXT_PX = 63
-private const val SEARCH_GLYPH_PX = 72
-private const val SEARCH_CLEAR_PX = 66
+private const val SEARCH_TEXT_PX = ROW_TITLE_PX
+private const val SEARCH_GLYPH_PX = ROW_ACTION_ICON_PX
 
-/**
- * Heavier than the app's hairline: this line is the field's own edge, the way
- * the LP3's keyboard screen draws it, not a scrollbar's track.
- */
-private const val SEARCH_RULE_PX = 6
+
 
 /**
  * The header every tab shares: sort at the left corner, search and now-playing at
@@ -400,8 +455,6 @@ private fun TabHeader(tab: LibraryTab, actions: ShellActions) {
     // announce it and one of three different ways into the three things that
     // are now rows on More. The title names the page and no more than that.
     //
-    // Search has gone to the tab bar, so this is two corner squares and a title
-    // spanning everything between them.
     // Except under Simplified, where the bar holds the player itself: a second
     // way to the same page, one above the other, is one too many — and the
     // corner it vacates becomes the way back to the library index this tab was
@@ -409,10 +462,22 @@ private fun TabHeader(tab: LibraryTab, actions: ShellActions) {
     val simplified = App.layoutMode.collectAsState().value == LayoutMode.SIMPLIFIED
     AppHeader(
         title = tabTitle(tab, likedOnly(tab)),
-        leftAction = if (simplified) null else HeaderAction(AppIcons.Waveform, actions.nowPlaying),
         onBack = if (simplified) ({ LibraryNav.openLibraryIndex() }) else null,
+        // Expanded only: Simplified keeps search in the bar, and a second way to
+        // it directly above that one is the same control twice.
+        //
+        // In the inner slot beside the page's menu rather than in a corner of
+        // its own, because that is what search is here — a way of narrowing the
+        // list in front of you, sat next to the sort and the filters that do the
+        // same thing by other means. Straight to the keyboard: a magnifier is a
+        // request to type rather than a page to go and look at.
+        searchAction = if (simplified) {
+            null
+        } else {
+            ({ LibraryNav.openSearch(withKeyboard = true) })
+        },
         fitTitle = true,
-        rightAction = HeaderAction(AppIcons.MoreHoriz) { actions.more(tab.page) },
+        rightAction = HeaderAction(AppIcons.Sort) { actions.more(tab.page) },
     )
 }
 
@@ -424,6 +489,19 @@ val LibraryTab.page: LibraryPage
         LibraryTab.ARTISTS -> LibraryPage.ARTISTS
         LibraryTab.PLAYLISTS -> LibraryPage.PLAYLISTS
     }
+
+/**
+ * The genre and composer a tab has been narrowed to — see [TagFilterScreen].
+ *
+ * Only the two lists of things a tag describes have one: an artist is not a
+ * genre's or a composer's, and a playlist is whatever was put in it.
+ */
+@Composable
+fun tagFilter(tab: LibraryTab): TagFilter = when (tab) {
+    LibraryTab.ALBUMS -> App.albumsTagFilter.collectAsState().value
+    LibraryTab.SONGS -> App.songsTagFilter.collectAsState().value
+    else -> TagFilter()
+}
 
 /** Whether this tab is currently showing only liked items. */
 @Composable
@@ -485,7 +563,7 @@ private fun LazyListScope.syncErrorNotice(error: String?, onOpen: () -> Unit) {
 }
 
 @Composable
-private fun AlbumsTab(actions: ShellActions) {
+private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
     val view by App.sortedAlbums.collectAsState()
     val sorted = view.items
     val letters = view.letters
@@ -503,7 +581,7 @@ private fun AlbumsTab(actions: ShellActions) {
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     val grid = App.albumGrid.collectAsState().value
     Column(Modifier.fillMaxSize()) {
-        TabHeader(LibraryTab.ALBUMS, actions)
+        if (header) TabHeader(LibraryTab.ALBUMS, actions)
         if (grid) {
             // Its own anchor, separate from the list's: see rememberGridAnchor.
             val gridState = rememberGridAnchor("tab:albums/grid", headerCount = 1)
@@ -526,12 +604,16 @@ private fun AlbumsTab(actions: ShellActions) {
                 anchor = "tab:albums",
                 // The index only makes sense while the list is in name order.
                 letters = letters,
+                // The action row, so the A–Z strip still lands on the right
+                // album — see IndexedList.headerCount. Counted whether or not
+                // the page has its own header: search borrows the list, and the
+                // list keeps the row that belongs to it.
                 headerCount = 1,
                 reversed = reversed,
             ) {
+                item { RandomAlbumRow(sorted, actions) }
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
                 syncErrorNotice(syncError, actions.settings)
-                item { RandomAlbumRow(sorted, actions) }
                 items(sorted, key = { it.id }) { album ->
                     TrackRow(
                         title = album.title,
@@ -622,7 +704,7 @@ private fun ColumnScope.IndexedList(
 
 
 @Composable
-private fun SongsTab(actions: ShellActions) {
+private fun SongsTab(actions: ShellActions, header: Boolean = true) {
     val view by App.sortedSongs.collectAsState()
     val sorted = view.items
     val letters = view.letters
@@ -639,12 +721,14 @@ private fun SongsTab(actions: ShellActions) {
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
 
     Column(Modifier.fillMaxSize()) {
-        if (selection.active) {
-            SelectionHeader(selection) {
-                actions.selectionActions(selection.pick(sorted) { it.id }, selection)
+        if (header) {
+            if (selection.active) {
+                SelectionHeader(selection) {
+                    actions.selectionActions(selection.pick(sorted) { it.id }, selection)
+                }
+            } else {
+                TabHeader(LibraryTab.SONGS, actions)
             }
-        } else {
-            TabHeader(LibraryTab.SONGS, actions)
         }
         IndexedList(
             anchor = "tab:songs",
@@ -653,14 +737,14 @@ private fun SongsTab(actions: ShellActions) {
             reversed = reversed,
         ) {
             if (!selection.active) {
-                localAccessNotice(needsAccess) { audioPermission?.launch() }
-                syncErrorNotice(syncError, actions.settings)
                 item {
                     PlayAllRow(AppIcons.Shuffle, "Shuffle") {
                         App.playback.playQueue(shuffled(sorted), 0)
                         actions.nowPlaying()
                     }
                 }
+                localAccessNotice(needsAccess) { audioPermission?.launch() }
+                syncErrorNotice(syncError, actions.settings)
             }
             items(sorted, key = { it.id }) { track ->
                 TrackRow(
@@ -688,7 +772,7 @@ private fun SongsTab(actions: ShellActions) {
 }
 
 @Composable
-private fun ArtistsTab(actions: ShellActions) {
+private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
     val view by App.sortedArtists.collectAsState()
     val sorted = view.items
     val letters = view.letters
@@ -709,7 +793,7 @@ private fun ArtistsTab(actions: ShellActions) {
     val syncError = App.library.syncState.collectAsState().value.error
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     Column(Modifier.fillMaxSize()) {
-        TabHeader(LibraryTab.ARTISTS, actions)
+        if (header) TabHeader(LibraryTab.ARTISTS, actions)
         IndexedList(
             anchor = "tab:artists",
             letters = letters,
@@ -732,7 +816,7 @@ private fun ArtistsTab(actions: ShellActions) {
 }
 
 @Composable
-private fun PlaylistsTab(actions: ShellActions) {
+private fun PlaylistsTab(actions: ShellActions, header: Boolean = true) {
     val view by App.sortedPlaylists.collectAsState()
     val playlists = view.items
     val letters = view.letters
@@ -752,13 +836,15 @@ private fun PlaylistsTab(actions: ShellActions) {
     // stayed composed through the switch would sit on an empty list for ever.
     LaunchedEffect(source.id) { App.library.refreshPlaylists() }
     Column(Modifier.fillMaxSize()) {
-        TabHeader(LibraryTab.PLAYLISTS, actions)
+        if (header) TabHeader(LibraryTab.PLAYLISTS, actions)
         IndexedList(
             anchor = "tab:playlists",
             letters = letters,
             headerCount = if (canCreateEmpty) 1 else 0,
             reversed = reversed,
         ) {
+            // A server that can't hold an empty playlist has no use for a bare
+            // "New Playlist" — see MusicSource.supportsEmptyPlaylists.
             if (canCreateEmpty) {
                 item { PlayAllRow(AppIcons.Add, "New Playlist") { actions.newPlaylist() } }
             }
@@ -793,8 +879,6 @@ private fun PlaylistsTab(actions: ShellActions) {
 @Composable
 private fun LibraryIndex(actions: ShellActions) {
     val source by App.source.collectAsState()
-    val genres by App.library.genres.collectAsState()
-    val composers by App.library.composers.collectAsState()
     // The liked lists appear only where there is something in them, and not at
     // all where the source has no likes — see MusicSource.supportsLikes.
     val likedArtists by App.library.likedArtists.collectAsState()
@@ -809,7 +893,7 @@ private fun LibraryIndex(actions: ShellActions) {
         title = "Library",
         fitTitle = true,
         // The page's own menu, as on every other library page.
-        rightAction = HeaderAction(AppIcons.MoreHoriz) { actions.more(LibraryPage.LIBRARY) },
+        rightAction = HeaderAction(AppIcons.Sort) { actions.more(LibraryPage.LIBRARY) },
     )
     ScrollableList(modifier = Modifier.fillMaxSize()) {
         // A source with no server has nowhere to keep a playlist — see
@@ -830,26 +914,6 @@ private fun LibraryIndex(actions: ShellActions) {
         }
         if (likes && likedTracks.isNotEmpty()) {
             item { LikedRow(LibraryTab.SONGS) }
-        }
-        // Only where the library has them, as on More: a server that doesn't
-        // tag composers shouldn't offer a Composers page.
-        if (composers.isNotEmpty()) {
-            item {
-                TextRow(
-                    title = "Composers",
-                    leading = { AppIcon(AppIcons.Composer, size = n(22)) },
-                    onClick = actions.composers,
-                )
-            }
-        }
-        if (genres.isNotEmpty()) {
-            item {
-                TextRow(
-                    title = "Genres",
-                    leading = { AppIcon(AppIcons.Genre, size = n(22)) },
-                    onClick = actions.genres,
-                )
-            }
         }
     }
     }
@@ -883,7 +947,7 @@ private fun LikedRow(tab: LibraryTab) {
     )
 }
 
-private suspend fun setLikedOnly(tab: LibraryTab, value: Boolean) {
+suspend fun setLikedOnly(tab: LibraryTab, value: Boolean) {
     when (tab) {
         LibraryTab.ALBUMS -> App.settings.setLikedAlbumsOnly(value)
         LibraryTab.SONGS -> App.settings.setLikedSongsOnly(value)
@@ -919,7 +983,7 @@ fun Navbar(
     if (simplified && onSearch != null && onNowPlaying != null && onBrowse != null) {
         SimplifiedNavbar(onSearch, onNowPlaying, onBrowse, searchActive)
     } else {
-        StandardNavbar(current, onSelect, onSearch, searchActive)
+        StandardNavbar(current, onSelect, onNowPlaying)
     }
 }
 
@@ -993,8 +1057,7 @@ private fun SimplifiedNavbar(
 private fun StandardNavbar(
     current: LibraryTab?,
     onSelect: (LibraryTab) -> Unit,
-    onSearch: (() -> Unit)?,
-    searchActive: Boolean,
+    onNowPlaying: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -1004,6 +1067,14 @@ private fun StandardNavbar(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Every tab goes through [onSelect] — never LibraryNav directly. This
+        // same bar is drawn over the shell and over the pages pushed on top of
+        // it, and only the caller knows which: from a sub-page, choosing a tab
+        // has to unwind the stack as well as change the tab. Three of these
+        // once set the tab themselves, so from an album page they moved the
+        // shell underneath and left the album sitting on top of it — the tap
+        // did nothing you could see.
+        //
         // A source with no server has nowhere to keep a playlist, so the tab
         // isn't there to be tapped — see MusicSource.supportsPlaylists.
         if (App.source.collectAsState().value.supportsPlaylists) {
@@ -1012,28 +1083,35 @@ private fun StandardNavbar(
                 current == LibraryTab.PLAYLISTS,
                 scale = PLAYLISTS_SCALE,
                 lift = PLAYLISTS_LIFT_PX,
-            ) { LibraryNav.selectTab(LibraryTab.PLAYLISTS) }
+            ) { onSelect(LibraryTab.PLAYLISTS) }
         }
         NavIcon(
             AppIcons.RecordVoiceOver,
             current == LibraryTab.ARTISTS,
             scale = navScale(ARTISTS_DRAWN_PX, ARTISTS_TARGET_PX),
-        ) { LibraryNav.selectTab(LibraryTab.ARTISTS) }
+        ) { onSelect(LibraryTab.ARTISTS) }
         NavIcon(
             AppIcons.AlbumStack,
             current == LibraryTab.ALBUMS,
             scale = navScale(ALBUMS_DRAWN_PX, TALL_TARGET_PX),
-        ) { LibraryNav.selectTab(LibraryTab.ALBUMS) }
+        ) { onSelect(LibraryTab.ALBUMS) }
         NavIcon(
             AppIcons.MusicNote,
             current == LibraryTab.SONGS,
             scale = navScale(SONGS_DRAWN_PX, TALL_TARGET_PX),
         ) { onSelect(LibraryTab.SONGS) }
-        // Search is the fifth destination: the one thing here you arrive at
+        // The player is the fifth destination: the one thing here you arrive at
         // rather than browse to, so it sits after the four ways of looking at
-        // the same library rather than among them.
-        if (onSearch != null) {
-            NavIcon(AppIcons.Search, searchActive, scale = SEARCH_SCALE) { onSearch() }
+        // the same library rather than among them. It took search's place —
+        // search is a field at the top of each of those four lists now, which is
+        // where you already are when you want it, and the player was in a corner
+        // of the header where a bar button is easier to reach.
+        //
+        // Never lit: the player is a screen of its own and hides this bar, so it
+        // is never the tab you are on. Drawn at the same 80px as the simplified
+        // bar's, so the two layouts agree about how big this glyph is.
+        if (onNowPlaying != null) {
+            NavIcon(AppIcons.Waveform, active = false, scale = NOW_PLAYING_SCALE) { onNowPlaying() }
         }
     }
 }
@@ -1188,7 +1266,17 @@ private const val PLAYLISTS_LIFT_PX = 5
 /** The magnifier, at the same reference size as the rest of the bar. */
 private const val SEARCH_SCALE = PLAYLISTS_SCALE
 
-/** The waveform, a shade under the rest — it drew heavy beside them. */
-private const val NOW_PLAYING_SCALE = 0.87f
+/**
+ * The waveform, at the 80px box LightOS itself gives it — two of the LP3's 27
+ * grid units, and what Bard draws the same glyph at.
+ *
+ * It used to be a trim off the bar's shared box, which drew it at 99px: a
+ * quarter larger than anywhere else this glyph appears, and off the pixel grid
+ * besides. 80px is 2px to each unit of its 40-unit viewport, so its bars land
+ * whole. Unlike the tab scales below it this is a size rather than an
+ * equalisation, so it is stated in px and the scale falls out of it.
+ */
+private const val NOW_PLAYING_PX = 80
+private val NOW_PLAYING_SCALE = NOW_PLAYING_PX.toFloat() / NAV_ICON_PX
 
 

@@ -85,10 +85,13 @@ enum class LastSection { LIBRARY, SEARCH, NOW_PLAYING }
 /**
  * How the bottom bar is arranged, and what that implies for the pages above it.
  *
- * [SIMPLIFIED] is the default and the one the setting describes the absence of:
- * "Expanded Library Navbar", off. Three buttons is the shape the phone itself
- * uses, and the library one of them opens holds more than the four tabs ever
- * did — the tag lists and the liked lists are on it rather than behind a menu.
+ * [STANDARD] is the default now, and the one the setting describes the absence
+ * of: "Simplified Library View", off. The four tabs along the bar are what most
+ * people expect of a music library, and the tag lists and liked lists that were
+ * Simplified's reason to exist are reachable from any tab's own menu.
+ *
+ * The default moved after installs already existed, so an install that predates
+ * the change keeps what it had — see [migrateLayoutDefault].
  */
 enum class LayoutMode {
     /** Expanded: the four library tabs along the bar, with search as a fifth. */
@@ -97,16 +100,6 @@ enum class LayoutMode {
     /** Library, the player and search — the library being a page of its own. */
     SIMPLIFIED,
 }
-
-/**
- * Ordering for the genre and composer lists, which are bare tag values.
- *
- * A tag carries nothing to sort on but itself, so the only other question worth
- * asking of it is how much music sits under it — [SONGS] answers that. One key
- * serves both lists: they are the same kind of list, and setting the order of
- * each separately is a distinction no one is asking for.
- */
-enum class TagSort { NAME, SONGS }
 
 /**
  * All persisted state: the server credentials plus user preferences, backed by
@@ -145,8 +138,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
                 downloadFormatId = source.downloadFormatId ?: p[DOWNLOAD_FORMAT],
                 offlineModeName = source.offlineModeName ?: legacyOfflineMode(p[OFFLINE_MODE]).name,
                 downloadLimitBytes = source.downloadLimitBytes ?: p[DOWNLOAD_LIMIT] ?: DEFAULT_DOWNLOAD_LIMIT,
-                downloadLibraryId = source.downloadLibraryId ?: p[DOWNLOAD_LIBRARY_ID],
-                downloadLyrics = source.downloadLyrics ?: p[DOWNLOAD_LYRICS] ?: true,
             )
         }
     }.distinctUntilChanged()
@@ -191,8 +182,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
                     downloadFormatId = source.downloadFormatId ?: old.downloadFormatId,
                     offlineModeName = source.offlineModeName ?: old.offlineModeName,
                     downloadLimitBytes = source.downloadLimitBytes ?: old.downloadLimitBytes,
-                    downloadLibraryId = source.downloadLibraryId ?: old.downloadLibraryId,
-                    downloadLyrics = source.downloadLyrics ?: old.downloadLyrics,
                     libraryId = source.libraryId ?: old.libraryId,
                 )
                 list.toMutableList().also { it[existing] = merged }
@@ -309,16 +298,13 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         editSource(sourceId) { it.copy(offlineModeName = mode.name) }
     }
 
-    suspend fun setSourceDownloadLimit(sourceId: String, bytes: Long) {
-        editSource(sourceId) { it.copy(downloadLimitBytes = bytes) }
-    }
-
-    suspend fun setSourceDownloadLibrary(sourceId: String, libraryId: String?) {
-        editSource(sourceId) { it.copy(downloadLibraryId = libraryId) }
-    }
-
-    suspend fun setSourceDownloadLyrics(sourceId: String, on: Boolean) {
-        editSource(sourceId) { it.copy(downloadLyrics = on) }
+    /**
+     * Record that this source's cache has been refilled by the current parser —
+     * see [MusicSource.parserGeneration]. Written only after a sync that
+     * finished, so one that was interrupted refetches again next time.
+     */
+    suspend fun setParserGeneration(sourceId: String, generation: Int) {
+        editSource(sourceId) { it.copy(parserGeneration = generation) }
     }
 
     private suspend fun editSource(sourceId: String, block: (MusicSource) -> MusicSource) {
@@ -332,7 +318,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     val songSort: Flow<SongSort> = enumFlow(SONG_SORT, SongSort.TITLE)
     val artistSort: Flow<ArtistSort> = enumFlow(ARTIST_SORT, ArtistSort.NAME)
     val playlistSort: Flow<PlaylistSort> = enumFlow(PLAYLIST_SORT, PlaylistSort.RECENTLY_UPDATED)
-    val tagSort: Flow<TagSort> = enumFlow(TAG_SORT, TagSort.NAME)
 
     /**
      * Whether a tab is showing only what you have liked.
@@ -342,6 +327,18 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * is not a statement about the others. Playlists have none — nothing likes a
      * playlist.
      */
+    /**
+     * The tag each list is narrowed to, or blank for all of it.
+     *
+     * Per tab, as the liked switch is: narrowing the albums to a composer and
+     * the songs to a genre at the same time is a reasonable thing to want, and
+     * one shared setting would make each page silently change the other.
+     */
+    val albumsGenre: Flow<String> = stringFlow(ALBUMS_GENRE)
+    val albumsComposer: Flow<String> = stringFlow(ALBUMS_COMPOSER)
+    val songsGenre: Flow<String> = stringFlow(SONGS_GENRE)
+    val songsComposer: Flow<String> = stringFlow(SONGS_COMPOSER)
+
     val likedAlbumsOnly: Flow<Boolean> = boolFlow(LIKED_ALBUMS_ONLY, false)
     val likedSongsOnly: Flow<Boolean> = boolFlow(LIKED_SONGS_ONLY, false)
     val likedArtistsOnly: Flow<Boolean> = boolFlow(LIKED_ARTISTS_ONLY, false)
@@ -351,7 +348,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     val songSortReversed: Flow<Boolean> = boolFlow(SONG_SORT_REV, false)
     val artistSortReversed: Flow<Boolean> = boolFlow(ARTIST_SORT_REV, false)
     val playlistSortReversed: Flow<Boolean> = boolFlow(PLAYLIST_SORT_REV, false)
-    val tagSortReversed: Flow<Boolean> = boolFlow(TAG_SORT_REV, false)
 
     // --- Offline / downloads -------------------------------------------------
 
@@ -376,6 +372,40 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      */
     val dataMode: Flow<DataMode> = enumFlow(DATA_MODE, DataMode.WIFI_ONLY)
 
+    /**
+     * How much of the phone the downloads may take, across the whole tool.
+     *
+     * One budget, not one per source: the limit is about this phone's storage,
+     * and the phone has one of those. Per source it was being weighed against a
+     * single source's usage either way, so three sources set to "20GB" could
+     * quietly take sixty.
+     */
+    val downloadLimit: Flow<Long> =
+        dataStore.data.map { it[DOWNLOAD_LIMIT] ?: DEFAULT_DOWNLOAD_LIMIT }
+            .distinctUntilChanged()
+
+    suspend fun setDownloadLimit(bytes: Long) {
+        dataStore.edit { it[DOWNLOAD_LIMIT] = bytes }
+    }
+
+    /**
+     * Carry the per-source limits up to the one that replaced them.
+     *
+     * Takes the largest, so nobody's budget shrinks under them on update — the
+     * new single limit has to cover what every source was allowed separately, or
+     * the first sweep after this would start deleting music that was within its
+     * limit yesterday.
+     */
+    suspend fun migrateDownloadLimit() {
+        val p = dataStore.data.first()
+        if (p[DOWNLOAD_LIMIT] != null) return
+        val perSource = runCatching {
+            sourcesJson.decodeFromString<List<MusicSource>>(p[SOURCES].orEmpty())
+        }.getOrDefault(emptyList()).mapNotNull { it.downloadLimitBytes }
+        if (perSource.isEmpty()) return
+        setDownloadLimit(perSource.max())
+    }
+
     suspend fun setDataMode(value: DataMode) = putString(DATA_MODE, value.name)
 
 
@@ -383,7 +413,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     val karaokeLyrics: Flow<Boolean> = boolFlow(KARAOKE_LYRICS, true)
 
     /** Whether to use the simplified or standard layout mode. */
-    val layoutMode: Flow<LayoutMode> = enumFlow(LAYOUT_MODE, LayoutMode.SIMPLIFIED)
+    val layoutMode: Flow<LayoutMode> = enumFlow(LAYOUT_MODE, LayoutMode.STANDARD)
 
     /** Where the app was when it was last closed — see [LastSection]. */
     val lastSection: Flow<LastSection> = enumFlow(LAST_SECTION, LastSection.LIBRARY)
@@ -504,7 +534,11 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setSongSort(value: SongSort) = putString(SONG_SORT, value.name)
     suspend fun setArtistSort(value: ArtistSort) = putString(ARTIST_SORT, value.name)
     suspend fun setPlaylistSort(value: PlaylistSort) = putString(PLAYLIST_SORT, value.name)
-    suspend fun setTagSort(value: TagSort) = putString(TAG_SORT, value.name)
+    suspend fun setAlbumsGenre(value: String) = putString(ALBUMS_GENRE, value)
+    suspend fun setAlbumsComposer(value: String) = putString(ALBUMS_COMPOSER, value)
+    suspend fun setSongsGenre(value: String) = putString(SONGS_GENRE, value)
+    suspend fun setSongsComposer(value: String) = putString(SONGS_COMPOSER, value)
+
     suspend fun setLikedAlbumsOnly(value: Boolean) = putBool(LIKED_ALBUMS_ONLY, value)
     suspend fun setLikedSongsOnly(value: Boolean) = putBool(LIKED_SONGS_ONLY, value)
     suspend fun setLikedArtistsOnly(value: Boolean) = putBool(LIKED_ARTISTS_ONLY, value)
@@ -513,7 +547,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setSongSortReversed(value: Boolean) = putBool(SONG_SORT_REV, value)
     suspend fun setArtistSortReversed(value: Boolean) = putBool(ARTIST_SORT_REV, value)
     suspend fun setPlaylistSortReversed(value: Boolean) = putBool(PLAYLIST_SORT_REV, value)
-    suspend fun setTagSortReversed(value: Boolean) = putBool(TAG_SORT_REV, value)
 
     suspend fun setInvertColors(value: Boolean) = putBool(INVERT_COLORS, value)
     suspend fun setKaraokeLyrics(value: Boolean) = putBool(KARAOKE_LYRICS, value)
@@ -526,9 +559,39 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setArtwork(value: ArtworkMode) = putString(ARTWORK, value.name)
     suspend fun setDownloadsPaused(value: Boolean) = putBool(DOWNLOADS_PAUSED, value)
     suspend fun setLayoutMode(value: LayoutMode) = putString(LAYOUT_MODE, value.name)
+
+    /**
+     * Hold an existing install to the layout it already had.
+     *
+     * The default flipped from Simplified to Expanded, and a default is only
+     * ever consulted when nothing is stored — so without this, every phone that
+     * had never opened the setting would rearrange itself on update. Someone
+     * who has been using the app for months should not have to find out where
+     * everything went because a new install wanted a different first impression.
+     *
+     * "Already existed" means a source is configured: nothing else is true of
+     * every old install and no new one. Run once, before anything reads the
+     * mode — see App.boot.
+     */
+    suspend fun migrateLayoutDefault() {
+        // Read first, and edit only where there is something to write. This runs
+        // on the launch path, where every launch would otherwise pay for opening
+        // a write transaction to discover it had nothing to do — and the launch
+        // path is what stands between the app opening and the last track being
+        // ready to play again.
+        val p = dataStore.data.first()
+        if (p[LAYOUT_MODE] != null) return
+        // BASE_URL as well as SOURCES: an install from before sources existed
+        // has only the one server, and is the oldest of all.
+        if (p[SOURCES].isNullOrBlank() && p[BASE_URL].isNullOrBlank()) return
+        putString(LAYOUT_MODE, LayoutMode.SIMPLIFIED.name)
+    }
     suspend fun setLastSection(value: LastSection) = putString(LAST_SECTION, value.name)
 
     // --- helpers -------------------------------------------------------------
+
+    private fun stringFlow(key: Preferences.Key<String>): Flow<String> =
+        dataStore.data.map { it[key].orEmpty() }.distinctUntilChanged()
 
     private fun boolFlow(key: Preferences.Key<Boolean>, default: Boolean): Flow<Boolean> =
         dataStore.data.map { it[key] ?: default }.distinctUntilChanged()
@@ -559,7 +622,11 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val SONG_SORT = stringPreferencesKey("pref.songSort")
         private val ARTIST_SORT = stringPreferencesKey("pref.artistSort")
         private val PLAYLIST_SORT = stringPreferencesKey("pref.playlistSort")
-        private val TAG_SORT = stringPreferencesKey("pref.tagSort")
+        private val ALBUMS_GENRE = stringPreferencesKey("pref.albumsGenre")
+        private val ALBUMS_COMPOSER = stringPreferencesKey("pref.albumsComposer")
+        private val SONGS_GENRE = stringPreferencesKey("pref.songsGenre")
+        private val SONGS_COMPOSER = stringPreferencesKey("pref.songsComposer")
+
         private val LIKED_ALBUMS_ONLY = booleanPreferencesKey("pref.likedAlbumsOnly")
         private val LIKED_SONGS_ONLY = booleanPreferencesKey("pref.likedSongsOnly")
         private val LIKED_ARTISTS_ONLY = booleanPreferencesKey("pref.likedArtistsOnly")
@@ -568,7 +635,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val SONG_SORT_REV = booleanPreferencesKey("pref.songSortReversed")
         private val ARTIST_SORT_REV = booleanPreferencesKey("pref.artistSortReversed")
         private val PLAYLIST_SORT_REV = booleanPreferencesKey("pref.playlistSortReversed")
-        private val TAG_SORT_REV = booleanPreferencesKey("pref.tagSortReversed")
 
         private val INVERT_COLORS = booleanPreferencesKey("pref.invertColors")
         private val KARAOKE_LYRICS = booleanPreferencesKey("pref.karaokeLyrics")
@@ -606,7 +672,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val DOWNLOAD_FORMAT = stringPreferencesKey("pref.downloadFormat")
         private val DOWNLOAD_LYRICS = booleanPreferencesKey("pref.downloadLyrics")
         private val DOWNLOAD_LIMIT = longPreferencesKey("pref.downloadLimitBytes")
-        private val DOWNLOAD_LIBRARY_ID = stringPreferencesKey("pref.downloadLibraryId")
 
         /** 2 GB — a few hundred albums as MP3, and well inside any device. */
         const val DEFAULT_DOWNLOAD_LIMIT = 2L * 1024 * 1024 * 1024

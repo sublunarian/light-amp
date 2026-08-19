@@ -18,8 +18,12 @@ import androidx.compose.ui.unit.dp
 val WaveformSymbol: ImageVector by lazy {
     ImageVector.Builder(
         name = "WaveformSymbol",
-        defaultWidth = 24.dp,
-        defaultHeight = 24.dp,
+        // One dp to a viewport unit, as the source drawable declares it. At the
+        // Material default of 24 the glyph was pre-scaled by 24/40 and then
+        // scaled back up to whatever box it was drawn in; matching the viewport
+        // leaves one scale between the path coordinates and the pixels.
+        defaultWidth = 40.dp,
+        defaultHeight = 40.dp,
         viewportWidth = 40f,
         viewportHeight = 40f,
     ).apply {

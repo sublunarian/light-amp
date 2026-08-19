@@ -129,15 +129,22 @@ data class AlbumDto(
     val version: String? = null,
     /** Subsonic userRating, 1–5; absent or 0 means unrated. */
     val userRating: Int? = null,
-    /**
-     * Navidrome's compilation flag, spelled two ways across versions of the
-     * API — `isCompilation` in OpenSubsonic, `compilation` before it.
-     */
-    val isCompilation: Boolean? = null,
-    val compilation: Boolean? = null,
     val genre: String? = null,
+    /**
+     * OpenSubsonic's structured album-artist credit, and the reliable one: the
+     * legacy [artist] flattens several names into one string with whichever
+     * separator the server likes. Taking the names from here means the app does
+     * its own joining and never has to guess where one ends.
+     */
+    val artists: List<AlbumArtistDto> = emptyList(),
+    /** OpenSubsonic's single-string form of the same credit. */
+    val displayArtist: String? = null,
     val song: List<SongDto> = emptyList(),
 )
+
+/** One name in an album's artist credit. Everything optional: servers vary. */
+@Serializable
+data class AlbumArtistDto(val id: String = "", val name: String? = null)
 
 /** OpenSubsonic ItemDate: any component may be missing. */
 @Serializable
@@ -169,6 +176,12 @@ data class SongDto(
     val album: String? = null,
     val artist: String? = null,
     val albumArtist: String? = null,
+    /**
+     * OpenSubsonic's name for the same thing, and the one Navidrome actually
+     * sends: the base Subsonic Child has no albumArtist field at all, so the
+     * plain spelling above stays only for servers that add it themselves.
+     */
+    val displayAlbumArtist: String? = null,
     val albumId: String? = null,
     val artistId: String? = null,
     val track: Int? = null,
@@ -190,6 +203,13 @@ data class SongDto(
     /** Tag fields Navidrome sends when the file carries them. */
     val genre: String? = null,
     val composer: String? = null,
+    /**
+     * As with the album artist, composer is an OpenSubsonic field under a name
+     * of its own — there is no plain `composer` on a Child. Reading only the
+     * plain spelling is why the library never reported having any composers,
+     * and so why the Composers page never appeared.
+     */
+    val displayComposer: String? = null,
 )
 
 @Serializable

@@ -3,34 +3,29 @@ package com.sublunar.amp.ui.screens
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import com.sublunar.amp.data.Track
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.ui.PlayerTheme
+import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.DataMode
 import com.sublunar.amp.data.OfflineMode
-import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.formatBytes
 import com.sublunar.amp.data.formatGb
-import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.data.sortSongs
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.EmptyState
-import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.ListScreen
-import com.sublunar.amp.ui.components.PlayAllRow
-import com.sublunar.amp.ui.components.SplitActionRow
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.TrackRow
@@ -82,19 +77,28 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
 
     @Composable
     override fun Content() {
-        val downloaded by App.library.downloads.collectAsState(initial = emptyList())
+        // Every source's downloads, not the active one's — see
+        // App.downloadsBySource. Read once when the page opens rather than
+        // observed: it reaches into databases the app is not otherwise holding
+        // open, and this is a page you look at rather than one that changes
+        // under you.
+        var bySource by remember { mutableStateOf<List<Pair<String, List<Track>>>>(emptyList()) }
+        LaunchedEffect(Unit) { bySource = App.downloadsBySource() }
         // The song lists' own order, chosen from the header — this page used to
         // be stuck with whatever order the store handed back.
         val sort by App.songSort.collectAsState()
         val reversed by App.songSortReversed.collectAsState()
-        val tracks = remember(downloaded, sort, reversed) {
-            sortSongs(downloaded, sort, reversed)
+        val sorted = remember(bySource, sort, reversed) {
+            bySource.map { (name, list) -> name to sortSongs(list, sort, reversed) }
         }
-        val bytes by App.library.downloadedBytes.collectAsState()
-        val limit = App.source.collectAsState().value.downloadLimit
-        // The global count, not `tracks.size`: the list below is scoped to the
-        // library in view, while the downloads themselves are not.
-        val downloadedCount by App.library.downloadedTrackIds.collectAsState()
+        val total = remember(sorted) { sorted.sumOf { it.second.size } }
+        val named = sorted.size > 1
+        // Across every source, off the disk: this page is about what the phone
+        // is holding, and the budget it is measured against covers all of it.
+        val bytes = remember { App.downloads.usedBytesEverywhere() }
+        val limit by App.settings.downloadLimit.collectAsState(
+            initial = AppSettings.DEFAULT_DOWNLOAD_LIMIT,
+        )
         val progress by App.downloader.progress.collectAsState()
         val paused by App.settings.downloadsPaused.collectAsState(initial = false)
 
@@ -110,7 +114,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 title = "Downloads",
                 fitTitle = true,
             )
-            if (tracks.isEmpty() && !progress.active && bytes == 0L) {
+            if (total == 0 && !progress.active && bytes == 0L) {
                 EmptyState("Nothing downloaded yet")
                 return@Column
             }
@@ -150,136 +154,29 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                         )
                     }
                 }
-                // Storage used against the budget, whatever the list shows: the
-                // rows are scoped to the selected library, so they can be empty
-                // while there are gigabytes downloaded from another one.
                 item {
-                    SectionLabel(
-                        "${downloadedCount.size} tracks · " +
-                            "${formatGb(bytes)} / ${formatGb(limit)}",
-                    )
+                    SectionLabel("$total tracks · ${formatGb(bytes)} / ${formatGb(limit)}")
                 }
-                if (tracks.isNotEmpty()) {
-                    item {
-                        PlayAllRow(AppIcons.Shuffle, "Shuffle") {
-                            App.playback.playQueue(shuffled(tracks), 0)
-                            go { NowPlayingScreen(it) }
-                        }
-                    }
-                    itemsIndexed(tracks, key = { _, t -> t.id }) { index, track ->
+                // A list to read, not to play from: a track from a source that
+                // isn't the current one resolves its file and its stream through
+                // the wrong server, so tapping it could only mislead. The
+                // library is where music is played from; this is where you see
+                // what the phone is holding.
+                sorted.forEach { (source, list) ->
+                    // Named only when there is more than one, since with a
+                    // single source the heading would repeat the obvious.
+                    if (named) item(key = "src-$source") { SectionLabel(source) }
+                    items(list, key = { "$source-${it.id}" }) { track ->
                         TrackRow(
                             title = track.title,
                             subtitle = track.artist,
                             coverArtId = track.coverArtId,
                             downloaded = true,
-                            onClick = {
-                                App.playback.playQueue(tracks, index)
-                                go { NowPlayingScreen(it) }
-                            },
-                            onLongClick = { go { TrackActionsScreen(it, track.id) } },
+                            onClick = {},
                         )
                     }
                 }
             }
-            }
-        }
-    }
-}
-
-/**
- * One source's downloads: what to fetch, how much of the phone to spend, and
- * what to throw away.
- *
- * Per source rather than app-wide because the downloads are: each source keeps
- * its own folder and its own rows, so "everything, up to 20GB" said once for the
- * whole app meant something different depending on which source you were looking
- * at — the budget was being weighed against one source's usage either way.
- */
-class DownloadSettingsScreen(
-    sealed: SealedLightActivity,
-    private val sourceId: String,
-) : SimpleLightScreen<Unit>(sealed) {
-    @Composable
-    override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
-        val source = sources.firstOrNull { it.id == sourceId }
-        val used by App.library.downloadedBytes.collectAsState()
-        val progress by App.downloader.progress.collectAsState()
-
-        ListScreen(onBack = { goBack() }, title = "Downloads") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
-                if (source == null) return@ScrollableList
-                val mode = source.offlineMode
-                val limit = source.downloadLimit
-                val lyrics = source.wantsLyrics
-                item { SectionLabel("Using ${formatBytes(used)} of ${formatBytes(limit)}") }
-                if (progress.limitReached) {
-                    item { SectionLabel("Size limit reached — raise it to download more") }
-                }
-
-                item { SectionLabel("What to download") }
-                item {
-                    TextRow(
-                        title = "Offline Mode",
-                        subtitle = offlineModeLabel(mode),
-                        onClick = { go { OfflineModeScreen(it, sourceId) } },
-                    )
-                }
-                item {
-                    TextRow(
-                        title = "Size Limit",
-                        subtitle = formatBytes(limit),
-                        onClick = { go { SizeLimitScreen(it, sourceId) } },
-                    )
-                }
-                item {
-                    TextRow(
-                        title = "Library",
-                        subtitle = source.downloadLibraryId?.let { "One library" } ?: "Current library",
-                        onClick = { go { DownloadLibraryScreen(it, sourceId) } },
-                    )
-                }
-
-                item { SectionLabel("Quality") }
-                if (source.kind != SourceKind.LOCAL) {
-                    item {
-                        TextRow(
-                            title = "Download Format",
-                            subtitle = formatLabel(source.downloadFormat),
-                            onClick = { go { SourceDownloadFormatScreen(it, sourceId) } },
-                        )
-                    }
-                }
-                item {
-                    ToggleRow("Include Lyrics", lyrics) {
-                        App.scope.launch {
-                            App.settings.setSourceDownloadLyrics(sourceId, !lyrics)
-                        }
-                    }
-                }
-
-                item { SectionLabel("Storage") }
-                item {
-                    TextRow(title = "Delete All Downloads") {
-                        navigateTo<Boolean>(
-                            {
-                                ConfirmScreen(
-                                    it,
-                                    title = "Delete All Downloads",
-                                    message = "This removes ${formatBytes(used)} of downloaded " +
-                                        "music from this phone. Your library on the server is " +
-                                        "untouched.",
-                                    confirmLabel = "Delete",
-                                )
-                            },
-                            resultCallback = { confirmed ->
-                                if (confirmed == true) {
-                                    App.scope.launch { App.downloader.deleteEverything() }
-                                }
-                            },
-                        )
-                    }
-                }
             }
         }
     }
@@ -342,16 +239,15 @@ class DataModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
  * Size budget. The offered values stop at what the device can actually spare —
  * see [com.sublunar.amp.data.DownloadStore.maxSelectableBytes].
  */
-class SizeLimitScreen(
-    sealed: SealedLightActivity,
-    private val sourceId: String,
-) : SimpleLightScreen<Unit>(sealed) {
+class SizeLimitScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
-        val current = sources.firstOrNull { it.id == sourceId }?.downloadLimit ?: 0L
+        val current by App.settings.downloadLimit.collectAsState(
+            initial = AppSettings.DEFAULT_DOWNLOAD_LIMIT,
+        )
         val max = remember { App.downloads.maxSelectableBytes() }
         val free = remember { App.downloads.freeBytes() }
+        val used = remember { App.downloads.usedBytesEverywhere() }
         val options = remember(max) {
             val gb = 1024L * 1024 * 1024
             listOf(1L, 2L, 5L, 10L, 20L, 32L, 48L).map { it * gb }.filter { it < max } + listOf(max)
@@ -359,84 +255,23 @@ class SizeLimitScreen(
 
         ListScreen(onBack = { goBack() }, title = "Size Limit") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                item { SectionLabel("${formatBytes(free)} free on this phone") }
+                // Both numbers, because a limit is chosen against both: free
+                // space alone makes the options look arbitrarily small next to
+                // what is already downloaded.
+                item {
+                    SectionLabel(
+                        "${formatBytes(used)} downloaded · ${formatBytes(free)} free",
+                    )
+                }
                 items(options) { bytes ->
                     TextRow(
                         title = formatBytes(bytes),
                         subtitle = if (bytes == max) "Maximum" else null,
                         onClick = {
-                            App.scope.launch {
-                                App.settings.setSourceDownloadLimit(sourceId, bytes)
-                            }
+                            App.scope.launch { App.settings.setDownloadLimit(bytes) }
                             goBack()
                         },
                         trailing = { if (bytes == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-class DownloadLibraryScreen(
-    sealed: SealedLightActivity,
-    private val sourceId: String,
-) : SimpleLightScreen<Unit>(sealed) {
-    @Composable
-    override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
-        val source = sources.firstOrNull { it.id == sourceId }
-        val current = source?.downloadLibraryId
-        var folders by remember(sourceId) {
-            mutableStateOf<List<com.sublunar.amp.data.MusicFolder>>(emptyList())
-        }
-        // Asked of the source being edited, not of whatever the app happens to
-        // be browsing: these pages are reachable for every configured source, and
-        // App.library only ever speaks to the active one — so editing a second
-        // server's downloads offered the first server's libraries, and picking
-        // one stored an id that means nothing on the server it was stored for.
-        LaunchedEffect(source?.id, source?.baseUrl) {
-            val s = source ?: return@LaunchedEffect
-            folders = if (s.id == App.source.value.id) {
-                // Already connected — no second client for the same server.
-                App.library.musicFolders()
-            } else {
-                val client = s.toClient()
-                try {
-                    runCatching { client?.getMusicFolders().orEmpty() }.getOrDefault(emptyList())
-                } finally {
-                    client?.close()
-                }
-            }
-        }
-
-        ListScreen(onBack = { goBack() }, title = "Download Library") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
-                item {
-                    TextRow(
-                        title = "Current library",
-                        subtitle = "Follow whatever the app is browsing",
-                        onClick = {
-                            App.scope.launch {
-                                App.settings.setSourceDownloadLibrary(sourceId, null)
-                            }
-                            goBack()
-                        },
-                        trailing = { if (current == null) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
-                    )
-                }
-                items(folders, key = { it.id }) { folder ->
-                    TextRow(
-                        title = folder.name,
-                        onClick = {
-                            App.scope.launch {
-                                App.settings.setSourceDownloadLibrary(sourceId, folder.id)
-                            }
-                            goBack()
-                        },
-                        trailing = {
-                            if (current == folder.id) LightIcon(LightIcons.ACCEPT, size = 1.4f)
-                        },
                     )
                 }
             }

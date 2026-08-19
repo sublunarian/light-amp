@@ -3,7 +3,6 @@ package com.sublunar.amp.ui.screens
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
@@ -18,16 +17,12 @@ import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
-import com.sublunar.amp.data.sortArtists
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
-import com.sublunar.amp.ui.components.ArtistRow
-import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.TrackRow
-import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.LibraryList
 import com.sublunar.amp.ui.components.AlbumGrid
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -36,9 +31,7 @@ import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.SplitActionRow
-import com.sublunar.amp.ui.components.listPadding
 import com.sublunar.amp.ui.components.rememberGridAnchor
-import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.nSp
 import com.thelightphone.sdk.SealedLightActivity

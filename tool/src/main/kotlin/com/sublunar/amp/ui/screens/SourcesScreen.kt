@@ -3,7 +3,6 @@ package com.sublunar.amp.ui.screens
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -422,6 +421,17 @@ class SourceDetailScreen(
                             onClick = { go { CellularFormatScreen(it, source.id) } },
                         )
                     }
+                    // Its own heading rather than a third row under Streaming:
+                    // a download is kept, where a stream is heard once, and the
+                    // bargain behind the two is not the same one.
+                    item { SectionLabel("Download quality") }
+                    item {
+                        TextRow(
+                            title = "Downloads",
+                            subtitle = formatLabel(source.downloadFormat),
+                            onClick = { go { SourceDownloadFormatScreen(it, source.id) } },
+                        )
+                    }
                 }
                 // Only worth offering when there is a choice to make: with one
                 // library there is one row under the source and nothing to hide.
@@ -437,17 +447,40 @@ class SourceDetailScreen(
                         )
                     }
                 }
-                // This source's downloads: its own budget, its own idea of what
-                // to fetch without being asked.
+                // What this source fetches without being asked, and how to get
+                // rid of it. These were a page of their own under a "Downloads"
+                // row; there were four settings on it, one of which restated a
+                // choice made above, and reaching any of them took three taps
+                // from Settings.
                 if (source.supportsDownloads) {
                     item { SectionLabel("Offline") }
                     item {
                         TextRow(
-                            title = "Downloads",
-                            subtitle = "${offlineModeLabel(source.offlineMode)} · " +
-                                formatLabel(source.downloadFormat),
-                            onClick = { go { DownloadSettingsScreen(it, source.id) } },
+                            title = "Offline Mode",
+                            subtitle = offlineModeLabel(source.offlineMode),
+                            onClick = { go { OfflineModeScreen(it, source.id) } },
                         )
+                    }
+                    item {
+                        TextRow(title = "Delete All Downloads") {
+                            navigateTo<Boolean>(
+                                {
+                                    ConfirmScreen(
+                                        it,
+                                        title = "Delete All Downloads",
+                                        message = "This removes the downloaded music from " +
+                                            "this phone. Your library on the server is " +
+                                            "untouched.",
+                                        confirmLabel = "Delete",
+                                    )
+                                },
+                                resultCallback = { confirmed ->
+                                    if (confirmed == true) {
+                                        App.scope.launch { App.downloader.deleteEverything() }
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
                 // Refreshing is a thing you do to *this* source, so it belongs

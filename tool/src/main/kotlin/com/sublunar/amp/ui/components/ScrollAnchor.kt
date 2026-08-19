@@ -4,7 +4,12 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Where a list was scrolled to, remembered across a trip to another screen.
@@ -40,6 +45,28 @@ object ScrollAnchors {
      * hold different numbers for the same shelf, and resetting one while keeping
      * the other means the answer depends on which view you happen to be in.
      */
+    /**
+     * Send these lists back to the top, now.
+     *
+     * [clear] only forgets where a list *was*, which shows the next time one is
+     * built — a list already on screen stays exactly where it is. Tapping the
+     * tab you are already on is a request about this list, so it needs a signal
+     * the live state can hear.
+     */
+    fun requestTop(owner: String) {
+        clear(owner)
+        _topRequests.value = TopRequest(owner, _topRequests.value.count + 1)
+    }
+
+    data class TopRequest(val owner: String = "", val count: Int = 0) {
+        /** Whether this names that list, or a view of it ("tab:albums/grid"). */
+        fun names(other: String): Boolean =
+            count > 0 && (other == owner || other.startsWith("$owner/"))
+    }
+
+    private val _topRequests = MutableStateFlow(TopRequest())
+    val topRequests: StateFlow<TopRequest> = _topRequests
+
     fun clear(vararg owners: String) {
         anchors.keys.removeAll { key -> owners.any { key == it || key.startsWith("$it/") } }
     }
@@ -60,6 +87,10 @@ fun rememberListAnchor(owner: String, headerCount: Int = 0): LazyListState {
         if (index <= 0) LazyListState() else LazyListState(index + headerCount, offset)
     }
     // Keyed on headerCount too, so a change saves under the old geometry first.
+    // A tap on the tab already showing asks this list, not the next one built
+    // from it, to go back to the top — see [ScrollAnchors.requestTop].
+    val top by ScrollAnchors.topRequests.collectAsState()
+    LaunchedEffect(top) { if (top.names(owner)) state.scrollToItem(0) }
     DisposableEffect(owner, headerCount) {
         onDispose {
             ScrollAnchors.save(
@@ -86,6 +117,10 @@ fun rememberGridAnchor(owner: String, headerCount: Int = 0): LazyGridState {
         val (index, offset) = ScrollAnchors.load(owner)
         if (index <= 0) LazyGridState() else LazyGridState(index + headerCount, offset)
     }
+    // A tap on the tab already showing asks this list, not the next one built
+    // from it, to go back to the top — see [ScrollAnchors.requestTop].
+    val top by ScrollAnchors.topRequests.collectAsState()
+    LaunchedEffect(top) { if (top.names(owner)) state.scrollToItem(0) }
     DisposableEffect(owner, headerCount) {
         onDispose {
             ScrollAnchors.save(

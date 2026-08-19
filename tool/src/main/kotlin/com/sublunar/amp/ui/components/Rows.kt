@@ -22,14 +22,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -209,7 +204,7 @@ private const val ROW_MARK_PX = 33
  * neighbour without truncating; at the list's usual 66/32 it was over by about
  * two characters.
  */
-private const val ROW_ACTION_ICON_PX = 57
+const val ROW_ACTION_ICON_PX = 57
 private const val ACTION_GAP_PX = 24
 const val ROW_ACTION_H_PX = 102
 
@@ -443,12 +438,13 @@ private const val NUMBERED_SUB_PX = 36
 private const val NUMBERED_SUB_LINE_PX = 45
 private const val NUMBERED_ROW_H_PX = 132
 
-/** Track number (or now-playing icon when current) + title + duration. */
+/** Track number (or now-playing icon when current) + title + a line under it. */
 @Composable
 fun NumberedRow(
     number: Int?,
     title: String,
-    durationMs: Long,
+    /** The line under the title — on a record, who plays on the song. */
+    subtitle: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     current: Boolean = false,
@@ -487,10 +483,12 @@ fun NumberedRow(
             }
         }
         Spacer(Modifier.width(px(ROW_GAP_PX)))
-        // Length under the title rather than across the row: it reads as a
-        // property of the song, the way an artist does in every other list, and
-        // it leaves long titles the whole width instead of a column of them
-        // truncating short of a right-hand gutter.
+        // Under the title rather than across the row, which leaves long titles
+        // the whole width instead of a column of them truncating short of a
+        // right-hand gutter. On a record this line is the performer: a track's
+        // own credit is the thing that varies down an album's list — the guests
+        // on one song and not the next — where its length is a number you have
+        // to read to learn nothing.
         Column(modifier = Modifier.weight(1f)) {
             AppText(
                 title,
@@ -499,7 +497,7 @@ fun NumberedRow(
                 maxLines = 1,
             )
             AppText(
-                formatTime(durationMs),
+                subtitle,
                 pxSp(NUMBERED_SUB_PX),
                 lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
                 dim = true,

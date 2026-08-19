@@ -617,9 +617,6 @@ class PlexClient(
         lastPlayedMs = (lastViewedAt ?: 0L) * 1000L,
         rating = starsFrom(userRating),
         genre = genres.firstOrNull()?.tag.orEmpty(),
-        // Plex has no compilation flag; what it has is the album artist every
-        // library uses to mean one.
-        compilation = parentTitle in COMPILATION_ARTISTS,
     )
 
     private fun PlexMetadata.toTrack(): Track = Track(
@@ -673,7 +670,6 @@ class PlexClient(
         private const val TOP_SONGS_LIMIT = 100
 
         /** What a library calls an album that isn't by one artist. */
-        private val COMPILATION_ARTISTS = setOf("Various Artists", "Various", "VA")
 
         /** Plex's stream types: 1 video, 2 audio, 3 subtitle, 4 lyrics. */
         private const val LYRIC_STREAM = 4

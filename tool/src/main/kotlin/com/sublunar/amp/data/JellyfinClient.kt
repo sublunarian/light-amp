@@ -566,7 +566,7 @@ class JellyfinClient(
          * artist — the fields are cheap, and their absence is silent.
          */
         private const val FIELDS =
-            "Genres,DateCreated,PremiereDate,ChildCount,AlbumArtists,ArtistItems"
+            "Genres,DateCreated,PremiereDate,ChildCount,AlbumArtists,ArtistItems,People"
 
         private const val MP3_CONTAINER = "mp3"
         private const val COVER_QUALITY = 90
@@ -616,7 +616,6 @@ class JellyfinClient(
 }
 
 /** What a library calls an album that isn't by one artist. */
-private val COMPILATION_ARTISTS = setOf("Various Artists", "Various", "VA")
 
 /**
  * The cover id for an item, or null when it hasn't got one.
@@ -654,7 +653,6 @@ internal fun JellyfinItem.toAlbum(): Album = Album(
     lastPlayedMs = jellyfinDateMs(userData?.lastPlayedDate),
     liked = userData?.isFavorite ?: false,
     genre = genres.firstOrNull().orEmpty(),
-    compilation = (albumArtist ?: "") in COMPILATION_ARTISTS,
 )
 
 internal fun JellyfinItem.toTrack(): Track = Track(
@@ -679,6 +677,12 @@ internal fun JellyfinItem.toTrack(): Track = Track(
     lastPlayedMs = jellyfinDateMs(userData?.lastPlayedDate),
     liked = userData?.isFavorite ?: false,
     genre = genres.firstOrNull().orEmpty(),
+    // Jellyfin files a composer as a credited person rather than a tag, so the
+    // Composers page is built out of People — see JellyfinItem.people. Joined
+    // with the separator the tag lists already split on.
+    composer = people.filter { it.type.equals("Composer", ignoreCase = true) }
+        .joinToString("; ") { it.name }
+        .trim(),
 )
 
 class JellyfinException(message: String) : Exception(message)

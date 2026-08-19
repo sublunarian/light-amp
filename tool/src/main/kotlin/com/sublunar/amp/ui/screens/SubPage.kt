@@ -45,20 +45,6 @@ fun SimpleLightScreen<*>.libraryBackAction(): (() -> Unit)? =
     if (simplifiedLayout()) ({ goBack() }) else null
 
 /**
- * The player in a header's left corner — the standard layout only.
- *
- * Simplified keeps the player in the bottom bar, so a second one directly above
- * it is one too many, and the title takes the corner's width back instead.
- */
-@Composable
-fun SimpleLightScreen<*>.nowPlayingCorner(): HeaderAction? =
-    if (App.layoutMode.collectAsState().value == LayoutMode.SIMPLIFIED) {
-        null
-    } else {
-        HeaderAction(AppIcons.Waveform) { go { NowPlayingScreen(it) } }
-    }
-
-/**
  * More sits in every library page's right-hand corner — see LibraryShell.
  *
  * [page] is what More carries up: the corner is drawn by the page itself, so
@@ -70,7 +56,7 @@ fun SimpleLightScreen<*>.libraryCornerAction(
     /** Only where the page's name isn't a constant — see [MoreScreen]. */
     pageTitle: String? = null,
 ): HeaderAction =
-    HeaderAction(AppIcons.MoreHoriz) { go { MoreScreen(it, page, pageTitle) } }
+    HeaderAction(AppIcons.Sort) { go { MoreScreen(it, page, pageTitle) } }
 
 
 @Composable
@@ -91,9 +77,11 @@ fun SimpleLightScreen<*>.LibrarySubPage(
                 Column(modifier = Modifier.fillMaxSize()) { content() }
             }
             val current by LibraryNav.currentTab.collectAsState()
-            val offTab by LibraryNav.offTab.collectAsState()
             Navbar(
-                current = if (moreActive || offTab) null else current,
+                // The tab you came from stays lit however deep this page is:
+                // a branch is still that tab, and back walks up it one level
+                // at a time. Only More is a place of its own.
+                current = if (moreActive) null else current,
                 moreActive = moreActive,
                 onSelect = { tab ->
                     LibraryNav.selectTab(tab)

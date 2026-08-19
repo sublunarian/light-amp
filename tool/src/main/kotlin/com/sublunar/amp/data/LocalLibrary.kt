@@ -162,6 +162,12 @@ object LocalLibrary {
                 track = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER),
                 disc = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER),
                 year = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR),
+                // The tag pages are offered only where the library has the tag
+                // (see LibraryIndex), and nothing read these — so a phone full
+                // of tagged files still reported having no genres and no
+                // composers, and neither page could ever appear.
+                genre = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE),
+                composer = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_COMPOSER),
                 durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                     ?.toLongOrNull() ?: 0L,
             )
@@ -196,6 +202,8 @@ object LocalLibrary {
             // different from what it means on every other source.
             playCount = 0,
             lastPlayedMs = 0L,
+            genre = tags.genre?.trim().orEmpty(),
+            composer = tags.composer?.trim().orEmpty(),
         )
     }
 
@@ -231,6 +239,8 @@ object LocalLibrary {
         val track: String?,
         val disc: String?,
         val year: String?,
+        val genre: String?,
+        val composer: String?,
         val durationMs: Long,
     )
 

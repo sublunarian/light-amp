@@ -37,38 +37,6 @@ val PlaylistSort.descendingByNature: Boolean
         PlaylistSort.DATE_CREATED, PlaylistSort.RECENTLY_UPDATED -> true
     }
 
-val TagSort.descendingByNature: Boolean
-    get() = when (this) {
-        TagSort.NAME -> false
-        TagSort.SONGS -> true
-    }
-
-/**
- * Order a list of tag values — genres, composers.
- *
- * [counts] is a function rather than a map so the name order costs nothing to
- * produce: counting walks every track in the library, and it is only the other
- * order that needs it.
- */
-fun sortTags(
-    tags: List<String>,
-    sort: TagSort,
-    reversed: Boolean = false,
-    counts: () -> Map<String, Int>,
-): List<String> {
-    val ordered = when (sort) {
-        TagSort.NAME -> tags.sortedBy { nameKey(it) }
-        // Ties fall back to the name, so equally-sized genres don't trade places
-        // between visits.
-        TagSort.SONGS -> counts().let { byTag ->
-            tags.sortedWith(
-                compareByDescending<String> { byTag[it] ?: 0 }.thenBy { nameKey(it) },
-            )
-        }
-    }
-    return if (reversed) ordered.reversed() else ordered
-}
-
 /**
  * Leading articles ignored when sorting names, so "The Beatles" files under B.
  * Matches Navidrome's own `IgnoredArticles` default, keeping the app's ordering

@@ -84,11 +84,12 @@ data class MusicSource(
     /** What gets downloaded without being asked for. */
     val offlineModeName: String? = null,
     /** How much of this phone this source's downloads may take. */
+    /**
+     * What this source was allowed on its own, before the budget became one for
+     * the whole tool. Kept only so [AppSettings.migrateDownloadLimit] can carry
+     * the largest of them up; nothing reads it to decide anything any more.
+     */
     val downloadLimitBytes: Long? = null,
-    /** Which of the server's libraries downloads come from; null means all. */
-    val downloadLibraryId: String? = null,
-    /** Whether a download brings the words with it. */
-    val downloadLyrics: Boolean? = null,
     /**
      * What this source reports itself as: Subsonic's `c=` client parameter
      * (Navidrome names its "Player" from it) and, on Plex, the
@@ -108,6 +109,20 @@ data class MusicSource(
     val userId: String = "",
     /** Plex's server id, needed to build the URIs that fill a playlist. */
     val machineIdentifier: String = "",
+    /**
+     * Which build's track parsing this source's cache was filled by.
+     *
+     * A sync only refetches an album whose song count changed, so a fix to how a
+     * track is *read* — rather than to what the server holds — would never reach
+     * a library that is already cached. Bumping
+     * [LibraryRepository.TRACK_PARSER_GENERATION] makes the next sync fetch every
+     * album once and then record the new number here. Zero is "filled before this
+     * existed", so every library synced by an older build refetches once.
+     *
+     * Deliberately not a database version: the Room builder destroys and rebuilds
+     * on a version change, which would take the downloads table with it.
+     */
+    val parserGeneration: Int = 0,
     /** Subsonic music folder, or null for all of them. */
     val libraryId: String? = null,
     /**
@@ -181,8 +196,6 @@ data class MusicSource(
     /** Whether the whole-server row is offered alongside the individual ones. */
     val showsAllLibraries: Boolean get() = null !in hiddenLibraryIds
 
-    val downloadLimit: Long get() = downloadLimitBytes ?: 0L
-    val wantsLyrics: Boolean get() = downloadLyrics ?: true
 
     private fun supported(id: String?): StreamFormat {
         val wanted = StreamFormat.fromId(id)

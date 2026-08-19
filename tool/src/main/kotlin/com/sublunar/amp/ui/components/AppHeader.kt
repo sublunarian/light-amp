@@ -17,9 +17,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.basicMarquee
-import androidx.compose.runtime.collectAsState
-import com.sublunar.amp.App
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
@@ -49,6 +46,14 @@ private const val NOW_PLAYING_SLOT_PX = 160
 
 /** Gap between the two icon centres. */
 private const val SEARCH_TO_NOW_PLAYING_PX = 120
+
+/**
+ * The corner glyph's own box, in physical pixels — the same 66px the player's
+ * header gives its More, so the two corners draw the same size as well as the
+ * same shape. n(26) came to 66.3px, and a third of a pixel is enough to put a
+ * one-pixel stem between two of them and take the edge off it.
+ */
+const val CORNER_ICON_PX = 66
 
 /** Nudge that puts the back chevron on the same axis as the other edge controls. */
 private val BACK_ICON_BIAS = px(15)
@@ -216,7 +221,7 @@ fun AppHeader(
         Spacer(Modifier.width(trailingSpacer).height(headerHeight))
         HeaderSlot(rightSlot, headerHeight, onClick = rightAction?.onClick) {
             if (rightAction != null) {
-                AppIcon(rightAction.icon, size = n(26))
+                AppIcon(rightAction.icon, size = px(CORNER_ICON_PX))
             }
         }
     }

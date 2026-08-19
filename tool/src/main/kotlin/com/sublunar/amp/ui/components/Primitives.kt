@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
@@ -89,7 +88,6 @@ object AppIcons {
     val RecordVoiceOver = Icons.Filled.Mic
     val QueueMusic = Icons.AutoMirrored.Filled.QueueMusic
     val PlaylistPlay = Icons.AutoMirrored.Filled.PlaylistPlay
-    val MoreHoriz = Icons.Filled.MoreHoriz
     val MoreVert = Icons.Filled.MoreVert
     val GraphicEq = Icons.Filled.GraphicEq
 
