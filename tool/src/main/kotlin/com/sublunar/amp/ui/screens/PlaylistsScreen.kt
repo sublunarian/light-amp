@@ -133,7 +133,7 @@ class PlaylistDetailScreen(
         // Where the drag would land right now, so the line can track a finger
         // that hasn't lifted yet — null beforeId means "at the very bottom".
         val dropTarget: DropTarget? = draggingIndex?.let { from ->
-            dropTargetFor(list, draggingIds, dragRowTarget(list, from, dragOffsetY, rowPx))
+            DropTarget(dropAnchor(list, from, draggingIds, dragRowTarget(list, from, dragOffsetY, rowPx)))
         }
 
         LibraryList(
@@ -235,7 +235,7 @@ class PlaylistDetailScreen(
                                         val from = draggingIndex
                                         if (from != null) {
                                             val target = dragRowTarget(list, from, dragOffsetY, rowPx)
-                                            if (target != from) reorderGroup(target, draggingIds)
+                                            reorderGroup(dropAnchor(list, from, draggingIds, target), draggingIds)
                                         }
                                         draggingIndex = null
                                         dragOffsetY = 0f
@@ -265,14 +265,24 @@ class PlaylistDetailScreen(
         (from + (dragOffsetY / rowPx).roundToInt()).coerceIn(0, list.lastIndex)
 
     /**
-     * The remaining (non-moving) row that [target] would land in front of, or a
-     * null id meaning "at the very end" — the same split [reorderGroup] uses to
-     * insert the block, kept here so the preview line never disagrees with where
-     * the drop will actually go.
+     * The row the dragged block would land in front of right now, or null
+     * meaning "at the very end". [target] is worked out as if only the grabbed
+     * row ([from]) were moving — the same math a solo drag has always used —
+     * so a multi-row selection tracks the finger exactly like a single row
+     * would, instead of running out of room early because the rest of the
+     * selection shrinks the pool of remaining rows to land among. The other
+     * selected rows just ride along: from that anchor point we walk forward to
+     * the nearest row that isn't itself part of the drag, since the block
+     * can't be inserted in front of a row that's also about to move.
+     *
+     * Used for both the preview line and the actual drop ([reorderGroup]), so
+     * the two can never disagree about where the drag will land.
      */
-    private fun dropTargetFor(list: List<Track>, ids: Set<String>, target: Int): DropTarget {
-        val remaining = list.filterNot { it.id in ids }
-        return DropTarget(remaining.getOrNull(target.coerceIn(0, remaining.size))?.id)
+    private fun dropAnchor(list: List<Track>, from: Int, ids: Set<String>, target: Int): String? {
+        val soloRemaining = list.filterIndexed { i, _ -> i != from }
+        val anchorId = soloRemaining.getOrNull(target.coerceIn(0, soloRemaining.size))?.id
+        val anchorIndex = anchorId?.let { id -> list.indexOfFirst { it.id == id } } ?: list.size
+        return list.drop(anchorIndex).firstOrNull { it.id !in ids }?.id
     }
 
     @Composable
@@ -320,19 +330,20 @@ class PlaylistDetailScreen(
     }
 
     /**
-     * Move [ids] as a block to [target]: pull them out in their current relative
-     * order, then reinsert them at [target] read against what's left. For a lone
-     * dragged row this is the familiar single-row reorder (`target` is exactly
-     * where it lands); for a multi-row selection the whole set rides along
-     * together, so moving one selected row moves them all.
+     * Move [ids] as a block to just in front of [beforeId] (or the very end,
+     * when null): pull them out in their current relative order, then reinsert
+     * them there. For a lone dragged row this is the familiar single-row
+     * reorder; for a multi-row selection the whole set rides along together,
+     * so moving one selected row moves them all.
      */
-    private fun reorderGroup(target: Int, ids: Set<String>) {
+    private fun reorderGroup(beforeId: String?, ids: Set<String>) {
         val current = tracks.value ?: return
         if (ids.isEmpty()) return
         val moving = current.filter { it.id in ids }
         if (moving.isEmpty() || moving.size == current.size) return
         val remaining = current.filterNot { it.id in ids }
-        val insertAt = target.coerceIn(0, remaining.size)
+        val insertAt = beforeId?.let { id -> remaining.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
+            ?: remaining.size
         val newList = remaining.toMutableList().apply { addAll(insertAt, moving) }
         if (newList == current) return
         tracks.value = newList
