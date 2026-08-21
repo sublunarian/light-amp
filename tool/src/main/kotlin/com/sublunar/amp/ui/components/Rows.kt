@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.sublunar.amp.App
+import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.ui.n
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
@@ -267,7 +268,13 @@ fun ArtistRow(
     // With pictures off the row is a line of text again, at the tighter pitch it
     // has always had; a picture needs the taller one the track rows use. Artists
     // can lose theirs on their own, without the sleeves going with them.
-    val covers = !App.hideArtistImages.collectAsState().value
+    // Read unconditionally, both of them — see the note in TrackRow.
+    val wantsCovers = !App.hideArtistImages.collectAsState().value
+    val local = App.source.collectAsState().value.kind == SourceKind.LOCAL
+    // The phone's own library has no artist pictures to fetch — nothing keeps
+    // them and no server can be asked — so the slot would be a column of empty
+    // circles. Text at the tighter pitch says the same thing in less room.
+    val covers = wantsCovers && !local
     // Read unconditionally — see the note in TrackRow.
     val marks = !App.hideDownloadIcons.collectAsState().value
     Row(
@@ -436,7 +443,12 @@ private const val NUMBERED_TITLE_PX = 48
 private const val NUMBERED_TITLE_LINE_PX = 60
 private const val NUMBERED_SUB_PX = 36
 private const val NUMBERED_SUB_LINE_PX = 45
+/**
+ * Two lines under the title where a record gives one — who plays on the song,
+ * then how long it runs — so the row is as tall as the type in it.
+ */
 private const val NUMBERED_ROW_H_PX = 132
+private const val NUMBERED_ROW_TALL_PX = 177
 
 /** Track number (or now-playing icon when current) + title + a line under it. */
 @Composable
@@ -445,6 +457,8 @@ fun NumberedRow(
     title: String,
     /** The line under the title — on a record, who plays on the song. */
     subtitle: String,
+    /** A second line under that, where there is one. */
+    detail: String? = null,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     current: Boolean = false,
@@ -455,7 +469,7 @@ fun NumberedRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(px(NUMBERED_ROW_H_PX))
+            .height(px(if (detail == null) NUMBERED_ROW_H_PX else NUMBERED_ROW_TALL_PX))
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -503,6 +517,15 @@ fun NumberedRow(
                 dim = true,
                 maxLines = 1,
             )
+            if (detail != null) {
+                AppText(
+                    detail,
+                    pxSp(NUMBERED_SUB_PX),
+                    lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
+                    dim = true,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }

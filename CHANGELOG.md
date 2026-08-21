@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.1
+
+### Fixed
+
+- Long tracks took minutes to start. A 29-minute track needed 68 seconds; the
+  same 124-minute one now starts in under a second.
+- Library tabs lost their place when you switched away and back.
+
+### Added
+
+- Album track rows show the length under the performer.
+
+### Changed
+
+- Full-screen artwork opens with the controls out of the way when you go to it;
+  opening the player still brings them back.
+- No artist pictures on the phone's own library, which has none to show.
+- The Source row is hidden when there is one source with one library.
+
 ## 0.3.0
 
 **Needs one online sync after updating.** Downloads are safe; the Downloads page

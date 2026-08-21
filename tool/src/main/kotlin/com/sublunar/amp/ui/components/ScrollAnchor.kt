@@ -64,6 +64,16 @@ object ScrollAnchors {
             count > 0 && (other == owner || other.startsWith("$owner/"))
     }
 
+    /**
+     * Answered once. The request outlives the list that asked for it — leaving a
+     * tab and coming back builds a new one, which reads the same standing value
+     * and would scroll to the top again, throwing away the position that had
+     * just been restored.
+     */
+    fun consumeTopRequest() {
+        _topRequests.value = TopRequest()
+    }
+
     private val _topRequests = MutableStateFlow(TopRequest())
     val topRequests: StateFlow<TopRequest> = _topRequests
 
@@ -90,7 +100,12 @@ fun rememberListAnchor(owner: String, headerCount: Int = 0): LazyListState {
     // A tap on the tab already showing asks this list, not the next one built
     // from it, to go back to the top — see [ScrollAnchors.requestTop].
     val top by ScrollAnchors.topRequests.collectAsState()
-    LaunchedEffect(top) { if (top.names(owner)) state.scrollToItem(0) }
+    LaunchedEffect(top) {
+        if (top.names(owner)) {
+            state.scrollToItem(0)
+            ScrollAnchors.consumeTopRequest()
+        }
+    }
     DisposableEffect(owner, headerCount) {
         onDispose {
             ScrollAnchors.save(
@@ -120,7 +135,12 @@ fun rememberGridAnchor(owner: String, headerCount: Int = 0): LazyGridState {
     // A tap on the tab already showing asks this list, not the next one built
     // from it, to go back to the top — see [ScrollAnchors.requestTop].
     val top by ScrollAnchors.topRequests.collectAsState()
-    LaunchedEffect(top) { if (top.names(owner)) state.scrollToItem(0) }
+    LaunchedEffect(top) {
+        if (top.names(owner)) {
+            state.scrollToItem(0)
+            ScrollAnchors.consumeTopRequest()
+        }
+    }
     DisposableEffect(owner, headerCount) {
         onDispose {
             ScrollAnchors.save(

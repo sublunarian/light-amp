@@ -187,7 +187,10 @@ class NowPlayingScreen(
         // page is one you have to keep setting.
         //
         // Having *hidden* the controls is neither: it is a moment's look at a
-        // sleeve, so opening the player always brings them back.
+        // sleeve, so opening the player always brings them back — including
+        // into Cover Only, where arriving from the library with no controls and
+        // no visible way to get them reads as a page that has failed to draw.
+        // Hiding them is what the long press and the menu are for.
         NowPlayingNav.coverChrome.value = true
     }
 
@@ -542,7 +545,9 @@ class NowPlayingScreen(
                     onTap = { if (coverOnly) NowPlayingNav.coverChrome.value = !chrome },
                     onLongPress = {
                         NowPlayingNav.coverOnly.value = !coverOnly
-                        if (!coverOnly) NowPlayingNav.coverChrome.value = true
+                        // Going full-screen means going to the picture, so the
+                        // controls step out of its way; a tap brings them back.
+                        if (!coverOnly) NowPlayingNav.coverChrome.value = false
                     },
                 )
                 if (heroTitle) TitleBlock(current)
@@ -1149,7 +1154,9 @@ class NowPlayingScreen(
                         // from the artwork lands on the player as intended.
                         goBack()
                         NowPlayingNav.coverOnly.value = !coverOnly
-                        if (!coverOnly) NowPlayingNav.coverChrome.value = true
+                        // Going full-screen means going to the picture, so the
+                        // controls step out of its way; a tap brings them back.
+                        if (!coverOnly) NowPlayingNav.coverChrome.value = false
                     }
                 } else {
                     null

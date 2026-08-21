@@ -1881,7 +1881,29 @@ class PlaybackController(
             if (!preferStream) return LightAudioSource.FileSource(file)
         }
         return LightAudioSource.UrlSource(
-            serverClient.value?.streamUrl(this, effectiveFormat(), sessionId = sessionIdFor(id)).orEmpty(),
+            // No estimated Content-Length, which is what made a long track take
+            // minutes to start.
+            //
+            // To declare a length for a transcode the server has to know the
+            // size, and knowing the size means finishing the encode — so the
+            // wait grew with the track. Measured: 29 minutes of audio took 67.9s
+            // to make a sound, with downloads held off entirely and the link
+            // running at 5 MB/s. That is ~26x realtime, this server's opus rate.
+            // Without the estimate the same 124-minute track starts in 605ms.
+            //
+            // The estimate was here for byte-seeking inside a transcoded stream,
+            // but seekTo doesn't byte-seek — it asks the server for the same
+            // track at a timeOffset. So nothing here needed it.
+            //
+            // Only Subsonic reads the flag; Jellyfin and Plex ignore it. Passing
+            // it here covers every source that ever might, and costs the other
+            // two nothing.
+            serverClient.value?.streamUrl(
+                this,
+                effectiveFormat(),
+                estimateContentLength = false,
+                sessionId = sessionIdFor(id),
+            ).orEmpty(),
         )
     }
 

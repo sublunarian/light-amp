@@ -16,6 +16,7 @@ import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.components.AppHeader
+import com.sublunar.amp.ui.components.formatTime
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.LibraryList
 import com.sublunar.amp.ui.components.AppText
@@ -105,6 +106,7 @@ class AlbumDetailScreen(
                                 // The track's own credit, not the record's —
                                 // which is what makes a guest on one song visible.
                                 subtitle = track.artist,
+                                detail = formatTime(track.durationMs),
                                 current = current?.id == track.id,
                                 selected = if (selection.active) track.id in selection.selected else null,
                                 onClick = {

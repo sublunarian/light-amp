@@ -193,7 +193,9 @@ object LibraryNav {
         // A selection belongs to the list it was made in; changing tabs abandons
         // it rather than leaving a stale count waiting on some other page.
         Selections.clearAll()
-        ScrollAnchors.clear("tab:${tab.name.lowercase()}")
+        // The tab keeps where it was. Coming back to a list is coming back to
+        // the place in it you left — tapping the tab you are already on is what
+        // asks for the top, and that is [tapTab]'s job.
         currentTab.value = tab
     }
 }
