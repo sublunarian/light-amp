@@ -31,12 +31,19 @@ exists. Checked against `upstream/main` at `c86e40a`, 19 Aug 2026.
 
 ### Hardware volume keys
 
-- **Need:** the rocker controls what is playing, including a remote speaker while
-  casting.
-- **Now:** keys fall through to the system, and the media session from background
-  audio gives the OS something to route them to.
-- **Would replace it:** the SDK routing keys to the focused screen, or the player
-  owning the session. Solving background audio mostly solves this.
+- **Need:** the rocker changes playback volume, with the LightOS volume panel.
+- **Fixed in LightOS 572:** the keys reach a side-loaded tool now. Before, the
+  token was rejected and the press did nothing.
+- **Still wrong:** forwarded keys move the **ringer**, even with music playing.
+  LightOS chooses the stream in its own process, where nothing is playing.
+- **Nothing on our side can say otherwise:** `DeviceKeyEvent` carries keyCode,
+  action and characters — no stream. Setting `volumeControlStream` on the
+  foreground activity does not cross the process boundary (tried, 20 Aug 2026).
+- **Now:** we keep volume keys away from the server and let them fall through to
+  the system, with `volumeControlStream = STREAM_MUSIC` so the stream is right.
+  That loses the LightOS volume panel.
+- **Would fix it:** route forwarded volume keys to the active media session, or
+  carry the foreground tool's `volumeControlStream` in `DeviceKeyEvent`.
 
 ### Colour
 
