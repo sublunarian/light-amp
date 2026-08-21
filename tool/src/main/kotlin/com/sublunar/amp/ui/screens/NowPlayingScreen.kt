@@ -186,12 +186,10 @@ class NowPlayingScreen(
         // looks, and a preference that undoes itself every time you leave the
         // page is one you have to keep setting.
         //
-        // Having *hidden* the controls is neither: it is a moment's look at a
-        // sleeve, so opening the player always brings them back — including
-        // into Cover Only, where arriving from the library with no controls and
-        // no visible way to get them reads as a page that has failed to draw.
-        // Hiding them is what the long press and the menu are for.
-        NowPlayingNav.coverChrome.value = true
+        // The controls start out of the way every time, whichever way you got
+        // here. Cover Only is a page about the picture, and a tap brings them
+        // back — one rule rather than a set of arrivals each with its own.
+        NowPlayingNav.coverChrome.value = false
     }
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
