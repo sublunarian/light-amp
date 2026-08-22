@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -449,13 +450,29 @@ private const val NUMBERED_SUB_LINE_PX = 45
  */
 private const val NUMBERED_ROW_H_PX = 132
 private const val NUMBERED_ROW_TALL_PX = 177
+/** Air between a number's right edge and the title axis it sets against. */
+private const val NUMBER_GAP_PX = 15
+
+/**
+ * The number gutter: three digits of [NUMBERED_SUB_PX] type plus
+ * [NUMBER_GAP_PX], and one width for every album. This page briefly borrowed
+ * the lists' 51px leading slot so titles would share their 72px axis, but a
+ * number only fit it shrunken and hard against the title, which read as
+ * cramped. The album page owns a wider axis of its own instead, the way a
+ * printed tracklist hangs its numbers in a margin cut to the widest of them.
+ */
+private const val NUMBERED_LEAD_PX = 78
 
 /** Track number (or now-playing icon when current) + title + a line under it. */
 @Composable
 fun NumberedRow(
     number: Int?,
     title: String,
-    /** The line under the title — on a record, who plays on the song. */
+    /**
+     * The line under the title — on a record, who plays on the song. Blank
+     * drops the line and the row closes up: the caller sends a credit only
+     * when it says something the page hasn't — see AlbumDetailScreen.
+     */
     subtitle: String,
     /** A second line under that, where there is one. */
     detail: String? = null,
@@ -466,19 +483,28 @@ fun NumberedRow(
     /** Selection state, or null when the list isn't in multi-select mode. */
     selected: Boolean? = null,
 ) {
+    val subLines = (if (subtitle.isNotBlank()) 1 else 0) + (if (detail != null) 1 else 0)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(px(if (detail == null) NUMBERED_ROW_H_PX else NUMBERED_ROW_TALL_PX))
+            .height(px(if (subLines >= 2) NUMBERED_ROW_TALL_PX else NUMBERED_ROW_H_PX))
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The circle stands in for the track number, keeping titles aligned.
-        Box(modifier = Modifier.width(n(30)), contentAlignment = Alignment.Center) {
+        // The number hangs in the gutter, right-aligned the way a printed
+        // tracklist sets its numbers — 9 and 10 end on the same edge — and the
+        // waveform or selection circle takes the number's place, not a slot
+        // beside it.
+        Box(
+            modifier = Modifier
+                .width(px(NUMBERED_LEAD_PX))
+                .padding(end = px(NUMBER_GAP_PX)),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
             when {
                 selected != null -> AppIcon(
                     if (selected) AppIcons.Selected else AppIcons.Unselected,
-                    size = n(20),
+                    size = n(16),
                     tint = if (selected) {
                         LightThemeTokens.colors.content
                     } else {
@@ -488,15 +514,14 @@ fun NumberedRow(
                 current -> AppIcon(AppIcons.Waveform, size = n(16))
                 else -> AppText(
                     number?.toString() ?: "",
-                    pxSp(ROW_SUB_PX),
-                    lineHeight = pxSp(ROW_SUB_LINE_PX),
+                    pxSp(NUMBERED_SUB_PX),
+                    lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
                     role = TextRole.Detail,
                     dim = true,
-                    align = TextAlign.Center,
+                    align = TextAlign.End,
                 )
             }
         }
-        Spacer(Modifier.width(px(ROW_GAP_PX)))
         // Under the title rather than across the row, which leaves long titles
         // the whole width instead of a column of them truncating short of a
         // right-hand gutter. On a record this line is the performer: a track's
@@ -510,13 +535,15 @@ fun NumberedRow(
                 lineHeight = pxSp(NUMBERED_TITLE_LINE_PX),
                 maxLines = 1,
             )
-            AppText(
-                subtitle,
-                pxSp(NUMBERED_SUB_PX),
-                lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
-                dim = true,
-                maxLines = 1,
-            )
+            if (subtitle.isNotBlank()) {
+                AppText(
+                    subtitle,
+                    pxSp(NUMBERED_SUB_PX),
+                    lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
+                    dim = true,
+                    maxLines = 1,
+                )
+            }
             if (detail != null) {
                 AppText(
                     detail,

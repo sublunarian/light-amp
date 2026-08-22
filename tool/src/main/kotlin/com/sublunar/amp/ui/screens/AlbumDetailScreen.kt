@@ -39,7 +39,9 @@ import com.sublunar.amp.ui.components.AppArtwork
 import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.rowClickable
 import com.sublunar.amp.ui.components.AppIcon
+import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.ROW_GAP_PX
+import com.sublunar.amp.ui.components.ROW_LEAD_PX
 import com.sublunar.amp.ui.components.ROW_SUB_PX
 import com.sublunar.amp.ui.components.ROW_SUB_LINE_PX
 import com.sublunar.amp.ui.components.formatRunTime
@@ -79,11 +81,21 @@ class AlbumDetailScreen(
                 } else {
                     AppHeader(
                         onBack = { goBack() },
-                        // The album's name alone. The artist is on every row
+                        // The album's name alone. The artist is in the card
                         // below and in the cover art, so a second line here was
                         // repeating what the page already says.
                         title = album?.title ?: "Album",
-                        rightAction = libraryCornerAction(LibraryPage.ALBUM, album?.title),
+                        // The album's own menu, not the library's sort: a record
+                        // has no order to choose, so the corner that offered a
+                        // dead sort now offers the record's verbs — download,
+                        // queue, playlist, artist. Same menu as a long-press on
+                        // the album's row, reachable from the album itself.
+                        rightAction = HeaderAction(
+                            AppIcons.MoreVert,
+                            onLongClick = { go { SettingsScreen(it) } },
+                        ) {
+                            go { AlbumActionsScreen(it, albumId) }
+                        },
                         fitTitle = true,
                     )
                 }
@@ -99,13 +111,22 @@ class AlbumDetailScreen(
                         if (!selection.active && album != null) {
                             item { AlbumCard(album, list) }
                         }
+                        // Credits appear only where the tracks' own artists
+                        // vary, and then on every track — all or nothing, so
+                        // the page never reads as "some tracks have artists".
+                        // Judged against each other, not against the record's
+                        // artist: a name shared by every track says nothing
+                        // per-row even when the album entity credits someone
+                        // else, as a classical record does when its tracks all
+                        // carry the composer and the album the performer.
+                        val varied = list
+                            .map { it.artist.trim().lowercase() }
+                            .distinct().size > 1
                         itemsIndexed(list, key = { _, t -> t.id }) { index, track ->
                             NumberedRow(
                                 number = track.trackNumber ?: (index + 1),
                                 title = track.title,
-                                // The track's own credit, not the record's —
-                                // which is what makes a guest on one song visible.
-                                subtitle = track.artist,
+                                subtitle = if (varied) track.artist else "",
                                 detail = formatTime(track.durationMs),
                                 current = current?.id == track.id,
                                 selected = if (selection.active) track.id in selection.selected else null,
@@ -143,6 +164,12 @@ class AlbumDetailScreen(
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = px(CARD_GAP_PX)),
         ) {
+            // The sleeve starts where every list's covers start — the axis
+            // after the leading slot — so the push from a list lands with the
+            // art on the same edge, and the tracklist's numbers sit in the
+            // gutter under it. (The albums grid is the one full-bleed
+            // exception, and it is tiles, not rows.)
+            Spacer(Modifier.width(px(ROW_LEAD_PX)))
             AppArtwork(
                 coverArtId = album.coverArtId,
                 size = px(CARD_ART_PX),
