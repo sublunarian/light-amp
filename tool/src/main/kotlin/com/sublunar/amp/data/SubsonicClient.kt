@@ -206,7 +206,8 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
                 ?: a.displayArtist?.takeIf { it.isNotBlank() }
                 ?: a.artist
         }
-        return body.album?.song.orEmpty().map { it.toTrack(albumName, albumArtist) }
+        // The album's own cover for every track on it — see toTrack.
+        return body.album?.song.orEmpty().map { it.toTrack(albumName, albumArtist, body.album?.coverArt) }
     }
 
     override suspend fun getStarred(musicFolderId: String?): Starred {
@@ -257,6 +258,26 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
                     if (count > 0) listOf("count" to count.toString()) else emptyList(),
             )
             body.topSongs?.song.orEmpty().map { it.toTrack() }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * `getSimilarSongs` takes the song's own id — checked against the public
+     * demo — and Navidrome resolves it to the artist before asking its Last.fm
+     * agent for artists like them. With no agent it still answers from that
+     * artist's own catalogue, so the radio narrows rather than vanishes.
+     */
+    override suspend fun getSimilarSongs(songId: String, count: Int): List<Track> {
+        return try {
+            val body = request(
+                "getSimilarSongs",
+                // Omitted rather than sent as 0 — see getTopSongs.
+                listOf("id" to songId) +
+                    if (count > 0) listOf("count" to count.toString()) else emptyList(),
+            )
+            body.similarSongs?.song.orEmpty().map { it.toTrack() }
         } catch (_: Exception) {
             emptyList()
         }
@@ -465,8 +486,15 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
     private fun SongDto.toTrack(
         albumName: String? = null,
         albumArtistName: String? = null,
+        /**
+         * The parent album's cover id, where the caller has the album. Preferred
+         * over the song's own: Navidrome hands every file an `mf-` id of its own
+         * that resolves to the same sleeve, and keyed by it the cache held one
+         * copy per song — thousands of files for a few hundred covers.
+         */
+        albumCoverArt: String? = null,
     ): Track {
-        val coverId = coverArt ?: albumId ?: id
+        val coverId = albumCoverArt ?: coverArt ?: albumId ?: id
         return Track(
             id = id,
             title = title ?: "Unknown Title",

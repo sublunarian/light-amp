@@ -4,6 +4,7 @@ import com.sublunar.amp.data.db.AlbumEntity
 import com.sublunar.amp.data.db.DownloadFile
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.LikedArtistEntity
+import com.sublunar.amp.data.db.TopSongEntity
 import com.sublunar.amp.data.db.toAlbum
 import com.sublunar.amp.data.db.toEntity
 import com.sublunar.amp.data.db.toTrack
@@ -17,6 +18,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -505,6 +507,14 @@ class LibraryRepository(
      */
     private val _playlistTrackIds = MutableStateFlow<Map<String, List<String>>>(emptyMap())
 
+    /**
+     * Which songs each playlist holds, for the playlists primed so far — see
+     * [primePlaylistTrackIds]. The list itself never carries this: no server
+     * sends membership with its playlist list, so [Playlist.trackIds] is empty
+     * for every server playlist and anything reading it there reads nothing.
+     */
+    val playlistTrackIds: StateFlow<Map<String, List<String>>> = _playlistTrackIds
+
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
 
     /**
@@ -831,9 +841,13 @@ class LibraryRepository(
 
     private suspend fun runSync(musicFolderId: String?, allowRepoint: Boolean = true) {
         val source = settings.activeSource.first()
+        // Pinned before anything is written — see the note below; the local
+        // scan needs the same guarantee, a switch away mid-scan would
+        // otherwise write this phone's files into a server's library.
+        val dao = daos.value ?: return
         // The phone's own music has no server to ask; it is read off the disk.
         if (source?.kind == SourceKind.LOCAL) {
-            runLocalScan()
+            runLocalScan(dao)
             return
         }
         // A build that changed how a track is read has to refill the cache once,
@@ -842,15 +856,60 @@ class LibraryRepository(
         val refillForParser =
             source != null && source.parserGeneration != TRACK_PARSER_GENERATION
         val client = serverClient.value ?: return
-        // Pinned for the run, exactly as the client is. `dao` is a property that
-        // re-reads whichever database is current, so a source switched while
-        // this was in flight moved the writes onto the new source's database
-        // while the fetches carried on against the old server — one server's
-        // albums and tracks landing in another's library. Both ends of a sync
-        // now belong to the source it started for.
-        val dao = daos.value ?: return
+        // `dao` above is pinned for the run, exactly as the client is. The
+        // property of that name re-reads whichever database is current, so a
+        // source switched while this was in flight moved the writes onto the
+        // new source's database while the fetches carried on against the old
+        // server — one server's albums and tracks landing in another's
+        // library. Both ends of a sync belong to the source it started for,
+        // and every helper this calls takes the pinned one rather than the
+        // property: the song-fetch phase didn't, and thirty of Plex's albums
+        // turned up in a Navidrome library, untagged, with ids Navidrome had
+        // never issued.
         _syncState.value = _syncState.value.copy(syncing = true, error = null, phase = "Connecting")
         try {
+            // Rows with no library recorded show in *every* library (see
+            // allAlbums), so an untagged album leaks into libraries it was never
+            // in. A scoped sync can only tag the folder it fetched; this asks
+            // the server for each folder's album list — cheap, no songs — and
+            // stamps every row it names. Runs only while untagged rows exist,
+            // which after the first pass is never.
+            val untagged = dao.untaggedAlbumCount()
+            if (untagged > 0) {
+                val folders = client.getMusicFolders()
+                if (folders.size >= 2) {
+                    _syncState.value = _syncState.value.copy(phase = "Sorting libraries")
+                    var stamped = 0
+                    var named = 0
+                    for (folder in folders) {
+                        val ids = client.getAllAlbums(folder.id).map { it.id }
+                        named += ids.size
+                        ids.chunked(500).forEach { chunk -> stamped += dao.tagAlbums(folder.id, chunk) }
+                    }
+                    // Whatever is still untagged after every folder has spoken is
+                    // an album the server has nowhere — its id gone or changed,
+                    // as a re-import does — and, being untagged, it was exempt
+                    // from every scoped prune and showed in every library. Now
+                    // a fetch *can* speak for it: the lists just read are the
+                    // whole server. Same empty-answer rule as the main prune.
+                    val dead = if (named > 0) dao.untaggedAlbumIds() else emptyList()
+                    if (dead.isNotEmpty()) {
+                        val deadSet = dead.toSet()
+                        val sample = dao.allAlbumsSnapshot()
+                            .filter { it.id in deadSet }
+                            .take(5)
+                            .joinToString { "${it.artist} – ${it.title} [${it.id}]" }
+                        android.util.Log.w("AmpSync", "dropping albums the server has nowhere, e.g. $sample")
+                        dead.forEach { dao.deleteTracksForAlbum(it) }
+                        dao.deleteAlbums(dead)
+                    }
+                    android.util.Log.i(
+                        "AmpSync",
+                        "retagged $stamped album rows across ${folders.size} libraries; " +
+                            "$untagged had no library, ${dead.size} of them exist nowhere and were dropped",
+                    )
+                }
+            }
             // "All libraries" has to be fanned out per folder and merged: an
             // unscoped getAlbumList2 returns only the server's default library,
             // so asking once would silently hide every other library.
@@ -868,7 +927,15 @@ class LibraryRepository(
             // over the cache rather than a fetch — see AlbumEntity.libraryId.
             // An album in two folders keeps the first, as distinctBy always did.
             val fetched = folderIds
-                .flatMap { folder -> client.getAllAlbums(folder).map { it to folder } }
+                .flatMap { folder ->
+                    val list = client.getAllAlbums(folder)
+                    android.util.Log.i(
+                        "AmpSync",
+                        "folder=$folder returned ${list.size} albums" +
+                            list.take(3).joinToString(prefix = " e.g. ") { it.title },
+                    )
+                    list.map { it to folder }
+                }
                 .distinctBy { (album, _) -> album.id }
             val serverAlbums = fetched.map { (album, _) ->
                 album.copy(liked = album.id in starred.albumIds)
@@ -877,6 +944,11 @@ class LibraryRepository(
             val serverAlbumById = serverAlbums.associateBy { it.id }
 
             val cached = dao.allAlbumsSnapshot().associateBy { it.id }
+            android.util.Log.i(
+                "AmpSync",
+                "scope=$musicFolderId cached rows by library tag: " +
+                    cached.values.groupBy { it.libraryId }.mapValues { it.value.size },
+            )
 
             dao.upsertAlbums(serverAlbums.map { it.toEntity(libraryOf[it.id]) })
 
@@ -953,7 +1025,7 @@ class LibraryRepository(
             // song count, and a library with more songs than albums then looks
             // like it is being cut short.
             _syncState.value = _syncState.value.copy(phase = "Albums 0/${toFetch.size}")
-            fetchAndStoreSongs(client, toFetch, starred.songIds)
+            fetchAndStoreSongs(dao, client, toFetch, starred.songIds, libraryOf)
 
             // Reconcile track likes across the whole library (cheap two-query pass).
             dao.replaceTrackLikes(starred.songIds.toList())
@@ -999,17 +1071,25 @@ class LibraryRepository(
      * cache of something already local. Likes, ratings and play counts have
      * nowhere to live on a local source, so there is nothing to reconcile.
      */
-    private suspend fun runLocalScan() {
+    private suspend fun runLocalScan(dao: LibraryDao) {
         _syncState.value = _syncState.value.copy(
             syncing = true,
             error = null,
             phase = "Reading this phone",
         )
         try {
-            if (!LocalLibrary.permitted()) {
+            val access = LocalLibrary.access()
+            if (access != LocalLibrary.Access.GRANTED) {
                 _syncState.value = SyncState(
                     syncing = false,
-                    error = "Allow music access to read this phone",
+                    // Blocked is not "not yet allowed": the prompt the other
+                    // message leads to can't change a LightOS policy, and a
+                    // row that sends you round that loop is worse than one
+                    // that says where the wall is.
+                    error = when (access) {
+                        LocalLibrary.Access.BLOCKED_BY_LIGHTOS -> "LightOS is blocking this tool's music access"
+                        else -> "Allow music access to read this phone"
+                    },
                 )
                 return
             }
@@ -1050,9 +1130,13 @@ class LibraryRepository(
     var onSyncFailed: ((authFailure: Boolean) -> Unit)? = null
 
     private suspend fun fetchAndStoreSongs(
+        /** The sync's own database — never the property, which follows the active source. */
+        dao: LibraryDao,
         client: MusicServer,
         albums: List<Album>,
         starredSongIds: Set<String>,
+        /** Which library each album came from — see the count write-back below. */
+        libraryOf: Map<String, String?>,
     ) = coroutineScope {
         val gate = Semaphore(SYNC_CONCURRENCY)
         val done = AtomicInteger(0)
@@ -1078,6 +1162,9 @@ class LibraryRepository(
                     }
                 }
             }.awaitAll()
+            // A switch away cancels this sync; a batch already fetched must
+            // not be written on the way out.
+            ensureActive()
             dao.replaceAlbumTracks(
                 batch.map { it.id },
                 fetched.flatten().map { it.toEntity() },
@@ -1089,7 +1176,10 @@ class LibraryRepository(
                 val songs = fetched.getOrNull(index)?.size ?: 0
                 album.copy(songCount = songs).takeIf { album.songCount == 0 && songs > 0 }
             }
-            if (counted.isNotEmpty()) dao.upsertAlbums(counted.map { it.toEntity() })
+            // With its library tag: an upsert replaces the whole row, and a
+            // row written back without its tag is an album that then shows
+            // in every library — see allAlbums.
+            if (counted.isNotEmpty()) dao.upsertAlbums(counted.map { it.toEntity(libraryOf[it.id]) })
         }
     }
 
@@ -1218,22 +1308,81 @@ class LibraryRepository(
      *
      * Navidrome answers `getTopSongs` from its Last.fm agent and matches the
      * results back onto the library, so this is a short top-tracks list rather
-     * than the full discography — shuffling it stays within those songs. Server
-     * rows are swapped for cached ones where possible so likes and play counts
-     * agree with the rest of the UI. Empty when Last.fm isn't configured.
+     * than the full discography — shuffling it stays within those songs.
+     *
+     * Kept in the source's database once fetched, so an artist's page opens
+     * with the row already there — and still has it offline, narrowed to what
+     * is downloaded like every other list. Popularity drifts over weeks, not
+     * minutes, so a stored list is served as it stands and refreshed in the
+     * background once it is older than [TOP_SONGS_TTL_MS]. Only ids are
+     * stored: they are matched back onto the library's own rows, so likes and
+     * play counts agree with the rest of the UI, and a song the library
+     * doesn't hold is left out rather than written in.
+     *
+     * An empty answer is never stored. It means either "this server ranks
+     * nothing" or "the server couldn't be reached just then", and the two are
+     * indistinguishable here — keeping it would turn a moment's failure into a
+     * row that stays missing.
      */
     suspend fun topSongsForArtist(name: String): List<Track> {
         topSongs[name]?.let { return it }
+        val stored = runCatching { dao.topSongs(name) }.getOrDefault(emptyList())
+        if (stored.isNotEmpty()) {
+            val byId = tracks.value.associateBy { it.id }
+            val held = stored.mapNotNull { byId[it.trackId] }
+            val stale = System.currentTimeMillis() - stored.first().fetchedAtMs > TOP_SONGS_TTL_MS
+            if (stale && !offline.value && serverClient.value != null) {
+                scope.launch { refreshTopSongs(name) }
+            }
+            if (held.isNotEmpty()) {
+                topSongs[name] = held
+                return held
+            }
+            // Stored, but none of it is here to play — offline with nothing of
+            // theirs downloaded. Online, ask again rather than show nothing.
+            if (offline.value) return emptyList()
+        }
+        return refreshTopSongs(name)
+    }
+
+    /** Ask the server, store what it says, answer with the library's own rows. */
+    private suspend fun refreshTopSongs(name: String): List<Track> {
+        val client = serverClient.value ?: return emptyList()
+        val answered = runCatching { client.getTopSongs(name) }.getOrDefault(emptyList())
+        if (answered.isEmpty()) return emptyList()
+        val now = System.currentTimeMillis()
+        runCatching {
+            dao.replaceTopSongs(name, answered.mapIndexed { i, t -> TopSongEntity(name, i, t.id, now) })
+        }
+        val byId = tracks.value.associateBy { it.id }
+        // Fresh from the server, a song the library doesn't hold is still shown
+        // this once — it plays through the server like any other.
+        val result = answered.map { byId[it.id] ?: it }
+        topSongs[name] = result
+        return result
+    }
+
+    /**
+     * A radio seeded by [seed]: the song itself, then what the server thinks
+     * follows from it.
+     *
+     * The seed leads because it is the song that was chosen — a radio that opens
+     * on something else has already wandered off. Server rows are swapped for
+     * cached ones so likes, play counts and downloads agree with the rest of the
+     * UI, and the seed is dropped from the server's answer so it can't play
+     * twice. Empty when the server has nothing: the caller says so, rather than
+     * shuffling the library and calling it radio.
+     */
+    suspend fun radioFrom(seed: Track): List<Track> {
         val client = serverClient.value ?: return emptyList()
         val byId = tracks.value.associateBy { it.id }
-        val result = client.getTopSongs(name).map { byId[it.id] ?: it }
-        // Only an answer worth keeping is kept. Empty means either "this server
-        // ranks nothing" or "the server couldn't be reached just then", and the
-        // two are indistinguishable here — caching it would turn a moment's
-        // failure into a section that stays missing for the rest of the session.
-        // The cost of being wrong the other way is one request per artist visit.
-        if (result.isNotEmpty()) topSongs[name] = result
-        return result
+        val answered = client.getSimilarSongs(seed.id, RADIO_LENGTH)
+        val similar = answered
+            .filter { it.id != seed.id }
+            .distinctBy { it.id }
+            .map { byId[it.id] ?: it }
+        android.util.Log.i("AmpRadio", "radio from ${seed.id}: server ${answered.size}, usable ${similar.size}")
+        return if (similar.isEmpty()) emptyList() else listOf(seed) + similar
     }
 
     /** An artist's albums as a discography: oldest release first, undated last. */
@@ -1390,6 +1539,7 @@ class LibraryRepository(
     suspend fun clearCache() {
         dao.clearTracks()
         dao.clearAlbums()
+        dao.clearAllTopSongs()
         forgetDerived()
     }
 
@@ -1495,3 +1645,9 @@ class LibraryRepository(
             compareBy({ it.discNumber ?: 0 }, { it.trackNumber ?: 0 }, { it.title.lowercase() })
     }
 }
+
+/** How many songs a radio asks the server for — Subsonic's own default. */
+private const val RADIO_LENGTH = 50
+
+/** How long a stored popular-songs list is served before being refreshed. */
+private const val TOP_SONGS_TTL_MS = 7L * 24 * 60 * 60 * 1000

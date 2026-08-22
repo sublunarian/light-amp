@@ -18,7 +18,8 @@ import kotlinx.coroutines.launch
  *
  * Separate from the ••• menu rather than folded into it — that one is about the
  * track (lyrics, artist, album, artwork), while these are the ways of keeping it:
- * liked, in a playlist, rated, or on the device.
+ * liked, in a playlist, rated, or on the device — and, for a queue worth
+ * keeping whole, the queue itself as a playlist.
  */
 class AddActionsScreen(
     sealed: SealedLightActivity,
@@ -40,6 +41,8 @@ class AddActionsScreen(
         val track = tracks.firstOrNull { it.id == id } ?: playing?.takeIf { it.id == id }
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val downloaded = id in downloadedIds
+        val queue by App.playback.queue.collectAsState()
+        val queueName by App.playback.queueName.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = track?.title ?: "Track", subtitle = track?.artist) {
             if (track == null) {
@@ -63,6 +66,31 @@ class AddActionsScreen(
                         navigateTo<Unit>(
                             { AddToPlaylistScreen(it, track.id) },
                             resultCallback = { goBack() },
+                        )
+                    }
+                }
+                // The whole queue, kept. This is how a song radio becomes
+                // something you can come back to — or download — instead of
+                // the app guessing which radios to cache: you hear it, you
+                // decide. The name is offered where the queue has one ("Judith
+                // Radio") and left to you where it is just some songs.
+                if (source.supportsPlaylists && queue.isNotEmpty()) {
+                    TextRow(title = "Save Queue as Playlist") {
+                        val ids = queue.map { it.id }
+                        navigateTo<String?>(
+                            {
+                                TextEntryScreen(
+                                    it,
+                                    title = "Playlist Name",
+                                    initial = queueName.orEmpty(),
+                                )
+                            },
+                            resultCallback = { name ->
+                                if (!name.isNullOrBlank()) {
+                                    App.scope.launch { App.library.createPlaylist(name, ids) }
+                                    goBack()
+                                }
+                            },
                         )
                     }
                 }

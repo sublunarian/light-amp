@@ -23,6 +23,12 @@ class PlaylistActionsScreen(
     sealed: SealedLightActivity,
     private val playlistId: String,
     private val playlistName: String,
+    /**
+     * Opened from the playlist's own page rather than its row in a list.
+     * Delete then has to unwind past that page — going back one level would
+     * land on the page of a playlist that no longer exists.
+     */
+    private val fromDetail: Boolean = false,
 ) : SimpleLightScreen<Unit>(sealed) {
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
@@ -80,7 +86,7 @@ class PlaylistActionsScreen(
                     TextRow(title = if (confirmDelete) "Tap again to delete" else "Delete Playlist") {
                         if (confirmDelete) {
                             App.scope.launch { App.library.deletePlaylist(playlistId) }
-                            goBack()
+                            if (fromDetail) popToRoot() else goBack()
                         } else {
                             confirmDelete = true
                         }

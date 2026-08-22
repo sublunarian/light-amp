@@ -7,11 +7,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
-import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.newSourceId
@@ -104,11 +102,6 @@ class ServerScreen(
             if (url == null) url = current.baseUrl
             if (user == null) user = current.username
         }
-                var folders by remember { mutableStateOf<List<MusicFolder>>(emptyList()) }
-        LaunchedEffect(source?.id) {
-            folders = if (source?.supportsLibraries == true) App.library.musicFolders() else emptyList()
-        }
-        val libraryName = folders.firstOrNull { it.id == source?.libraryId }?.name ?: "All Libraries"
 
         val address = url.orEmpty()
         val name = user.orEmpty()
@@ -178,20 +171,10 @@ class ServerScreen(
                         },
                     )
                 }
-                // Quality lives on the source's own page now, next to the
-                // download setting it pairs with; this screen is about how the
-                // server is reached. The library picker stays because it is only
-                // meaningful for a server that is being browsed.
-                if (source != null && source.id == active?.id) {
-                    item { SectionLabel("Playback") }
-                    item {
-                        TextRow(
-                            title = "Library",
-                            subtitle = libraryName,
-                            onClick = { go { LibraryFolderScreen(it) } },
-                        )
-                    }
-                }
+                // Only how the server is reached, nothing about what it plays:
+                // quality lives on Data and Offline, and choosing a library is
+                // the Sources page under More — this form's job ends at the
+                // connection working.
                 item { SectionLabel("Connection") }
                 item {
                     TextRow(

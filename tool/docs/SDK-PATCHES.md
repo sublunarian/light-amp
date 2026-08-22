@@ -3,11 +3,11 @@
 Amp needs some changes to `sdk/client` in Light's repository. They fall into
 two groups, and the difference matters.
 
-**Additions** (§1–8) are small, self-contained and would be reasonable in the SDK
+**Additions** (§1–9) are small, self-contained and would be reasonable in the SDK
 as it stands. Every one is marked in the source with
 `SDK PATCH (additive, upstreamable)`.
 
-**Workarounds** (§9–13) exist only because there is no supported route. Every one
+**Workarounds** (§10–14) exist only because there is no supported route. Every one
 is marked `SPIKE` or `TEMPORARY`, carries revert instructions in its own comment,
 and must come out before a tool is submitted. What each is standing in for is
 explained in [SDK-GAPS.md](SDK-GAPS.md).
@@ -149,35 +149,46 @@ mp3 when the file is already mp3 and it sends the file untouched — then ignore
 it can, the server ignores it, and the track silently restarts while the
 position readout insists the seek landed.
 
+### 9. `hasRuntimePermission(permission)` — `LightPermissions.kt`
+
+Whether this process holds a permission, from the process itself. The SDK's
+`checkPermission` asks the server, and the server answers from its own policy
+before it looks at the grant — `BlockedByServer` where the tool isn't meant to
+have it, `Unknown` where it can't say. What decides whether a file can be read
+is the grant, which the user may have made in Android's own settings without
+the server hearing of it. A tool with only the server's answer told such a
+phone to allow access it already had, and sent it to a prompt with nothing to
+change. Exposes `LightServiceConnection.applicationContext` (internal) to ask.
+
 ## Workarounds
 
 Each of these is described in full — what it's standing in for, and how to
 remove it — in [SDK-GAPS.md](SDK-GAPS.md). In brief:
 
-### 9. `audio/LightMediaService.kt` + manifest
+### 10. `audio/LightMediaService.kt` + manifest
 
 Foreground `MediaSessionService` so audio survives the screen going off.
 Also declares `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_MEDIA_PLAYBACK`.
 
-### 10. `transfer/LightTransferService.kt` + manifest
+### 11. `transfer/LightTransferService.kt` + manifest
 
 `dataSync` foreground service so downloads aren't throttled ~9× when the tool is
 backgrounded.
 
-### 11. `LightActivity` — volume key pass-through
+### 12. `LightActivity` — volume key pass-through
 
 Lets hardware volume keys reach the system so the media session can route them,
 which is what makes the rocker control a cast renderer rather than a silent
 local player.
 
-### 12. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
+### 13. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
 
 Switches LightOS's device-wide greyscale filter off while the tool is in front.
 Needs `WRITE_SECURE_SETTINGS`, declared in the `debug` and `release` manifest
 overlays but never in `src/main` — the plugin validates `src/main` only, so it
 cannot reach a submitted build.
 
-### 13. `cast/DlnaCast.kt`
+### 14. `cast/DlnaCast.kt`
 
 SSDP discovery and SOAP control, written by hand because the sandbox blocks the
 libraries that would normally do this.

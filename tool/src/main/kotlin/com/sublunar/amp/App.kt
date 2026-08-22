@@ -154,12 +154,61 @@ object App {
      */
     suspend fun forgetSource(source: MusicSource) {
         val db = databaseFor(source)
+        // Named before the tables go: the covers on disk can only be found
+        // through the ids this database holds — see ArtworkLoader.forget.
+        val covers = runCatching { db.libraryDao().allCoverArtIds() }.getOrDefault(emptyList())
         db.libraryDao().apply {
             clearTracks()
             clearAlbums()
             clearLikedArtists()
             clearDownloads()
+            clearAllTopSongs()
         }
+        downloads.deleteSource(source.id)
+        artwork.forget(source.id, covers)
+    }
+
+    /**
+     * The cover files the artwork budget must never evict: one per downloaded
+     * song's album, across every source. These are the offline sleeves, and
+     * they are tied to their songs — removing the downloads is what frees them,
+     * not the budget.
+     */
+    private suspend fun protectedCoverFiles(): Set<String> =
+        settings.sources.first().flatMap { source ->
+            runCatching { databaseFor(source).libraryDao().downloadedCoverArtIds() }
+                .getOrDefault(emptyList())
+                .map { artwork.fileNameFor(source.id, it) }
+        }.toSet()
+
+    /**
+     * Delete every source's downloaded audio, whichever source is active.
+     *
+     * The Offline page's Delete All row. The downloader can't do this: it is
+     * bound to the active source's index and folder, so asking it would empty
+     * whichever source happens to be playing rather than the phone. This walks
+     * all of them the way [forgetSource] does.
+     */
+    suspend fun deleteAllDownloads() {
+        downloader.cancelAll()
+        settings.sources.first().forEach { wipeDownloads(it) }
+    }
+
+    /**
+     * Delete one source's downloaded audio — the per-server Delete on the
+     * Offline page. The download queue is only cancelled when it is this
+     * source's queue: the downloader drains the active source, and another
+     * server's fetches shouldn't stop because this one was emptied.
+     */
+    suspend fun deleteDownloadsFor(source: MusicSource) {
+        if (source.id == _source.value.id) downloader.cancelAll()
+        wipeDownloads(source)
+    }
+
+    private suspend fun wipeDownloads(source: MusicSource) {
+        // A database that won't open shouldn't save its files: the bytes are
+        // what fills the phone, and the index is rebuilt from them.
+        runCatching { databaseFor(source).libraryDao().clearDownloads() }
         downloads.deleteSource(source.id)
     }
 
@@ -261,18 +310,13 @@ object App {
                 }
             }
             scope.launch { downloader.setUserPaused(settings.downloadsPaused.first()) }
-            // The colour workaround's switch. See LightDisplayColor: this is an
-            // off-SDK spike, and this is what turns it off again.
-            //
-            // Hidden artwork forces it off regardless: with no covers on screen
-            // there is nothing for colour to do, and the control that would turn
-            // it back on isn't visible either — leaving the device switched to
-            // colour from a setting the user can no longer see would be the
-            // worst of both.
+            // The colour workaround follows the artwork switch. See LightDisplayColor:
+            // this is an off-SDK spike, and hiding artwork is what turns it off —
+            // with no covers on screen there is nothing for colour to do. It used
+            // to have a switch of its own ("Monochrome Artwork"); a sleeve you
+            // chose to see is a sleeve you want in colour, so the switch went.
             scope.launch {
-                combine(settings.monochromeArtwork, settings.artwork) { mono, artwork ->
-                    !mono && artwork != ArtworkMode.NONE
-                }.collect { LightDisplayColor.enabled = it }
+                settings.artwork.collect { LightDisplayColor.enabled = it != ArtworkMode.NONE }
             }
             // A refused login is not the server being gone. Marking it
             // unreachable narrows the library to downloads, which on a source
@@ -365,6 +409,18 @@ object App {
             // schema bump wipes the table, and without this the app would re-fetch
             // audio it already has.
             scope.launch { downloader.reindexFromDisk() }
+            // The artwork budget, applied at launch — which is also what trims an
+            // install from before there was one. Tracks are pointed at their
+            // album's cover first, so the protected set is one file per
+            // downloaded album rather than one per downloaded song, and the
+            // per-song copies fall to the budget. See ArtworkLoader.trimToBudget.
+            scope.launch {
+                settings.sources.first().forEach { source ->
+                    runCatching { databaseFor(source).libraryDao().collapseTrackCovers() }
+                        .onSuccess { if (it > 0) android.util.Log.i("AmpArt", "${source.name}: $it tracks now share their album's cover") }
+                }
+                artwork.trimToBudget(protectedCoverFiles())
+            }
             // Downloads yield to the sync: both hit the same server, and the sync
             // is hundreds of small sequential requests that a saturated
             // transcoder turns into a crawl.
@@ -575,8 +631,10 @@ object App {
      * wholesale, so the one place that reads it needs only the one answer.
      */
     val hideArtistImages: StateFlow<Boolean> by lazy {
+        // Initial matches the stored default, so the first frame doesn't flash
+        // a row of photos that are about to be hidden.
         combine(settings.hideArtistImages, hideArtwork) { off, all -> off || all }
-            .stateIn(scope, SharingStarted.Eagerly, false)
+            .stateIn(scope, SharingStarted.Eagerly, true)
     }
 
     /**
@@ -589,10 +647,13 @@ object App {
     }
 
     val sortedAlbums: StateFlow<SortedView<Album>> by lazy {
-        combine(library.albums, albumSort, albumSortReversed, likedAlbumsOnly, albumsMatchingTags) {
-                list, sort, rev, liked, tagged ->
+        // The three order settings fold into one flow first: combine takes five
+        // flows at most, and the reshuffle nonce made six.
+        val order = combine(albumSort, albumSortReversed, settings.shuffleNonce, ::Triple)
+        combine(library.albums, order, likedAlbumsOnly, albumsMatchingTags) {
+                list, (sort, rev, nonce), liked, tagged ->
             val narrowed = list.filter { (!liked || it.liked) && (tagged == null || it.id in tagged) }
-            val sorted = sortAlbums(narrowed, sort, rev)
+            val sorted = sortAlbums(narrowed, sort, rev, nonce)
             // The bucket follows whatever the list is ordered by, so sorting by
             // artist gives an index over artist names rather than no index at all.
             // Both use the same key the sort itself used, or the letters would
@@ -650,7 +711,16 @@ object App {
         // already downloaded".
         val tracks = library.downloadableTracks.value
         if (tracks.isEmpty()) return
-        val playlistTrackIds = library.playlists.value.flatMap { it.trackIds }.toSet()
+        // Playlists count in both modes — Favorites promises them outright, and
+        // Everything fetches them first — so what they hold has to be known
+        // here, not just on the Playlists tab. The list is fetched if it
+        // hasn't been yet, then each playlist's songs, once: no server sends
+        // membership with the list, and reading Playlist.trackIds — always
+        // empty for a server playlist — had both modes quietly downloading no
+        // playlist at all.
+        if (library.playlists.value.isEmpty()) runCatching { library.refreshPlaylists() }
+        runCatching { library.primePlaylistTrackIds(library.playlists.value.map { it.id }) }
+        val playlistTrackIds = library.playlistTrackIds.value.values.flatten().toHashSet()
         downloader.applyAutoMode(
             allTracks = tracks,
             likedTracks = tracks.filter { it.liked },

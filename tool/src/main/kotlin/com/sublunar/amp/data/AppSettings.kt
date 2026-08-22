@@ -349,6 +349,18 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     val artistSortReversed: Flow<Boolean> = boolFlow(ARTIST_SORT_REV, false)
     val playlistSortReversed: Flow<Boolean> = boolFlow(PLAYLIST_SORT_REV, false)
 
+    /**
+     * Bumped each time Random is re-tapped for a new deal — see sortAlbums,
+     * whose shuffle is otherwise seeded by the library alone and would hand the
+     * same order back forever.
+     */
+    val shuffleNonce: Flow<Int> =
+        dataStore.data.map { it[SHUFFLE_NONCE] ?: 0 }.distinctUntilChanged()
+
+    suspend fun bumpShuffleNonce() {
+        dataStore.edit { it[SHUFFLE_NONCE] = (it[SHUFFLE_NONCE] ?: 0) + 1 }
+    }
+
     // --- Offline / downloads -------------------------------------------------
 
     /**
@@ -447,8 +459,11 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * reads as broken rather than as sparse. With them off the artist rows fall
      * back to the tighter single-line pitch, exactly as they do with artwork
      * switched off altogether.
+     *
+     * Hidden by default — the publicity shots have to be asked for. Only the
+     * default moved: a value the toggle ever stored still wins.
      */
-    val hideArtistImages: Flow<Boolean> = boolFlow(HIDE_ARTIST_IMAGES, false)
+    val hideArtistImages: Flow<Boolean> = boolFlow(HIDE_ARTIST_IMAGES, true)
 
     /**
      * Stop marking downloaded rows.
@@ -463,15 +478,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      */
     val hideDownloadIcons: Flow<Boolean> = boolFlow(HIDE_DOWNLOAD_ICONS, false)
 
-
-    /**
-     * Artwork stays grey — the app's own switch over the display workaround.
-     *
-     * On by default, because turning it off changes the whole device's colour
-     * filter for as long as the app is in front, and because without the adb
-     * grant behind it there is nothing it can do. See LightDisplayColor.
-     */
-    val monochromeArtwork: Flow<Boolean> = boolFlow(MONOCHROME_ARTWORK, true)
 
     /**
      * The queue as it stood when the app last went away: track ids, the index into
@@ -555,7 +561,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setHideArtistImages(value: Boolean) = putBool(HIDE_ARTIST_IMAGES, value)
     suspend fun setHideDownloadIcons(value: Boolean) = putBool(HIDE_DOWNLOAD_ICONS, value)
 
-    suspend fun setMonochromeArtwork(value: Boolean) = putBool(MONOCHROME_ARTWORK, value)
     suspend fun setArtwork(value: ArtworkMode) = putString(ARTWORK, value.name)
     suspend fun setDownloadsPaused(value: Boolean) = putBool(DOWNLOADS_PAUSED, value)
     suspend fun setLayoutMode(value: LayoutMode) = putString(LAYOUT_MODE, value.name)
@@ -635,6 +640,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val SONG_SORT_REV = booleanPreferencesKey("pref.songSortReversed")
         private val ARTIST_SORT_REV = booleanPreferencesKey("pref.artistSortReversed")
         private val PLAYLIST_SORT_REV = booleanPreferencesKey("pref.playlistSortReversed")
+        private val SHUFFLE_NONCE = intPreferencesKey("pref.shuffleNonce")
 
         private val INVERT_COLORS = booleanPreferencesKey("pref.invertColors")
         private val KARAOKE_LYRICS = booleanPreferencesKey("pref.karaokeLyrics")
@@ -642,7 +648,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val ARTIST_ALBUM_GRID = booleanPreferencesKey("pref.artistAlbumGrid")
         private val HIDE_ARTIST_IMAGES = booleanPreferencesKey("pref.hideArtistImages")
         private val HIDE_DOWNLOAD_ICONS = booleanPreferencesKey("pref.hideDownloadIcons")
-        private val MONOCHROME_ARTWORK = booleanPreferencesKey("pref.monochromeArtwork")
         private val ARTWORK = stringPreferencesKey("pref.artworkMode")
         private val LAYOUT_MODE = stringPreferencesKey("pref.layoutMode")
         private val LAST_SECTION = stringPreferencesKey("pref.lastSection")

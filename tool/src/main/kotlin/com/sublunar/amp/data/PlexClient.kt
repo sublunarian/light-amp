@@ -14,6 +14,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * A Plex Media Server's music library, behind the same [MusicServer] interface
@@ -55,16 +60,33 @@ class PlexClient(
 
     // --- Requests ------------------------------------------------------------
 
-    private suspend fun fetch(path: String, params: List<Pair<String, String>> = emptyList()): PlexResponse {
+    private suspend fun fetch(path: String, params: List<Pair<String, String>> = emptyList()): PlexResponse =
+        decode(rawBody(path, params))
+
+    /** The body as text, for the one answer whose shape isn't declared — see [stationKeyFor]. */
+    private suspend fun rawBody(path: String, params: List<Pair<String, String>> = emptyList()): String {
         val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
         val url = baseUrl.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
         val response = http.get(url) { plexHeaders() }
         if (!response.status.isSuccess()) {
             throw PlexException("Plex says ${response.status.value} for $path")
         }
-        val text = response.bodyAsText()
-        return if (text.isBlank()) PlexResponse() else json.decodeFromString(text)
+        return response.bodyAsText()
     }
+
+    /** A POST whose answer matters — creating a play queue hands its items back. */
+    private suspend fun rawPost(path: String, params: List<Pair<String, String>> = emptyList()): String {
+        val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
+        val url = baseUrl.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
+        val response = http.post(url) { plexHeaders() }
+        if (!response.status.isSuccess()) {
+            throw PlexException("Plex says ${response.status.value} for $path")
+        }
+        return response.bodyAsText()
+    }
+
+    private fun decode(text: String): PlexResponse =
+        if (text.isBlank()) PlexResponse() else json.decodeFromString(text)
 
     private suspend fun send(method: String, path: String, params: List<Pair<String, String>> = emptyList()) {
         val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
@@ -267,6 +289,142 @@ class PlexClient(
 
     override suspend fun getAlbumTracks(albumId: String): List<Track> =
         fetch("/library/metadata/$albumId/children").container.metadata.map { it.toTrack() }
+
+    /**
+     * Plex has two answers to "songs like this one", and either is taken.
+     *
+     * The first is the station it builds for the track — `includeStations=1`
+     * on the track's metadata names it, and a play queue created from the
+     * station's key is how any station hands out its songs (python-plexapi's
+     * `Artist.station()` + `PlayQueue.fromStationKey`, with the key's own
+     * `?type=10` kept). The second is the tracks it judges nearest, where the
+     * server has done its sonic analysis — what Plexamp's Track Radio draws
+     * on. Both are Plex's own judgement of the same question, so whichever the
+     * server can answer is the radio; what it answered is logged under
+     * `AmpRadio`, because neither could be verified here against a live server.
+     * Empty when it has neither — the caller says so; nothing plays instead.
+     */
+    override suspend fun getSimilarSongs(songId: String, count: Int): List<Track> {
+        val limit = if (count > 0) count else RADIO_DEFAULT
+        // Three askings, each Plex's own, most song-specific first. On the
+        // server this was checked against, a track carries no station and
+        // `nearest` answers nothing (sonic analysis is a Plex Pass feature),
+        // and the artist's station is what Plex actually has — which is also
+        // what Navidrome's song radio is underneath: the song's artist and the
+        // artists like them.
+        val own = runCatching { stationTracks(songId, "track") }
+            .onFailure { android.util.Log.w(RADIO_TAG, "plex track station failed: ${it.message}") }
+            .getOrDefault(StationAnswer())
+        if (own.tracks.isNotEmpty()) return own.tracks.take(limit)
+        val nearest = runCatching { nearestTracks(songId, limit) }
+            .onFailure { android.util.Log.w(RADIO_TAG, "plex nearest failed: ${it.message}") }
+            .getOrDefault(emptyList())
+        android.util.Log.i(RADIO_TAG, "plex nearest: ${nearest.size} tracks for $songId")
+        if (nearest.isNotEmpty()) return nearest
+        val artist = own.grandparentRatingKey ?: return emptyList()
+        // A station hands out a few songs at a time — five, on the server this
+        // was checked against — and expects the client to report its position
+        // and be topped up as it plays. This client reads once, so it asks a
+        // few times instead: every ask mints a fresh station (the key's uuid
+        // differs each time) with a fresh handful, merged here until there is
+        // enough for a radio or an ask brings nothing new.
+        val merged = LinkedHashMap<String, Track>()
+        for (ask in 1..STATION_ASKS) {
+            val answer = runCatching { stationTracks(artist, "artist") }
+                .onFailure { android.util.Log.w(RADIO_TAG, "plex artist station failed: ${it.message}") }
+                .getOrDefault(StationAnswer())
+            val before = merged.size
+            answer.tracks.forEach { merged.putIfAbsent(it.id, it) }
+            if (merged.size == before || merged.size >= limit) break
+        }
+        android.util.Log.i(RADIO_TAG, "plex artist radio: ${merged.size} tracks after up to $STATION_ASKS asks")
+        return merged.values.take(limit)
+    }
+
+    /** What asking an item for its station came to, plus the artist it named. */
+    private class StationAnswer(
+        val tracks: List<Track> = emptyList(),
+        val grandparentRatingKey: String? = null,
+    )
+
+    /** An item's station, read once as a play queue; no tracks when it has none. */
+    private suspend fun stationTracks(ratingKey: String, what: String): StationAnswer {
+        val text = rawBody("/library/metadata/$ratingKey", listOf("includeStations" to "1"))
+        val tree = json.parseToJsonElement(text)
+        val stationKey = findStationKey(tree)
+        val artistKey = findString(tree, "grandparentRatingKey")
+        android.util.Log.i(RADIO_TAG, "plex $what $ratingKey: station=${stationKey != null}, artist=$artistKey")
+        if (stationKey == null) return StationAnswer(grandparentRatingKey = artistKey)
+        val machine = machineIdentifier.ifBlank { identity().orEmpty() }
+        if (machine.isBlank()) {
+            android.util.Log.w(RADIO_TAG, "plex: no machine identifier, can't build the queue")
+            return StationAnswer(grandparentRatingKey = artistKey)
+        }
+        // Read once rather than followed: `continuous` keeps Plex topping the
+        // queue up for clients that report their position back, and this one
+        // doesn't.
+        val queueText = rawPost(
+            "/playQueues",
+            listOf(
+                "type" to "audio",
+                "uri" to "server://$machine/$LIBRARY_IDENTIFIER$stationKey",
+                "continuous" to "1",
+                "shuffle" to "0",
+                "repeat" to "0",
+                "includeChapters" to "0",
+            ),
+        )
+        var tracks = decode(queueText).container.metadata.filter { it.type == "track" }.map { it.toTrack() }
+        val queueTree = json.parseToJsonElement(queueText)
+        val queueId = findString(queueTree, "playQueueID")
+        android.util.Log.i(
+            RADIO_TAG,
+            "plex $what station queue $queueId: ${tracks.size} tracks, " +
+                "total=${findString(queueTree, "playQueueTotalCount")}",
+        )
+        // Checked once, logged: whether re-reading a continuous queue with a
+        // wide window is what makes Plex generate more of it.
+        if (queueId != null) {
+            val wider = runCatching {
+                fetch("/playQueues/$queueId", listOf("window" to "100", "includeChapters" to "0"))
+                    .container.metadata.filter { it.type == "track" }.map { it.toTrack() }
+            }.getOrDefault(emptyList())
+            android.util.Log.i(RADIO_TAG, "plex queue $queueId re-read, window=100: ${wider.size} tracks")
+            if (wider.size > tracks.size) tracks = wider
+        }
+        return StationAnswer(tracks, artistKey)
+    }
+
+    /** Sonically nearest tracks — python-plexapi's `sonicallySimilar`. */
+    private suspend fun nearestTracks(ratingKey: String, limit: Int): List<Track> =
+        fetch("/library/metadata/$ratingKey/nearest", listOf("limit" to limit.toString()))
+            .container.metadata.filter { it.type == "track" }.map { it.toTrack() }
+
+    /**
+     * Walked rather than declared: Plex nests its Stations block differently
+     * between XML and JSON, and the one stable fact is a playlist entry whose
+     * key says `/station/`. The first such key is the track's own station.
+     */
+    /** The first string under [name] anywhere in the tree. */
+    private fun findString(node: JsonElement, name: String): String? = when (node) {
+        is JsonObject -> (node[name] as? JsonPrimitive)?.contentOrNull
+            ?: node.values.firstNotNullOfOrNull { findString(it, name) }
+        is JsonArray -> node.firstNotNullOfOrNull { findString(it, name) }
+        else -> null
+    }
+
+    private fun findStationKey(node: JsonElement): String? = when (node) {
+        is JsonObject -> {
+            val key = (node["key"] as? JsonPrimitive)?.contentOrNull
+            if (key != null && "/station/" in key) {
+                key
+            } else {
+                node.values.firstNotNullOfOrNull { findStationKey(it) }
+            }
+        }
+        is JsonArray -> node.firstNotNullOfOrNull { findStationKey(it) }
+        else -> null
+    }
 
     // --- Media ---------------------------------------------------------------
 
@@ -685,7 +843,10 @@ class PlexClient(
         album = parentTitle ?: "Unknown Album",
         albumArtist = grandparentTitle ?: "Unknown Artist",
         albumId = parentRatingKey,
-        coverArtId = thumb ?: parentThumb,
+        // The album's sleeve first: a track's own thumb is usually that very
+        // path, and where a file carries its own art it is still the same
+        // picture — keyed by the album it is cached once, not once per song.
+        coverArtId = parentThumb ?: thumb,
         durationMs = duration ?: 0L,
         trackNumber = index,
         discNumber = parentIndex,
@@ -713,6 +874,13 @@ class PlexClient(
         /** Retry budget for the batched playlist-tail add in [reorderPlaylist]. */
         private const val ADD_RETRY_ATTEMPTS = 3
         private const val ADD_RETRY_BASE_MS = 300L
+
+        /** Songs per radio when the caller leaves it to the server. */
+        private const val RADIO_DEFAULT = 50
+        private const val RADIO_TAG = "AmpRadio"
+
+        /** How many fresh stations to deal from before calling the radio full. */
+        private const val STATION_ASKS = 5
 
         /**
          * The original file, or MP3. Plex's universal music transcoder produces

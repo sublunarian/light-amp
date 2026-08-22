@@ -146,10 +146,63 @@ class ArtworkLoader(
         }
     }
 
-    private fun diskFile(coverArtId: String) = File(diskDir, md5Hex("${sourceId()}|$coverArtId"))
+    private fun diskFile(coverArtId: String) = File(diskDir, fileNameFor(sourceId(), coverArtId))
 
-    private fun readDisk(coverArtId: String): ByteArray? =
-        diskFile(coverArtId).takeIf { it.exists() && it.length() > 0 }?.readBytes()
+    private fun readDisk(coverArtId: String): ByteArray? {
+        val file = diskFile(coverArtId).takeIf { it.exists() && it.length() > 0 } ?: return null
+        // Reading is use. The budget evicts by last use, and a read leaves no
+        // mark of its own — so the covers you look at are the ones that stay.
+        file.setLastModified(System.currentTimeMillis())
+        return file.readBytes()
+    }
+
+    /**
+     * Drop one source's covers — on Log Out, with its library.
+     *
+     * Files are named by a hash of source and cover id, so a source's files
+     * can't be told apart on disk; the caller reads the ids out of the
+     * source's own database before that database is cleared, and names them.
+     */
+    suspend fun forget(sourceId: String, coverArtIds: Collection<String>) {
+        withContext(Dispatchers.IO) {
+            coverArtIds.forEach { File(diskDir, fileNameFor(sourceId, it)).delete() }
+        }
+        memory.snapshot().keys.filter { it.startsWith("$sourceId|") }.forEach { memory.remove(it) }
+    }
+
+    /**
+     * Hold the cache to [DISK_BUDGET_BYTES], least recently used first.
+     *
+     * Run once at launch, off the main thread, which is also what brings an
+     * install from before there was a budget down to it: the cache used to
+     * grow for ever, a cover for every album ever scrolled past, and nothing
+     * cleared it. [keep] names the files that must survive whatever the
+     * budget says — the covers of downloaded albums, which are the offline
+     * sleeves and belong to their songs rather than to this cache; they go
+     * when the songs do. See App.protectedCoverFiles.
+     */
+    suspend fun trimToBudget(keep: Set<String>) = withContext(Dispatchers.IO) {
+        val files = diskDir.listFiles().orEmpty().filter { it.isFile }
+        val before = files.sumOf { it.length() }
+        var total = before
+        if (total <= DISK_BUDGET_BYTES) return@withContext
+        var removed = 0
+        for (file in files.filter { it.name !in keep }.sortedBy { it.lastModified() }) {
+            if (total <= DISK_BUDGET_BYTES) break
+            val size = file.length()
+            if (file.delete()) {
+                total -= size
+                removed++
+            }
+        }
+        android.util.Log.i(
+            "AmpArt",
+            "artwork cache trimmed: $removed files, ${before shr 20} MB -> ${total shr 20} MB",
+        )
+    }
+
+    /** The file a cover is kept in, for anything naming files to keep or drop. */
+    fun fileNameFor(sourceId: String, coverArtId: String): String = md5Hex("$sourceId|$coverArtId")
 
     /**
      * Whether these bytes are a picture at all.
@@ -210,7 +263,7 @@ class ArtworkLoader(
         px <= 160 -> 128
         px <= 360 -> 320
         px <= 720 -> 640
-        else -> 1024
+        else -> FETCH_PX
     }
 
     companion object {
@@ -220,14 +273,25 @@ class ArtworkLoader(
          * The size covers are fetched at, whatever they are drawn at.
          *
          * One file per cover, sized for the largest place it is ever shown —
-         * the player's full-width square, which is the screen's own width. Rows
+         * the player's full-width square, which is the screen's own width: the
+         * LP3 panel is 1080px across, so 1080, not a power of two. Rows
          * downsample from the same bytes, so a page of thumbnails costs one
          * fetch each rather than one per size, and an album opened after its row
          * was drawn needs no second trip.
          */
-        private const val FETCH_PX = 1024
+        private const val FETCH_PX = 1080
 
         /** How many covers are fetched at once; the rest wait their turn. */
         private const val FETCH_CONCURRENCY = 4
+
+        /**
+         * What the covers on disk may add up to, beyond the protected ones.
+         *
+         * At [FETCH_PX] a cover runs 90–280 KB, so this holds roughly a
+         * thousand of the most recently seen — several screens of any
+         * library — while a collection of five thousand albums no longer
+         * turns into a gigabyte of sleeves nobody asked to keep.
+         */
+        private const val DISK_BUDGET_BYTES = 200L * 1024 * 1024
     }
 }

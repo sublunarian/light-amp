@@ -477,7 +477,7 @@ private fun TabHeader(tab: LibraryTab, actions: ShellActions) {
             ({ LibraryNav.openSearch(withKeyboard = true) })
         },
         fitTitle = true,
-        rightAction = HeaderAction(AppIcons.Sort) { actions.more(tab.page) },
+        rightAction = HeaderAction(AppIcons.Sort, onLongClick = actions.settings) { actions.more(tab.page) },
     )
 }
 
@@ -893,7 +893,9 @@ private fun LibraryIndex(actions: ShellActions) {
         title = "Library",
         fitTitle = true,
         // The page's own menu, as on every other library page.
-        rightAction = HeaderAction(AppIcons.Sort) { actions.more(LibraryPage.LIBRARY) },
+        rightAction = HeaderAction(AppIcons.Sort, onLongClick = actions.settings) {
+            actions.more(LibraryPage.LIBRARY)
+        },
     )
     ScrollableList(modifier = Modifier.fillMaxSize()) {
         // A source with no server has nowhere to keep a playlist — see

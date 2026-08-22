@@ -81,6 +81,18 @@ interface MusicServer {
      */
     suspend fun getTopSongs(artistName: String, count: Int = 0): List<Track> = emptyList()
 
+    /**
+     * Songs to follow on from this one: a radio seeded by a track.
+     *
+     * Navidrome answers from its Last.fm agent — the track's artist and artists
+     * like them — Plex from the station it builds for the track, and Jellyfin
+     * from its instant mix. Empty where
+     * the server has no such idea, or nothing to say about this track; the
+     * caller tells the user so rather than playing something else instead. A
+     * [count] of 0 means the server's own default, as for [getTopSongs].
+     */
+    suspend fun getSimilarSongs(songId: String, count: Int = 0): List<Track> = emptyList()
+
     // --- Media ---------------------------------------------------------------
 
     fun streamUrl(

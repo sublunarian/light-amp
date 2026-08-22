@@ -9,6 +9,6 @@ fun songSortLabel(sort: SongSort): String = when (sort) {
     SongSort.ARTIST -> "Artist"
     SongSort.DATE_ADDED -> "Recently Added"
     SongSort.RECENTLY_PLAYED -> "Recently Played"
-    SongSort.MOST_PLAYED -> "Plays"
+    SongSort.MOST_PLAYED -> "Frequently Played"
     SongSort.RATING -> "Rating"
 }

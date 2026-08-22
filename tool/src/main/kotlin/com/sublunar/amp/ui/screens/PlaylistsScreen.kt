@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +36,7 @@ import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.LibraryList
 import com.sublunar.amp.ui.components.AppText
+import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.SelectionState
@@ -89,7 +91,13 @@ class PlaylistDetailScreen(
 
         val selection = rememberSelection("playlist:$playlistId")
 
-        LibrarySubPage(LibraryPage.PLAYLIST, playlistName) {
+        // The stored name, not the one this screen was opened with: the corner
+        // menu can rename the playlist while this page is under it, and the
+        // constructor's copy would keep saying the old name until reopened.
+        val liveName = App.library.playlists.collectAsState().value
+            .firstOrNull { it.id == playlistId }?.name ?: playlistName
+
+        LibrarySubPage(LibraryPage.PLAYLIST, liveName) {
             if (selection.active) {
                 SelectionHeader(
                     selection = selection,
@@ -110,8 +118,18 @@ class PlaylistDetailScreen(
             } else {
                 AppHeader(
                     onBack = { goBack() },
-                    title = playlistName,
-                    rightAction = libraryCornerAction(LibraryPage.PLAYLIST, playlistName),
+                    title = liveName,
+                    // The playlist's own menu, not the library's sort: a
+                    // playlist plays in its own order, so the corner that
+                    // offered a dead sort now offers its verbs — play, rename,
+                    // delete. Same menu as a long-press on its row; see the
+                    // album page, which made the same trade.
+                    rightAction = HeaderAction(
+                        AppIcons.MoreVert,
+                        onLongClick = { go { SettingsScreen(it) } },
+                    ) {
+                        go { PlaylistActionsScreen(it, playlistId, liveName, fromDetail = true) }
+                    },
                     fitTitle = true,
                 )
             }

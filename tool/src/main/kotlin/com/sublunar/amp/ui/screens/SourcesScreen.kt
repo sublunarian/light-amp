@@ -13,7 +13,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
-import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.ui.components.AppIcons
@@ -318,7 +317,15 @@ private fun subtitleFor(source: MusicSource): String = when (source.kind) {
         source.baseUrl.ifBlank { "Not connected" }
 }
 
-/** One source's own settings: what it is called, and how it is reached. */
+/**
+ * One source's own settings: what it is called, and how it is reached.
+ *
+ * Nothing else. This page used to carry the source's streaming and download
+ * quality and its offline behaviour too, which buried the connection rows under
+ * knobs that get revisited; those live under Data and Offline now — see
+ * [DataScreen] and [OfflineScreen] — leaving this a page you visit to point the
+ * app at a server and then leave alone.
+ */
 class SourceDetailScreen(
     sealed: SealedLightActivity,
     private val sourceId: String,
@@ -336,8 +343,9 @@ class SourceDetailScreen(
         val sync by App.library.syncState.collectAsState()
         // Re-checked on every sync, because granting access is what the user
         // goes off to do and coming back is when it should have changed.
-        var canRead by remember { mutableStateOf(true) }
-        LaunchedEffect(sync) { canRead = LocalLibrary.permitted() }
+        var access by remember { mutableStateOf(LocalLibrary.Access.GRANTED) }
+        LaunchedEffect(sync) { access = LocalLibrary.access() }
+        val canRead = access == LocalLibrary.Access.GRANTED
         val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Source") {
@@ -350,7 +358,11 @@ class SourceDetailScreen(
                     item {
                         TextRow(
                             title = "Allow Music Access",
-                            subtitle = "Needed to read this phone's music folder",
+                            subtitle = if (access == LocalLibrary.Access.BLOCKED_BY_LIGHTOS) {
+                                "LightOS is blocking it for this tool"
+                            } else {
+                                "Needed to read this phone's music folder"
+                            },
                             onClick = { audioPermission?.launch() },
                         )
                     }
@@ -361,6 +373,17 @@ class SourceDetailScreen(
                             title = "Connection",
                             subtitle = source.baseUrl.ifBlank { "Not set" },
                             onClick = { go { ServerScreen(it, sourceId = source.id) } },
+                        )
+                    }
+                } else if (source.kind != SourceKind.LOCAL) {
+                    // Plex and Jellyfin sign in by token, so there are no fields
+                    // to edit — a different server or account means logging out
+                    // and linking again. The row still answers where the music
+                    // comes from; a stating row takes no press — see TextRow.
+                    item {
+                        TextRow(
+                            title = "Connection",
+                            subtitle = source.baseUrl.ifBlank { "Not set" },
                         )
                     }
                 }
@@ -395,44 +418,6 @@ class SourceDetailScreen(
                         )
                     }
                 }
-                // Both qualities together, and per source: two servers can hold
-                // the same album in different formats and only one of them may
-                // be able to transcode it, so this is a fact about the server
-                // rather than about the app. The phone's own music has neither —
-                // it plays the file that is there.
-                if (source.kind != SourceKind.LOCAL) {
-                    // Streaming twice over, because the two connections are
-                    // different bargains: on Wi-Fi the bytes are free and the
-                    // answer is usually "the best you have", on cellular they
-                    // are not. Stating both beats one setting and a data mode
-                    // that silently overrides it.
-                    item { SectionLabel("Streaming quality") }
-                    item {
-                        TextRow(
-                            title = "On Wi-Fi",
-                            subtitle = formatLabel(source.wifiFormat),
-                            onClick = { go { StreamFormatScreen(it, source.id) } },
-                        )
-                    }
-                    item {
-                        TextRow(
-                            title = "On Cellular",
-                            subtitle = formatLabel(source.cellularFormat),
-                            onClick = { go { CellularFormatScreen(it, source.id) } },
-                        )
-                    }
-                    // Its own heading rather than a third row under Streaming:
-                    // a download is kept, where a stream is heard once, and the
-                    // bargain behind the two is not the same one.
-                    item { SectionLabel("Download quality") }
-                    item {
-                        TextRow(
-                            title = "Downloads",
-                            subtitle = formatLabel(source.downloadFormat),
-                            onClick = { go { SourceDownloadFormatScreen(it, source.id) } },
-                        )
-                    }
-                }
                 // Only worth offering when there is a choice to make: with one
                 // library there is one row under the source and nothing to hide.
                 if (source.libraries.size >= 2) {
@@ -445,42 +430,6 @@ class SourceDetailScreen(
                             subtitle = "$shown of ${source.libraries.size + 1}",
                             onClick = { go { LibraryVisibilityScreen(it, source.id) } },
                         )
-                    }
-                }
-                // What this source fetches without being asked, and how to get
-                // rid of it. These were a page of their own under a "Downloads"
-                // row; there were four settings on it, one of which restated a
-                // choice made above, and reaching any of them took three taps
-                // from Settings.
-                if (source.supportsDownloads) {
-                    item { SectionLabel("Offline") }
-                    item {
-                        TextRow(
-                            title = "Offline Mode",
-                            subtitle = offlineModeLabel(source.offlineMode),
-                            onClick = { go { OfflineModeScreen(it, source.id) } },
-                        )
-                    }
-                    item {
-                        TextRow(title = "Delete All Downloads") {
-                            navigateTo<Boolean>(
-                                {
-                                    ConfirmScreen(
-                                        it,
-                                        title = "Delete All Downloads",
-                                        message = "This removes the downloaded music from " +
-                                            "this phone. Your library on the server is " +
-                                            "untouched.",
-                                        confirmLabel = "Delete",
-                                    )
-                                },
-                                resultCallback = { confirmed ->
-                                    if (confirmed == true) {
-                                        App.scope.launch { App.downloader.deleteEverything() }
-                                    }
-                                },
-                            )
-                        }
                     }
                 }
                 // Refreshing is a thing you do to *this* source, so it belongs
@@ -535,43 +484,3 @@ class SourceDetailScreen(
     }
 }
 
-/** Which of a Subsonic server's music folders this source shows. */
-class LibraryFolderScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
-
-    @Composable
-    override fun Content() {
-        val selected by App.settings.libraryId.collectAsState(initial = null)
-        var folders by remember { mutableStateOf<List<MusicFolder>>(emptyList()) }
-        LaunchedEffect(Unit) { folders = App.library.musicFolders() }
-
-        ListScreen(onBack = { goBack() }, title = "Library") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
-                item { row("All Libraries", selected == null) { choose(null) } }
-                items(folders, key = { it.id }) { folder: MusicFolder ->
-                    row(folder.name, selected == folder.id) { choose(folder.id) }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun row(name: String, chosen: Boolean, onClick: () -> Unit) {
-        TextRow(
-            title = name,
-            onClick = onClick,
-            trailing = { if (chosen) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
-        )
-    }
-
-    private fun choose(id: String?) {
-        App.scope.launch {
-            App.settings.setLibraryId(id)
-            App.library.switchLibrary(id)
-        }
-        goBack()
-    }
-}

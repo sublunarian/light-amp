@@ -56,7 +56,11 @@ fun SimpleLightScreen<*>.libraryCornerAction(
     /** Only where the page's name isn't a constant — see [MoreScreen]. */
     pageTitle: String? = null,
 ): HeaderAction =
-    HeaderAction(AppIcons.Sort) { go { MoreScreen(it, page, pageTitle) } }
+    HeaderAction(
+        AppIcons.Sort,
+        // Held, the corner is the way to Settings from any library page.
+        onLongClick = { go { SettingsScreen(it) } },
+    ) { go { MoreScreen(it, page, pageTitle) } }
 
 
 @Composable
