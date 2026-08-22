@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+### Fixed
+
+- Playing to the end of a queue closed the app, and reopening put you back at
+  the same spot to do it again. Present since 0.3.0.
+
 ## 0.4.0
 
 The first launch trims the artwork cache to 200 MB in the background; covers
@@ -34,8 +41,6 @@ come back as you browse.
 
 ### Fixed
 
-- Playing to the end of a queue could close the app, and reopening put you back
-  at the same spot to do it again.
 - Local Music said it had no access on phones where the permission was granted,
   and Sync Now led back to Allow Music Access.
 - Switching from a cast back to This Device started the song over. It now
