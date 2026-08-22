@@ -62,6 +62,7 @@ import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AppArtwork
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
+import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppProgressBar
 import android.view.KeyEvent
@@ -508,38 +509,33 @@ class NowPlayingScreen(
         val chrome = NowPlayingNav.coverChrome.value
 
         Column(modifier = Modifier.fillMaxSize()) {
-            PlayerHeader(
-                current,
-                left = {
-                    // The same chevron the queue view uses, on the shared edge
-                    // axis — ArrowBackIos draws its glyph left of centre, which
-                    // is what BACK_ICON_BIAS puts right.
-                    AppIcon(
-                        AppIcons.ArrowBackIos,
-                        size = px(BACK_ICON_PX),
-                        modifier = Modifier
-                            .offset(x = px(BACK_BIAS_PX))
-                            .appClickable { goBack() },
-                    )
-                },
-                right = {
-                    AppIcon(
+            // The same header as every other page — 160px bar, 160px corner
+            // squares that take the tap and the hold, icons on the shared edge
+            // axis — with the track card in the title's place. It used to be
+            // a hand-built copy with the taps hung on the glyphs, which left
+            // this one screen with smaller targets and no hold. Kept on OLED
+            // black explicitly: the stage below may be a full-bleed cover.
+            Box(modifier = Modifier.background(LightThemeTokens.colors.background)) {
+                AppHeader(
+                    onBack = { goBack() },
+                    // Nothing in the card's place in hero mode, where the
+                    // title lives on the stage instead — see heroTitle.
+                    titleContent = if (heroTitle) null else ({ TitleCard(current.title, current.artist) }),
+                    rightAction = HeaderAction(
                         AppIcons.MoreVert,
-                        size = px(HEADER_ICON_PX),
-                        modifier = Modifier.appClickable {
-                            openOptions(current.id, artwork, coverOnly)
-                        },
-                    )
-                },
-                showTitle = !heroTitle,
-            )
+                        onLongClick = { go { SettingsScreen(it) } },
+                    ) { openOptions(current.id, artwork, coverOnly) },
+                )
+            }
             Box(modifier = Modifier.fillMaxSize()) {
                 Stage(
                     current,
                     fullBleed = coverOnly,
                     // A tap puts the controls away and brings them back; the
                     // long press that opened the cover closes it, which is how
-                    // the other two layouts leave as well.
+                    // the other two layouts leave as well. (A plain tap that
+                    // toggled the cover itself was tried and rejected — too
+                    // easy, too rewarding, on a phone meant to be light.)
                     onTap = { if (coverOnly) NowPlayingNav.coverChrome.value = !chrome },
                     onLongPress = {
                         NowPlayingNav.coverOnly.value = !coverOnly
@@ -631,30 +627,28 @@ class NowPlayingScreen(
                     },
                 )
             } else {
-                PlayerHeader(
-                    current,
-                    left = {
-                        AppIcon(
-                            AppIcons.ArrowBackIos,
-                            size = px(BACK_ICON_PX),
-                            modifier = Modifier
-                                .offset(x = px(BACK_BIAS_PX))
-                                .appClickable { NowPlayingNav.view.value = NpView.ARTWORK },
-                        )
-                    },
-                    right = {},
-                    // Not the track — that one is on screen already, in the row
-                    // marked as playing. This says which page you are on.
-                    title = "Queue",
-                    // Where in it you are. Only with something playing: a queue
-                    // with nothing current has no "of" to answer, and "0 of 12"
-                    // would be a position no row is at.
-                    subtitle = if (index in queue.indices) {
-                        "${index + 1} of ${queue.size}"
-                    } else {
-                        null
-                    },
-                )
+                Box(modifier = Modifier.background(LightThemeTokens.colors.background)) {
+                    AppHeader(
+                        onBack = { NowPlayingNav.view.value = NpView.ARTWORK },
+                        titleContent = {
+                            QueueTitle(
+                                // Not the track — that one is on screen already,
+                                // in the row marked as playing. This says which
+                                // page you are on.
+                                title = "Queue",
+                                // Where in it you are. Only with something
+                                // playing: a queue with nothing current has no
+                                // "of" to answer, and "0 of 12" would be a
+                                // position no row is at.
+                                subtitle = if (index in queue.indices) {
+                                    "${index + 1} of ${queue.size}"
+                                } else {
+                                    null
+                                },
+                            )
+                        },
+                    )
+                }
             }
             val listState = rememberLazyListState()
             Box(
@@ -709,66 +703,31 @@ class NowPlayingScreen(
     }
 
     /**
-     * 160px of OLED black: back, the two-line title card, then the heart and •••.
+     * The queue view's page title: its name, and where in it you are.
      *
-     * Hand-built rather than [AppHeader]: that one balances its centred title
-     * against an optional search slot this header doesn't have, which would push
-     * the text off the screen's midline. Back and ••• are the library header's
-     * own 160px squares, so both stay where the thumb expects them.
+     * A column even with nothing under it, so a title that gains a second line
+     * doesn't shift up as it arrives.
      */
     @Composable
-    private fun PlayerHeader(
-        current: Track,
-        left: @Composable () -> Unit,
-        right: @Composable () -> Unit,
-        showTitle: Boolean = true,
-        /** A plain page title in the card's place — the queue's own name. */
-        title: String? = null,
-        /** A second line under [title], at the weight the card's own second line uses. */
-        subtitle: String? = null,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(px(HEADER_BAR_PX))
-                .background(LightThemeTokens.colors.background),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            HeaderSlot { left() }
-            if (!showTitle && title == null) {
-                Spacer(Modifier.weight(1f))
-                HeaderSlot { right() }
-                return@Row
+    private fun QueueTitle(title: String, subtitle: String?) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            AppText(
+                title,
+                nSp(20),
+                role = TextRole.Subheading,
+                maxLines = 1,
+                align = TextAlign.Center,
+            )
+            if (subtitle != null) {
+                AppText(
+                    subtitle,
+                    pxSp(QUEUE_SUBTITLE_PX),
+                    lineHeight = pxSp(QUEUE_SUBTITLE_LINE_PX),
+                    dim = true,
+                    maxLines = 1,
+                    align = TextAlign.Center,
+                )
             }
-            // Balances the right-hand square, so the pair centres on the screen.
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                if (title != null) {
-                    // A column even with nothing under it, so a title that
-                    // gains a second line doesn't shift up as it arrives.
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        AppText(
-                            title,
-                            nSp(20),
-                            role = TextRole.Subheading,
-                            maxLines = 1,
-                            align = TextAlign.Center,
-                        )
-                        if (subtitle != null) {
-                            AppText(
-                                subtitle,
-                                pxSp(QUEUE_SUBTITLE_PX),
-                                lineHeight = pxSp(QUEUE_SUBTITLE_LINE_PX),
-                                dim = true,
-                                maxLines = 1,
-                                align = TextAlign.Center,
-                            )
-                        }
-                    }
-                } else {
-                    TitleCard(current.title, current.artist)
-                }
-            }
-            HeaderSlot { right() }
         }
     }
 
@@ -978,11 +937,16 @@ class NowPlayingScreen(
         }
     }
 
-    /** Rewind, play/pause, forward — full white, the only undimmed controls. */
+    /**
+     * Rewind, play/pause, forward — full white, the only undimmed controls.
+     *
+     * Tried with output and queue at its edges and a bigger cover above, as a
+     * switchable layout; dropped — a busier transport bought little when the
+     * full-screen cover is one hold away.
+     */
     @Composable
     private fun BoxScope.TransportRow() {
         val isPlaying by App.playback.isPlaying.collectAsState()
-
         Band(TRANSPORT_UP_PX, TRANSPORT_ROW_PX) {
             Slot(SIDE_X_PX) {
                 ScrubButton(AppIcons.FastRewind, direction = -1, size = px(SEEK_BOX_PX)) {
@@ -1142,10 +1106,10 @@ class NowPlayingScreen(
                 // Only worth offering when there is a cover to enlarge; with
                 // artwork off there is nothing to show.
                 //
-                // In Cover Only it stays as the way back out too. The long press
-                // on the cover toggles it either way, but that gesture is
-                // invisible — the menu is where you look when you don't already
-                // know it exists.
+                // In Cover Only it stays as the way back out too. A hold on the
+                // cover toggles it either way, but that gesture is invisible —
+                // the menu is where you look when you don't already know it
+                // exists.
                 onShowArtwork = if (artworkMode == ArtworkMode.SMALL) {
                     {
                         // Replaces this sheet rather than stacking on it, so back
@@ -1196,8 +1160,6 @@ class NowPlayingScreen(
 private const val SCREEN_W_PX = 1080
 private const val SCREEN_H_PX = 1240
 
-/** Header: the chevron's nudge onto the shared edge axis. */
-private const val BACK_BIAS_PX = 15
 
 /** The clocks under the seek line, in physical pixels. */
 private const val TIME_PX = 36
@@ -1214,6 +1176,14 @@ private const val HERO_TITLE_LINE_PX = 96
 private const val HERO_SIDE_PX = 51
 private const val HERO_SIDE_LINE_PX = 63
 
+/**
+ * The panel the lyrics and a small cover fill: everything on the player between
+ * the header and the seek line. The queue page has no controls to clear, so it
+ * runs deeper — see [QUEUE_END_PX].
+ */
+private const val PANEL_END_PX = 420
+private const val PANEL_H_PX = SCREEN_H_PX - HEADER_BAR_PX - PANEL_END_PX
+
 /** The queue list's bounds: between the header and the shuffle/repeat bar. */
 private const val QUEUE_TOP_PX = HEADER_BAR_PX
 private const val QUEUE_END_PX = HEADER_BAR_PX
@@ -1223,8 +1193,6 @@ private const val QUEUE_END_PX = HEADER_BAR_PX
  * the header and the seek line. The queue page has no controls to clear, so it
  * runs deeper — see [QUEUE_END_PX].
  */
-private const val PANEL_END_PX = 420
-private const val PANEL_H_PX = SCREEN_H_PX - HEADER_BAR_PX - PANEL_END_PX
 
 /** The underline that marks a header toggle as on. */
 private const val UNDERLINE_GAP_PX = 3
@@ -1264,9 +1232,7 @@ private const val SLOT_W_PX = 200
  */
 private const val PLAY_BOX_PX = 138      // 80px of ink
 private const val SEEK_BOX_PX = 114      // 57px
-private const val SECONDARY_BOX_PX = 54  // 40px
-private const val HEADER_ICON_PX = 66
-
+private const val SECONDARY_BOX_PX = 54  
 /** The queue header's second line — the card's own second line, which it sits beside. */
 private const val QUEUE_SUBTITLE_PX = 36
 private const val QUEUE_SUBTITLE_LINE_PX = 42
@@ -1277,7 +1243,6 @@ private const val QUEUE_SUBTITLE_LINE_PX = 42
  * controls, and at header size they read as an afterthought.
  */
 private const val QUEUE_TOGGLE_ICON_PX = 90
-private const val BACK_ICON_PX = 57
 
 /** The tile the queue glyph inverts into while that page is on screen. */
 private const val QUEUE_TILE_PX = 66
@@ -1306,4 +1271,6 @@ private const val ON_COVER_ALPHA = 0.75f
  */
 private const val SCRIM_H_PX = 520
 private const val SCRIM_ALPHA = 0.82f
+
+
 

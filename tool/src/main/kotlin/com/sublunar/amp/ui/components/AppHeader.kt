@@ -27,7 +27,19 @@ import com.sublunar.amp.ui.nSp
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 
-data class HeaderAction(val icon: ImageVector, val onClick: () -> Unit)
+/**
+ * The corner button: what a tap does, and optionally what a hold does.
+ *
+ * [onLongClick] is declared before [onClick] so the trailing-lambda form every
+ * call site uses still names the tap. On library pages the hold is Settings —
+ * one gesture from anywhere, the same 900 ms every other hold in the app takes,
+ * instead of a gear on every page.
+ */
+data class HeaderAction(
+    val icon: ImageVector,
+    val onLongClick: (() -> Unit)? = null,
+    val onClick: () -> Unit,
+)
 
 /**
  * Right-hand geometry when a search button is present.
@@ -219,7 +231,12 @@ fun AppHeader(
             Spacer(Modifier.width(searchGap).height(headerHeight))
         }
         Spacer(Modifier.width(trailingSpacer).height(headerHeight))
-        HeaderSlot(rightSlot, headerHeight, onClick = rightAction?.onClick) {
+        HeaderSlot(
+            rightSlot,
+            headerHeight,
+            onClick = rightAction?.onClick,
+            onLongClick = rightAction?.onLongClick,
+        ) {
             if (rightAction != null) {
                 AppIcon(rightAction.icon, size = px(CORNER_ICON_PX))
             }
@@ -236,13 +253,20 @@ private fun HeaderSlot(
     width: Dp,
     height: Dp,
     onClick: (() -> Unit)?,
+    /** A hold, where the slot has one — the same slow press every row uses. */
+    onLongClick: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
+    val press = when {
+        onLongClick != null -> Modifier.rowClickable(onClick = onClick ?: {}, onLongClick = onLongClick)
+        onClick != null -> Modifier.appClickable(onClick = onClick)
+        else -> Modifier
+    }
     Box(
         modifier = Modifier
             .width(width)
             .height(height)
-            .then(if (onClick != null) Modifier.appClickable(onClick = onClick) else Modifier),
+            .then(press),
         contentAlignment = Alignment.Center,
     ) {
         content()
