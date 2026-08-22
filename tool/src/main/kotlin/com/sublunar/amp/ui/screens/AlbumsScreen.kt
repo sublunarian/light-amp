@@ -11,7 +11,7 @@ fun albumSortLabel(sort: AlbumSort): String = when (sort) {
     AlbumSort.YEAR -> "Date Released"
     AlbumSort.DATE_ADDED -> "Recently Added"
     AlbumSort.RECENTLY_PLAYED -> "Recently Played"
-    AlbumSort.MOST_PLAYED -> "Plays"
+    AlbumSort.MOST_PLAYED -> "Frequently Played"
     AlbumSort.RATING -> "Rating"
     AlbumSort.RANDOM -> "Random"
 }

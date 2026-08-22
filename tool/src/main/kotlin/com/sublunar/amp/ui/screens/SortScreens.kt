@@ -18,6 +18,7 @@ import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.ScrollableList
+import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.n
 import com.thelightphone.sdk.SealedLightActivity
@@ -126,9 +127,15 @@ class TagFilterScreen(
  * Shared body for every "Sort by" menu.
  *
  * Picking a different option applies it and closes; tapping the already-selected
- * option flips the sort direction and also closes, so either way one tap is the
- * whole interaction. The arrow beside the selected option shows which direction
- * is in effect when the menu is reopened.
+ * option flips the sort direction — or deals a new shuffle when that option is
+ * Random — and also closes, so either way one tap is the whole interaction. The
+ * arrow beside the selected option shows which direction is in effect when the
+ * menu is reopened; Random gets no arrow, because a shuffle has no direction.
+ *
+ * The label up top says what the second tap does. The gesture is invisible
+ * otherwise — nothing about a selected row suggests it still answers a tap —
+ * and it is the same idiom the connection form uses for its own hidden verb
+ * ("Tap a field to change it").
  *
  * Closing lands wherever the menu was opened from — the list, for the title
  * tap, or More, which is a panel of modifiers you may well want to set two of
@@ -146,16 +153,27 @@ private fun <T> SortOptions(
     onBack: () -> Unit,
     /** The page being sorted, named under the heading — see [sortedPage]. */
     page: String?,
+    /** The option that shuffles rather than orders, where the menu has one. */
+    isRandom: (T) -> Boolean = { false },
 ) {
     ListScreen(onBack = onBack, title = "Sort by", subtitle = page) {
         ScrollableList(modifier = Modifier.fillMaxSize()) {
+            item {
+                SectionLabel(
+                    if (isRandom(current)) {
+                        "Tap Random again for a new shuffle"
+                    } else {
+                        "Tap the current sort again to reverse it"
+                    },
+                )
+            }
             items(options) { option ->
                 val selected = option == current
                 TextRow(
                     title = label(option),
                     onClick = { if (selected) onFlip() else onSelect(option) },
                     trailing = {
-                        if (selected) {
+                        if (selected && !isRandom(option)) {
                             // `reversed` inverts the option's natural direction.
                             val descending = naturallyDescending(option) != reversed
                             AppIcon(
@@ -181,12 +199,20 @@ class AlbumsSortScreen(
     override fun Content() {
         val current by App.settings.albumSort.collectAsState(initial = AlbumSort.TITLE)
         val reversed by App.settings.albumSortReversed.collectAsState(initial = false)
+        // No Rating where nothing can be rated — the action menus already hide
+        // the star behind supportsRatings, and a sort by all-zeros orders
+        // nothing. Kept while it is the current sort, so a source switch can't
+        // leave the menu with no way to see or leave the order in effect.
+        val supportsRatings = App.source.collectAsState().value.supportsRatings
         SortOptions(
-            options = ALBUM_SORT_OPTIONS,
+            options = ALBUM_SORT_OPTIONS.filter {
+                it != AlbumSort.RATING || supportsRatings || it == current
+            },
             current = current,
             reversed = reversed,
             label = ::albumSortLabel,
             naturallyDescending = { it.descendingByNature },
+            isRandom = { it == AlbumSort.RANDOM },
             onSelect = { option ->
                 App.scope.launch {
                     App.settings.setAlbumSort(option)
@@ -200,7 +226,17 @@ class AlbumsSortScreen(
                 goBack(Unit)
             },
             onFlip = {
-                App.scope.launch { App.settings.setAlbumSortReversed(!reversed) }
+                App.scope.launch {
+                    if (current == AlbumSort.RANDOM) {
+                        // A shuffle has no direction to flip; the second tap
+                        // asks for a new deal. Reversed is cleared too, in case
+                        // an older install flipped Random when that was a thing.
+                        App.settings.bumpShuffleNonce()
+                        App.settings.setAlbumSortReversed(false)
+                    } else {
+                        App.settings.setAlbumSortReversed(!reversed)
+                    }
+                }
                 ScrollAnchors.clear("tab:albums", "albums")
                 goBack(Unit)
             },
@@ -220,8 +256,12 @@ class SongsSortScreen(
     override fun Content() {
         val current by App.settings.songSort.collectAsState(initial = SongSort.TITLE)
         val reversed by App.settings.songSortReversed.collectAsState(initial = false)
+        // Same gate as the albums menu — see AlbumsSortScreen.
+        val supportsRatings = App.source.collectAsState().value.supportsRatings
         SortOptions(
-            options = SONG_SORT_OPTIONS,
+            options = SONG_SORT_OPTIONS.filter {
+                it != SongSort.RATING || supportsRatings || it == current
+            },
             current = current,
             reversed = reversed,
             label = ::songSortLabel,
@@ -323,7 +363,7 @@ class PlaylistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>
 
 fun artistSortLabel(sort: ArtistSort): String = when (sort) {
     ArtistSort.NAME -> "Name"
-    ArtistSort.MOST_PLAYED -> "Plays"
+    ArtistSort.MOST_PLAYED -> "Frequently Played"
 }
 
 fun playlistSortLabel(sort: PlaylistSort): String = when (sort) {

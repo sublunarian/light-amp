@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.BuildConfig
+import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.PlaylistSort
 import com.sublunar.amp.data.descendingByNature
@@ -247,7 +248,13 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
     LibraryPage.ALBUMS -> {
         val sort by App.albumSort.collectAsState()
         val reversed by App.albumSortReversed.collectAsState()
-        sortable(albumSortLabel(sort), sort.descendingByNature, reversed) {
+        sortable(
+            albumSortLabel(sort),
+            sort.descendingByNature,
+            reversed,
+            // A shuffle has no direction for the arrow to claim.
+            directionless = sort == AlbumSort.RANDOM,
+        ) {
             AlbumsSortScreen(it)
         }
     }
@@ -281,7 +288,7 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
     LibraryPage.ALBUM -> PageSetting("Track order")
     LibraryPage.ARTIST -> PageSetting("Date Released")
     LibraryPage.ARTIST_SONGS -> PageSetting("Album")
-    LibraryPage.ARTIST_POPULAR -> PageSetting("Plays")
+    LibraryPage.ARTIST_POPULAR -> PageSetting("Frequently Played")
     LibraryPage.PLAYLIST -> PageSetting("Playlist order")
     LibraryPage.SEARCH -> PageSetting("Library order")
     // A menu of places, in the order the app lists them.
@@ -293,6 +300,8 @@ private fun sortable(
     label: String,
     naturallyDescending: Boolean,
     reversed: Boolean,
+    /** True for an order with no direction — Random — which gets no arrow. */
+    directionless: Boolean = false,
     open: (SealedLightActivity) -> SimpleLightScreen<Unit>,
 ): PageSetting {
     // `reversed` inverts the option's natural direction — as in SortOptions.
@@ -300,11 +309,15 @@ private fun sortable(
     return PageSetting(
         value = label,
         open = open,
-        trailing = {
-            AppIcon(
-                if (descending) AppIcons.ArrowDownward else AppIcons.ArrowUpward,
-                size = n(18),
-            )
+        trailing = if (directionless) {
+            null
+        } else {
+            {
+                AppIcon(
+                    if (descending) AppIcons.ArrowDownward else AppIcons.ArrowUpward,
+                    size = n(18),
+                )
+            }
         },
     )
 }

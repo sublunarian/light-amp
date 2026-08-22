@@ -650,10 +650,13 @@ object App {
     }
 
     val sortedAlbums: StateFlow<SortedView<Album>> by lazy {
-        combine(library.albums, albumSort, albumSortReversed, likedAlbumsOnly, albumsMatchingTags) {
-                list, sort, rev, liked, tagged ->
+        // The three order settings fold into one flow first: combine takes five
+        // flows at most, and the reshuffle nonce made six.
+        val order = combine(albumSort, albumSortReversed, settings.shuffleNonce, ::Triple)
+        combine(library.albums, order, likedAlbumsOnly, albumsMatchingTags) {
+                list, (sort, rev, nonce), liked, tagged ->
             val narrowed = list.filter { (!liked || it.liked) && (tagged == null || it.id in tagged) }
-            val sorted = sortAlbums(narrowed, sort, rev)
+            val sorted = sortAlbums(narrowed, sort, rev, nonce)
             // The bucket follows whatever the list is ordered by, so sorting by
             // artist gives an index over artist names rather than no index at all.
             // Both use the same key the sort itself used, or the letters would

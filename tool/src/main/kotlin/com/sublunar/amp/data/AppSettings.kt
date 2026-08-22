@@ -349,6 +349,18 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     val artistSortReversed: Flow<Boolean> = boolFlow(ARTIST_SORT_REV, false)
     val playlistSortReversed: Flow<Boolean> = boolFlow(PLAYLIST_SORT_REV, false)
 
+    /**
+     * Bumped each time Random is re-tapped for a new deal — see sortAlbums,
+     * whose shuffle is otherwise seeded by the library alone and would hand the
+     * same order back forever.
+     */
+    val shuffleNonce: Flow<Int> =
+        dataStore.data.map { it[SHUFFLE_NONCE] ?: 0 }.distinctUntilChanged()
+
+    suspend fun bumpShuffleNonce() {
+        dataStore.edit { it[SHUFFLE_NONCE] = (it[SHUFFLE_NONCE] ?: 0) + 1 }
+    }
+
     // --- Offline / downloads -------------------------------------------------
 
     /**
@@ -635,6 +647,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val SONG_SORT_REV = booleanPreferencesKey("pref.songSortReversed")
         private val ARTIST_SORT_REV = booleanPreferencesKey("pref.artistSortReversed")
         private val PLAYLIST_SORT_REV = booleanPreferencesKey("pref.playlistSortReversed")
+        private val SHUFFLE_NONCE = intPreferencesKey("pref.shuffleNonce")
 
         private val INVERT_COLORS = booleanPreferencesKey("pref.invertColors")
         private val KARAOKE_LYRICS = booleanPreferencesKey("pref.karaokeLyrics")
