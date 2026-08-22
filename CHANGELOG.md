@@ -2,29 +2,8 @@
 
 ## 0.4.0
 
-Updating keeps your library and downloads — no sync needed. The first launch
-trims the artwork cache to 200 MB in the background; covers come back as you
-browse.
-
-### Fixed
-
-- Local Music said it had no access on phones where the permission was granted,
-  and Sync Now led back to Allow Music Access.
-- Switching from a speaker back to This Device started the song over. It now
-  picks up where the speaker was.
-- While casting, dragging to the end of a song waited, then restarted it. It
-  goes to the next song.
-- Seeking while casting replayed the song from the top before jumping. It seeks
-  in place.
-- The clock flashed the previous song's time on Next while casting.
-- A source switched during a sync could write one server's albums into
-  another's library, where they showed in every library. Fixed, and the stray
-  rows are removed on the next sync.
-- Everything and Favorites never auto-downloaded playlist songs.
-- Delete All Downloads emptied only the active source.
-- The artwork cache grew without limit — 3 GB on one phone — keeping a copy of
-  each cover per song. One per album now, 200 MB at most; the covers of
-  downloaded albums are always kept.
+The first launch trims the artwork cache to 200 MB in the background; covers
+come back as you browse.
 
 ### Added
 
@@ -53,9 +32,29 @@ browse.
   server can rate.
 - Hide Artist Photos is on by default.
 
+### Fixed
+
+- Local Music said it had no access on phones where the permission was granted,
+  and Sync Now led back to Allow Music Access.
+- Switching from a cast back to This Device started the song over. It now
+  picks up where the speaker was.
+- While casting, dragging to the end of a song waited, then restarted it. It
+  goes to the next song.
+- Seeking while casting replayed the song from the top before jumping. It seeks
+  in place.
+- The clock flashed the previous song's time on Next while casting.
+- A source switched during a sync could write one server's albums into
+  another's library, where they showed in every library. Fixed, and the stray
+  rows are removed on the next sync.
+- Everything and Favorites never auto-downloaded playlist songs.
+- Delete All Downloads emptied only the active source.
+- The artwork cache grew without limit — 3 GB on one phone — keeping a copy of
+  each cover per song. One per album now, 200 MB at most; the covers of
+  downloaded albums are always kept.
+
 ### Removed
 
-- The Monochrome Artwork setting. Colour follows the artwork switch.
+- The Monochrome Artwork setting. Color follows the artwork switch.
 
 ## 0.3.1
 
