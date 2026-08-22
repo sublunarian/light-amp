@@ -286,8 +286,18 @@ class PlaybackController(
         if (p.positionMs.value < duration - QUEUE_END_SLACK_MS) return
         // Paused first: a seek out of the ended state with playWhenReady still
         // true starts the queue over from the top instead of waiting there.
-        p.pause()
-        p.seekToIndex(0)
+        //
+        // On Main, because this is reached from the isPlaying collector, which
+        // runs on Default: ExoPlayer's looper is Main and it throws rather than
+        // tolerating anything else — every other player call in this class
+        // places itself for that reason, and this one didn't, so reaching the
+        // end of the last track killed the app. The rest is set here rather
+        // than inside, so a second emission arriving before that block runs
+        // can't queue a second rewind behind it.
+        scope.launch(Dispatchers.Main.immediate) {
+            p.pause()
+            p.seekToIndex(0)
+        }
         _index.value = 0
         _positionMs.value = 0L
         hasPlayed = false
