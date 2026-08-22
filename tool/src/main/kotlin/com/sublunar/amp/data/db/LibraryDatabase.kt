@@ -2,6 +2,9 @@ package com.sublunar.amp.data.db
 
 import androidx.room.Dao
 import androidx.room.Database
+import androidx.room.OnConflictStrategy
+import androidx.room.Insert
+import androidx.room.AutoMigration
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import androidx.room.Query
@@ -72,6 +75,23 @@ data class AlbumEntity(
  */
 @Entity(tableName = "liked_artists")
 data class LikedArtistEntity(@PrimaryKey val name: String)
+
+/**
+ * One entry of an artist's popular-songs list, as the server ranked it.
+ *
+ * Ids only — the tracks themselves are library rows, and a popular song that
+ * isn't in the cached library is left out when read back rather than written
+ * in: rows from outside the library are how one server's songs once ended up
+ * in another's. Kept per source with the rest of its cache, and refreshed
+ * quietly once [fetchedAtMs] is old — see LibraryRepository.topSongsForArtist.
+ */
+@Entity(tableName = "top_songs", primaryKeys = ["artist", "position"])
+data class TopSongEntity(
+    val artist: String,
+    val position: Int,
+    val trackId: String,
+    val fetchedAtMs: Long,
+)
 
 /**
  * One downloaded track. The audio lives on disk under the tool's files dir; this
@@ -236,11 +256,73 @@ interface LibraryDao {
     @Query("DELETE FROM liked_artists")
     suspend fun clearLikedArtists()
 
+    // --- popular songs -------------------------------------------------------
+
+    @Query("SELECT * FROM top_songs WHERE artist = :artist ORDER BY position")
+    suspend fun topSongs(artist: String): List<TopSongEntity>
+
+    @Query("DELETE FROM top_songs WHERE artist = :artist")
+    suspend fun clearTopSongs(artist: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTopSongs(rows: List<TopSongEntity>)
+
+    /** The server's list for one artist, replacing whatever was held. */
+    @Transaction
+    suspend fun replaceTopSongs(artist: String, rows: List<TopSongEntity>) {
+        clearTopSongs(artist)
+        if (rows.isNotEmpty()) insertTopSongs(rows)
+    }
+
+    @Query("DELETE FROM top_songs")
+    suspend fun clearAllTopSongs()
+
     // --- downloads -----------------------------------------------------------
 
     /** Ids already downloaded, so a bulk enqueue can filter in one query. */
     @Query("SELECT trackId FROM downloads")
     suspend fun downloadedIds(): List<String>
+
+    /** Every cover this source's cache names, so Log Out can drop them from disk. */
+    @Query(
+        "SELECT DISTINCT coverArtId FROM albums WHERE coverArtId IS NOT NULL " +
+            "UNION SELECT DISTINCT coverArtId FROM tracks WHERE coverArtId IS NOT NULL",
+    )
+    suspend fun allCoverArtIds(): List<String>
+
+    /**
+     * Point every track at its album's cover, once.
+     *
+     * Rows synced before the clients did this themselves carry a cover id of
+     * their own — Navidrome's per-file `mf-` ids, Jellyfin's per-track images —
+     * and every one was a separate copy of the same sleeve on disk. Idempotent
+     * and cheap, so it simply runs at each launch; see App.boot.
+     */
+    @Query(
+        "UPDATE tracks SET coverArtId = (SELECT a.coverArtId FROM albums a WHERE a.id = tracks.albumId) " +
+            "WHERE albumId IS NOT NULL " +
+            "AND (SELECT a.coverArtId FROM albums a WHERE a.id = tracks.albumId) IS NOT NULL " +
+            "AND coverArtId IS NOT (SELECT a.coverArtId FROM albums a WHERE a.id = tracks.albumId)",
+    )
+    suspend fun collapseTrackCovers(): Int
+
+    /** The covers of downloaded songs — the sleeves an offline library needs. */
+    @Query(
+        "SELECT DISTINCT t.coverArtId FROM tracks t JOIN downloads d ON d.trackId = t.id " +
+            "WHERE t.coverArtId IS NOT NULL",
+    )
+    suspend fun downloadedCoverArtIds(): List<String>
+
+    /** Albums with no library recorded — see LibraryRepository's retag pass. */
+    @Query("SELECT COUNT(*) FROM albums WHERE libraryId IS NULL")
+    suspend fun untaggedAlbumCount(): Int
+
+    @Query("SELECT id FROM albums WHERE libraryId IS NULL")
+    suspend fun untaggedAlbumIds(): List<String>
+
+    /** Stamp these albums as belonging to [libraryId]; answers how many rows took it. */
+    @Query("UPDATE albums SET libraryId = :libraryId WHERE id IN (:ids)")
+    suspend fun tagAlbums(libraryId: String, ids: List<String>): Int
 
     /** How many tracks are actually cached per album, for sync reconciliation. */
     @Query("SELECT albumId AS albumId, COUNT(*) AS tracks FROM tracks WHERE albumId IS NOT NULL GROUP BY albumId")
@@ -320,9 +402,15 @@ interface LibraryDao {
         AlbumEntity::class,
         LikedArtistEntity::class,
         DownloadEntity::class,
+        TopSongEntity::class,
     ],
-    version = 9,
-    exportSchema = false,
+    version = 10,
+    exportSchema = true,
+    // Generated from the committed schemas (tool/schemas), so existing installs
+    // keep their libraries and downloads across the bump. Every schema change
+    // from here on should add a step here rather than lean on the SDK's
+    // drop-everything fallback.
+    autoMigrations = [AutoMigration(from = 9, to = 10)],
 )
 abstract class LibraryDatabase : RoomDatabase() {
     abstract fun libraryDao(): LibraryDao

@@ -128,3 +128,14 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.kotlin.test)
 }
+
+/**
+ * Room schemas, exported and committed, so a schema change ships as an
+ * auto-migration rather than a wipe. The SDK's database helper can only fall
+ * back to dropping every table — a tool has no way to hand it migrations — but
+ * auto-migrations need no handing over: the generated database carries them,
+ * and Room uses one whenever the two versions' schemas are here to diff.
+ */
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}

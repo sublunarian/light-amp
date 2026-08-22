@@ -4,6 +4,7 @@ import com.sublunar.amp.data.db.AlbumEntity
 import com.sublunar.amp.data.db.DownloadFile
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.LikedArtistEntity
+import com.sublunar.amp.data.db.TopSongEntity
 import com.sublunar.amp.data.db.toAlbum
 import com.sublunar.amp.data.db.toEntity
 import com.sublunar.amp.data.db.toTrack
@@ -1217,21 +1218,57 @@ class LibraryRepository(
      *
      * Navidrome answers `getTopSongs` from its Last.fm agent and matches the
      * results back onto the library, so this is a short top-tracks list rather
-     * than the full discography — shuffling it stays within those songs. Server
-     * rows are swapped for cached ones where possible so likes and play counts
-     * agree with the rest of the UI. Empty when Last.fm isn't configured.
+     * than the full discography — shuffling it stays within those songs.
+     *
+     * Kept in the source's database once fetched, so an artist's page opens
+     * with the row already there — and still has it offline, narrowed to what
+     * is downloaded like every other list. Popularity drifts over weeks, not
+     * minutes, so a stored list is served as it stands and refreshed in the
+     * background once it is older than [TOP_SONGS_TTL_MS]. Only ids are
+     * stored: they are matched back onto the library's own rows, so likes and
+     * play counts agree with the rest of the UI, and a song the library
+     * doesn't hold is left out rather than written in.
+     *
+     * An empty answer is never stored. It means either "this server ranks
+     * nothing" or "the server couldn't be reached just then", and the two are
+     * indistinguishable here — keeping it would turn a moment's failure into a
+     * row that stays missing.
      */
     suspend fun topSongsForArtist(name: String): List<Track> {
         topSongs[name]?.let { return it }
+        val stored = runCatching { dao.topSongs(name) }.getOrDefault(emptyList())
+        if (stored.isNotEmpty()) {
+            val byId = tracks.value.associateBy { it.id }
+            val held = stored.mapNotNull { byId[it.trackId] }
+            val stale = System.currentTimeMillis() - stored.first().fetchedAtMs > TOP_SONGS_TTL_MS
+            if (stale && !offline.value && serverClient.value != null) {
+                scope.launch { refreshTopSongs(name) }
+            }
+            if (held.isNotEmpty()) {
+                topSongs[name] = held
+                return held
+            }
+            // Stored, but none of it is here to play — offline with nothing of
+            // theirs downloaded. Online, ask again rather than show nothing.
+            if (offline.value) return emptyList()
+        }
+        return refreshTopSongs(name)
+    }
+
+    /** Ask the server, store what it says, answer with the library's own rows. */
+    private suspend fun refreshTopSongs(name: String): List<Track> {
         val client = serverClient.value ?: return emptyList()
+        val answered = runCatching { client.getTopSongs(name) }.getOrDefault(emptyList())
+        if (answered.isEmpty()) return emptyList()
+        val now = System.currentTimeMillis()
+        runCatching {
+            dao.replaceTopSongs(name, answered.mapIndexed { i, t -> TopSongEntity(name, i, t.id, now) })
+        }
         val byId = tracks.value.associateBy { it.id }
-        val result = client.getTopSongs(name).map { byId[it.id] ?: it }
-        // Only an answer worth keeping is kept. Empty means either "this server
-        // ranks nothing" or "the server couldn't be reached just then", and the
-        // two are indistinguishable here — caching it would turn a moment's
-        // failure into a section that stays missing for the rest of the session.
-        // The cost of being wrong the other way is one request per artist visit.
-        if (result.isNotEmpty()) topSongs[name] = result
+        // Fresh from the server, a song the library doesn't hold is still shown
+        // this once — it plays through the server like any other.
+        val result = answered.map { byId[it.id] ?: it }
+        topSongs[name] = result
         return result
     }
 
@@ -1389,6 +1426,7 @@ class LibraryRepository(
     suspend fun clearCache() {
         dao.clearTracks()
         dao.clearAlbums()
+        dao.clearAllTopSongs()
         forgetDerived()
     }
 
@@ -1494,3 +1532,9 @@ class LibraryRepository(
             compareBy({ it.discNumber ?: 0 }, { it.trackNumber ?: 0 }, { it.title.lowercase() })
     }
 }
+
+/** How many songs a radio asks the server for — Subsonic's own default. */
+private const val RADIO_LENGTH = 50
+
+/** How long a stored popular-songs list is served before being refreshed. */
+private const val TOP_SONGS_TTL_MS = 7L * 24 * 60 * 60 * 1000
