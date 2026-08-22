@@ -176,6 +176,15 @@ class PlaybackController(
      */
     private var castOffsetMs = 0L
 
+    /** Where the current cast track was started from — see pollRenderer. */
+    private var castStartedAtMs = 0L
+
+    /**
+     * Target of a seek sent to the renderer in place, until a reading near it
+     * arrives; -1 when none is in flight. See pollRenderer.
+     */
+    private var castSeekPending = -1L
+
     /** Latched by [fallBackOffline]; cleared when the server answers again. */
     @Volatile
     private var forceOffline = false
@@ -568,9 +577,7 @@ class PlaybackController(
             nowPlayingId = null
             // Start position goes in at prepare time: seekTo() clamps to the
             // duration, which is still unknown this early, so it would land on 0.
-            queuedSources = tracks.map { it.source() }
-            p.setMediaQueueAt(tracks.map { it.toAudioItem() }, index, position)
-            _index.value = index
+            rebuildQueueAt(p, tracks, index, position)
             // Deliberately not p.play(): restoring should cue the track up, not
             // start making noise on its own the moment the app is opened.
             p.pause()
@@ -746,12 +753,28 @@ class PlaybackController(
     fun seekTo(ms: Long) {
         val renderer = _castRenderer.value
         if (renderer != null) {
+            // The last moments of a track are not worth a seek. Seeking means
+            // pushing the stream again, probing it and seeking it — seconds —
+            // after which the renderer stops almost at once, and a stop before
+            // any poll had seen it playing read as a track that never started:
+            // a six-second wait, then the track again from the top. Dragging to
+            // the end means the next track, and that is what Next does.
+            val total = _durationMs.value
+            if (total > 0L && total - ms <= CAST_SEEK_END_SLACK_MS) {
+                android.util.Log.i("AmpCast", "seek $ms of $total is the end → next")
+                castJob?.cancel()
+                castJob = scope.launch {
+                    if (advanceCast(renderer)) pollRenderer(renderer) else DlnaCast.stop(renderer)
+                }
+                return
+            }
             _positionMs.value = ms
-            // Re-push the track from the new offset rather than asking the
-            // renderer to seek — see [castOffsetMs].
+            // In place when the renderer can, pushed again when it can't — see
+            // seekCast. The track was playing a moment ago, so a stop after
+            // this is the end of it, not a failure to start.
             castJob?.cancel()
             castJob = scope.launch {
-                if (startCastTrack(renderer, ms)) pollRenderer(renderer)
+                if (seekCast(renderer, ms)) pollRenderer(renderer, playedBefore = true)
             }
             return
         }
@@ -784,9 +807,12 @@ class PlaybackController(
     private var seekGeneration = 0
 
     /** True when the player can't be trusted to seek within this stream. */
-    private fun needsServerSeek(track: Track): Boolean {
+    private fun needsServerSeek(track: Track, askPlayer: Boolean = true): Boolean {
         if (track.source() is LightAudioSource.FileSource) return false
         if (track.id in seekNeedsReload) return true
+        // A queue being rebuilt has nothing prepared to ask: the player's
+        // answer would be about the item it held before.
+        if (!askPlayer) return effectiveFormat() != StreamFormat.RAW
         // Ask the player, which knows what actually arrived. Asking for mp3 and
         // getting mp3 means the server sent the file untouched — with a length
         // and byte ranges — and it then ignores timeOffset, because it is not
@@ -806,9 +832,21 @@ class PlaybackController(
      * reading is worthless immediately. A moment later it reflects the stream,
      * and a stream that ignored the seek is back near the beginning.
      */
-    private fun verifyNativeSeek(p: LightAudioPlayer, track: Track, target: Long) {
+    private fun verifyNativeSeek(
+        p: LightAudioPlayer,
+        track: Track,
+        target: Long,
+        awaitStream: Boolean = false,
+    ) {
         val generation = ++seekGeneration
         scope.launch {
+            // A queue just built has no stream to report on yet, and until it
+            // has one the player answers with the position it was asked for —
+            // the check would pass on a seek about to be dropped. Wait for the
+            // stream to declare itself, within reason.
+            if (awaitStream) {
+                withTimeoutOrNull(REBUILD_VERIFY_TIMEOUT_MS) { p.durationMs.first { it > 0L } }
+            }
             delay(SEEK_VERIFY_MS)
             if (generation != seekGeneration) return@launch
             if (_castRenderer.value != null) return@launch
@@ -1174,12 +1212,112 @@ class PlaybackController(
         castJob = null
         _castRenderer.value = null
         castOffsetMs = 0L
+        castSeekPending = -1L
         scope.launch { DlnaCast.stop(renderer) }
         val p = player ?: return
         _volume.value = p.deviceVolume.value
         if (resumeLocally) {
-            p.seekTo(at)
-            p.play()
+            // The queue moved on while the renderer had it — advanceCast walks
+            // _index as tracks finish there — but this player sat paused on
+            // whatever it held when casting began. Seeking it in place picked
+            // the cast's position inside the *old* track: coming back landed
+            // where you were before casting, not where the speaker left off.
+            // Index and position go in one seek; see LightAudioPlayer.
+            // Rebuilt at that index and position in one call rather than
+            // seeked: a paused player has no duration yet for an item it never
+            // opened, so any plain seek into it clamps to 0 — which is why the
+            // right song came back from the top. Same reason restoreState and
+            // the stream fallback rebuild instead of seeking — and a stream the
+            // player can't seek at all goes through the server; see
+            // rebuildQueueAt, which is where the second restart-from-the-top
+            // came from.
+            scope.launch(Dispatchers.Main.immediate) {
+                val tracks = _queue.value
+                if (tracks.isEmpty()) return@launch
+                val index = _index.value.coerceIn(0, tracks.lastIndex)
+                android.util.Log.i("AmpCast", "hand-back idx=$index at=$at")
+                rebuildQueueAt(p, tracks, index, at)
+                p.play()
+            }
+        }
+    }
+
+    /**
+     * Seek within the track the renderer is playing.
+     *
+     * The renderer already has the stream. When that stream can be seeked — the
+     * file itself, served in ranges — a Seek is all it takes: one call, about a
+     * second, and the track carries on from the new position. Pushing the track
+     * again first, as every cast seek did, had the renderer open the stream
+     * afresh and play a burst of it from the top before seeking anyway. The
+     * push stays for the cases that need it: a stream that starts part-way
+     * (the renderer can seek only within what it holds), a transcode (which
+     * nobody can seek, so it is asked for again from the position), and a
+     * renderer that refuses the Seek.
+     */
+    private suspend fun seekCast(renderer: DlnaRenderer, ms: Long): Boolean {
+        val track = _queue.value.getOrNull(_index.value) ?: return false
+        val url = castCurrentUrl
+        val wanted = if (ms > 1_000L) ms else 0L
+        if (url != null && castOffsetMs == 0L) {
+            val (format, _) = castFormatFor(renderer, track)
+            val seekKey = "${track.id}|${format.id}"
+            val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
+            if (seekable == true) {
+                if (DlnaCast.seek(renderer, wanted)) {
+                    android.util.Log.i("AmpCast", "seek in place → $wanted")
+                    _positionMs.value = wanted
+                    castStartedAtMs = wanted
+                    castSeekPending = wanted
+                    if (wanted > 0L) verifyCastSeek(renderer, wanted, url)
+                    return true
+                }
+                android.util.Log.i("AmpCast", "in-place seek refused → push")
+            }
+        }
+        return startCastTrack(renderer, wanted)
+    }
+
+    /**
+     * A moment after a seek, check the renderer really went there; if not,
+     * ask the server for the track from that position instead.
+     *
+     * Refusing outright is the easy case. The hard one is a renderer that
+     * accepts a Seek it can't honour: a live transcode arrives chunked with no
+     * length, so there is nothing to jump to and it grinds forward through the
+     * encode instead — minutes of silence on a long track. Unlike the local
+     * player, GetPositionInfo reports where the renderer really is, so this is
+     * measurable.
+     *
+     * Seeking into the last few seconds has nothing to verify: the track ends
+     * before the check, the renderer's clock resets, and "landed at 0" read as
+     * a failed seek — which restarted the track from the top, through the
+     * server, just as it was about to end.
+     */
+    private fun verifyCastSeek(renderer: DlnaRenderer, wanted: Long, url: String) {
+        val nearEnd = _durationMs.value > 0 &&
+            _durationMs.value - wanted <= CAST_SEEK_VERIFY_MS + CAST_SEEK_TOLERANCE_MS
+        if (nearEnd) return
+        val generation = ++seekGeneration
+        val seekedIndex = _index.value
+        scope.launch {
+            delay(CAST_SEEK_VERIFY_MS)
+            if (generation != seekGeneration) return@launch
+            if (_castRenderer.value?.id != renderer.id) return@launch
+            // Moved on — the renderer finished it, or a skip did — so the
+            // seek has nothing left to be measured against.
+            if (_index.value != seekedIndex || castCurrentUrl != url) return@launch
+            val info = DlnaCast.position(renderer) ?: return@launch
+            if (info.trackUri != null && info.trackUri != url) return@launch
+            if (DlnaCast.state(renderer) == DlnaState.STOPPED) return@launch
+            if (info.positionMs >= wanted - CAST_SEEK_TOLERANCE_MS) return@launch
+            android.util.Log.i("AmpCast", "seek missed: at ${info.positionMs} wanted $wanted → server")
+            castJob?.cancel()
+            castJob = scope.launch {
+                if (startCastTrack(renderer, wanted, askServer = true)) {
+                    pollRenderer(renderer, playedBefore = true)
+                }
+            }
         }
     }
 
@@ -1237,10 +1375,12 @@ class PlaybackController(
             mimeType = mime,
         )
         if (!started) return false
+        android.util.Log.i("AmpCast", "pushed idx=${_index.value} wanted=$wanted offset=$offset ${format.id}")
         _isPlaying.value = true
         _durationMs.value = track.durationMs
         castOffsetMs = offset
         _positionMs.value = wanted
+        castStartedAtMs = wanted
         if (offset == 0L && wanted > 0L) {
             // A stream the server won't serve in ranges cannot be seeked by
             // anyone, so asking the renderer buys nothing but the four seconds
@@ -1251,33 +1391,21 @@ class PlaybackController(
             // another; see DlnaCast.supportsRanges.
             val seekKey = "${track.id}|${format.id}"
             val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
+            android.util.Log.i("AmpCast", "seekable=$seekable")
             if (seekable == false) {
                 return startCastTrack(renderer, wanted, askServer = true)
             }
-            // Refusing outright is the easy case. The hard one is a renderer
-            // that accepts a Seek it can't honour: a live transcode arrives
-            // chunked with no length, so there is nothing to jump to and it
-            // grinds forward through the encode instead — minutes of silence on
-            // a long track. Unlike the local player, GetPositionInfo reports
-            // where the renderer really is, so this is measurable.
+            // Whether it then went there is checked a moment later — see
+            // verifyCastSeek.
             if (!DlnaCast.seek(renderer, wanted)) {
+                android.util.Log.i("AmpCast", "renderer refused seek → server")
                 return startCastTrack(renderer, wanted, askServer = true)
             }
-            val generation = ++seekGeneration
-            scope.launch {
-                delay(CAST_SEEK_VERIFY_MS)
-                if (generation != seekGeneration) return@launch
-                if (_castRenderer.value?.id != renderer.id) return@launch
-                val landed = DlnaCast.position(renderer)?.positionMs ?: return@launch
-                if (landed >= wanted - CAST_SEEK_TOLERANCE_MS) return@launch
-                castJob?.cancel()
-                castJob = scope.launch {
-                    if (startCastTrack(renderer, wanted, askServer = true)) pollRenderer(renderer)
-                }
-            }
+            verifyCastSeek(renderer, wanted, url)
         }
         announceNowPlaying()
         castCurrentUrl = url
+        castSeekPending = -1L
         // SetAVTransportURI leaves the next slot empty, and it stays that way
         // until this track is nearly over — see armNextIfDue.
         castNextUrl = null
@@ -1453,8 +1581,15 @@ class PlaybackController(
      * finishes — a renderer only ever holds one URI, so gapless hand-off has to
      * be driven from here.
      */
-    private suspend fun pollRenderer(renderer: DlnaRenderer) {
+    private suspend fun pollRenderer(renderer: DlnaRenderer, playedBefore: Boolean = false) {
         var settled = false
+        // Whether a stop can only mean the track ended. A track pushed again
+        // for a seek was playing a moment ago; it has nothing to prove, and a
+        // stop after the seek is the end of it — or the seek killed it, which
+        // going on from is also the right answer. Without this the stop came
+        // before any poll had seen PLAYING, counted as a track that never
+        // started, and restarted it from the top after a six-second wait.
+        var played = playedBefore
         // What the renderer said last time. A position that hasn't moved is not
         // evidence that anything is playing — see below.
         var lastPositionMs = -1L
@@ -1490,6 +1625,8 @@ class PlaybackController(
                     castCurrentUrl = castNextUrl
                     // The queued track was handed over whole, from its start.
                     castOffsetMs = 0L
+                    castStartedAtMs = 0L
+                    castSeekPending = -1L
                     _durationMs.value = _queue.value.getOrNull(_index.value)?.durationMs
                         ?: _durationMs.value
                     announceNowPlaying()
@@ -1508,6 +1645,7 @@ class PlaybackController(
                     // and the rest of this poll is about the old one, so there
                     // is nothing here worth reading.
                     settled = false
+                    played = false
                     // Seeded with the reading we just saw, not cleared: cleared,
                     // the next identical stale reading looks like a change and
                     // re-arms the very flag this is putting down.
@@ -1535,7 +1673,27 @@ class PlaybackController(
                 // offset we had seeked to was added on top.
                 val ours = position.trackUri == null || position.trackUri == castCurrentUrl
                 if (ours) {
-                    _positionMs.value = position.positionMs + castOffsetMs
+                    // Until this track has settled, only a reading near where
+                    // it was started is believed: a renderer reports the new
+                    // URI with the *old* clock for a poll or two while it opens
+                    // the stream, and the finished track's 0:42 was flashing
+                    // onto a track that hadn't begun.
+                    val reading = position.positionMs + castOffsetMs
+                    val pending = castSeekPending
+                    if (pending >= 0L) {
+                        // A seek is in flight. The renderer goes on reporting
+                        // the old clock for a poll or two while it reopens the
+                        // stream at the new position, and shown, that is the
+                        // bar jumping back to where it was and forward again.
+                        // Nothing is believed until a reading near the target;
+                        // if none ever comes, the seek's own check re-pushes.
+                        if (kotlin.math.abs(reading - pending) <= CAST_START_WINDOW_MS) {
+                            castSeekPending = -1L
+                            _positionMs.value = reading
+                        }
+                    } else if (settled || kotlin.math.abs(reading - castStartedAtMs) <= CAST_START_WINDOW_MS) {
+                        _positionMs.value = reading
+                    }
                     // The renderer only knows about the piece of the track it was
                     // given, so a stream that started part-way in reports a short
                     // duration. The track's own is the honest number.
@@ -1571,9 +1729,11 @@ class PlaybackController(
                 // Played, then stopped: the track ended. Move on. Only readings
                 // the renderer actually gave us count here — going quiet must
                 // never cost a track that was playing perfectly well.
-                settled && stall.stopped >= STOPPED_POLLS_TO_ADVANCE -> {
+                (settled || played) && stall.stopped >= STOPPED_POLLS_TO_ADVANCE -> {
+                    android.util.Log.i("AmpCast", "ended idx=${_index.value} → advance")
                     if (!advanceCast(renderer)) return
                     settled = false
+                    played = false
                     stall.reset()
                     startedIndex = -1
                     restartAfter = STALLED_POLLS_TO_RESTART
@@ -1587,9 +1747,10 @@ class PlaybackController(
                 // over it. A renderer that has stopped answering counts too:
                 // nothing is playing either way, and this is the decision that
                 // can afford to be wrong.
-                !settled &&
+                !settled && !played &&
                     stall.notPlaying >= restartAfter &&
                     startedIndex != _index.value -> {
+                    android.util.Log.i("AmpCast", "never started idx=${_index.value} → restart")
                     startedIndex = _index.value
                     stall.reset()
                     restartAfter = STALLED_POLLS_TO_RESTART
@@ -1598,9 +1759,10 @@ class PlaybackController(
                 // Asked again and it still won't play: something is wrong with
                 // this track rather than with the hand-off, and sitting in
                 // silence is worse than going on.
-                !settled &&
+                !settled && !played &&
                     stall.notPlaying >= restartAfter &&
                     startedIndex == _index.value -> {
+                    android.util.Log.i("AmpCast", "still not playing idx=${_index.value} → pass over")
                     if (!advanceCast(renderer)) return
                     stall.reset()
                     startedIndex = -1
@@ -1672,6 +1834,7 @@ class PlaybackController(
             return false
         }
         _index.value = next
+        android.util.Log.i("AmpCast", "advance → idx=$next")
         return startCastTrack(renderer)
     }
 
@@ -1941,8 +2104,52 @@ class PlaybackController(
         )
     }
 
-    private fun Track.toAudioItem(): LightAudioItem = LightAudioItem(
-        source = source(),
+    /**
+     * Rebuild the player's queue on [index], cued at [positionMs]. Main only.
+     *
+     * A start position handed to the player at prepare time only lands on a
+     * stream it can seek. A transcode arrives chunked with nothing to seek by,
+     * and ExoPlayer quietly opens it from 0:00 instead — which is how coming
+     * back from the speaker, and reopening the app, began the track over. Those
+     * streams go through the server the way [seekTo] does: the item is built
+     * on a stream that already starts at the position, and [streamOffsetMs]
+     * shifts the readouts. A stream the player can seek keeps the cheap route,
+     * checked afterwards the way a native seek is.
+     */
+    private fun rebuildQueueAt(p: LightAudioPlayer, tracks: List<Track>, index: Int, positionMs: Long) {
+        val track = tracks[index]
+        val at = positionMs.coerceAtLeast(0L)
+        queuedSources = tracks.map { it.source() }
+        // Set before the player moves: the index collector reads a change as a
+        // new track and would clear the offset this is about to set.
+        _index.value = index
+        _positionMs.value = at
+        val client = serverClient.value
+        if (at > 1_000L && client != null && needsServerSeek(track, askPlayer = false)) {
+            android.util.Log.i("AmpCast", "rebuild idx=$index at=$at via server offset")
+            val url = client.streamUrl(
+                track,
+                effectiveFormat(),
+                timeOffsetSeconds = (at / 1000).toInt(),
+                sessionId = sessionIdFor(track.id),
+            )
+            streamOffsetMs = at
+            p.setMediaQueue(
+                tracks.mapIndexed { i, it ->
+                    if (i == index) it.toAudioItem(LightAudioSource.UrlSource(url)) else it.toAudioItem()
+                },
+                index,
+            )
+        } else {
+            android.util.Log.i("AmpCast", "rebuild idx=$index at=$at natively")
+            streamOffsetMs = 0
+            p.setMediaQueueAt(tracks.map { it.toAudioItem() }, index, at)
+            if (at > 0L) verifyNativeSeek(p, track, at, awaitStream = true)
+        }
+    }
+
+    private fun Track.toAudioItem(from: LightAudioSource = source()): LightAudioItem = LightAudioItem(
+        source = from,
         metadata = LightMediaMetadata(
             title = title,
             artist = artist,
@@ -1973,12 +2180,20 @@ class PlaybackController(
         /** Long enough for the player to be reporting the stream, not the request. */
         private const val SEEK_VERIFY_MS = 900L
 
+        /** How long a rebuilt queue gets to open its stream before the seek is judged. */
+        private const val REBUILD_VERIFY_TIMEOUT_MS = 8_000L
+
         /** How far a native seek may land from the target before it counts as a miss. */
         private const val SEEK_TOLERANCE_MS = 5_000L
 
         /** Long enough for a renderer that can seek to have done so. */
         private const val CAST_SEEK_VERIFY_MS = 4_000L
+
+        /** A cast seek this close to the end is the next track, not a seek. */
+        private const val CAST_SEEK_END_SLACK_MS = 3_000L
         private const val CAST_SEEK_TOLERANCE_MS = 15_000L
+        /** How far a just-started track's first readings may stray from its start before being disbelieved. */
+        const val CAST_START_WINDOW_MS = 15_000L
 
         private const val CAST_POLL_MS = 1_000L
 
