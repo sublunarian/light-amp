@@ -711,7 +711,16 @@ object App {
         // already downloaded".
         val tracks = library.downloadableTracks.value
         if (tracks.isEmpty()) return
-        val playlistTrackIds = library.playlists.value.flatMap { it.trackIds }.toSet()
+        // Playlists count in both modes — Favorites promises them outright, and
+        // Everything fetches them first — so what they hold has to be known
+        // here, not just on the Playlists tab. The list is fetched if it
+        // hasn't been yet, then each playlist's songs, once: no server sends
+        // membership with the list, and reading Playlist.trackIds — always
+        // empty for a server playlist — had both modes quietly downloading no
+        // playlist at all.
+        if (library.playlists.value.isEmpty()) runCatching { library.refreshPlaylists() }
+        runCatching { library.primePlaylistTrackIds(library.playlists.value.map { it.id }) }
+        val playlistTrackIds = library.playlistTrackIds.value.values.flatten().toHashSet()
         downloader.applyAutoMode(
             allTracks = tracks,
             likedTracks = tracks.filter { it.liked },

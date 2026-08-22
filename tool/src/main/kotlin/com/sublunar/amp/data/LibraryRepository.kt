@@ -507,6 +507,14 @@ class LibraryRepository(
      */
     private val _playlistTrackIds = MutableStateFlow<Map<String, List<String>>>(emptyMap())
 
+    /**
+     * Which songs each playlist holds, for the playlists primed so far — see
+     * [primePlaylistTrackIds]. The list itself never carries this: no server
+     * sends membership with its playlist list, so [Playlist.trackIds] is empty
+     * for every server playlist and anything reading it there reads nothing.
+     */
+    val playlistTrackIds: StateFlow<Map<String, List<String>>> = _playlistTrackIds
+
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
 
     /**

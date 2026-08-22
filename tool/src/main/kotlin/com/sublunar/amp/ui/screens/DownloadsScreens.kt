@@ -45,7 +45,7 @@ fun offlineModeLabel(mode: OfflineMode): String = when (mode) {
 }
 
 private fun offlineModeDetail(mode: OfflineMode): String = when (mode) {
-    OfflineMode.MANUAL -> "You choose what to download"
+    OfflineMode.MANUAL -> "Hold a song, album or artist to download it"
     OfflineMode.FAVORITES -> "Liked albums, liked songs and playlists"
     OfflineMode.ALL -> "Favorites first, then the rest of the library"
 }
@@ -115,7 +115,9 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 fitTitle = true,
             )
             if (total == 0 && !progress.active && bytes == 0L) {
-                EmptyState("Nothing downloaded yet")
+                // Says how, not just that: the one user who came looking here
+                // had no way to learn that holding a row is the way in.
+                EmptyState("Nothing downloaded yet.\nHold a song, album or artist and choose Download.")
                 return@Column
             }
             LibraryList(
@@ -182,6 +184,13 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
     }
 }
 
+/**
+ * What one server downloads without being asked.
+ *
+ * Titled "Auto-Download" rather than the OfflineMode name the setting keeps:
+ * "Offline Mode" sounds like a switch that takes the app offline, and under a
+ * page already called Offline it said nothing the header hadn't.
+ */
 class OfflineModeScreen(
     sealed: SealedLightActivity,
     private val sourceId: String,
@@ -190,7 +199,7 @@ class OfflineModeScreen(
     override fun Content() {
         val sources by App.settings.sources.collectAsState(initial = emptyList())
         val current = sources.firstOrNull { it.id == sourceId }?.offlineMode ?: OfflineMode.MANUAL
-        ListScreen(onBack = { goBack() }, title = "Offline Mode") {
+        ListScreen(onBack = { goBack() }, title = "Auto-Download") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
                 items(OfflineMode.entries.toList()) { mode ->
                     TextRow(
