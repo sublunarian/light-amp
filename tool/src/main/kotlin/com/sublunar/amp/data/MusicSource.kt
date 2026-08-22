@@ -241,6 +241,13 @@ data class MusicSource(
      */
     val supportsLikes: Boolean get() = kind == SourceKind.SUBSONIC || kind == SourceKind.JELLYFIN
     val supportsRatings: Boolean get() = kind == SourceKind.SUBSONIC || kind == SourceKind.PLEX
+
+    /**
+     * A radio seeded by one song — see [MusicServer.getSimilarSongs]. Every
+     * server has one: Subsonic's `getSimilarSongs`, Plex's stations, Jellyfin's
+     * instant mix. The phone's own files have no one to ask.
+     */
+    val supportsRadio: Boolean get() = kind != SourceKind.LOCAL
     /** The phone keeps its own, as m3u8 files — see [LocalPlaylists]. */
     val supportsPlaylists: Boolean get() = true
 

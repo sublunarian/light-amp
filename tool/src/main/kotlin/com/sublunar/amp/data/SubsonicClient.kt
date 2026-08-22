@@ -263,6 +263,26 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         }
     }
 
+    /**
+     * `getSimilarSongs` takes the song's own id — checked against the public
+     * demo — and Navidrome resolves it to the artist before asking its Last.fm
+     * agent for artists like them. With no agent it still answers from that
+     * artist's own catalogue, so the radio narrows rather than vanishes.
+     */
+    override suspend fun getSimilarSongs(songId: String, count: Int): List<Track> {
+        return try {
+            val body = request(
+                "getSimilarSongs",
+                // Omitted rather than sent as 0 — see getTopSongs.
+                listOf("id" to songId) +
+                    if (count > 0) listOf("count" to count.toString()) else emptyList(),
+            )
+            body.similarSongs?.song.orEmpty().map { it.toTrack() }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
     override suspend fun starSong(songId: String) = Unit.also { request("star", listOf("id" to songId)) }
     override suspend fun unstarSong(songId: String) = Unit.also { request("unstar", listOf("id" to songId)) }
     override suspend fun starAlbum(albumId: String) = Unit.also { request("star", listOf("albumId" to albumId)) }

@@ -29,6 +29,7 @@ data class SubsonicBody(
     val musicFolders: MusicFoldersDto? = null,
     val artists: ArtistsRootDto? = null,
     val topSongs: TopSongsDto? = null,
+    val similarSongs: SimilarSongsDto? = null,
     val scanStatus: ScanStatusDto? = null,
     val playQueue: PlayQueueDto? = null,
 )
@@ -73,6 +74,9 @@ data class ArtistDto(
 
 @Serializable
 data class TopSongsDto(val song: List<SongDto> = emptyList())
+
+@Serializable
+data class SimilarSongsDto(val song: List<SongDto> = emptyList())
 
 @Serializable
 data class MusicFoldersDto(val musicFolder: List<MusicFolderDto> = emptyList())

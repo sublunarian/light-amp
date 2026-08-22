@@ -195,6 +195,22 @@ class JellyfinClient(
         ).items.map { it.toTrack() }
 
     /**
+     * Jellyfin's instant mix: songs it judges to go with this one, from its own
+     * genre and artist data rather than an outside agent. Verified against the
+     * public demo — the seed comes back first, and the repository puts it
+     * first anyway, so it is dropped there rather than counted on here.
+     */
+    override suspend fun getSimilarSongs(songId: String, count: Int): List<Track> = runCatching {
+        fetch<JellyfinItems>(
+            "/Items/$songId/InstantMix",
+            listOf("userId" to userId, "Fields" to FIELDS) +
+                if (count > 0) listOf("Limit" to count.toString()) else emptyList(),
+        ).items.filter { it.type == TRACK_TYPE }.map { it.toTrack() }
+    }.onFailure { android.util.Log.w("AmpRadio", "jellyfin instant mix failed: ${it.message}") }
+        .onSuccess { android.util.Log.i("AmpRadio", "jellyfin instant mix: ${it.size} items for $songId") }
+        .getOrDefault(emptyList())
+
+    /**
      * Favourites, which Jellyfin keeps per user and per item.
      *
      * Artists come back as names rather than ids because the app's artist list

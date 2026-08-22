@@ -1353,6 +1353,29 @@ class LibraryRepository(
         return result
     }
 
+    /**
+     * A radio seeded by [seed]: the song itself, then what the server thinks
+     * follows from it.
+     *
+     * The seed leads because it is the song that was chosen — a radio that opens
+     * on something else has already wandered off. Server rows are swapped for
+     * cached ones so likes, play counts and downloads agree with the rest of the
+     * UI, and the seed is dropped from the server's answer so it can't play
+     * twice. Empty when the server has nothing: the caller says so, rather than
+     * shuffling the library and calling it radio.
+     */
+    suspend fun radioFrom(seed: Track): List<Track> {
+        val client = serverClient.value ?: return emptyList()
+        val byId = tracks.value.associateBy { it.id }
+        val answered = client.getSimilarSongs(seed.id, RADIO_LENGTH)
+        val similar = answered
+            .filter { it.id != seed.id }
+            .distinctBy { it.id }
+            .map { byId[it.id] ?: it }
+        android.util.Log.i("AmpRadio", "radio from ${seed.id}: server ${answered.size}, usable ${similar.size}")
+        return if (similar.isEmpty()) emptyList() else listOf(seed) + similar
+    }
+
     /** An artist's albums as a discography: oldest release first, undated last. */
     fun albumsForArtist(name: String): List<Album> {
         val albumIds = tracks.value

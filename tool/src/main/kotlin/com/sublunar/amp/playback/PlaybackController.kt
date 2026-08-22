@@ -76,6 +76,15 @@ class PlaybackController(
     private val _queue = MutableStateFlow<List<Track>>(emptyList())
     val queue: StateFlow<List<Track>> = _queue
 
+    /**
+     * What the queue was started *as*, where that has a name — "Judith Radio"
+     * — for anything that wants to keep it, like saving it as a playlist. Null
+     * for a queue that is just some songs. Set with the queue and cleared with
+     * it; adding to the queue leaves it, since the radio is still what it was.
+     */
+    private val _queueName = MutableStateFlow<String?>(null)
+    val queueName: StateFlow<String?> = _queueName
+
     private val _index = MutableStateFlow(-1)
     val index: StateFlow<Int> = _index
 
@@ -610,9 +619,10 @@ class PlaybackController(
 
     // --- Playback controls ---------------------------------------------------
 
-    /** Replace the queue with [tracks] and start at [startIndex]. */
-    fun playQueue(tracks: List<Track>, startIndex: Int = 0) {
+    /** Replace the queue with [tracks] and start at [startIndex]; see [queueName]. */
+    fun playQueue(tracks: List<Track>, startIndex: Int = 0, name: String? = null) {
         if (tracks.isEmpty()) return
+        _queueName.value = name
         // A new queue is a new listening session, so the ids derived from it are
         // new too — otherwise playing the same track again an hour later would
         // report itself as the same session still going.
@@ -872,6 +882,7 @@ class PlaybackController(
             p.stop()
             p.setMediaQueue(emptyList())
             _queue.value = emptyList()
+            _queueName.value = null
             _index.value = -1
             streamOffsetMs = 0
             _positionMs.value = 0
@@ -959,6 +970,29 @@ class PlaybackController(
             // behind the cursor lands one place earlier than one pushed forward.
             moveInQueue(from, if (from < cur) cur else cur + 1)
         }
+    }
+
+    /**
+     * Keep what is playing, replace everything after it.
+     *
+     * For a radio started from the song already playing: the song carries on
+     * untouched and the radio becomes what follows, in place of whatever was
+     * queued. The queue's name changes with its contents — see [queueName].
+     * Upcoming items are dropped back to front so each removal can't shift the
+     * ones still to go, as [removeFromQueue] does.
+     */
+    fun replaceUpcoming(tracks: List<Track>, name: String? = null) {
+        val p = player ?: return
+        val q = _queue.value
+        val cur = _index.value
+        if (cur !in q.indices) {
+            playQueue(tracks, 0, name)
+            return
+        }
+        for (i in q.lastIndex downTo cur + 1) p.removeItem(i)
+        _queue.value = q.take(cur + 1) + tracks
+        if (tracks.isNotEmpty()) p.addItems(tracks.map { it.toAudioItem() })
+        _queueName.value = name
     }
 
     fun removeFromQueue(index: Int) {
