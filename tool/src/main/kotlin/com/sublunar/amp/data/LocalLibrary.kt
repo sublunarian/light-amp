@@ -2,6 +2,7 @@ package com.sublunar.amp.data
 
 import android.media.MediaMetadataRetriever
 import com.thelightphone.sdk.checkPermission
+import com.thelightphone.sdk.hasRuntimePermission
 import com.thelightphone.sdk.shared.LightServiceMethod
 import com.thelightphone.sdk.shared.asKotlinResult
 import android.util.Log
@@ -89,19 +90,42 @@ object LocalLibrary {
     /** The permission that makes any of this readable — see lighttool.toml. */
     const val PERMISSION = "android.permission.READ_MEDIA_AUDIO"
 
+    /** What stands between the app and the music folder, if anything. */
+    enum class Access { GRANTED, NOT_GRANTED, BLOCKED_BY_LIGHTOS }
+
     /**
-     * Whether the app may actually read the music folder.
+     * Whether the app may actually read the music folder — and if not, why.
      *
-     * Asked of LightOS rather than inferred from the filesystem: without the
-     * permission, listing `/sdcard/Music` returns an *empty* array rather than
-     * null or an error, so a folder full of music and a folder we aren't allowed
-     * to see look exactly alike from here — which is how a local library ends up
-     * silently showing nothing.
+     * Not inferred from the filesystem: without the permission, listing
+     * `/sdcard/Music` returns an *empty* array rather than null or an error, so
+     * a folder full of music and a folder we aren't allowed to see look exactly
+     * alike from here — which is how a local library ends up silently showing
+     * nothing.
+     *
+     * The grant itself, asked of this process, is what decides. LightOS is asked
+     * only when the process can't say yet. Its answer used to be the whole test,
+     * and LightOS answers from its own policy before it looks at the grant —
+     * BlockedByServer, or Unknown when it can't say — so a phone where the
+     * permission had been granted in Android's own settings, or where LightOS's
+     * policy and the grant disagreed, was told to allow access it already had,
+     * and sent to a prompt that had nothing to change. Both answers are logged,
+     * because a report from such a phone needs them side by side.
      */
-    suspend fun permitted(): Boolean =
-        checkPermission(PERMISSION).asKotlinResult
-            .map { it.permissionResult == LightServiceMethod.GetPermission.Result.Granted }
-            .getOrDefault(false)
+    suspend fun access(): Access {
+        val held = hasRuntimePermission(PERMISSION)
+        val lightOs = checkPermission(PERMISSION).asKotlinResult
+            .map { it.permissionResult }
+            .getOrNull()
+        Log.i(TAG, "Music access: grant=${held ?: "unknown"} lightos=${lightOs ?: "no answer"}")
+        return when {
+            held == true -> Access.GRANTED
+            held == null && lightOs == LightServiceMethod.GetPermission.Result.Granted -> Access.GRANTED
+            lightOs == LightServiceMethod.GetPermission.Result.BlockedByServer -> Access.BLOCKED_BY_LIGHTOS
+            else -> Access.NOT_GRANTED
+        }
+    }
+
+    suspend fun permitted(): Boolean = access() == Access.GRANTED
 
     private fun roots(): List<File> =
         ROOTS.map(::File).filter { it.isDirectory }.distinctBy { it.canonicalPath }

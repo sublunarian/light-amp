@@ -39,6 +39,9 @@ internal object LightServiceConnection : ServiceConnection {
     private var appContext: Context? = null
     private var serverPackage: String? = null
 
+    // SDK PATCH (additive, upstreamable): see hasRuntimePermission in LightPermissions.kt.
+    internal val applicationContext: Context? get() = appContext
+
     fun bind(context: Context, serverPackage: String) {
         appContext = context.applicationContext
         this.serverPackage = serverPackage

@@ -343,8 +343,9 @@ class SourceDetailScreen(
         val sync by App.library.syncState.collectAsState()
         // Re-checked on every sync, because granting access is what the user
         // goes off to do and coming back is when it should have changed.
-        var canRead by remember { mutableStateOf(true) }
-        LaunchedEffect(sync) { canRead = LocalLibrary.permitted() }
+        var access by remember { mutableStateOf(LocalLibrary.Access.GRANTED) }
+        LaunchedEffect(sync) { access = LocalLibrary.access() }
+        val canRead = access == LocalLibrary.Access.GRANTED
         val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Source") {
@@ -357,7 +358,11 @@ class SourceDetailScreen(
                     item {
                         TextRow(
                             title = "Allow Music Access",
-                            subtitle = "Needed to read this phone's music folder",
+                            subtitle = if (access == LocalLibrary.Access.BLOCKED_BY_LIGHTOS) {
+                                "LightOS is blocking it for this tool"
+                            } else {
+                                "Needed to read this phone's music folder"
+                            },
                             onClick = { audioPermission?.launch() },
                         )
                     }

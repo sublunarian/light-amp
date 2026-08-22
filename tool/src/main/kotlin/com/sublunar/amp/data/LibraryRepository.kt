@@ -1077,10 +1077,18 @@ class LibraryRepository(
             phase = "Reading this phone",
         )
         try {
-            if (!LocalLibrary.permitted()) {
+            val access = LocalLibrary.access()
+            if (access != LocalLibrary.Access.GRANTED) {
                 _syncState.value = SyncState(
                     syncing = false,
-                    error = "Allow music access to read this phone",
+                    // Blocked is not "not yet allowed": the prompt the other
+                    // message leads to can't change a LightOS policy, and a
+                    // row that sends you round that loop is worse than one
+                    // that says where the wall is.
+                    error = when (access) {
+                        LocalLibrary.Access.BLOCKED_BY_LIGHTOS -> "LightOS is blocking this tool's music access"
+                        else -> "Allow music access to read this phone"
+                    },
                 )
                 return
             }
