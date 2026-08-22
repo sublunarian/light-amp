@@ -628,7 +628,10 @@ class PlexClient(
         album = parentTitle ?: "Unknown Album",
         albumArtist = grandparentTitle ?: "Unknown Artist",
         albumId = parentRatingKey,
-        coverArtId = thumb ?: parentThumb,
+        // The album's sleeve first: a track's own thumb is usually that very
+        // path, and where a file carries its own art it is still the same
+        // picture — keyed by the album it is cached once, not once per song.
+        coverArtId = parentThumb ?: thumb,
         durationMs = duration ?: 0L,
         trackNumber = index,
         discNumber = parentIndex,

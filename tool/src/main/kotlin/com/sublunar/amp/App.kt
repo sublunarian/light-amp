@@ -154,12 +154,61 @@ object App {
      */
     suspend fun forgetSource(source: MusicSource) {
         val db = databaseFor(source)
+        // Named before the tables go: the covers on disk can only be found
+        // through the ids this database holds — see ArtworkLoader.forget.
+        val covers = runCatching { db.libraryDao().allCoverArtIds() }.getOrDefault(emptyList())
         db.libraryDao().apply {
             clearTracks()
             clearAlbums()
             clearLikedArtists()
             clearDownloads()
+            clearAllTopSongs()
         }
+        downloads.deleteSource(source.id)
+        artwork.forget(source.id, covers)
+    }
+
+    /**
+     * The cover files the artwork budget must never evict: one per downloaded
+     * song's album, across every source. These are the offline sleeves, and
+     * they are tied to their songs — removing the downloads is what frees them,
+     * not the budget.
+     */
+    private suspend fun protectedCoverFiles(): Set<String> =
+        settings.sources.first().flatMap { source ->
+            runCatching { databaseFor(source).libraryDao().downloadedCoverArtIds() }
+                .getOrDefault(emptyList())
+                .map { artwork.fileNameFor(source.id, it) }
+        }.toSet()
+
+    /**
+     * Delete every source's downloaded audio, whichever source is active.
+     *
+     * The Offline page's Delete All row. The downloader can't do this: it is
+     * bound to the active source's index and folder, so asking it would empty
+     * whichever source happens to be playing rather than the phone. This walks
+     * all of them the way [forgetSource] does.
+     */
+    suspend fun deleteAllDownloads() {
+        downloader.cancelAll()
+        settings.sources.first().forEach { wipeDownloads(it) }
+    }
+
+    /**
+     * Delete one source's downloaded audio — the per-server Delete on the
+     * Offline page. The download queue is only cancelled when it is this
+     * source's queue: the downloader drains the active source, and another
+     * server's fetches shouldn't stop because this one was emptied.
+     */
+    suspend fun deleteDownloadsFor(source: MusicSource) {
+        if (source.id == _source.value.id) downloader.cancelAll()
+        wipeDownloads(source)
+    }
+
+    private suspend fun wipeDownloads(source: MusicSource) {
+        // A database that won't open shouldn't save its files: the bytes are
+        // what fills the phone, and the index is rebuilt from them.
+        runCatching { databaseFor(source).libraryDao().clearDownloads() }
         downloads.deleteSource(source.id)
     }
 
@@ -365,6 +414,18 @@ object App {
             // schema bump wipes the table, and without this the app would re-fetch
             // audio it already has.
             scope.launch { downloader.reindexFromDisk() }
+            // The artwork budget, applied at launch — which is also what trims an
+            // install from before there was one. Tracks are pointed at their
+            // album's cover first, so the protected set is one file per
+            // downloaded album rather than one per downloaded song, and the
+            // per-song copies fall to the budget. See ArtworkLoader.trimToBudget.
+            scope.launch {
+                settings.sources.first().forEach { source ->
+                    runCatching { databaseFor(source).libraryDao().collapseTrackCovers() }
+                        .onSuccess { if (it > 0) android.util.Log.i("AmpArt", "${source.name}: $it tracks now share their album's cover") }
+                }
+                artwork.trimToBudget(protectedCoverFiles())
+            }
             // Downloads yield to the sync: both hit the same server, and the sync
             // is hundreds of small sequential requests that a saturated
             // transcoder turns into a crawl.

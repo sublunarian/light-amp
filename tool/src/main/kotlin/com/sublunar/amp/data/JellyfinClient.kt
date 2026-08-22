@@ -625,9 +625,17 @@ class JellyfinClient(
  * metadata. A track usually carries no image of its own and inherits the
  * album's, which is why the album is the fallback rather than the track id.
  */
+/**
+ * The album's picture before the item's own, where the item has an album.
+ *
+ * A track with art embedded in its file has a Primary image of its own, and
+ * Jellyfin says so — but it is the same sleeve its album has, and keyed by the
+ * track it was cached once per song: a downloaded library held thousands of
+ * copies of a few hundred covers. The album's id keys them all to one file.
+ */
 fun JellyfinItem.imageId(): String? = when {
-    imageTags.containsKey("Primary") -> id
     !albumPrimaryImageTag.isNullOrBlank() && !albumId.isNullOrBlank() -> albumId
+    imageTags.containsKey("Primary") -> id
     else -> null
 }
 

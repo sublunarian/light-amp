@@ -206,7 +206,8 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
                 ?: a.displayArtist?.takeIf { it.isNotBlank() }
                 ?: a.artist
         }
-        return body.album?.song.orEmpty().map { it.toTrack(albumName, albumArtist) }
+        // The album's own cover for every track on it — see toTrack.
+        return body.album?.song.orEmpty().map { it.toTrack(albumName, albumArtist, body.album?.coverArt) }
     }
 
     override suspend fun getStarred(musicFolderId: String?): Starred {
@@ -465,8 +466,15 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
     private fun SongDto.toTrack(
         albumName: String? = null,
         albumArtistName: String? = null,
+        /**
+         * The parent album's cover id, where the caller has the album. Preferred
+         * over the song's own: Navidrome hands every file an `mf-` id of its own
+         * that resolves to the same sleeve, and keyed by it the cache held one
+         * copy per song — thousands of files for a few hundred covers.
+         */
+        albumCoverArt: String? = null,
     ): Track {
-        val coverId = coverArt ?: albumId ?: id
+        val coverId = albumCoverArt ?: coverArt ?: albumId ?: id
         return Track(
             id = id,
             title = title ?: "Unknown Title",
