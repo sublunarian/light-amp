@@ -8,6 +8,9 @@ browse.
 
 ### Fixed
 
+- Local Music said it had no access on phones where the permission was granted,
+  and Sync Now led back to Allow Music Access. The permission itself decides now,
+  and a LightOS block is named as one.
 - Switching from a speaker back to This Device started the song over. It now
   picks up where the speaker was.
 - While casting, dragging to the end of a song waited, then restarted it. It
