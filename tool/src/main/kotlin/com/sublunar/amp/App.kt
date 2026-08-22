@@ -310,18 +310,13 @@ object App {
                 }
             }
             scope.launch { downloader.setUserPaused(settings.downloadsPaused.first()) }
-            // The colour workaround's switch. See LightDisplayColor: this is an
-            // off-SDK spike, and this is what turns it off again.
-            //
-            // Hidden artwork forces it off regardless: with no covers on screen
-            // there is nothing for colour to do, and the control that would turn
-            // it back on isn't visible either — leaving the device switched to
-            // colour from a setting the user can no longer see would be the
-            // worst of both.
+            // The colour workaround follows the artwork switch. See LightDisplayColor:
+            // this is an off-SDK spike, and hiding artwork is what turns it off —
+            // with no covers on screen there is nothing for colour to do. It used
+            // to have a switch of its own ("Monochrome Artwork"); a sleeve you
+            // chose to see is a sleeve you want in colour, so the switch went.
             scope.launch {
-                combine(settings.monochromeArtwork, settings.artwork) { mono, artwork ->
-                    !mono && artwork != ArtworkMode.NONE
-                }.collect { LightDisplayColor.enabled = it }
+                settings.artwork.collect { LightDisplayColor.enabled = it != ArtworkMode.NONE }
             }
             // A refused login is not the server being gone. Marking it
             // unreachable narrows the library to downloads, which on a source
@@ -636,8 +631,10 @@ object App {
      * wholesale, so the one place that reads it needs only the one answer.
      */
     val hideArtistImages: StateFlow<Boolean> by lazy {
+        // Initial matches the stored default, so the first frame doesn't flash
+        // a row of photos that are about to be hidden.
         combine(settings.hideArtistImages, hideArtwork) { off, all -> off || all }
-            .stateIn(scope, SharingStarted.Eagerly, false)
+            .stateIn(scope, SharingStarted.Eagerly, true)
     }
 
     /**

@@ -238,12 +238,6 @@ class Downloader(
 
     suspend fun removeAll(trackIds: List<String>) = trackIds.forEach { remove(it) }
 
-    suspend fun deleteEverything() {
-        cancelAll()
-        dao.clearDownloads()
-        store.deleteAll()
-    }
-
     /** Lyrics captured with a download, for offline display. */
     suspend fun cachedLyrics(trackId: String): String? = dao.download(trackId)?.lyrics
 

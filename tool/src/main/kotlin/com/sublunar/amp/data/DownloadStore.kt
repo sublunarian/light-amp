@@ -151,11 +151,6 @@ class DownloadStore(
         File(File(filesDir, "downloads"), id).deleteRecursively()
     }
 
-    suspend fun deleteAll() = withContext(Dispatchers.IO) {
-        root.listFiles()?.forEach { it.delete() }
-        Unit
-    }
-
     /** Free space on the volume holding the downloads. */
     fun freeBytes(): Long = runCatching { StatFs(root.absolutePath).availableBytes }.getOrDefault(0L)
 

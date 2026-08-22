@@ -459,8 +459,11 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * reads as broken rather than as sparse. With them off the artist rows fall
      * back to the tighter single-line pitch, exactly as they do with artwork
      * switched off altogether.
+     *
+     * Hidden by default — the publicity shots have to be asked for. Only the
+     * default moved: a value the toggle ever stored still wins.
      */
-    val hideArtistImages: Flow<Boolean> = boolFlow(HIDE_ARTIST_IMAGES, false)
+    val hideArtistImages: Flow<Boolean> = boolFlow(HIDE_ARTIST_IMAGES, true)
 
     /**
      * Stop marking downloaded rows.
@@ -475,15 +478,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      */
     val hideDownloadIcons: Flow<Boolean> = boolFlow(HIDE_DOWNLOAD_ICONS, false)
 
-
-    /**
-     * Artwork stays grey — the app's own switch over the display workaround.
-     *
-     * On by default, because turning it off changes the whole device's colour
-     * filter for as long as the app is in front, and because without the adb
-     * grant behind it there is nothing it can do. See LightDisplayColor.
-     */
-    val monochromeArtwork: Flow<Boolean> = boolFlow(MONOCHROME_ARTWORK, true)
 
     /**
      * The queue as it stood when the app last went away: track ids, the index into
@@ -567,7 +561,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setHideArtistImages(value: Boolean) = putBool(HIDE_ARTIST_IMAGES, value)
     suspend fun setHideDownloadIcons(value: Boolean) = putBool(HIDE_DOWNLOAD_ICONS, value)
 
-    suspend fun setMonochromeArtwork(value: Boolean) = putBool(MONOCHROME_ARTWORK, value)
     suspend fun setArtwork(value: ArtworkMode) = putString(ARTWORK, value.name)
     suspend fun setDownloadsPaused(value: Boolean) = putBool(DOWNLOADS_PAUSED, value)
     suspend fun setLayoutMode(value: LayoutMode) = putString(LAYOUT_MODE, value.name)
@@ -655,7 +648,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val ARTIST_ALBUM_GRID = booleanPreferencesKey("pref.artistAlbumGrid")
         private val HIDE_ARTIST_IMAGES = booleanPreferencesKey("pref.hideArtistImages")
         private val HIDE_DOWNLOAD_ICONS = booleanPreferencesKey("pref.hideDownloadIcons")
-        private val MONOCHROME_ARTWORK = booleanPreferencesKey("pref.monochromeArtwork")
         private val ARTWORK = stringPreferencesKey("pref.artworkMode")
         private val LAYOUT_MODE = stringPreferencesKey("pref.layoutMode")
         private val LAST_SECTION = stringPreferencesKey("pref.lastSection")
