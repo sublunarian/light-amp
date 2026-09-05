@@ -189,8 +189,15 @@ fun <K> Modifier.dragReorderContainer(
                             change.consume()
                         }
                         val target = dragRowTarget(orderedKeys.size, fromIndex, state.dragOffsetY, rowPx, minIndex)
-                        val insertAt = dropInsertIndex(orderedKeys.size, fromIndex, movingIndices, target)
-                        onDrop(movingIndices, insertAt)
+                        // A tap on the handle, or a drag that came back to the row it
+                        // started on, is not a reorder. Without this the block is still
+                        // gathered: for a non-contiguous selection dropInsertIndex has
+                        // no "leave it alone" answer, so the list would jump and a write
+                        // would go out for a gesture that moved nothing.
+                        if (target != fromIndex) {
+                            val insertAt = dropInsertIndex(orderedKeys.size, fromIndex, movingIndices, target)
+                            onDrop(movingIndices, insertAt)
+                        }
                     } finally {
                         state.end()
                     }

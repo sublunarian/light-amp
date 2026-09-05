@@ -363,7 +363,12 @@ class NowPlayingScreen(
         // Only the upcoming portion of the queue (past current) can be dragged into.
         val minIndex = index + 1
         val orderedKeys = remember(queue) { queue.mapIndexed { i, t -> "$i-${t.id}" } }
-        val dropTarget: DropTarget? = drag.draggingIndex?.let { from ->
+        // takeIf on the same condition that gates dragging at all: the track can finish
+        // while a drag is held, and once the playing row is the last one there is no
+        // upcoming range left. dragRowTarget would then be asked to clamp into an empty
+        // range and throw -- and this runs before the pointerInput restart that ends the
+        // drag has had a composition to take effect.
+        val dropTarget: DropTarget? = drag.draggingIndex?.takeIf { queue.size > minIndex }?.let { from ->
             val target = dragRowTarget(queue.size, from, drag.dragOffsetY, rowPx, minIndex)
             val movingIndices = drag.draggingKeys.mapNotNull { orderedKeys.indexOf(it).takeIf { i -> i >= 0 } }.toSet()
             remember(queue, from, drag.draggingKeys, target) {
