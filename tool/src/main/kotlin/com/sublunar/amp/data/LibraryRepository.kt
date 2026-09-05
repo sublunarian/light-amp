@@ -804,11 +804,13 @@ class LibraryRepository(
     suspend fun removeFromPlaylistAt(id: String, index: Int): Boolean = playlistWrite(id) {
         if (playlistsAreLocal()) {
             LocalPlaylists.removeAt(id, index)
-            true
         } else {
-            runCatching { serverClient.value?.removeFromPlaylistAt(id, index) }
+            // The client's own answer, not merely "it didn't throw": every one of
+            // them catches its transport errors internally, so isSuccess here would
+            // be true for a write the server refused — and for no client at all.
+            runCatching { serverClient.value?.removeFromPlaylistAt(id, index) ?: false }
                 .onFailure { android.util.Log.w("AmpSync", "removeFromPlaylistAt($id) failed: ${it.message}", it) }
-                .isSuccess
+                .getOrDefault(false)
         }
     }
 
@@ -816,11 +818,11 @@ class LibraryRepository(
     suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = playlistWrite(id) {
         if (playlistsAreLocal()) {
             LocalPlaylists.reorder(id, orderedSongIds)
-            true
         } else {
-            runCatching { serverClient.value?.reorderPlaylist(id, orderedSongIds) }
+            // See removeFromPlaylistAt: the client's answer, not the absence of a throw.
+            runCatching { serverClient.value?.reorderPlaylist(id, orderedSongIds) ?: false }
                 .onFailure { android.util.Log.w("AmpSync", "reorderPlaylist($id) failed: ${it.message}", it) }
-                .isSuccess
+                .getOrDefault(false)
         }
     }
 

@@ -443,15 +443,24 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         request("updatePlaylist", listOf("playlistId" to id, "songIdToAdd" to songId))
     }
 
-    override suspend fun removeFromPlaylistAt(id: String, index: Int) {
+    override suspend fun removeFromPlaylistAt(id: String, index: Int): Boolean {
         request("updatePlaylist", listOf("playlistId" to id, "songIndexToRemove" to index.toString()))
+        return true
     }
 
-    /** Subsonic has no reorder; overwrite the playlist with the full ordered id list. */
-    override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>) {
+    /**
+     * Subsonic has no reorder; overwrite the playlist with the full ordered id
+     * list. Which is why the count is checked against the server's own copy
+     * first: an overwrite with a partial list doesn't reorder a playlist, it
+     * deletes everything the list left out.
+     */
+    override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean {
+        val known = getPlaylist(id).trackIds
+        if (known.size != orderedSongIds.size) return false
         val params = mutableListOf("playlistId" to id)
         orderedSongIds.forEach { params.add("songId" to it) }
         request("createPlaylist", params)
+        return true
     }
 
     // --- Mapping -------------------------------------------------------------

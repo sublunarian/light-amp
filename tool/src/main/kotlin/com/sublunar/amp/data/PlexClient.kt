@@ -777,9 +777,12 @@ class PlexClient(
      * an index into the playlist as the app last read it, so the entry ids are
      * re-read here rather than remembered.
      */
-    override suspend fun removeFromPlaylistAt(id: String, index: Int) {
-        val entry = playlistItemIds(id).getOrNull(index) ?: return
-        deletePlaylistEntry(id, entry)
+    override suspend fun removeFromPlaylistAt(id: String, index: Int): Boolean {
+        val entry = playlistItemIds(id).getOrNull(index) ?: run {
+            android.util.Log.w(TAG, "removeFromPlaylistAt($id): no entry at $index; nothing removed")
+            return false
+        }
+        return deletePlaylistEntry(id, entry)
     }
 
     private suspend fun deletePlaylistEntry(id: String, entryId: Long): Boolean =
@@ -819,7 +822,7 @@ class PlexClient(
      * land, since a skip decision after the first move has to go by where an
      * entry ended up, not [entries]' original position.
      */
-    override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>) {
+    override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean {
         val entries = playlistEntries(id)
         if (entries.size != orderedSongIds.size) {
             android.util.Log.w(
@@ -827,7 +830,7 @@ class PlexClient(
                 "reorderPlaylist($id): wanted ${orderedSongIds.size} track(s) but the playlist has " +
                     "${entries.size}; refusing to touch it",
             )
-            return
+            return false
         }
         // Duplicate song ids: pool entries per song id, hand out in original order.
         val bySong = mutableMapOf<String, MutableList<Long>>()
@@ -841,7 +844,7 @@ class PlexClient(
                     TAG,
                     "reorderPlaylist($id): wanted order references a track not in the playlist; refusing to touch it",
                 )
-                return
+                return false
             }
             queue.removeAt(0)
         }
@@ -858,11 +861,12 @@ class PlexClient(
             )
             if (!moved) {
                 android.util.Log.w(TAG, "reorderPlaylist($id): move failed partway; playlist left partially reordered, nothing lost")
-                return
+                return false
             }
             localOrder.remove(entryId)
             localOrder.add(localOrder.indexOf(afterId) + 1, entryId)
         }
+        return true
     }
 
     /** Each entry's `(songId, playlistItemID)`, in playlist order. */
