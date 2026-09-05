@@ -1,0 +1,135 @@
+diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicy.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicy.kt
+new file mode 100644
+index 0000000..f8efdba
+--- /dev/null
++++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicy.kt
+@@ -0,0 +1,89 @@
++package com.thelightphone.sdk.audio
++
++import android.content.Context
++import androidx.annotation.OptIn
++import androidx.media3.common.util.UnstableApi
++import androidx.media3.datasource.DataSource
++import androidx.media3.datasource.DataSpec
++import androidx.media3.datasource.DefaultDataSource
++import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
++import androidx.media3.exoplayer.source.MediaSource
++import java.io.FileNotFoundException
++
++/**
++ * SDK PATCH (additive, upstreamable): a tool's say over whether its players
++ * may use the network at all.
++ *
++ * A tool with a "Wi-Fi only" setting has no other way to keep that promise.
++ * Playback fetches through the platform player, not through the tool's own
++ * HTTP client, and once a queue holds a stream the player will open it — for
++ * the next item ahead of time, and again to reconnect a stream that dropped —
++ * over whatever network the phone is on at that moment. So the question is
++ * put to the tool before every connection a player opens for a remote source,
++ * and again as it reads, so a stream that is no longer allowed stops at the
++ * next read rather than at the end of the file. Local files, assets and other
++ * in-phone sources never ask.
++ *
++ * One rule for the process rather than a property per player: the detached
++ * service builds its own player, in the same process, and it must answer to
++ * the same rule.
++ */
++object LightAudioNetworkPolicy {
++    /** Whether a player may fetch over the network right now. Default: always. */
++    @Volatile
++    var allowsNetwork: () -> Boolean = { true }
++}
++
++/**
++ * Raised by a player's data source when [LightAudioNetworkPolicy] says no.
++ *
++ * A [FileNotFoundException] because that is what the platform player's
++ * default load-error policy treats as final: the failure is reported at once
++ * instead of being retried for several seconds, and the tool can then say
++ * what happened. There is no retrying a rule.
++ */
++class LightAudioNetworkBlockedException :
++    FileNotFoundException("The tool does not allow network use right now")
++
++/** A media-source factory whose remote fetches answer to [LightAudioNetworkPolicy]. */
++@OptIn(UnstableApi::class)
++internal fun gatedMediaSourceFactory(context: Context): MediaSource.Factory =
++    DefaultMediaSourceFactory(GatedDataSource.Factory(DefaultDataSource.Factory(context)))
++
++/**
++ * Consults [LightAudioNetworkPolicy] before opening, and while reading, a
++ * remote source; hands everything else straight to [upstream].
++ */
++@OptIn(UnstableApi::class)
++internal class GatedDataSource(private val upstream: DataSource) : DataSource by upstream {
++
++    private var remote = false
++
++    override fun open(dataSpec: DataSpec): Long {
++        remote = isRemoteScheme(dataSpec.uri.scheme)
++        if (remote && !LightAudioNetworkPolicy.allowsNetwork()) {
++            throw LightAudioNetworkBlockedException()
++        }
++        return upstream.open(dataSpec)
++    }
++
++    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
++        if (remote && !LightAudioNetworkPolicy.allowsNetwork()) {
++            throw LightAudioNetworkBlockedException()
++        }
++        return upstream.read(buffer, offset, length)
++    }
++
++    class Factory(private val upstream: DataSource.Factory) : DataSource.Factory {
++        override fun createDataSource(): DataSource = GatedDataSource(upstream.createDataSource())
++    }
++}
++
++/**
++ * Whether a URI scheme leaves the phone. Everything the platform player can
++ * read from the device itself is named; anything else is a network fetch.
++ */
++internal fun isRemoteScheme(scheme: String?): Boolean = when (scheme?.lowercase()) {
++    null, "", "file", "asset", "content", "rawresource", "android.resource", "data" -> false
++    else -> true
++}
+diff --git a/sdk/client/src/test/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicyTest.kt b/sdk/client/src/test/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicyTest.kt
+new file mode 100644
+index 0000000..443f24e
+--- /dev/null
++++ b/sdk/client/src/test/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicyTest.kt
+@@ -0,0 +1,34 @@
++package com.thelightphone.sdk.audio
++
++import java.io.FileNotFoundException
++import kotlin.test.Test
++import kotlin.test.assertFalse
++import kotlin.test.assertTrue
++
++class LightAudioNetworkPolicyTest {
++    @Test
++    fun inPhoneSchemesNeverAsk() {
++        for (scheme in listOf(null, "", "file", "FILE", "asset", "content", "rawresource", "android.resource", "data")) {
++            assertFalse(isRemoteScheme(scheme), "scheme $scheme should not count as remote")
++        }
++    }
++
++    @Test
++    fun anythingElseIsANetworkFetch() {
++        for (scheme in listOf("http", "https", "HTTPS", "rtsp", "ftp", "udp")) {
++            assertTrue(isRemoteScheme(scheme), "scheme $scheme should count as remote")
++        }
++    }
++
++    @Test
++    fun refusalIsFinalToThePlayer() {
++        // The default load-error policy retries most IOExceptions for seconds;
++        // a FileNotFoundException it reports at once. A rule is not worth retrying.
++        assertTrue(LightAudioNetworkBlockedException() is FileNotFoundException)
++    }
++
++    @Test
++    fun policyAllowsByDefault() {
++        assertTrue(LightAudioNetworkPolicy.allowsNetwork())
++    }
++}

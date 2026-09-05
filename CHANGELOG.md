@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.2
+
+### Fixed
+
+- Wi-Fi Only could still use cellular data: a stream already in the queue kept
+  playing after Wi-Fi dropped, and the next track along with it. Every
+  connection the app or its player opens now asks first, so on cellular nothing
+  reaches the server. A track that needs it shows "Waiting for Wi-Fi" and is
+  cued up again once Wi-Fi is back.
+
 ## 0.6.1
 
 ### Fixed

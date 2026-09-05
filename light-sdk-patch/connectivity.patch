@@ -1,0 +1,44 @@
+diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightConnectivity.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightConnectivity.kt
+index d9a5b86..59cc01c 100644
+--- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightConnectivity.kt
++++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightConnectivity.kt
+@@ -60,12 +60,39 @@ class LightConnectivity(androidContext: Context) {
+                 }
+             }
+ 
++            // SDK PATCH (additive, upstreamable): the default-network callback
++            // as well. The request above hears every network appear, change
++            // its capabilities and disappear — but not the moment the phone
++            // moves its default from one to another while both stay up, which
++            // is what a weak Wi-Fi does: it stays connected at the edge of
++            // range while the bytes quietly move to cellular. That switch is
++            // exactly what changes the answer here, and only the default
++            // callback reports it.
++            val defaultCallback = object : ConnectivityManager.NetworkCallback() {
++                override fun onAvailable(network: Network) {
++                    trySend(currentStatus)
++                }
++
++                override fun onLost(network: Network) {
++                    trySend(currentStatus)
++                }
++
++                override fun onCapabilitiesChanged(
++                    network: Network,
++                    capabilities: NetworkCapabilities
++                ) {
++                    trySend(currentStatus)
++                }
++            }
++
+             trySend(currentStatus)
+ 
+             connectivityManager.registerNetworkCallback(request, callback)
++            connectivityManager.registerDefaultNetworkCallback(defaultCallback)
+ 
+             awaitClose {
+                 connectivityManager.unregisterNetworkCallback(callback)
++                connectivityManager.unregisterNetworkCallback(defaultCallback)
+             }
+         }
+             .distinctUntilChanged()

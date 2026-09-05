@@ -1,7 +1,5 @@
 package com.sublunar.amp.data
 
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -56,7 +54,7 @@ class JellyfinClient(
     private val product: String? = null,
 ) : MusicServer {
 
-    private val http = HttpClient(OkHttp) { expectSuccess = false }
+    private val http = NetworkGate.httpClient { expectSuccess = false }
 
     private val json = Json {
         ignoreUnknownKeys = true

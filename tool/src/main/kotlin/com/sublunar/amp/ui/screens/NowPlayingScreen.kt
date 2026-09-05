@@ -99,6 +99,7 @@ import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.sublunar.amp.ui.components.appClickable
 import kotlinx.coroutines.launch
+import com.sublunar.amp.data.NetworkGate
 
 /** Where the active synced-lyric line sits in the pane, as a fraction of its height. */
 private const val LYRIC_ANCHOR = 0.38f
@@ -521,6 +522,11 @@ class NowPlayingScreen(
     @Composable
     private fun ArtPlayer(current: Track) {
         val artwork by App.settings.artwork.collectAsState(initial = ArtworkMode.SMALL)
+        // Parked by the rule — see PlaybackController.waitingForWifi. The
+        // credit line carries it: the same words the downloads page uses for
+        // the same wait, in the place the eye already goes for what is up.
+        val waiting by App.playback.waitingForWifi.collectAsState()
+        val credit = if (waiting) NetworkGate.WAITING_FOR_WIFI else current.artist
         // The words want the whole panel, so the title goes back to the header
         // it came from rather than sitting behind them.
         val heroTitle = artwork == ArtworkMode.NONE && !NowPlayingNav.lyricsOverlay.value
@@ -545,7 +551,7 @@ class NowPlayingScreen(
                     onBack = { goBack() },
                     // Nothing in the card's place in hero mode, where the
                     // title lives on the stage instead — see heroTitle.
-                    titleContent = if (heroTitle) null else ({ TitleCard(current.title, current.artist) }),
+                    titleContent = if (heroTitle) null else ({ TitleCard(current.title, credit) }),
                     rightAction = HeaderAction(
                         AppIcons.MoreVert,
                         onLongClick = { go { SettingsScreen(it) } },
@@ -569,7 +575,7 @@ class NowPlayingScreen(
                         if (!coverOnly) NowPlayingNav.coverChrome.value = false
                     },
                 )
-                if (heroTitle) TitleBlock(current)
+                if (heroTitle) TitleBlock(current, credit)
                 if (!coverOnly || chrome) {
                     // On the cover everything steps back a little, but by less
                     // than the secondary row is knocked back on black: there it
@@ -871,7 +877,7 @@ class NowPlayingScreen(
      * which is what the cover was doing before.
      */
     @Composable
-    private fun BoxScope.TitleBlock(current: Track) {
+    private fun BoxScope.TitleBlock(current: Track, credit: String) {
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -886,7 +892,7 @@ class NowPlayingScreen(
                 // Artist above the song, album below it, both in the secondary
                 // weight — the credit first, then what you're hearing, then the
                 // record it came off.
-                HeroLine(current.artist, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
+                HeroLine(credit, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
                 HeroLine(current.title, HERO_TITLE_PX, HERO_TITLE_LINE_PX, dim = false)
                 HeroLine(current.album, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
             }

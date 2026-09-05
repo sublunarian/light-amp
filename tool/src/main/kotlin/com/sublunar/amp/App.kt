@@ -69,6 +69,8 @@ import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.minutes
+import com.sublunar.amp.data.NetworkGate
+import com.thelightphone.sdk.audio.LightAudioNetworkPolicy
 
 /**
  * App-scoped service locator. Initialized once from the boot screen (which owns
@@ -303,6 +305,26 @@ object App {
         dataMode.value != DataMode.WIFI_ONLY || Connectivity.isUnmetered()
 
     /**
+     * The one rule every byte answers to: may the network be used right now?
+     * False only in Wi-Fi Only on a metered link — or with no link at all.
+     *
+     * The same answer as [metadataAllowed], enforced rather than consulted.
+     * That one is the courtesy: the early return that saves building work
+     * which would only be refused. This one is the wall behind it — every
+     * HTTP client is built through NetworkGate, the platform player asks
+     * through the SDK's LightAudioNetworkPolicy, and the raw download and
+     * discovery paths ask directly — so a path that never asked is refused
+     * all the same. Before this, Wi-Fi Only was a set of courtesy checks,
+     * and a stream already in the queue played over cellular.
+     *
+     * Asked of the system each time, not of the last callback: a phone at
+     * the edge of Wi-Fi moves its default to cellular without either network
+     * going away, and a report of that can arrive after the socket would.
+     */
+    fun networkAllowed(): Boolean =
+        dataMode.value != DataMode.WIFI_ONLY || Connectivity.isUnmeteredNow()
+
+    /**
      * Whether real bytes may move — downloads, cover art.
      *
      * Free on an unmetered link. On a metered one, only Make it Hurt, whose
@@ -322,6 +344,12 @@ object App {
             settings = AppSettings(context.dataStore)
             lightContext = context
             Connectivity.bind(context, scope)
+            // The wall goes up before anything exists to be built behind it:
+            // every client below is made through NetworkGate, and the player
+            // — attached or the detached service, same process — asks the
+            // same rule at its own connections.
+            NetworkGate.policy = ::networkAllowed
+            LightAudioNetworkPolicy.allowsNetwork = ::networkAllowed
             artwork = ArtworkLoader(
                 context.filesDir,
                 serverClient,

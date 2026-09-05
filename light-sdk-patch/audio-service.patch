@@ -1,5 +1,5 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioService.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioService.kt
-index 32d937e..7223e52 100644
+index 32d937e..88f2de7 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioService.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioService.kt
 @@ -1,6 +1,7 @@
@@ -10,24 +10,27 @@ index 32d937e..7223e52 100644
  import android.os.Handler
  import android.os.Looper
  import androidx.media3.common.Player
-@@ -32,7 +33,15 @@ internal class LightAudioService : MediaSessionService() {
+@@ -32,7 +33,18 @@ internal class LightAudioService : MediaSessionService() {
  
          assertSharedProcess()
  
 -        player = ExoPlayer.Builder(this).build().apply {
 +        player = ExoPlayer.Builder(this)
-+            // SDK PATCH (additive, upstreamable): the same two defaults the
++            // SDK PATCH (additive, upstreamable): the same defaults the
 +            // attached path carries. Without device-volume control, a tool's
 +            // volume fader reads nothing through its controller; without
 +            // becoming-noisy, unplugging headphones keeps playing out loud on
-+            // the phone's speaker.
++            // the phone's speaker; and every remote fetch answers to
++            // LightAudioNetworkPolicy, this being the player that keeps going
++            // after the tool's screen is gone.
 +            .setDeviceVolumeControlEnabled(true)
 +            .setHandleAudioBecomingNoisy(true)
++            .setMediaSourceFactory(gatedMediaSourceFactory(this))
 +            .build().apply {
              setAudioAttributes(LightAudioUsage.Music.toMedia3AudioAttributes(), true)
              addListener(object : Player.Listener {
                  override fun onIsPlayingChanged(isPlaying: Boolean) {
-@@ -43,6 +52,18 @@ internal class LightAudioService : MediaSessionService() {
+@@ -43,6 +55,18 @@ internal class LightAudioService : MediaSessionService() {
          session = MediaSession.Builder(this, player)
              .setId(packageName)
              .setCallback(SessionCallback())

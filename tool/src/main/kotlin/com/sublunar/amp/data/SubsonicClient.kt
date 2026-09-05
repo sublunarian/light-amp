@@ -1,7 +1,5 @@
 package com.sublunar.amp.data
 
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
@@ -45,7 +43,7 @@ class SubsonicException(message: String) : Exception(message)
  */
 class SubsonicClient(val config: SubsonicConfig) : MusicServer {
 
-    private val http = HttpClient(OkHttp) {
+    private val http = NetworkGate.httpClient {
         expectSuccess = false
     }
 

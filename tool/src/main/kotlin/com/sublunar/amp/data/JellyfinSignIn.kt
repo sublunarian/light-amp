@@ -1,7 +1,5 @@
 package com.sublunar.amp.data
 
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -50,7 +48,7 @@ object JellyfinSignIn {
         password: String,
         product: String? = null,
     ): JellyfinSession? {
-        val http = HttpClient(OkHttp) { expectSuccess = false }
+        val http = NetworkGate.httpClient { expectSuccess = false }
         try {
             val root = baseUrl.trimEnd('/')
             val payload: JsonObject = buildJsonObject {

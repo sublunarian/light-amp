@@ -478,7 +478,7 @@ class Downloader(
             // finish rather than abandoning the bytes already fetched.
             while (userPaused || !heavyDataAllowed()) {
                 _progress.value = _progress.value.copy(
-                    currentTitle = if (userPaused) "Paused" else "Waiting for Wi-Fi",
+                    currentTitle = if (userPaused) "Paused" else NetworkGate.WAITING_FOR_WIFI,
                     currentSource = null,
                 )
                 delay(PAUSE_POLL_MS)

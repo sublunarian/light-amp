@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.thelightphone.sdk.LightConnectivity
 import com.thelightphone.sdk.NetworkStatus
 import com.thelightphone.sdk.SealedLightContext
 import kotlinx.coroutines.CoroutineScope
@@ -33,13 +34,36 @@ object Connectivity {
         NetworkStatus(isConnected = false, isWifi = false, isMetered = true),
     )
 
+    /** The system's answer, kept for [isUnmeteredNow]; null until [bind]. */
+    @Volatile
+    private var source: LightConnectivity? = null
+
     /** Wired once at boot — see App.boot. */
     fun bind(context: SealedLightContext, scope: CoroutineScope) {
-        status.value = runCatching { context.connectivity.currentStatus }
+        val connectivity = context.connectivity
+        source = connectivity
+        status.value = runCatching { connectivity.currentStatus }
             .getOrDefault(status.value)
         scope.launch {
-            context.connectivity.observeNetworkStatus().collect { status.value = it }
+            connectivity.observeNetworkStatus().collect { status.value = it }
         }
+    }
+
+    /**
+     * [isUnmetered] as of this instant, asked of the system rather than read
+     * from the last callback.
+     *
+     * For the gates that stand in front of a connection — see NetworkGate. A
+     * callback is a report of a change, and a report can arrive after the
+     * socket would have; the wall asks for itself. Two binder reads, so it is
+     * asked once per connection, not once per byte. The flow is brought up to
+     * date on the way, so the courtesy checks see the same answer. Before
+     * [bind] there is nothing to ask, and the cached answer errs metered.
+     */
+    fun isUnmeteredNow(): Boolean {
+        val now = source?.let { runCatching { it.currentStatus }.getOrNull() } ?: return isUnmetered()
+        status.value = now
+        return now.isConnected && !now.isMetered
     }
 
     val network: StateFlow<NetworkStatus> = status

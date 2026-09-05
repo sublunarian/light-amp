@@ -1,8 +1,6 @@
 package com.sublunar.amp.data
 
 import com.sublunar.amp.App
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -29,7 +27,7 @@ object LyricsRepository {
     private const val USER_AGENT = "Amp (Light Phone III music player)"
     private const val LRCLIB = "https://lrclib.net/api"
 
-    private val http by lazy { HttpClient(OkHttp) { expectSuccess = false } }
+    private val http by lazy { NetworkGate.httpClient { expectSuccess = false } }
     private val json = Json { ignoreUnknownKeys = true }
 
     /**

@@ -4,6 +4,8 @@ import androidx.media3.common.Player
 import com.thelightphone.sdk.cast.DlnaCast
 import com.thelightphone.sdk.cast.DlnaRenderer
 import com.thelightphone.sdk.cast.DlnaState
+import com.thelightphone.sdk.audio.LightAudioNetworkBlockedException
+import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.Connectivity
 import com.sublunar.amp.data.DownloadStore
@@ -222,6 +224,19 @@ class PlaybackController(
     private var retriedTrackId: String? = null
 
     /**
+     * Parked by the rule: the player refused its own connection because the
+     * bytes would have cost cellular data in Wi-Fi Only — see the SDK's
+     * LightAudioNetworkPolicy, wired to App.networkAllowed. The one failure a
+     * stream can raise that is neither the server's nor the network's doing,
+     * so the one the screen names. The player sits in its error state until
+     * [resumeAfterWait] prepares it again: when the link is free again, cued
+     * where it stood; on a press before that, left parked, which is the
+     * screen keeping its word.
+     */
+    private val _waitingForWifi = MutableStateFlow(false)
+    val waitingForWifi: StateFlow<Boolean> = _waitingForWifi
+
+    /**
      * Tracks whose stream failed, which play from disk instead.
      *
      * Narrower than [forceOffline], and the right size for a server that is
@@ -432,13 +447,21 @@ class PlaybackController(
             if (streamOffsetMs > 0L) seekTo(0)
         }
         p.onPlaybackError = { error ->
-            // A bad HTTP status is proof the server is *there*: it answered, it
-            // just didn't like the request. Treating that as "unreachable" takes
-            // the whole library down to downloads-only over one bad URL, and it
-            // stays that way until something else proves otherwise.
-            fallBackOffline(
-                serverAnswered = error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
-            )
+            if (error.refusedByGate()) {
+                // Not the server's failure and not the network's: the app's
+                // own rule, at the player's own connection. Nothing to fall
+                // back to and nothing to latch — the server is not unreachable,
+                // it is unasked.
+                stallForWifi()
+            } else {
+                // A bad HTTP status is proof the server is *there*: it answered, it
+                // just didn't like the request. Treating that as "unreachable" takes
+                // the whole library down to downloads-only over one bad URL, and it
+                // stays that way until something else proves otherwise.
+                fallBackOffline(
+                    serverAnswered = error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+                )
+            }
         }
         // While casting, the renderer is the source of truth for these — the local
         // player sits paused and would otherwise report position 0 / not-playing
@@ -634,8 +657,12 @@ class PlaybackController(
             Connectivity.unmetered.collect {
                 unmetered = it
                 reresolveQueue()
+                if (it) cueIfParked()
             }
         }
+        // The rule can also open by the mode changing — Wi-Fi Only switched
+        // off while on cellular — with nothing about the connection changing.
+        scope.launch { App.dataMode.collect { cueIfParked() } }
         // Shared with the library rather than queried again here — one read of
         // the downloads table feeds both. It also fixes a subtler thing: this
         // used to resolve `dao` once, at bind, and so stayed subscribed to
@@ -928,12 +955,85 @@ class PlaybackController(
             reportTimeline(TimelineState.PLAYING)
             return
         }
+        // Parked by the rule: a play on the player as it stands is silence
+        // (it is in its error state). Prepare it again where it stood, or,
+        // if the rule still says no, leave it parked and let the screen say so.
+        if (_waitingForWifi.value) {
+            resumeAfterWait(play = true)
+            return
+        }
         // The decision first, then the sound — see MusicServer.prepareStream.
         // Starting the player before it is settled is what left a restored
         // queue dead: the stream went out with no decision behind it and came
         // back 400, which then took the whole library offline.
         withStreamDecision { player?.play() }
         reportTimeline(TimelineState.PLAYING)
+    }
+
+    /** Whether the player's own connection was refused by the network rule. */
+    private fun PlaybackException.refusedByGate(): Boolean =
+        generateSequence<Throwable>(this) { it.cause }.any { it is LightAudioNetworkBlockedException }
+
+    private fun stallForWifi() {
+        _waitingForWifi.value = true
+        _isPlaying.value = false
+        android.util.Log.i("AmpNet", "refused by the rule at idx=${_index.value} pos=${_positionMs.value}")
+    }
+
+    /**
+     * Prepare the parked player again where it stood, and play if asked.
+     * Main only, like [rebuildQueueAt].
+     *
+     * Asked of the rule first, not because the player wouldn't ask — it
+     * would, at its connection, and refuse the same way — but so that a press
+     * while the link is still metered costs no rebuild, no seek check and no
+     * error, and the screen simply goes on saying what it said.
+     */
+    private fun resumeAfterWait(play: Boolean) {
+        val p = player ?: return
+        val tracks = _queue.value
+        val index = _index.value
+        if (index !in tracks.indices) {
+            _waitingForWifi.value = false
+            return
+        }
+        if (tracks[index].source() is LightAudioSource.UrlSource && !NetworkGate.isOpen()) return
+        _waitingForWifi.value = false
+        rebuildQueueAt(p, tracks, index, _positionMs.value)
+        if (play) p.play() else p.pause()
+    }
+
+    /**
+     * The rule opened — Wi-Fi is back, or the mode changed — and playback is
+     * parked on it: prepare the player where it stood, paused. Cued rather
+     * than started, for the reason [restoreState] gives — the phone coming
+     * back into Wi-Fi is not a press of play. One press then plays, from the
+     * screen or a headset button, where a parked player answers a press with
+     * silence.
+     */
+    private suspend fun cueIfParked() {
+        if (!_waitingForWifi.value || isCasting) return
+        withContext(Dispatchers.Main.immediate) { resumeAfterWait(play = false) }
+    }
+
+    /**
+     * Next/previous while parked: move the marker and try the neighbour the
+     * way play would — a downloaded track plays, a stream is refused again
+     * and the screen says so on the new row. Repeat's wrap is honoured the way
+     * [advanceCast] honours it; off the end, nothing.
+     */
+    private fun stepWhileWaiting(delta: Int) {
+        val size = _queue.value.size
+        if (size == 0) return
+        val target = when {
+            delta == 0 -> _index.value
+            _repeatMode.value == RepeatMode.QUEUE -> ((_index.value + delta) % size + size) % size
+            else -> _index.value + delta
+        }
+        if (target !in 0 until size) return
+        _index.value = target
+        _positionMs.value = 0L
+        resumeAfterWait(play = true)
     }
 
     /**
@@ -1199,6 +1299,7 @@ class PlaybackController(
         _queue.value = emptyList()
         _queueName.value = null
         _index.value = -1
+        _waitingForWifi.value = false
         queuedSources = emptyList()
         streamOffsetMs = 0
         offsetItemTrackId = null
@@ -1227,6 +1328,10 @@ class PlaybackController(
             jumpTo(_index.value + 1)
             return
         }
+        if (_waitingForWifi.value) {
+            stepWhileWaiting(+1)
+            return
+        }
         player?.skipToNext()
     }
 
@@ -1244,6 +1349,10 @@ class PlaybackController(
         }
         if (isCasting) {
             if (_positionMs.value > PREVIOUS_RESTART_MS) seekTo(0) else jumpTo(_index.value - 1)
+            return
+        }
+        if (_waitingForWifi.value) {
+            stepWhileWaiting(if (_positionMs.value > PREVIOUS_RESTART_MS) 0 else -1)
             return
         }
         val p = player ?: return
@@ -1998,7 +2107,10 @@ class PlaybackController(
     // --- DLNA casting --------------------------------------------------------
 
     /** Find renderers on the network. Blocking on the network for a few seconds. */
-    suspend fun findCastDevices(): List<DlnaRenderer> = DlnaCast.discover()
+    suspend fun findCastDevices(): List<DlnaRenderer> =
+        // A LAN broadcast, but the LAN could be a hotspot — metered, and so
+        // cellular as far as Wi-Fi Only is concerned. Same wall as every socket.
+        if (NetworkGate.isOpen()) DlnaCast.discover() else emptyList()
 
     /**
      * Move playback to [renderer]: stop this device, hand the current track's
@@ -2683,6 +2795,8 @@ class PlaybackController(
         offsetItemTrackId = null
         // Picking something new to play is reason enough to try the server again.
         streamFailed.clear()
+        // A new queue is prepared afresh, so a park on the old one is over.
+        _waitingForWifi.value = false
         // Right from the first frame, rather than whenever the stream gets round
         // to declaring a length — see the durationMs collector in ensurePlayer.
         tracks.getOrNull(startIndex)?.durationMs

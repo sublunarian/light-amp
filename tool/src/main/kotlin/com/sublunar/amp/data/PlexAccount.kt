@@ -1,7 +1,5 @@
 package com.sublunar.amp.data
 
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -27,7 +25,7 @@ object PlexAccount {
 
     private const val PLEX_TV = "https://plex.tv"
 
-    private val http = HttpClient(OkHttp) { expectSuccess = false }
+    private val http = NetworkGate.httpClient { expectSuccess = false }
 
     private val json = Json {
         ignoreUnknownKeys = true

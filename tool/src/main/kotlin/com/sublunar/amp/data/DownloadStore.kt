@@ -98,6 +98,12 @@ class DownloadStore(private val filesDir: File) {
             val partial = File(target.parentFile, "${target.name}$PART_SUFFIX")
             try {
                 val startedMs = System.currentTimeMillis()
+                // The wall, not the courtesy: Downloader asks heavyDataAllowed
+                // between tracks, and this asks NetworkGate before the
+                // connection and again between reads, so a mode switched to
+                // Wi-Fi Only mid-transfer, or a link that turned metered, stops
+                // the file here rather than at its end.
+                NetworkGate.check()
                 val connection = URL(url).openConnection()
                 // Without these a half-open connection parks the worker forever,
                 // which reads as "downloads have stopped" rather than as an error.
@@ -108,7 +114,13 @@ class DownloadStore(private val filesDir: File) {
                     // is a write syscall every 8 KiB; on this hardware that costs
                     // more than the transfer does.
                     BufferedOutputStream(partial.outputStream(), BUFFER_BYTES).use { output ->
-                        input.copyTo(output, BUFFER_BYTES)
+                        val buffer = ByteArray(BUFFER_BYTES)
+                        while (true) {
+                            NetworkGate.check()
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            output.write(buffer, 0, n)
+                        }
                     }
                 }
                 val elapsedMs = System.currentTimeMillis() - startedMs

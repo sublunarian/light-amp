@@ -1,7 +1,5 @@
 package com.sublunar.amp.data
 
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.delete
@@ -51,7 +49,7 @@ class PlexClient(
 
     private val identityHeaders: List<Pair<String, String>> = plexIdentity(product)
 
-    private val http = HttpClient(OkHttp) { expectSuccess = false }
+    private val http = NetworkGate.httpClient { expectSuccess = false }
 
     /** Serialises requests aimed at a player; see [companionXml]. */
     private val playerLock = Mutex()

@@ -9,9 +9,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import com.sublunar.amp.data.LocalLibrary
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.md5Hex
-import io.ktor.client.HttpClient
 import io.ktor.client.call.body
-import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.get
 import io.ktor.http.isSuccess
 import java.io.File
@@ -20,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import com.sublunar.amp.data.NetworkGate
 
 /**
  * Loads album art. Bytes are fetched once and cached on disk; decoded bitmaps
@@ -52,7 +51,7 @@ class ArtworkLoader(
      */
     private val sourceId: () -> String,
 ) {
-    private val http = HttpClient(OkHttp) { expectSuccess = false }
+    private val http = NetworkGate.httpClient { expectSuccess = false }
     private val diskDir = File(filesDir, "artwork").apply { mkdirs() }
     private val memory = object : LruCache<String, ImageBitmap>(MEMORY_ENTRIES) {}
     private val gate = Semaphore(FETCH_CONCURRENCY)

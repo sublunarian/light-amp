@@ -97,6 +97,13 @@ observer sees it. Swap sets inside one `@Transaction`.
 **A `graphicsLayer`'s `clip` applies before its transform.** Clipping a zooming
 image that way scales the clip rectangle too. Clip on an untransformed parent.
 
+**Every socket goes through `NetworkGate`.** Wi-Fi Only is a wall at the
+transport, not a set of checks: HTTP clients are built with
+`NetworkGate.httpClient`, the player asks the SDK's `LightAudioNetworkPolicy`,
+and the raw paths ask `NetworkGate.check()`. A bare `HttpClient(OkHttp)` or
+`URL.openConnection()` anywhere else is a hole in that wall — the courtesy
+checks (`metadataAllowed`, `heavyDataAllowed`) only save work, they stop nothing.
+
 **Conditional composable calls stop subscribing.** A `collectAsState` behind an
 `&&` or inside an `if` silently stops triggering recomposition. Read
 unconditionally, branch on the result.

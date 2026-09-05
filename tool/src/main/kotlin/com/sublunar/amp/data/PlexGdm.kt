@@ -34,6 +34,10 @@ object PlexGdm {
      * places itself.
      */
     suspend fun findPlayers(): List<PlexPlayer> = withContext(Dispatchers.IO) {
+        // A broadcast is a LAN thing, and the LAN in question could be a
+        // hotspot — which is metered, and so cellular as far as Wi-Fi Only is
+        // concerned. Same wall as every other socket in the app.
+        if (!NetworkGate.isOpen()) return@withContext emptyList()
         val found = LinkedHashMap<String, PlexPlayer>()
         runCatching {
             DatagramSocket().use { socket ->
