@@ -58,6 +58,19 @@ data class SearchResults(
 }
 
 /**
+ * A playlist's songs, and whether they are all of them.
+ *
+ * [LibraryRepository.playlistTracks] can hand back less than the playlist holds —
+ * filtered to what's playable offline, or rebuilt from a cached membership that
+ * the local library no longer has every track for. That's right for showing, and
+ * wrong for editing: [LibraryRepository.removeFromPlaylistAt] takes an index into
+ * the *server's* list, and [LibraryRepository.reorderPlaylist] takes an order that
+ * has to name every track or the ones left out are the ones lost. A caller that
+ * edits must check [complete] first.
+ */
+data class PlaylistView(val tracks: List<Track>, val complete: Boolean)
+
+/**
  * The library: reads come from the Room cache (instant on launch) and are kept
  * fresh by [sync], which pulls the server catalogue incrementally — only albums
  * that are new or whose song count changed have their tracks re-fetched.
@@ -639,8 +652,11 @@ class LibraryRepository(
      * The offline rebuild keeps the playlist's order and silently drops tracks
      * the library no longer holds, which is the same thing the server would do.
      */
-    suspend fun playlistTracks(id: String): List<Track> {
-        val tracks = fetchPlaylistTracks(id)
+    suspend fun playlistTracks(id: String): List<Track> = playlistView(id).tracks
+
+    /** [playlistTracks] plus whether it's the whole playlist — see [PlaylistView]. */
+    suspend fun playlistView(id: String): PlaylistView {
+        val (tracks, whole) = fetchPlaylistTracks(id)
         // Cached below at full membership, then narrowed on the way out: the
         // badge needs to know what the playlist *is*, the page needs to show
         // what it can actually play.
@@ -652,12 +668,21 @@ class LibraryRepository(
         if (tracks.isNotEmpty()) {
             _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
         }
+        if (!offline.value) return PlaylistView(tracks, whole)
+        // A song from the phone's own folder needs no server, so it stays whatever
+        // the connection is.
         val downloaded = downloadedTrackIds.value
-        return if (offline.value) tracks.filter { it.id in downloaded } else tracks
+        val playable = tracks.filter { it.id in downloaded || LocalLibrary.isLocal(it.id) }
+        return PlaylistView(playable, whole && playable.size == tracks.size)
     }
 
-    private suspend fun fetchPlaylistTracks(id: String): List<Track> {
-        if (playlistsAreLocal()) return getTracksByIds(LocalPlaylists.trackIds(id))
+    /** The songs, and whether they're the playlist entire rather than what could be recovered. */
+    private suspend fun fetchPlaylistTracks(id: String): PlaylistView {
+        if (playlistsAreLocal()) {
+            val ids = LocalPlaylists.trackIds(id)
+            val tracks = getTracksByIds(ids)
+            return PlaylistView(tracks, tracks.size == ids.size)
+        }
         // The list of playlists and their membership both wait for a connection
         // the mode allows; opening one asked the server regardless, which made
         // Wi-Fi Only mean something different depending on which way in you
@@ -665,11 +690,16 @@ class LibraryRepository(
         // it was simply never reached until the request had failed.
         if (metadataAllowed()) {
             serverClient.value?.let { client ->
-                runCatching { client.getPlaylistTracks(id) }.getOrNull()?.let { return it }
+                runCatching { client.getPlaylistTracks(id) }.getOrNull()
+                    ?.let { return PlaylistView(it, complete = true) }
             }
         }
-        val ids = (_playlists.value.firstOrNull { it.id == id } ?: return emptyList()).trackIds
-        return getTracksByIds(ids)
+        // The rebuild is a guess at what the server holds, not a reading of it:
+        // the cached membership can be stale and the library can be missing rows
+        // for ids it names, so nothing built here is safe to edit against.
+        val ids = (_playlists.value.firstOrNull { it.id == id } ?: return PlaylistView(emptyList(), false))
+            .trackIds
+        return PlaylistView(getTracksByIds(ids), complete = false)
     }
 
     /**
