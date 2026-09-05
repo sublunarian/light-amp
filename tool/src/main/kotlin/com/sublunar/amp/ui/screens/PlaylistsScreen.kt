@@ -106,6 +106,40 @@ class PlaylistDetailScreen(
     // where the block actually landed once the list re-settles.
     private val scrollToKey = mutableStateOf<String?>(null)
 
+    // Whether what's on screen is the whole playlist -- see PlaylistView. Removing and
+    // reordering both address the server's copy by position, so neither is offered when
+    // this list is only part of it: the indices would point at other songs entirely.
+    // Read at load and not revisited, which is the same snapshot the list itself is.
+    private val wholeList = mutableStateOf(true)
+
+    // Whether the library is down to its downloads right now, unlike wholeList kept live:
+    // a playlist opened on Wi-Fi and still open when it drops would otherwise keep
+    // offering edits that can only fail.
+    private val offline = mutableStateOf(false)
+
+    /**
+     * Whether this playlist may be edited at all.
+     *
+     * Both halves have to hold. Offline there is nothing to edit *against*: the write
+     * would fail, and under Wi-Fi Only on metered data it shouldn't even be attempted --
+     * a playlist edit is the app touching the network in a mode where the user asked it
+     * not to. And a partial list can't be addressed by position whatever the connection.
+     */
+    private fun canEdit(): Boolean = wholeList.value && !offline.value
+
+    /**
+     * Whether an edit may start right now: [canEdit], and nothing already in flight.
+     *
+     * Every write here addresses the playlist by position, and the positions are read
+     * before the write is sent. A second edit started while the first is still going
+     * would be counting rows in a list the server has already changed: remove the first
+     * of five, start a remove of the fourth before that lands, and the index that meant
+     * the fourth now means the fifth -- which is deleted instead, and reported as
+     * success. The rows are pessimistic anyway, so there is nothing to see in the
+     * meantime but the "Saving…" the overlay is already showing.
+     */
+    private fun canStartEdit(): Boolean = canEdit() && pendingKeys.value.isEmpty()
+
     // Duplicate songs can appear in a playlist, so rows use a synthetic key, not track.id.
     private var nextEntryKey = 0
     private fun newEntryKey(): String = "e${nextEntryKey++}"
@@ -118,9 +152,14 @@ class PlaylistDetailScreen(
     override fun Content() {
         LaunchedEffect(playlistId) {
             if (entries.value == null) {
-                entries.value = App.library.playlistTracks(playlistId).map { PlaylistEntry(newEntryKey(), it) }
+                val view = App.library.playlistView(playlistId)
+                wholeList.value = view.complete
+                entries.value = view.tracks.map { PlaylistEntry(newEntryKey(), it) }
             }
         }
+        // Collected for the life of the screen, not read once: this is the half of
+        // canEdit that can change while the playlist sits open.
+        LaunchedEffect(Unit) { App.offlineOnly.collect { offline.value = it } }
 
         val selection = rememberSelection("playlist:$playlistId")
 
@@ -136,12 +175,17 @@ class PlaylistDetailScreen(
                     if (selection.active) {
                         SelectionHeader(
                             selection = selection,
-                            onDelete = {
-                                removeSongs(selection.selected)
-                                // Stay in edit mode with an empty selection: pruning a
-                                // playlist is usually more than one pass, and the X is
-                                // right there when it isn't.
-                                selection.begin()
+                            // No delete offered at all when this isn't the whole
+                            // playlist: an offer that could only ever fail is worse
+                            // than the icon not being there.
+                            onDelete = if (!canEdit()) null else {
+                                {
+                                    removeSongs(selection.selected)
+                                    // Stay in edit mode with an empty selection: pruning a
+                                    // playlist is usually more than one pass, and the X is
+                                    // right there when it isn't.
+                                    selection.begin()
+                                }
                             },
                             onConfirm = {
                                 openSelectionActions(
@@ -273,7 +317,7 @@ class PlaylistDetailScreen(
                 .fillMaxSize()
                 .dragReorderContainer(
                     state = drag,
-                    enabled = editing,
+                    enabled = editing && canEdit(),
                     restartKey = list,
                     orderedKeys = orderedKeys,
                     rowPx = rowPx,
@@ -330,7 +374,9 @@ class PlaylistDetailScreen(
                                             TrackActionsScreen(
                                                 it, track.id,
                                                 onSelect = { selection.begin(entry.key) },
-                                                onRemoveFromPlaylist = { removeSong(index) },
+                                                // Absent, not failing: see the delete icon above.
+                                                onRemoveFromPlaylist =
+                                                    if (canEdit()) ({ removeSong(index) }) else null,
                                             )
                                         }
                                     },
@@ -360,7 +406,7 @@ class PlaylistDetailScreen(
                                 // itself reverted, so without this it's indistinguishable
                                 // from one that was never touched.
                                 AppIcon(AppIcons.ErrorOutline, size = px(51))
-                            } else if (editing) {
+                            } else if (editing && canEdit()) {
                                 // Drag handle for reordering within the playlist.
                                 AppIcon(
                                     AppIcons.Dehaze,
@@ -449,6 +495,7 @@ class PlaylistDetailScreen(
      * this write's own success, so it shouldn't hold up the flash confirming it.
      */
     private fun removeSong(index: Int) {
+        if (!canStartEdit()) return
         val entry = entries.value?.getOrNull(index) ?: return
         pendingKeys.value = pendingKeys.value + entry.key
         App.scope.launch {
@@ -479,6 +526,9 @@ class PlaylistDetailScreen(
      * its own error instead of the whole selection reverting.
      */
     private fun removeSongs(keys: Set<String>) {
+        // The indices below are into what's shown; if that isn't the whole playlist
+        // they name different songs on the server. See [canEdit].
+        if (!canStartEdit()) return
         val current = entries.value ?: return
         if (keys.isEmpty()) return
         val targets = current.withIndex().filter { it.value.key in keys }.sortedByDescending { it.index }
@@ -500,8 +550,11 @@ class PlaylistDetailScreen(
                     App.scope.launch { App.library.refreshPlaylists() }
                 }
                 pendingKeys.value = pendingKeys.value - keys
+                // Both raised before either is waited on: the overlay puts "Couldn't
+                // save" ahead of "Done", so a partly-failed batch reads as the failure
+                // it was rather than flashing a full second of success first.
+                if (failedKeys.isNotEmpty()) App.scope.launch { flashError(failedKeys) }
                 if (removedKeys.isNotEmpty()) flashSuccess(removedKeys)
-                if (failedKeys.isNotEmpty()) flashError(failedKeys)
             } finally {
                 pendingKeys.value = pendingKeys.value - keys
             }
@@ -517,6 +570,8 @@ class PlaylistDetailScreen(
      * confirms the move, then jumps to its new one.
      */
     private fun reorderGroup(indices: Set<Int>, insertAt: Int) {
+        // A partial order would be an instruction to lose everything it omits.
+        if (!canStartEdit()) return
         val current = entries.value ?: return
         if (indices.isEmpty()) return
         val moving = current.filterIndexed { i, _ -> i in indices }
