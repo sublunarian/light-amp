@@ -1465,10 +1465,12 @@ class PlaybackController(
         if (fromIndices.isEmpty()) return
         val q = _queue.value
         if (fromIndices.any { it !in q.indices }) return
+        val playingId = q.getOrNull(_index.value)?.id
         val moving = q.filterIndexed { i, _ -> i in fromIndices }
         if (moving.size == q.size) return
         val remaining = q.filterIndexed { i, _ -> i !in fromIndices }
-        val newQueue = remaining.toMutableList().apply { addAll(insertAt.coerceIn(0, remaining.size), moving) }
+        val landsAt = insertAt.coerceIn(0, remaining.size)
+        val newQueue = remaining.toMutableList().apply { addAll(landsAt, moving) }
         if (newQueue == q) return
         val working = q.toMutableList()
         newQueue.forEachIndexed { target, track ->
@@ -1479,7 +1481,18 @@ class PlaybackController(
             }
         }
         _queue.value = newQueue
-        _index.value = p.currentMediaItemIndex.value.coerceIn(0, newQueue.lastIndex)
+        _index.value = indexAfterEdit(newQueue, playingId)
+        // Plex places an item *after* another one, so the block is expressed as
+        // whoever its first track now follows, and each one after that follows
+        // the one before it — one call at a time, each answer carrying the
+        // places for the next. Nothing to follow when the block lands at the front.
+        val anchorId = newQueue.getOrNull(landsAt - 1)?.id
+        val movedIds = moving.map { it.id }
+        plexQueueEdit { client, queue ->
+            movedIds.foldIndexed<String, PlexQueue?>(queue) { i, acc, id ->
+                acc?.let { client.movePlayQueueItem(it, id, if (i == 0) anchorId else movedIds[i - 1]) }
+            }
+        }
     }
 
     // --- Modes ---------------------------------------------------------------
