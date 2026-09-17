@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Move several songs at once: in a playlist's Edit mode or the queue, select
+  songs and drag any one of them by its handle, and the rest go with it. A line
+  shows where they will land, and the list scrolls when the drag reaches its
+  top or bottom edge. Thanks to @wsturgiss.
+
+### Changed
+
+- Lists in select mode show each song's cover, dimmed, behind its check circle.
+- A playlist can only be edited while the whole of it is on screen — not
+  offline, and not when only part of it could be loaded. An edit that doesn't
+  save is undone and says "Couldn't save".
+
+### Fixed
+
+- Deleting several songs from a Plex or Jellyfin playlist did nothing.
+- Removing one copy of a song that a playlist holds twice removed both.
+
 ## 0.6.2
 
 ### Fixed
