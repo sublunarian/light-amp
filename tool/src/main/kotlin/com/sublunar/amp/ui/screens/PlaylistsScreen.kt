@@ -453,10 +453,12 @@ class PlaylistDetailScreen(
         // they name different songs on the server. See [canEdit].
         if (!canEdit()) return
         val current = entries.value ?: return
-        val indices = current.indices.filter { current[it].key in keys }
-        if (indices.isEmpty()) return
+        // Each position with the song seen there, so a playlist that has been edited
+        // from somewhere else in the meantime is refused rather than mis-pruned.
+        val at = current.indices.filter { current[it].key in keys }.associateWith { current[it].track.id }
+        if (at.isEmpty()) return
         edit(current.filterNot { it.key in keys }) {
-            App.library.removeFromPlaylistAt(playlistId, indices)
+            App.library.removeFromPlaylistAt(playlistId, at)
         }
     }
 

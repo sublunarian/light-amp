@@ -803,18 +803,19 @@ class LibraryRepository(
     }
 
     /**
-     * Remove the entries at [indices], positions in the playlist as it stands.
+     * Remove the entries [at] these positions in the playlist, each given with the
+     * song expected there — see [MusicServer.removeFromPlaylistAt].
      * Whether they all went: callers show the edit at once and take it back on
      * a false.
      */
-    suspend fun removeFromPlaylistAt(id: String, indices: List<Int>): Boolean = playlistWrite {
+    suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean = playlistWrite {
         if (playlistsAreLocal()) {
-            LocalPlaylists.removeAt(id, indices)
+            LocalPlaylists.removeAt(id, at)
         } else {
             // The client's own answer, not merely "it didn't throw": some of them
             // catch their transport errors internally, so isSuccess here would be
             // true for a write the server refused — and for no client at all.
-            runCatching { serverClient.value?.removeFromPlaylistAt(id, indices) ?: false }
+            runCatching { serverClient.value?.removeFromPlaylistAt(id, at) ?: false }
                 .onFailure { android.util.Log.w("AmpSync", "removeFromPlaylistAt($id) failed: ${it.message}", it) }
                 .getOrDefault(false)
         }

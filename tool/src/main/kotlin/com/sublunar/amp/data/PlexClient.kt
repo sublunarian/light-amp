@@ -780,12 +780,13 @@ class PlexClient(
      * rest — each entry is named by its own id, so none depends on another —
      * but it does make the answer false, and the caller re-reads the playlist.
      */
-    override suspend fun removeFromPlaylistAt(id: String, indices: List<Int>): Boolean {
-        if (indices.isEmpty()) return true
-        val entries = playlistItemIds(id)
-        val wanted = indices.map { index ->
-            entries.getOrNull(index) ?: run {
-                android.util.Log.w(TAG, "removeFromPlaylistAt($id): no entry at $index; nothing removed")
+    override suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean {
+        if (at.isEmpty()) return true
+        val entries = playlistEntries(id)
+        val wanted = at.map { (index, songId) ->
+            // Not the song the caller saw there: the playlist has changed under it.
+            entries.getOrNull(index)?.takeIf { it.first == songId }?.second ?: run {
+                android.util.Log.w(TAG, "removeFromPlaylistAt($id): position $index isn't the song expected; nothing removed")
                 return false
             }
         }
@@ -865,9 +866,6 @@ class PlexClient(
         paged("/playlists/$id/items").mapNotNull { item ->
             item.playlistItemID?.let { item.ratingKey to it }
         }
-
-    private suspend fun playlistItemIds(id: String): List<Long> =
-        playlistEntries(id).map { it.second }
 
     /** `server://{machine}/com.plexapp.plugins.library/library/metadata/{id}`. */
     private fun itemUri(songId: String): String =

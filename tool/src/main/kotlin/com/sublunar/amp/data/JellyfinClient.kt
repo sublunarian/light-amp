@@ -544,10 +544,13 @@ class JellyfinClient(
      * re-read here rather than remembered. `entryIds` takes a comma-separated
      * list, so however many go, it's one read and one delete.
      */
-    override suspend fun removeFromPlaylistAt(id: String, indices: List<Int>): Boolean {
-        if (indices.isEmpty()) return true
+    override suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean {
+        if (at.isEmpty()) return true
         val entries = runCatching { playlistEntries(id) }.getOrNull() ?: return false
-        val entryIds = indices.map { entries.getOrNull(it)?.playlistItemId ?: return false }
+        val entryIds = at.map { (index, songId) ->
+            // Not the song the caller saw there: the playlist has changed under it.
+            entries.getOrNull(index)?.takeIf { it.id == songId }?.playlistItemId ?: return false
+        }
         return send("DELETE", "/Playlists/$id/Items", listOf("entryIds" to entryIds.joinToString(",")))
     }
 

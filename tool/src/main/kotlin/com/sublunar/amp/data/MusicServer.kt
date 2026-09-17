@@ -261,10 +261,16 @@ interface MusicServer {
     suspend fun deletePlaylist(id: String) = Unit
     suspend fun addToPlaylist(id: String, songId: String) = Unit
     /**
-     * Remove the entries at [indices] — positions in the playlist as the server
+     * Remove the entries [at] these positions — in the playlist as the server
      * holds it, all of them read against the list as it stands before any is
      * removed. Positions rather than song ids because a playlist can hold a
      * song twice and only one of them is meant.
+     *
+     * Each position comes with the id of the song the caller saw there, and an
+     * implementation must find that song there before it removes anything: the
+     * playlist may have been edited from somewhere else since the caller read
+     * it, and a position that has drifted names a different song — which would
+     * go, and be reported as success. A mismatch removes nothing and is false.
      *
      * Whether every one of them went. The caller shows the edit at once and
      * takes it back on a false, so a server that quietly refused must answer
@@ -272,7 +278,7 @@ interface MusicServer {
      * default here is false for the same reason: a source with no playlist
      * writes never lands one.
      */
-    suspend fun removeFromPlaylistAt(id: String, indices: List<Int>): Boolean = false
+    suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean = false
 
     /** Whether the edit landed — see [removeFromPlaylistAt]. */
     suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = false

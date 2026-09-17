@@ -441,11 +441,18 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         request("updatePlaylist", listOf("playlistId" to id, "songIdToAdd" to songId))
     }
 
-    /** One request however many go: `songIndexToRemove` repeats, each an index into the list as it stands. */
-    override suspend fun removeFromPlaylistAt(id: String, indices: List<Int>): Boolean {
-        if (indices.isEmpty()) return true
+    /**
+     * One request however many go: `songIndexToRemove` repeats, each an index
+     * into the list as it stands. Subsonic removes by position and nothing
+     * else, so the server's copy is read first to see the expected songs are
+     * still where the positions say.
+     */
+    override suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean {
+        if (at.isEmpty()) return true
+        val known = getPlaylist(id).trackIds
+        if (at.any { (index, songId) -> known.getOrNull(index) != songId }) return false
         val params = mutableListOf("playlistId" to id)
-        indices.forEach { params.add("songIndexToRemove" to it.toString()) }
+        at.keys.forEach { params.add("songIndexToRemove" to it.toString()) }
         request("updatePlaylist", params)
         return true
     }

@@ -117,12 +117,12 @@ object LocalPlaylists {
     }
 
     /** Whether the edit reached the file — callers take it back off the screen if it didn't. */
-    suspend fun removeAt(id: String, indices: List<Int>): Boolean = withContext(Dispatchers.IO) {
+    suspend fun removeAt(id: String, at: Map<Int, String>): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
         val ids = readIds(file)
-        if (indices.any { it !in ids.indices }) return@withContext false
-        val going = indices.toSet()
-        writeIds(file, ids.filterIndexed { i, _ -> i !in going })
+        // See [MusicServer.removeFromPlaylistAt]: each position has to hold the song expected.
+        if (at.any { (index, trackId) -> ids.getOrNull(index) != trackId }) return@withContext false
+        writeIds(file, ids.filterIndexed { i, _ -> i !in at.keys })
     }
 
     /** Whether the edit reached the file — see [removeAt]. */
