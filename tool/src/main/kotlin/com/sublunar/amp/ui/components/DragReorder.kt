@@ -30,11 +30,15 @@ import kotlin.math.roundToInt
 // Thicker than the Now Playing tab underline so it reads under a finger.
 private const val DROP_LINE_HEIGHT_PX = 9
 
-/** Marks where a dragged row (or group) will land if dropped now. */
+/**
+ * Marks where a dragged row (or group) will land if dropped now. Rows lay it over
+ * their own top edge rather than above themselves, so the list doesn't shift by
+ * the line's height each time the target changes.
+ */
 @Composable
-fun DropIndicatorLine() {
+fun DropIndicatorLine(modifier: Modifier = Modifier) {
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
             .height(px(DROP_LINE_HEIGHT_PX))
             .background(LightThemeTokens.colors.content),

@@ -426,8 +426,7 @@ class NowPlayingScreen(
                     DisposableEffect(rowKey) {
                         onDispose { drag.clear(rowKey) }
                     }
-                    Column(Modifier.fillMaxWidth()) {
-                        if (dropTarget?.beforeKey == rowKey) DropIndicatorLine()
+                    Box(Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -485,6 +484,7 @@ class NowPlayingScreen(
                                 )
                             }
                         }
+                        if (dropTarget?.beforeKey == rowKey) DropIndicatorLine(Modifier.align(Alignment.TopStart))
                     }
                 }
                 if (dropTarget != null && dropTarget.beforeKey == null) {

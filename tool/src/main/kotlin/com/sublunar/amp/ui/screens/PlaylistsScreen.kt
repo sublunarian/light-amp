@@ -284,8 +284,7 @@ class PlaylistDetailScreen(
                     DisposableEffect(entry.key) {
                         onDispose { drag.clear(entry.key) }
                     }
-                    Column(Modifier.fillMaxWidth()) {
-                        if (dropTarget?.beforeKey == entry.key) DropIndicatorLine()
+                    Box(Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -336,6 +335,7 @@ class PlaylistDetailScreen(
                                 )
                             }
                         }
+                        if (dropTarget?.beforeKey == entry.key) DropIndicatorLine(Modifier.align(Alignment.TopStart))
                     }
                 }
                 if (dropTarget != null && dropTarget.beforeKey == null) {
