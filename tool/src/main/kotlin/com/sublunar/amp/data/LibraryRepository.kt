@@ -502,6 +502,18 @@ class LibraryRepository(
     /** Runs [block] with playlist writes serialized — see [playlistMutex]. First come, first written. */
     private suspend fun <T> playlistWrite(block: suspend () -> T): T = playlistMutex.withLock { block() }
 
+    /**
+     * Wait out the playlist writes already queued, then return — called before a
+     * playlist is read from the server. Edits show on screen before they are
+     * written, and a Plex reorder is seconds of single moves, so a read that
+     * doesn't wait can come back with the order from before the edit, or one
+     * half-moved: Play from the playlist's menu would then queue something other
+     * than the list the user just arranged. The lock is fair, so taking it once
+     * is waiting for everyone ahead; it isn't held for the read itself, which
+     * can be slow and has no reason to keep edits waiting.
+     */
+    private suspend fun awaitPlaylistWrites() = playlistMutex.withLock { }
+
     // name -> server artist id, resolved once and reused for starring.
     private var artistIds: Map<String, String>? = null
 
@@ -636,6 +648,7 @@ class LibraryRepository(
 
     /** The songs, and whether they're the playlist entire rather than what could be recovered. */
     private suspend fun fetchPlaylistTracks(id: String): PlaylistView {
+        awaitPlaylistWrites()
         if (playlistsAreLocal()) {
             val ids = LocalPlaylists.trackIds(id)
             val tracks = getTracksByIds(ids)
@@ -714,6 +727,7 @@ class LibraryRepository(
             return
         }
         if (!metadataAllowed()) return
+        awaitPlaylistWrites()
         val tracks = runCatching { serverClient.value?.getPlaylistTracks(id) }.getOrNull() ?: return
         _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
     }
