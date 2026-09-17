@@ -116,12 +116,13 @@ object LocalPlaylists {
         Unit
     }
 
-    /** Whether the edit reached the file — callers show it only once it has. */
-    suspend fun removeAt(id: String, index: Int): Boolean = withContext(Dispatchers.IO) {
+    /** Whether the edit reached the file — callers take it back off the screen if it didn't. */
+    suspend fun removeAt(id: String, indices: List<Int>): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
         val ids = readIds(file)
-        if (index !in ids.indices) return@withContext false
-        writeIds(file, ids.filterIndexed { i, _ -> i != index })
+        if (indices.any { it !in ids.indices }) return@withContext false
+        val going = indices.toSet()
+        writeIds(file, ids.filterIndexed { i, _ -> i !in going })
     }
 
     /** Whether the edit reached the file — see [removeAt]. */

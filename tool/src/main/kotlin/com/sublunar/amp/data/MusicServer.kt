@@ -261,12 +261,18 @@ interface MusicServer {
     suspend fun deletePlaylist(id: String) = Unit
     suspend fun addToPlaylist(id: String, songId: String) = Unit
     /**
-     * Whether the edit landed. Callers hold off applying it locally until it
-     * has, so a server that quietly refused must answer false rather than let
-     * its own swallowed error read as success — the default here is false for
-     * the same reason: a source with no playlist writes never lands one.
+     * Remove the entries at [indices] — positions in the playlist as the server
+     * holds it, all of them read against the list as it stands before any is
+     * removed. Positions rather than song ids because a playlist can hold a
+     * song twice and only one of them is meant.
+     *
+     * Whether every one of them went. The caller shows the edit at once and
+     * takes it back on a false, so a server that quietly refused must answer
+     * false rather than let its own swallowed error read as success — the
+     * default here is false for the same reason: a source with no playlist
+     * writes never lands one.
      */
-    suspend fun removeFromPlaylistAt(id: String, index: Int): Boolean = false
+    suspend fun removeFromPlaylistAt(id: String, indices: List<Int>): Boolean = false
 
     /** Whether the edit landed — see [removeFromPlaylistAt]. */
     suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = false

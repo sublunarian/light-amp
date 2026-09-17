@@ -539,14 +539,16 @@ class JellyfinClient(
 
     /**
      * Jellyfin removes a playlist entry by the entry's own id, not the song's —
-     * the same song can appear twice and only one of them is meant. The index
-     * given is into the playlist as the app last read it, so the entry ids are
-     * re-read here rather than remembered.
+     * the same song can appear twice and only one of them is meant. The indices
+     * given are into the playlist as the app last read it, so the entry ids are
+     * re-read here rather than remembered. `entryIds` takes a comma-separated
+     * list, so however many go, it's one read and one delete.
      */
-    override suspend fun removeFromPlaylistAt(id: String, index: Int): Boolean {
-        val entries = runCatching { playlistEntries(id) }.getOrDefault(emptyList())
-        val entryId = entries.getOrNull(index)?.playlistItemId ?: return false
-        return send("DELETE", "/Playlists/$id/Items", listOf("entryIds" to entryId))
+    override suspend fun removeFromPlaylistAt(id: String, indices: List<Int>): Boolean {
+        if (indices.isEmpty()) return true
+        val entries = runCatching { playlistEntries(id) }.getOrNull() ?: return false
+        val entryIds = indices.map { entries.getOrNull(it)?.playlistItemId ?: return false }
+        return send("DELETE", "/Playlists/$id/Items", listOf("entryIds" to entryIds.joinToString(",")))
     }
 
     /**

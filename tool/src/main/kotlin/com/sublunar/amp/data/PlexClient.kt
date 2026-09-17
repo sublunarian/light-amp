@@ -771,20 +771,30 @@ class PlexClient(
 
     /**
      * Plex removes a playlist entry by its own id, not the song's — the same
-     * song can appear twice and only one of them is meant. The position given is
-     * an index into the playlist as the app last read it, so the entry ids are
-     * re-read here rather than remembered.
+     * song can appear twice and only one of them is meant. The positions given
+     * are indices into the playlist as the app last read it, so the entry ids
+     * are re-read here — once — rather than remembered.
+     *
+     * One delete per entry, one at a time: Plex has no call that takes several,
+     * and deletes sent together didn't all land. A refusal doesn't stop the
+     * rest — each entry is named by its own id, so none depends on another —
+     * but it does make the answer false, and the caller re-reads the playlist.
      */
-    override suspend fun removeFromPlaylistAt(id: String, index: Int): Boolean {
-        val entry = playlistItemIds(id).getOrNull(index) ?: run {
-            android.util.Log.w(TAG, "removeFromPlaylistAt($id): no entry at $index; nothing removed")
-            return false
+    override suspend fun removeFromPlaylistAt(id: String, indices: List<Int>): Boolean {
+        if (indices.isEmpty()) return true
+        val entries = playlistItemIds(id)
+        val wanted = indices.map { index ->
+            entries.getOrNull(index) ?: run {
+                android.util.Log.w(TAG, "removeFromPlaylistAt($id): no entry at $index; nothing removed")
+                return false
+            }
         }
-        return deletePlaylistEntry(id, entry)
+        var all = true
+        for (entry in wanted) {
+            if (!sendChecked("/playlists/$id/items/$entry", method = "DELETE")) all = false
+        }
+        return all
     }
-
-    private suspend fun deletePlaylistEntry(id: String, entryId: Long): Boolean =
-        sendChecked("/playlists/$id/items/$entryId", method = "DELETE")
 
     /**
      * Reordering is a sequence of moves: Plex will put one entry after another,

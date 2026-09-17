@@ -499,50 +499,8 @@ class LibraryRepository(
     // with no compare-and-swap, so concurrent edits can clobber each other.
     private val playlistMutex = Mutex()
 
-    /**
-     * Playlist ids with a mutation still on its way to the server (or the disk, for a
-     * local source) -- e.g. a drag-reorder that can take a few seconds on Plex, since it
-     * has no bulk-reorder call and this app plays it safe rather than fast. Playlist edits
-     * are applied on screen only once the write this tracks succeeds, so this is what
-     * tells a playlist screen its last change is still in flight.
-     */
-    private val _pendingPlaylistWrites = MutableStateFlow<Set<String>>(emptySet())
-    val pendingPlaylistWrites: StateFlow<Set<String>> = _pendingPlaylistWrites
-
-    // Backs [_pendingPlaylistWrites] with a per-id count, not just membership: two
-    // overlapping writes to the same playlist (e.g. a reorder still saving when a
-    // delete starts) would otherwise have the first one's `finally` clear the id
-    // out from under the second, hiding the indicator while a write is still in
-    // flight. Only accessed inside [playlistWrite], always on the calling
-    // coroutine's thread at entry/exit, but guarded anyway since two callers can
-    // interleave those entries/exits.
-    private val pendingPlaylistWriteCounts = mutableMapOf<String, Int>()
-    private val pendingPlaylistWriteCountsLock = Any()
-
-    /** Runs [block] for playlist [id], serialized via [playlistMutex] and tracked in [pendingPlaylistWrites]. */
-    private suspend fun <T> playlistWrite(id: String, block: suspend () -> T): T {
-        val firstWriter = synchronized(pendingPlaylistWriteCountsLock) {
-            val count = (pendingPlaylistWriteCounts[id] ?: 0) + 1
-            pendingPlaylistWriteCounts[id] = count
-            count == 1
-        }
-        if (firstWriter) _pendingPlaylistWrites.update { it + id }
-        try {
-            return playlistMutex.withLock { block() }
-        } finally {
-            val lastWriter = synchronized(pendingPlaylistWriteCountsLock) {
-                val count = (pendingPlaylistWriteCounts[id] ?: 1) - 1
-                if (count <= 0) {
-                    pendingPlaylistWriteCounts.remove(id)
-                    true
-                } else {
-                    pendingPlaylistWriteCounts[id] = count
-                    false
-                }
-            }
-            if (lastWriter) _pendingPlaylistWrites.update { it - id }
-        }
-    }
+    /** Runs [block] with playlist writes serialized — see [playlistMutex]. First come, first written. */
+    private suspend fun <T> playlistWrite(block: suspend () -> T): T = playlistMutex.withLock { block() }
 
     // name -> server artist id, resolved once and reused for starring.
     private var artistIds: Map<String, String>? = null
@@ -799,7 +757,7 @@ class LibraryRepository(
         refreshPlaylists()
     }
 
-    suspend fun renamePlaylist(id: String, name: String) = playlistWrite(id) {
+    suspend fun renamePlaylist(id: String, name: String) = playlistWrite {
         if (playlistsAreLocal()) {
             LocalPlaylists.rename(id, name.trim())
         } else {
@@ -808,7 +766,7 @@ class LibraryRepository(
         refreshPlaylists()
     }
 
-    suspend fun deletePlaylist(id: String) = playlistWrite(id) {
+    suspend fun deletePlaylist(id: String) = playlistWrite {
         if (playlistsAreLocal()) {
             LocalPlaylists.delete(id)
         } else {
@@ -822,7 +780,7 @@ class LibraryRepository(
      * concurrent calls would race the order. [playlistMutex] is what makes that
      * contract hold across calls, not just within a single caller's loop.
      */
-    suspend fun addToPlaylist(id: String, trackId: String) = playlistWrite(id) {
+    suspend fun addToPlaylist(id: String, trackId: String) = playlistWrite {
         if (playlistsAreLocal()) {
             LocalPlaylists.add(id, trackId)
         } else {
@@ -830,22 +788,26 @@ class LibraryRepository(
         }
     }
 
-    /** Whether the edit landed, so callers can hold off applying it locally until it has. */
-    suspend fun removeFromPlaylistAt(id: String, index: Int): Boolean = playlistWrite(id) {
+    /**
+     * Remove the entries at [indices], positions in the playlist as it stands.
+     * Whether they all went: callers show the edit at once and take it back on
+     * a false.
+     */
+    suspend fun removeFromPlaylistAt(id: String, indices: List<Int>): Boolean = playlistWrite {
         if (playlistsAreLocal()) {
-            LocalPlaylists.removeAt(id, index)
+            LocalPlaylists.removeAt(id, indices)
         } else {
-            // The client's own answer, not merely "it didn't throw": every one of
-            // them catches its transport errors internally, so isSuccess here would
-            // be true for a write the server refused — and for no client at all.
-            runCatching { serverClient.value?.removeFromPlaylistAt(id, index) ?: false }
+            // The client's own answer, not merely "it didn't throw": some of them
+            // catch their transport errors internally, so isSuccess here would be
+            // true for a write the server refused — and for no client at all.
+            runCatching { serverClient.value?.removeFromPlaylistAt(id, indices) ?: false }
                 .onFailure { android.util.Log.w("AmpSync", "removeFromPlaylistAt($id) failed: ${it.message}", it) }
                 .getOrDefault(false)
         }
     }
 
-    /** Whether the edit landed, so callers can hold off applying it locally until it has. */
-    suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = playlistWrite(id) {
+    /** Whether the new order landed — see [removeFromPlaylistAt]. */
+    suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = playlistWrite {
         if (playlistsAreLocal()) {
             LocalPlaylists.reorder(id, orderedSongIds)
         } else {
