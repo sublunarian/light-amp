@@ -130,6 +130,7 @@ class AlbumDetailScreen(
                                 detail = formatTime(track.durationMs),
                                 current = current?.id == track.id,
                                 selected = if (selection.active) track.id in selection.selected else null,
+                                coverArtId = track.coverArtId,
                                 onClick = {
                                     if (selection.active) {
                                         selection.toggle(track.id)

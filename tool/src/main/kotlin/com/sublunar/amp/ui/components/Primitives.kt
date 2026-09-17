@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.HistoryEdu
 import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Dehaze
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.FastForward
@@ -123,6 +124,7 @@ object AppIcons {
     /** Selection state in multi-select mode: filled when picked, ring when not. */
     val Selected = Icons.Filled.CheckCircle
     val Unselected = Icons.Filled.RadioButtonUnchecked
+    val ErrorOutline = Icons.Filled.ErrorOutline
 
     /** Marks a header title that opens a menu. */
     val ArrowDropDown = Icons.Filled.ArrowDropDown

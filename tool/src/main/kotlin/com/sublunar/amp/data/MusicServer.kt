@@ -260,8 +260,16 @@ interface MusicServer {
     suspend fun renamePlaylist(id: String, name: String) = Unit
     suspend fun deletePlaylist(id: String) = Unit
     suspend fun addToPlaylist(id: String, songId: String) = Unit
-    suspend fun removeFromPlaylistAt(id: String, index: Int) = Unit
-    suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>) = Unit
+    /**
+     * Whether the edit landed. Callers hold off applying it locally until it
+     * has, so a server that quietly refused must answer false rather than let
+     * its own swallowed error read as success — the default here is false for
+     * the same reason: a source with no playlist writes never lands one.
+     */
+    suspend fun removeFromPlaylistAt(id: String, index: Int): Boolean = false
+
+    /** Whether the edit landed — see [removeFromPlaylistAt]. */
+    suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = false
 }
 
 /** What [MusicServer.reportTimeline] tells the server a session is doing. */

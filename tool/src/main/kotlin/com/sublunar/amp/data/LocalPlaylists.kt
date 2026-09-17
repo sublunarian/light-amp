@@ -116,18 +116,18 @@ object LocalPlaylists {
         Unit
     }
 
-    suspend fun removeAt(id: String, index: Int) = withContext(Dispatchers.IO) {
-        val file = fileOf(id) ?: return@withContext
+    /** Whether the edit reached the file — callers show it only once it has. */
+    suspend fun removeAt(id: String, index: Int): Boolean = withContext(Dispatchers.IO) {
+        val file = fileOf(id) ?: return@withContext false
         val ids = readIds(file)
-        if (index !in ids.indices) return@withContext
+        if (index !in ids.indices) return@withContext false
         writeIds(file, ids.filterIndexed { i, _ -> i != index })
-        Unit
     }
 
-    suspend fun reorder(id: String, orderedIds: List<String>) = withContext(Dispatchers.IO) {
-        val file = fileOf(id) ?: return@withContext
+    /** Whether the edit reached the file — see [removeAt]. */
+    suspend fun reorder(id: String, orderedIds: List<String>): Boolean = withContext(Dispatchers.IO) {
+        val file = fileOf(id) ?: return@withContext false
         writeIds(file, orderedIds)
-        Unit
     }
 
     /**

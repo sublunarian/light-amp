@@ -543,10 +543,10 @@ class JellyfinClient(
      * given is into the playlist as the app last read it, so the entry ids are
      * re-read here rather than remembered.
      */
-    override suspend fun removeFromPlaylistAt(id: String, index: Int) {
+    override suspend fun removeFromPlaylistAt(id: String, index: Int): Boolean {
         val entries = runCatching { playlistEntries(id) }.getOrDefault(emptyList())
-        val entryId = entries.getOrNull(index)?.playlistItemId ?: return
-        send("DELETE", "/Playlists/$id/Items", listOf("entryIds" to entryId))
+        val entryId = entries.getOrNull(index)?.playlistItemId ?: return false
+        return send("DELETE", "/Playlists/$id/Items", listOf("entryIds" to entryId))
     }
 
     /**
@@ -554,14 +554,23 @@ class JellyfinClient(
      * order" call. Each move is applied against the list as it stands, so the
      * entries are re-read after each one rather than computed up front.
      */
-    override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>) {
+    override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean {
+        // A wanted order that isn't the whole playlist would move its tracks to
+        // the front and leave the rest trailing in an order nobody asked for.
+        val known = runCatching { playlistEntries(id) }.getOrNull() ?: return false
+        if (known.size != orderedSongIds.size) return false
         orderedSongIds.forEachIndexed { target, songId ->
-            val entries = runCatching { playlistEntries(id) }.getOrDefault(emptyList())
+            val entries = runCatching { playlistEntries(id) }.getOrNull() ?: return false
             val at = entries.indexOfFirst { it.id == songId }
-            if (at < 0 || at == target) return@forEachIndexed
-            val entryId = entries[at].playlistItemId ?: return@forEachIndexed
-            send("POST", "/Playlists/$id/Items/$entryId/Move/$target")
+            if (at == target) return@forEachIndexed
+            // A wanted track the playlist doesn't have means the caller is
+            // ordering a list that isn't this one; the moves already made stand,
+            // but the answer mustn't claim the wanted order landed.
+            if (at < 0) return false
+            val entryId = entries[at].playlistItemId ?: return false
+            if (!send("POST", "/Playlists/$id/Items/$entryId/Move/$target")) return false
         }
+        return true
     }
 
     private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")

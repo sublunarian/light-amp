@@ -76,6 +76,32 @@ fun AppArtwork(
     }
 }
 
+// Faint enough for the check bubble to read clearly, still recognizable as the cover.
+private const val EDIT_ARTWORK_ALPHA = 0.55f
+
+/**
+ * The artwork every select-mode row wears: a dimmed cover with the check
+ * bubble centred on top of it. One composable so the bubble's size, tint and
+ * dimming can't drift between the playlist page, the songs tab, an artist's
+ * track list, and an album's — they all call this rather than each drawing
+ * their own.
+ */
+@Composable
+fun SelectionArtwork(coverArtId: String?, selected: Boolean, size: Dp = px(ROW_ART_PX)) {
+    Box(Modifier.size(size), contentAlignment = Alignment.Center) {
+        AppArtwork(coverArtId, size = size, modifier = Modifier.alpha(EDIT_ARTWORK_ALPHA))
+        AppIcon(
+            if (selected) AppIcons.Selected else AppIcons.Unselected,
+            size = px(66),
+            tint = if (selected) {
+                LightThemeTokens.colors.content
+            } else {
+                LightThemeTokens.colors.contentSecondary
+            },
+        )
+    }
+}
+
 /**
  * A list row in the Light music app's proportions: title at [ROW_TITLE_PX], a
  * dimmer subtitle at [ROW_SUB_PX] under it, on the 160px pitch its own lists use.
@@ -95,13 +121,7 @@ fun TrackRow(
     onLongClick: (() -> Unit)? = null,
     /** Shows the offline badge — set for a downloaded song or a complete album. */
     downloaded: Boolean = false,
-    /**
-     * Selection state, or null when the list isn't in multi-select mode.
-     *
-     * The circle takes the artwork's place rather than sitting beside it: the row
-     * is 160px with no room to spare, and swapping keeps every title on the same
-     * left edge whether or not selection is active.
-     */
+    /** Selection state, or null when the list isn't in multi-select mode — see [SelectionArtwork]. */
     selected: Boolean? = null,
 ) {
     val artworkHidden = App.hideArtwork.collectAsState().value
@@ -126,20 +146,7 @@ fun TrackRow(
             if (downloaded && marks) AppIcon(AppIcons.Downloaded, size = px(ROW_MARK_PX))
         }
         if (selected != null) {
-            Box(
-                modifier = Modifier.size(px(ROW_ART_PX)),
-                contentAlignment = Alignment.Center,
-            ) {
-                AppIcon(
-                    if (selected) AppIcons.Selected else AppIcons.Unselected,
-                    size = px(66),
-                    tint = if (selected) {
-                        LightThemeTokens.colors.content
-                    } else {
-                        LightThemeTokens.colors.contentSecondary
-                    },
-                )
-            }
+            SelectionArtwork(coverArtId, selected, size = px(ROW_ART_PX))
             Spacer(Modifier.width(px(ROW_GAP_PX)))
         } else if (!artworkHidden) {
             AppArtwork(coverArtId = coverArtId, size = px(ROW_ART_PX), fallback = fallback)
@@ -481,6 +488,8 @@ fun NumberedRow(
     onLongClick: (() -> Unit)? = null,
     /** Selection state, or null when the list isn't in multi-select mode. */
     selected: Boolean? = null,
+    /** The row's cover, needed only while selecting — see [SelectionArtwork]. */
+    coverArtId: String? = null,
 ) {
     val subLines = (if (subtitle.isNotBlank()) 1 else 0) + (if (detail != null) 1 else 0)
     Row(
@@ -490,35 +499,30 @@ fun NumberedRow(
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The number hangs in the gutter, right-aligned the way a printed
-        // tracklist sets its numbers — 9 and 10 end on the same edge — and the
-        // waveform or selection circle takes the number's place, not a slot
-        // beside it.
-        Box(
-            modifier = Modifier
-                .width(px(NUMBERED_LEAD_PX))
-                .padding(end = px(NUMBER_GAP_PX)),
-            contentAlignment = Alignment.CenterEnd,
-        ) {
-            when {
-                selected != null -> AppIcon(
-                    if (selected) AppIcons.Selected else AppIcons.Unselected,
-                    size = px(41),
-                    tint = if (selected) {
-                        LightThemeTokens.colors.content
-                    } else {
-                        LightThemeTokens.colors.contentSecondary
-                    },
-                )
-                current -> AppIcon(AppIcons.Waveform, size = px(41))
-                else -> AppText(
-                    number?.toString() ?: "",
-                    pxSp(NUMBERED_SUB_PX),
-                    lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
-                    role = TextRole.Detail,
-                    dim = true,
-                    align = TextAlign.End,
-                )
+        if (selected != null) {
+            // Select mode swaps the number gutter for cover art + check bubble.
+            SelectionArtwork(coverArtId, selected)
+            Spacer(Modifier.width(px(ROW_GAP_PX)))
+        } else {
+            // Number is right-aligned in the gutter; waveform replaces it when playing.
+            Box(
+                modifier = Modifier
+                    .width(px(NUMBERED_LEAD_PX))
+                    .padding(end = px(NUMBER_GAP_PX)),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                if (current) {
+                    AppIcon(AppIcons.Waveform, size = px(41))
+                } else {
+                    AppText(
+                        number?.toString() ?: "",
+                        pxSp(NUMBERED_SUB_PX),
+                        lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
+                        role = TextRole.Detail,
+                        dim = true,
+                        align = TextAlign.End,
+                    )
+                }
             }
         }
         // Under the title rather than across the row, which leaves long titles
@@ -613,9 +617,10 @@ fun LibraryList(
     headerCount: Int = 0,
     /** The right-hand lane and its bar, as the few lists that never had one. */
     scrollBar: Boolean = true,
+    // Callers driving scroll themselves (drag auto-scroll) pass their own state here.
+    state: LazyListState = rememberListAnchor(anchor, headerCount),
     content: LazyListScope.() -> Unit,
 ) {
-    val state = rememberListAnchor(anchor, headerCount)
     Box(modifier = modifier) {
         LazyColumn(
             state = state,

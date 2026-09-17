@@ -58,6 +58,19 @@ data class SearchResults(
 }
 
 /**
+ * A playlist's songs, and whether they are all of them.
+ *
+ * [LibraryRepository.playlistTracks] can hand back less than the playlist holds —
+ * filtered to what's playable offline, or rebuilt from a cached membership that
+ * the local library no longer has every track for. That's right for showing, and
+ * wrong for editing: [LibraryRepository.removeFromPlaylistAt] takes an index into
+ * the *server's* list, and [LibraryRepository.reorderPlaylist] takes an order that
+ * has to name every track or the ones left out are the ones lost. A caller that
+ * edits must check [complete] first.
+ */
+data class PlaylistView(val tracks: List<Track>, val complete: Boolean)
+
+/**
  * The library: reads come from the Room cache (instant on launch) and are kept
  * fresh by [sync], which pulls the server catalogue incrementally — only albums
  * that are new or whose song count changed have their tracks re-fetched.
@@ -482,6 +495,55 @@ class LibraryRepository(
     private val syncMutex = Mutex()
     private var syncJob: Job? = null
 
+    // Serializes playlist mutations: servers read-then-write full playlist state
+    // with no compare-and-swap, so concurrent edits can clobber each other.
+    private val playlistMutex = Mutex()
+
+    /**
+     * Playlist ids with a mutation still on its way to the server (or the disk, for a
+     * local source) -- e.g. a drag-reorder that can take a few seconds on Plex, since it
+     * has no bulk-reorder call and this app plays it safe rather than fast. Playlist edits
+     * are applied on screen only once the write this tracks succeeds, so this is what
+     * tells a playlist screen its last change is still in flight.
+     */
+    private val _pendingPlaylistWrites = MutableStateFlow<Set<String>>(emptySet())
+    val pendingPlaylistWrites: StateFlow<Set<String>> = _pendingPlaylistWrites
+
+    // Backs [_pendingPlaylistWrites] with a per-id count, not just membership: two
+    // overlapping writes to the same playlist (e.g. a reorder still saving when a
+    // delete starts) would otherwise have the first one's `finally` clear the id
+    // out from under the second, hiding the indicator while a write is still in
+    // flight. Only accessed inside [playlistWrite], always on the calling
+    // coroutine's thread at entry/exit, but guarded anyway since two callers can
+    // interleave those entries/exits.
+    private val pendingPlaylistWriteCounts = mutableMapOf<String, Int>()
+    private val pendingPlaylistWriteCountsLock = Any()
+
+    /** Runs [block] for playlist [id], serialized via [playlistMutex] and tracked in [pendingPlaylistWrites]. */
+    private suspend fun <T> playlistWrite(id: String, block: suspend () -> T): T {
+        val firstWriter = synchronized(pendingPlaylistWriteCountsLock) {
+            val count = (pendingPlaylistWriteCounts[id] ?: 0) + 1
+            pendingPlaylistWriteCounts[id] = count
+            count == 1
+        }
+        if (firstWriter) _pendingPlaylistWrites.update { it + id }
+        try {
+            return playlistMutex.withLock { block() }
+        } finally {
+            val lastWriter = synchronized(pendingPlaylistWriteCountsLock) {
+                val count = (pendingPlaylistWriteCounts[id] ?: 1) - 1
+                if (count <= 0) {
+                    pendingPlaylistWriteCounts.remove(id)
+                    true
+                } else {
+                    pendingPlaylistWriteCounts[id] = count
+                    false
+                }
+            }
+            if (lastWriter) _pendingPlaylistWrites.update { it - id }
+        }
+    }
+
     // name -> server artist id, resolved once and reused for starring.
     private var artistIds: Map<String, String>? = null
 
@@ -590,8 +652,11 @@ class LibraryRepository(
      * The offline rebuild keeps the playlist's order and silently drops tracks
      * the library no longer holds, which is the same thing the server would do.
      */
-    suspend fun playlistTracks(id: String): List<Track> {
-        val tracks = fetchPlaylistTracks(id)
+    suspend fun playlistTracks(id: String): List<Track> = playlistView(id).tracks
+
+    /** [playlistTracks] plus whether it's the whole playlist — see [PlaylistView]. */
+    suspend fun playlistView(id: String): PlaylistView {
+        val (tracks, whole) = fetchPlaylistTracks(id)
         // Cached below at full membership, then narrowed on the way out: the
         // badge needs to know what the playlist *is*, the page needs to show
         // what it can actually play.
@@ -603,12 +668,21 @@ class LibraryRepository(
         if (tracks.isNotEmpty()) {
             _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
         }
+        if (!offline.value) return PlaylistView(tracks, whole)
+        // A song from the phone's own folder needs no server, so it stays whatever
+        // the connection is.
         val downloaded = downloadedTrackIds.value
-        return if (offline.value) tracks.filter { it.id in downloaded } else tracks
+        val playable = tracks.filter { it.id in downloaded || LocalLibrary.isLocal(it.id) }
+        return PlaylistView(playable, whole && playable.size == tracks.size)
     }
 
-    private suspend fun fetchPlaylistTracks(id: String): List<Track> {
-        if (playlistsAreLocal()) return getTracksByIds(LocalPlaylists.trackIds(id))
+    /** The songs, and whether they're the playlist entire rather than what could be recovered. */
+    private suspend fun fetchPlaylistTracks(id: String): PlaylistView {
+        if (playlistsAreLocal()) {
+            val ids = LocalPlaylists.trackIds(id)
+            val tracks = getTracksByIds(ids)
+            return PlaylistView(tracks, tracks.size == ids.size)
+        }
         // The list of playlists and their membership both wait for a connection
         // the mode allows; opening one asked the server regardless, which made
         // Wi-Fi Only mean something different depending on which way in you
@@ -616,11 +690,16 @@ class LibraryRepository(
         // it was simply never reached until the request had failed.
         if (metadataAllowed()) {
             serverClient.value?.let { client ->
-                runCatching { client.getPlaylistTracks(id) }.getOrNull()?.let { return it }
+                runCatching { client.getPlaylistTracks(id) }.getOrNull()
+                    ?.let { return PlaylistView(it, complete = true) }
             }
         }
-        val ids = (_playlists.value.firstOrNull { it.id == id } ?: return emptyList()).trackIds
-        return getTracksByIds(ids)
+        // The rebuild is a guess at what the server holds, not a reading of it:
+        // the cached membership can be stale and the library can be missing rows
+        // for ids it names, so nothing built here is safe to edit against.
+        val ids = (_playlists.value.firstOrNull { it.id == id } ?: return PlaylistView(emptyList(), false))
+            .trackIds
+        return PlaylistView(getTracksByIds(ids), complete = false)
     }
 
     /**
@@ -711,7 +790,7 @@ class LibraryRepository(
      * [trackIds] are the playlist's opening contents, not a hint — see
      * [MusicServer.createPlaylist]. Callers must not add them again.
      */
-    suspend fun createPlaylist(name: String, trackIds: List<String>) {
+    suspend fun createPlaylist(name: String, trackIds: List<String>) = playlistMutex.withLock {
         if (playlistsAreLocal()) {
             LocalPlaylists.create(name.trim(), trackIds)
         } else {
@@ -720,7 +799,7 @@ class LibraryRepository(
         refreshPlaylists()
     }
 
-    suspend fun renamePlaylist(id: String, name: String) {
+    suspend fun renamePlaylist(id: String, name: String) = playlistWrite(id) {
         if (playlistsAreLocal()) {
             LocalPlaylists.rename(id, name.trim())
         } else {
@@ -729,7 +808,7 @@ class LibraryRepository(
         refreshPlaylists()
     }
 
-    suspend fun deletePlaylist(id: String) {
+    suspend fun deletePlaylist(id: String) = playlistWrite(id) {
         if (playlistsAreLocal()) {
             LocalPlaylists.delete(id)
         } else {
@@ -740,9 +819,10 @@ class LibraryRepository(
 
     /**
      * Append one track. Sequential by contract: the server's update appends, so
-     * concurrent calls would race the order.
+     * concurrent calls would race the order. [playlistMutex] is what makes that
+     * contract hold across calls, not just within a single caller's loop.
      */
-    suspend fun addToPlaylist(id: String, trackId: String) {
+    suspend fun addToPlaylist(id: String, trackId: String) = playlistWrite(id) {
         if (playlistsAreLocal()) {
             LocalPlaylists.add(id, trackId)
         } else {
@@ -750,19 +830,29 @@ class LibraryRepository(
         }
     }
 
-    suspend fun removeFromPlaylistAt(id: String, index: Int) {
+    /** Whether the edit landed, so callers can hold off applying it locally until it has. */
+    suspend fun removeFromPlaylistAt(id: String, index: Int): Boolean = playlistWrite(id) {
         if (playlistsAreLocal()) {
             LocalPlaylists.removeAt(id, index)
         } else {
-            runCatching { serverClient.value?.removeFromPlaylistAt(id, index) }
+            // The client's own answer, not merely "it didn't throw": every one of
+            // them catches its transport errors internally, so isSuccess here would
+            // be true for a write the server refused — and for no client at all.
+            runCatching { serverClient.value?.removeFromPlaylistAt(id, index) ?: false }
+                .onFailure { android.util.Log.w("AmpSync", "removeFromPlaylistAt($id) failed: ${it.message}", it) }
+                .getOrDefault(false)
         }
     }
 
-    suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>) {
+    /** Whether the edit landed, so callers can hold off applying it locally until it has. */
+    suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = playlistWrite(id) {
         if (playlistsAreLocal()) {
             LocalPlaylists.reorder(id, orderedSongIds)
         } else {
-            runCatching { serverClient.value?.reorderPlaylist(id, orderedSongIds) }
+            // See removeFromPlaylistAt: the client's answer, not the absence of a throw.
+            runCatching { serverClient.value?.reorderPlaylist(id, orderedSongIds) ?: false }
+                .onFailure { android.util.Log.w("AmpSync", "reorderPlaylist($id) failed: ${it.message}", it) }
+                .getOrDefault(false)
         }
     }
 

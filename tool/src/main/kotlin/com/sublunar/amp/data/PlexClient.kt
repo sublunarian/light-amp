@@ -106,11 +106,28 @@ class PlexClient(
         }
     }
 
-    /** Like [send], but says whether the server took it. */
-    private suspend fun sendChecked(path: String, params: List<Pair<String, String>> = emptyList()): Boolean {
+    /** Like [send], but says whether the server took it — and logs when it didn't. */
+    private suspend fun sendChecked(
+        path: String,
+        params: List<Pair<String, String>> = emptyList(),
+        method: String = "GET",
+    ): Boolean {
         val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
         val url = baseUrl.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
-        return runCatching { http.get(url) { plexHeaders() }.status.isSuccess() }.getOrDefault(false)
+        val result = runCatching {
+            when (method) {
+                "GET" -> http.get(url) { plexHeaders() }
+                "PUT" -> http.put(url) { plexHeaders() }
+                "DELETE" -> http.delete(url) { plexHeaders() }
+                else -> error("unsupported method $method")
+            }.status.isSuccess()
+        }
+        val ok = result.getOrDefault(false)
+        if (!ok) {
+            val why = result.exceptionOrNull()?.message ?: "server refused"
+            android.util.Log.w(TAG, "$method $path failed: $why")
+        }
+        return ok
     }
 
     private fun io.ktor.client.request.HttpRequestBuilder.plexHeaders() {
@@ -758,44 +775,96 @@ class PlexClient(
      * an index into the playlist as the app last read it, so the entry ids are
      * re-read here rather than remembered.
      */
-    override suspend fun removeFromPlaylistAt(id: String, index: Int) {
-        val entry = playlistItemIds(id).getOrNull(index) ?: return
-        send("DELETE", "/playlists/$id/items/$entry")
+    override suspend fun removeFromPlaylistAt(id: String, index: Int): Boolean {
+        val entry = playlistItemIds(id).getOrNull(index) ?: run {
+            android.util.Log.w(TAG, "removeFromPlaylistAt($id): no entry at $index; nothing removed")
+            return false
+        }
+        return deletePlaylistEntry(id, entry)
     }
 
+    private suspend fun deletePlaylistEntry(id: String, entryId: Long): Boolean =
+        sendChecked("/playlists/$id/items/$entryId", method = "DELETE")
+
     /**
-     * Reordering is a sequence of moves: Plex will put one entry after another,
-     * and has no call that takes a whole new running order.
+     * Reorders via a chain of relative moves — Plex's only primitive for this;
+     * there's no bulk-reorder call and no endpoint that takes a whole new
+     * running order in one shot.
      *
-     * Walking the wanted order and moving each entry behind the one before it
-     * settles the list in a single pass, and skipping the entries already in
-     * place keeps a small change to a small number of requests.
+     * This used to rebuild the tail instead: find where the current order
+     * first diverges from the wanted one, batch-*add* the wanted tail, then
+     * delete the old copies of those entries. That relied on re-adding a
+     * track already in the playlist creating a fresh, distinct entry for the
+     * delete step to leave in place of the one it removed. It doesn't — Plex
+     * silently no-ops an add of media the playlist already has — so on any
+     * reorder large enough to diverge near the start (moving a block from the
+     * front to the back diverges at position zero, i.e. the whole list) the
+     * "fresh" entries were never created and the delete step removed the
+     * originals anyway, wiping the playlist out with nothing put back. Moving
+     * entries in place instead never deletes anything, so there's no failure
+     * mode here that loses a track — only, in the worst case, one that
+     * doesn't finish landing every move.
+     *
+     * Each entry (from the second on) is moved to just after its predecessor
+     * in the wanted order, one call at a time, sequential and awaited — Plex's
+     * playlist ordering isn't known to be safe under concurrent writes to the
+     * same playlist (see [removeFromPlaylistAt]'s sibling comment on delete),
+     * and a failed move here should stop rather than let every move after it
+     * land against a playlist that isn't in the order it assumes.
+     *
+     * An entry already directly after its wanted predecessor is skipped
+     * rather than moved: a request that would put it exactly where it already
+     * is is still a full round trip Plex has to serve, and a drag that only
+     * touches a few rows of a long playlist would otherwise fire a move for
+     * every untouched row too. [localOrder] tracks the running order as moves
+     * land, since a skip decision after the first move has to go by where an
+     * entry ended up, not [entries]' original position.
      */
-    override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>) {
+    override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean {
         val entries = playlistEntries(id)
-        // Several entries can share a song id; take each in turn so a playlist
-        // holding a song twice still moves the right one.
-        val bySong = entries.groupBy { it.first }
-            .mapValues { (_, v) -> v.map { it.second }.toMutableList() }
-        val wanted = orderedSongIds.mapNotNull { songId ->
-            bySong[songId]?.removeFirstOrNull()
+        if (entries.size != orderedSongIds.size) {
+            android.util.Log.w(
+                TAG,
+                "reorderPlaylist($id): wanted ${orderedSongIds.size} track(s) but the playlist has " +
+                    "${entries.size}; refusing to touch it",
+            )
+            return false
         }
-        var previous: Long? = null
-        val current = entries.map { it.second }.toMutableList()
-        for (entry in wanted) {
-            val target = previous?.let { current.indexOf(it) + 1 } ?: 0
-            val at = current.indexOf(entry)
-            if (at != target) {
-                send(
-                    "PUT",
-                    "/playlists/$id/items/$entry/move",
-                    if (previous == null) emptyList() else listOf("after" to previous.toString()),
+        // Duplicate song ids: pool entries per song id, hand out in original order.
+        val bySong = mutableMapOf<String, MutableList<Long>>()
+        for ((songId, entryId) in entries) {
+            bySong.getOrPut(songId) { mutableListOf() }.add(entryId)
+        }
+        val orderedEntryIds = orderedSongIds.map { songId ->
+            val queue = bySong[songId]
+            if (queue.isNullOrEmpty()) {
+                android.util.Log.w(
+                    TAG,
+                    "reorderPlaylist($id): wanted order references a track not in the playlist; refusing to touch it",
                 )
-                current.removeAt(at)
-                current.add(target, entry)
+                return false
             }
-            previous = entry
+            queue.removeAt(0)
         }
+        val localOrder = entries.map { it.second }.toMutableList()
+        for (i in 1 until orderedEntryIds.size) {
+            val entryId = orderedEntryIds[i]
+            val afterId = orderedEntryIds[i - 1]
+            val afterPos = localOrder.indexOf(afterId)
+            if (localOrder.getOrNull(afterPos + 1) == entryId) continue
+            val moved = sendChecked(
+                "/playlists/$id/items/$entryId/move",
+                listOf("after" to afterId.toString()),
+                method = "PUT",
+            )
+            if (!moved) {
+                android.util.Log.w(TAG, "reorderPlaylist($id): move failed partway; playlist left partially reordered, nothing lost")
+                return false
+            }
+            localOrder.remove(entryId)
+            localOrder.add(localOrder.indexOf(afterId) + 1, entryId)
+        }
+        return true
     }
 
     /** Each entry's `(songId, playlistItemID)`, in playlist order. */
@@ -1326,6 +1395,8 @@ class PlexClient(
     private fun HttpStatusCode.isSuccess(): Boolean = value in 200..299
 
     companion object {
+        private const val TAG = "PlexClient"
+
         const val LIBRARY_IDENTIFIER = "com.plexapp.plugins.library"
 
         /** Songs per radio when the caller leaves it to the server. */
