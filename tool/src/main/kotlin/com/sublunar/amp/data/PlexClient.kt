@@ -787,38 +787,21 @@ class PlexClient(
         sendChecked("/playlists/$id/items/$entryId", method = "DELETE")
 
     /**
-     * Reorders via a chain of relative moves — Plex's only primitive for this;
-     * there's no bulk-reorder call and no endpoint that takes a whole new
-     * running order in one shot.
+     * Reordering is a sequence of moves: Plex will put one entry after another,
+     * and has no call that takes a whole new running order.
      *
-     * This used to rebuild the tail instead: find where the current order
-     * first diverges from the wanted one, batch-*add* the wanted tail, then
-     * delete the old copies of those entries. That relied on re-adding a
-     * track already in the playlist creating a fresh, distinct entry for the
-     * delete step to leave in place of the one it removed. It doesn't — Plex
-     * silently no-ops an add of media the playlist already has — so on any
-     * reorder large enough to diverge near the start (moving a block from the
-     * front to the back diverges at position zero, i.e. the whole list) the
-     * "fresh" entries were never created and the delete step removed the
-     * originals anyway, wiping the playlist out with nothing put back. Moving
-     * entries in place instead never deletes anything, so there's no failure
-     * mode here that loses a track — only, in the worst case, one that
-     * doesn't finish landing every move.
+     * Walking the wanted order and moving each entry behind the one before it
+     * settles the list in a single pass, and skipping the entries already in
+     * place keeps a small change to a small number of requests. [localOrder]
+     * follows the list as the moves land, since "already in place" has to go by
+     * where an entry has ended up, not where it started.
      *
-     * Each entry (from the second on) is moved to just after its predecessor
-     * in the wanted order, one call at a time, sequential and awaited — Plex's
-     * playlist ordering isn't known to be safe under concurrent writes to the
-     * same playlist (see [removeFromPlaylistAt]'s sibling comment on delete),
-     * and a failed move here should stop rather than let every move after it
-     * land against a playlist that isn't in the order it assumes.
-     *
-     * An entry already directly after its wanted predecessor is skipped
-     * rather than moved: a request that would put it exactly where it already
-     * is is still a full round trip Plex has to serve, and a drag that only
-     * touches a few rows of a long playlist would otherwise fire a move for
-     * every untouched row too. [localOrder] tracks the running order as moves
-     * land, since a skip decision after the first move has to go by where an
-     * entry ended up, not [entries]' original position.
+     * Moves only, never add-then-delete: Plex quietly ignores an add of a track
+     * the playlist already holds, so a rebuild that re-adds and then deletes
+     * the old copies deletes the only copies. A move can't lose a track — the
+     * worst a failure does is stop partway, which is what happens here: one at
+     * a time, awaited, and the first refusal ends the pass, because every move
+     * after it would be placed against an order the list isn't in.
      */
     override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean {
         val entries = playlistEntries(id)
