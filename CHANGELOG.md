@@ -4,58 +4,34 @@
 
 ### Added
 
-- Covers are saved with the library. After a sync on Wi-Fi, the covers of the
-  library you're browsing are fetched to the phone, so lists have their
-  artwork on cellular without spending data on it. The first sync after
-  updating fetches them all, about 100 KB an album. A cover is deleted when
-  its album leaves the library or its art changes, and the cache holds up to
-  400 MB, up from 200.
-- Move several songs at once: in a playlist's Edit mode or the queue, select
-  songs and drag any one of them by its handle, and the rest go with it. A line
-  shows where they will land, and the list scrolls when the drag reaches its
-  top or bottom edge. Thanks to @wsturgiss.
+- Library covers are saved to the phone after a sync on Wi-Fi, so lists have
+  their artwork on cellular without using data. Covers of removed albums are
+  deleted.
+- Move several songs at once in a playlist's Edit mode or the queue: select
+  them and drag one. Thanks to @wsturgiss.
 
 ### Changed
 
-- Switching between Wi-Fi and cellular is followed at once, in every data
-  mode. The library, the queue and playback change together, and a server
-  that stopped answering is asked again as soon as the connection changes,
-  instead of staying "offline" until the next sync.
-- The same queue keeps working through a network or data-mode change. Songs
-  that can't play right now stay in it, dimmed, and are skipped; they play
-  again the moment they can. With nothing playable left, the player says what
-  it is waiting for.
+- Switching between Wi-Fi and cellular is followed at once, in every data mode.
+- The queue keeps working through a network or data-mode change. Songs that
+  can't play right now are dimmed and skipped.
 - A stream cut off by a change of network picks up where it stopped.
-- Network speakers are a Wi-Fi feature: off Wi-Fi they aren't searched for,
-  can't be cast to, and a cast in progress ends on the phone without anything
-  starting to play.
-- Starting up on a slow connection: a song you tap starts sooner. The
-  library sync no longer runs at every launch (at most every six hours on
-  cellular; Sync Now is unchanged), playlists' contents are only fetched in
-  bulk on Wi-Fi, and background work waits while a stream is starting.
-- "Buffering…" shows while a stream is starting, and tapping the same song
-  again no longer starts it over.
+- Songs start sooner on a slow connection, and "Buffering…" shows while one
+  is starting.
 - Low Data shows the cover of what's playing and of the album you open, on
-  cellular too. Library covers still wait for Wi-Fi.
-- Lists in select mode show each song's cover, dimmed, behind its check circle.
-- A playlist can only be edited while the whole of it is on screen — not
-  offline, and not when only part of it could be loaded. An edit that doesn't
-  save is undone and says "Couldn't save".
+  cellular too.
+- Network speakers are only available on Wi-Fi.
+- A playlist can only be edited while all of it is loaded. An edit that
+  doesn't save is undone.
 
 ### Fixed
 
-- Wi-Fi Only could still use cellular data: a stream already in the queue kept
-  playing after Wi-Fi dropped, and the next track along with it. Every
-  connection the app or its player opens now asks first, redirects and
-  downloads included, and switching into the mode closes any connection still
-  open over cellular. A track that needs Wi-Fi shows "Waiting for Wi-Fi" and
-  is cued up again once it is back.
+- Wi-Fi Only could still use cellular data for streams already in the queue.
+  Nothing reaches the server on cellular now.
 - A download could save a server's error message as the song.
-- Tapping a queue row while waiting for Wi-Fi did nothing.
-- A slow server was sometimes taken for an unreachable one, which hid
-  everything that wasn't downloaded for a few minutes after launch.
-- A track the server refused left the player silent with nothing on screen
-  to say so.
+- A slow server was sometimes taken for an unreachable one, hiding everything
+  that wasn't downloaded.
+- A track the server refused left the player silent with no message.
 - A playlist that couldn't be loaded on a bad connection opened empty.
 - Deleting several songs from a Plex or Jellyfin playlist did nothing.
 - Removing one copy of a song that a playlist holds twice removed both.
