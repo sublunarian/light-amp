@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import io.ktor.client.HttpClient
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -56,6 +57,19 @@ class JellyfinClient(
 
     private val http = NetworkGate.httpClient { expectSuccess = false }
 
+    /**
+     * A second, small client for the two calls a person is waiting on — the
+     * reachability ping and the stream decision. A separate client is a
+     * separate request queue: on the shared one they stood behind a launch
+     * sync's hundreds of requests (five at a time per host), and a ping that
+     * waited out its turn there was read as "the server is gone" — which
+     * narrowed the library to downloads in the very minutes the user was
+     * trying to start a song. Built on first use; most sessions never need it
+     * more than a handful of times.
+     */
+    private val quickClient = lazy { NetworkGate.httpClient(isolated = true) { expectSuccess = false } }
+    private val quick get() = quickClient.value
+
     private val json = Json {
         ignoreUnknownKeys = true
         coerceInputValues = true
@@ -63,7 +77,10 @@ class JellyfinClient(
         encodeDefaults = true
     }
 
-    override fun close() = http.close()
+    override fun close() {
+        http.close()
+        if (quickClient.isInitialized()) quick.close()
+    }
 
     // --- Requests ------------------------------------------------------------
 
@@ -72,10 +89,14 @@ class JellyfinClient(
         return baseUrl.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
     }
 
-    private suspend fun body(path: String, params: List<Pair<String, String>> = emptyList()): String {
-        val response = http.get(url(path, params)) { jellyfinHeaders() }
+    private suspend fun body(
+        path: String,
+        params: List<Pair<String, String>> = emptyList(),
+        via: HttpClient = http,
+    ): String {
+        val response = via.get(url(path, params)) { jellyfinHeaders() }
         if (!response.status.isSuccess()) {
-            throw JellyfinException("Jellyfin says ${response.status.value} for $path")
+            throw JellyfinException("Jellyfin says ${response.status.value} for $path", response.status.value)
         }
         return response.bodyAsText()
     }
@@ -115,7 +136,7 @@ class JellyfinClient(
     override suspend fun ping() {
         // Proves the address, the token and the user in one call: an expired
         // token answers 401 here rather than an empty library later.
-        body("/Users/$userId")
+        body("/Users/$userId", via = quick)
     }
 
     // --- Browsing ------------------------------------------------------------
@@ -739,4 +760,5 @@ internal fun JellyfinItem.toTrack(): Track = Track(
     gainDb = normalizationGain,
 )
 
-class JellyfinException(message: String) : Exception(message)
+/** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */
+class JellyfinException(message: String, val status: Int? = null) : Exception(message)

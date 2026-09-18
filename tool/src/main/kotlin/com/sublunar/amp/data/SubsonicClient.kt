@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
@@ -34,7 +35,8 @@ data class SubsonicConfig(
     }
 }
 
-class SubsonicException(message: String) : Exception(message)
+/** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */
+class SubsonicException(message: String, val status: Int? = null) : Exception(message)
 
 /**
  * Navidrome / Subsonic API client. Ported from the React Native `navidrome.ts`.
@@ -46,6 +48,19 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
     private val http = NetworkGate.httpClient {
         expectSuccess = false
     }
+
+    /**
+     * A second, small client for the two calls a person is waiting on — the
+     * reachability ping and the stream decision. A separate client is a
+     * separate request queue: on the shared one they stood behind a launch
+     * sync's hundreds of requests (five at a time per host), and a ping that
+     * waited out its turn there was read as "the server is gone" — which
+     * narrowed the library to downloads in the very minutes the user was
+     * trying to start a song. Built on first use; most sessions never need it
+     * more than a handful of times.
+     */
+    private val quickClient = lazy { NetworkGate.httpClient(isolated = true) { expectSuccess = false } }
+    private val quick get() = quickClient.value
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -66,7 +81,10 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         }
     }
 
-    override fun close() = http.close()
+    override fun close() {
+        http.close()
+        if (quickClient.isInitialized()) quick.close()
+    }
 
     // --- URL builders --------------------------------------------------------
 
@@ -153,10 +171,11 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
     private suspend fun request(
         endpoint: String,
         params: List<Pair<String, String>> = emptyList(),
+        via: HttpClient = http,
     ): SubsonicBody {
-        val response = http.get(restUrl(endpoint, params))
+        val response = via.get(restUrl(endpoint, params))
         if (!response.status.isSuccess()) {
-            throw SubsonicException("Server returned HTTP ${response.status.value}.")
+            throw SubsonicException("Server returned HTTP ${response.status.value}.", response.status.value)
         }
         val body = json.decodeFromString<SubsonicEnvelope>(response.bodyAsText()).response
             ?: throw SubsonicException("Unexpected response from server.")
@@ -168,7 +187,7 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
 
     /** Verify credentials by pinging the server. Throws on failure. */
     override suspend fun ping() {
-        request("ping")
+        request("ping", via = quick)
     }
 
     /** The server's libraries (Navidrome exposes each as a music folder). */

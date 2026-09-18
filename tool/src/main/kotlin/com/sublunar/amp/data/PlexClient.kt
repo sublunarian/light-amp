@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.delete
@@ -51,6 +52,19 @@ class PlexClient(
 
     private val http = NetworkGate.httpClient { expectSuccess = false }
 
+    /**
+     * A second, small client for the two calls a person is waiting on — the
+     * reachability ping and the stream decision. A separate client is a
+     * separate request queue: on the shared one they stood behind a launch
+     * sync's hundreds of requests (five at a time per host), and a ping that
+     * waited out its turn there was read as "the server is gone" — which
+     * narrowed the library to downloads in the very minutes the user was
+     * trying to start a song. Built on first use; most sessions never need it
+     * more than a handful of times.
+     */
+    private val quickClient = lazy { NetworkGate.httpClient(isolated = true) { expectSuccess = false } }
+    private val quick get() = quickClient.value
+
     /** Serialises requests aimed at a player; see [companionXml]. */
     private val playerLock = Mutex()
 
@@ -60,7 +74,10 @@ class PlexClient(
         isLenient = true
     }
 
-    override fun close() = http.close()
+    override fun close() {
+        http.close()
+        if (quickClient.isInitialized()) quick.close()
+    }
 
     // --- Requests ------------------------------------------------------------
 
@@ -68,12 +85,16 @@ class PlexClient(
         decode(rawBody(path, params))
 
     /** The body as text, for the one answer whose shape isn't declared — see [stationKeyFor]. */
-    private suspend fun rawBody(path: String, params: List<Pair<String, String>> = emptyList()): String {
+    private suspend fun rawBody(
+        path: String,
+        params: List<Pair<String, String>> = emptyList(),
+        via: HttpClient = http,
+    ): String {
         val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
         val url = baseUrl.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
-        val response = http.get(url) { plexHeaders() }
+        val response = via.get(url) { plexHeaders() }
         if (!response.status.isSuccess()) {
-            throw PlexException("Plex says ${response.status.value} for $path")
+            throw PlexException("Plex says ${response.status.value} for $path", response.status.value)
         }
         return response.bodyAsText()
     }
@@ -84,7 +105,7 @@ class PlexClient(
         val url = baseUrl.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
         val response = http.post(url) { plexHeaders() }
         if (!response.status.isSuccess()) {
-            throw PlexException("Plex says ${response.status.value} for $path")
+            throw PlexException("Plex says ${response.status.value} for $path", response.status.value)
         }
         return response.bodyAsText()
     }
@@ -111,14 +132,15 @@ class PlexClient(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
         method: String = "GET",
+        via: HttpClient = http,
     ): Boolean {
         val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
         val url = baseUrl.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
         val result = runCatching {
             when (method) {
-                "GET" -> http.get(url) { plexHeaders() }
-                "PUT" -> http.put(url) { plexHeaders() }
-                "DELETE" -> http.delete(url) { plexHeaders() }
+                "GET" -> via.get(url) { plexHeaders() }
+                "PUT" -> via.put(url) { plexHeaders() }
+                "DELETE" -> via.delete(url) { plexHeaders() }
                 else -> error("unsupported method $method")
             }.status.isSuccess()
         }
@@ -138,8 +160,9 @@ class PlexClient(
 
     override suspend fun ping() {
         // Any authenticated endpoint will do; sections is the cheapest that
-        // proves both the address and the token.
-        fetch("/library/sections")
+        // proves both the address and the token. The status is the answer;
+        // the body is not read for meaning.
+        rawBody("/library/sections", via = quick)
     }
 
     /**
@@ -477,7 +500,11 @@ class PlexClient(
         // leaves the identifier off in that case too, and Plex only enforces
         // this against sessions it is tracking.
         if (sessionId.isNullOrBlank()) return true
-        return sendChecked("/music/:/transcode/universal/decision", transcodeParams(songId, format, 0, sessionId))
+        return sendChecked(
+            "/music/:/transcode/universal/decision",
+            transcodeParams(songId, format, 0, sessionId),
+            via = quick,
+        )
     }
 
     override fun streamUrl(
@@ -1455,7 +1482,8 @@ class PlexClient(
     }
 }
 
-class PlexException(message: String) : Exception(message)
+/** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */
+class PlexException(message: String, val status: Int? = null) : Exception(message)
 
 /**
  * A Companion-capable player, from the server's list or the account's.
