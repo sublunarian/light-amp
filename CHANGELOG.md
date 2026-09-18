@@ -1,9 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
 ### Added
 
+- Covers are saved with the library. After a sync on Wi-Fi, the covers of the
+  library you're browsing are fetched to the phone, so lists have their
+  artwork on cellular without spending data on it. The first sync after
+  updating fetches them all, about 100 KB an album. A cover is deleted when
+  its album leaves the library or its art changes, and the cache holds up to
+  400 MB, up from 200.
 - Move several songs at once: in a playlist's Edit mode or the queue, select
   songs and drag any one of them by its handle, and the rest go with it. A line
   shows where they will land, and the list scrolls when the drag reaches its
@@ -31,11 +37,6 @@
   again no longer starts it over.
 - Low Data shows the cover of what's playing and of the album you open, on
   cellular too. Library covers still wait for Wi-Fi.
-- Covers are fetched with the library. After a sync on Wi-Fi the covers of
-  the library you're browsing are saved to the phone, so lists have their
-  artwork on cellular without using data for it. A cover is deleted when its
-  album leaves the library or its art changes, and the cache can hold more
-  (400 MB, up from 200).
 - Lists in select mode show each song's cover, dimmed, behind its check circle.
 - A playlist can only be edited while the whole of it is on screen — not
   offline, and not when only part of it could be loaded. An edit that doesn't
@@ -43,9 +44,12 @@
 
 ### Fixed
 
-- Wi-Fi Only: switching into the mode now closes any connection still open
-  over cellular, and redirects and downloads go through the same check as
-  everything else.
+- Wi-Fi Only could still use cellular data: a stream already in the queue kept
+  playing after Wi-Fi dropped, and the next track along with it. Every
+  connection the app or its player opens now asks first, redirects and
+  downloads included, and switching into the mode closes any connection still
+  open over cellular. A track that needs Wi-Fi shows "Waiting for Wi-Fi" and
+  is cued up again once it is back.
 - A download could save a server's error message as the song.
 - Tapping a queue row while waiting for Wi-Fi did nothing.
 - A slow server was sometimes taken for an unreachable one, which hid
@@ -55,16 +59,6 @@
 - A playlist that couldn't be loaded on a bad connection opened empty.
 - Deleting several songs from a Plex or Jellyfin playlist did nothing.
 - Removing one copy of a song that a playlist holds twice removed both.
-
-## 0.6.2
-
-### Fixed
-
-- Wi-Fi Only could still use cellular data: a stream already in the queue kept
-  playing after Wi-Fi dropped, and the next track along with it. Every
-  connection the app or its player opens now asks first, so on cellular nothing
-  reaches the server. A track that needs it shows "Waiting for Wi-Fi" and is
-  cued up again once Wi-Fi is back.
 
 ## 0.6.1
 
