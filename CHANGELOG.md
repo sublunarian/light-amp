@@ -4,37 +4,21 @@
 
 ### Added
 
-- Library covers are saved to the phone after a sync on Wi-Fi, so lists have
-  their artwork on cellular without using data. Covers of removed albums are
-  deleted.
-- Move several songs at once in a playlist's Edit mode or the queue: select
-  them and drag one. Thanks to @wsturgiss.
+- Batch editing: select several songs in a playlist or the queue and move
+  them together. Thanks to @wsturgiss.
+- Album covers are saved while you're on Wi-Fi, so they show up on cellular
+  without using data.
 
 ### Changed
 
-- Switching between Wi-Fi and cellular is followed at once, in every data mode.
-- The queue keeps working through a network or data-mode change. Songs that
-  can't play right now are dimmed and skipped.
-- A stream cut off by a change of network picks up where it stopped.
-- Songs start sooner on a slow connection, and "Buffering…" shows while one
-  is starting.
-- Low Data shows the cover of what's playing and of the album you open, on
-  cellular too.
-- Network speakers are only available on Wi-Fi.
-- A playlist can only be edited while all of it is loaded. An edit that
-  doesn't save is undone.
+- Switching between Wi-Fi and cellular is faster and more reliable: music
+  keeps playing, and the library and queue update right away.
+- Songs start faster on slow connections.
 
 ### Fixed
 
-- Wi-Fi Only could still use cellular data for streams already in the queue.
-  Nothing reaches the server on cellular now.
-- A download could save a server's error message as the song.
-- A slow server was sometimes taken for an unreachable one, hiding everything
-  that wasn't downloaded.
-- A track the server refused left the player silent with no message.
-- A playlist that couldn't be loaded on a bad connection opened empty.
-- Deleting several songs from a Plex or Jellyfin playlist did nothing.
-- Removing one copy of a song that a playlist holds twice removed both.
+- Wi-Fi Only could still use cellular data in some cases.
+- Several playlist and download bugs.
 
 ## 0.6.1
 
