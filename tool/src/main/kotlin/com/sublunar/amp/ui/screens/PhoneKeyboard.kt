@@ -34,6 +34,11 @@ private var lastKnown: KeyboardOptions? = null
  * handed some, and puts a spacer in its place otherwise — so an empty set is
  * the keyboard's own no-emoji state, not a layout of ours.
  *
+ * **No voice key either, for now.** Keyboard 0.0.19 draws a dictation key when
+ * the phone's setting says so, but the library has no dictation behind it yet —
+ * Light's own `fix/hide-voice` masks it the same way in `rememberKeyboardOptions`,
+ * which Amp doesn't use (see above). Drop this pin when the key does something.
+ *
  * [swipe] pins swipe typing regardless of the setting. The password screen
  * turns it off: its keyboard masks what is typed and has no words to offer, so
  * a swiped word would be silently dropped — see MaskedKeyboardCallback.
@@ -42,6 +47,7 @@ private var lastKnown: KeyboardOptions? = null
 fun rememberPhoneKeyboardOptions(swipe: Boolean? = null): StateFlow<KeyboardOptions> {
     fun pinned(options: KeyboardOptions) = options.copy(
         emojis = emptyList(),
+        displayVoice = false,
         swipeEnabled = swipe ?: options.swipeEnabled,
     )
     val flow = remember { MutableStateFlow(pinned(lastKnown ?: defaultKeyboardOptions())) }
