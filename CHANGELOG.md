@@ -31,6 +31,11 @@
   again no longer starts it over.
 - Low Data shows the cover of what's playing and of the album you open, on
   cellular too. Library covers still wait for Wi-Fi.
+- Covers are fetched with the library. After a sync on Wi-Fi the covers of
+  the library you're browsing are saved to the phone, so lists have their
+  artwork on cellular without using data for it. A cover is deleted when its
+  album leaves the library or its art changes, and the cache can hold more
+  (400 MB, up from 200).
 - Lists in select mode show each song's cover, dimmed, behind its check circle.
 - A playlist can only be edited while the whole of it is on screen — not
   offline, and not when only part of it could be loaded. An edit that doesn't

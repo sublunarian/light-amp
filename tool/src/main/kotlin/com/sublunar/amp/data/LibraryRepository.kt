@@ -1010,7 +1010,7 @@ class LibraryRepository(
         val dao = daos.value ?: return releaseSyncClaim()
         // The phone's own music has no server to ask; it is read off the disk.
         if (source?.kind == SourceKind.LOCAL) {
-            runLocalScan(dao)
+            runLocalScan(dao, source.id)
             return
         }
         // Wi-Fi Only off Wi-Fi means no network — and a sync is hundreds of
@@ -1034,6 +1034,8 @@ class LibraryRepository(
         // never issued.
         _syncState.value = _syncState.value.copy(syncing = true, error = null, phase = "Connecting")
         try {
+            // Read before the first write — see reportDroppedCovers.
+            val coversBefore = coverIdsOrNull(dao)
             // Rows with no library recorded show in *every* library (see
             // allAlbums), so an untagged album leaks into libraries it was never
             // in. A scoped sync can only tag the folder it fetched; this asks
@@ -1247,6 +1249,14 @@ class LibraryRepository(
                 settings.setParserGeneration(source.id, TRACK_PARSER_GENERATION)
             }
 
+            // An album whose art changed has a new cover id, and its songs —
+            // not re-fetched for that — still carry the old one. Pointed at
+            // the album's here, as every launch already does, so a record
+            // has one sleeve rather than one per era, and so the old one is
+            // seen to have been let go of just below.
+            runCatching { dao.collapseTrackCovers() }
+            reportDroppedCovers(dao, source?.id, coversBefore)
+
             val finishedAt = System.currentTimeMillis()
             _syncState.value = SyncState(
                 syncing = false,
@@ -1282,7 +1292,7 @@ class LibraryRepository(
      * cache of something already local. Likes, ratings and play counts have
      * nowhere to live on a local source, so there is nothing to reconcile.
      */
-    private suspend fun runLocalScan(dao: LibraryDao) {
+    private suspend fun runLocalScan(dao: LibraryDao, sourceId: String) {
         _syncState.value = _syncState.value.copy(
             syncing = true,
             error = null,
@@ -1307,10 +1317,12 @@ class LibraryRepository(
             val scan = LocalLibrary.scan { count ->
                 _syncState.value = _syncState.value.copy(phase = "$count tracks")
             }
+            val coversBefore = coverIdsOrNull(dao)
             dao.clearTracks()
             dao.clearAlbums()
             dao.upsertAlbums(scan.albums.map { it.toEntity() })
             dao.upsertTracks(scan.tracks.map { it.toEntity() })
+            reportDroppedCovers(dao, sourceId, coversBefore)
             val finishedAt = System.currentTimeMillis()
             _syncState.value = SyncState(
                 syncing = false,
@@ -1335,6 +1347,42 @@ class LibraryRepository(
      * rather than a dependency so the repository doesn't have to know about either.
      */
     var onSyncSucceeded: (() -> Unit)? = null
+
+    /**
+     * Told which covers a finished sync left nothing pointing at, so their
+     * files can go — see ArtworkLoader.drop. The source is named because the
+     * run was pinned to it, and it may no longer be the one on screen.
+     */
+    var onCoversDropped: (suspend (sourceId: String, coverArtIds: Set<String>) -> Unit)? = null
+
+    private suspend fun coverIdsOrNull(dao: LibraryDao): Set<String>? =
+        runCatching { dao.allCoverArtIds().toSet() }.getOrNull()
+
+    /**
+     * Name the covers that were in this database before the run and aren't now.
+     *
+     * An album removed from the server takes its cover id with it; an album
+     * whose art changed gets a new one, on Navidrome and Plex both, since
+     * theirs carry the date the art was last touched. Either way the old
+     * file is a picture of nothing, and the artwork cache can't find it on
+     * its own — its files are named by a hash, so only the id names one.
+     *
+     * Asked of the database rather than worked out from the prune, so it
+     * covers every way a run changes what is pointed at — the album prune,
+     * the orphaned tracks, an upsert that changed an id — without having to
+     * be told about each. Only on success: a run that threw may have pruned
+     * and not yet written, and the covers of a half-finished sync are not
+     * orphans. What that misses, the cache ages out on its own (see
+     * ArtworkLoader.expireUnclaimed).
+     */
+    private suspend fun reportDroppedCovers(dao: LibraryDao, sourceId: String?, before: Set<String>?) {
+        if (sourceId == null || before.isNullOrEmpty()) return
+        val after = coverIdsOrNull(dao) ?: return
+        val dropped = before - after
+        if (dropped.isEmpty()) return
+        runCatching { onCoversDropped?.invoke(sourceId, dropped) }
+            .onFailure { if (it is CancellationException) throw it }
+    }
     /**
      * Called when a sync gives up. The flag is true when the server answered and
      * refused us — see [isAuthFailure]; the caller must not read that as the

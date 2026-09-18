@@ -49,6 +49,7 @@ import com.thelightphone.sdk.buildDatabase
 import com.thelightphone.sdk.display.LightDisplayColor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -237,6 +238,89 @@ object App {
                 .getOrDefault(emptyList())
                 .map { artwork.fileNameFor(source.id, it) }
         }.toSet()
+
+    /**
+     * Every cover file some source's library points at — what the cache's
+     * monthly expiry must leave alone. See ArtworkLoader.expireUnclaimed.
+     *
+     * Null if any source's database couldn't be read: an unreadable library
+     * looks exactly like an empty one from here, and the difference is every
+     * cover it owns. Nothing is expired on a launch that can't tell.
+     */
+    private suspend fun claimedCoverFiles(): Set<String>? {
+        val claimed = HashSet<String>()
+        for (source in settings.sources.first()) {
+            val ids = runCatching { databaseFor(source).libraryDao().allCoverArtIds() }.getOrNull() ?: return null
+            ids.mapTo(claimed) { artwork.fileNameFor(source.id, it) }
+        }
+        return claimed
+    }
+
+    /** The cover sync in flight, if one is — see [syncCovers]. */
+    private var coverSync: Job? = null
+
+    /**
+     * Fetch the covers the library on screen has and the phone doesn't, while
+     * bytes are free.
+     *
+     * Lists draw only the covers already on the phone once the link costs
+     * money, so this is what decides what a library looks like on cellular.
+     * Run whenever there might be something to fetch and a free link to fetch
+     * it on: after a sync, when the link becomes free, at launch. Finding
+     * nothing missing costs a look at the disk and no request.
+     *
+     * Unmetered only, in every data mode. Make it Hurt spends cellular data
+     * on what is asked for; this is asked for by nobody, and the covers it
+     * would fetch still load as they are looked at.
+     *
+     * One at a time and replaced, not queued: a second trigger is either the
+     * same library — and the disk already holds what the first run fetched —
+     * or a different one, which the first run has just stopped being for.
+     */
+    private fun syncCovers() {
+        synchronized(this) {
+            coverSync?.cancel()
+            coverSync = scope.launch {
+                // The stored setting, not [hideArtwork]: at launch that flow
+                // still holds its placeholder, and "off" has to mean not one.
+                if (settings.artwork.first() == ArtworkMode.NONE) return@launch
+                val source = settings.activeSource.first() ?: return@launch
+                val client = clientFor(source) ?: return@launch
+                // The chosen library, as the lists filter it — see
+                // LibraryRepository.allAlbums — newest first: those are the
+                // covers a run cut short is most likely to be asked for.
+                val wanted = runCatching { databaseFor(source).libraryDao().allAlbumsSnapshot() }
+                    .getOrDefault(emptyList())
+                    .filter { source.libraryId == null || it.libraryId == null || it.libraryId == source.libraryId }
+                    .sortedByDescending { it.createdMs }
+                    .mapNotNull { it.coverArtId }
+                if (wanted.isEmpty()) return@launch
+                val startedMs = System.currentTimeMillis()
+                val result = artwork.syncCovers(
+                    sourceId = source.id,
+                    client = client,
+                    coverArtIds = wanted,
+                    protectedFiles = protectedCoverFiles(),
+                    mayContinue = {
+                        yieldToPlayback()
+                        // Asked of the system, not of the flow: this is the
+                        // last look before bytes that must not cost anything.
+                        val now = rulesNow()
+                        now.unmetered && now.mayStream && _source.value.id == source.id
+                    },
+                )
+                if (result.missing > 0) {
+                    android.util.Log.i(
+                        "AmpArt",
+                        "cover sync: ${source.name}: ${result.fetched} of ${result.missing} missing fetched " +
+                            "(${result.wanted} in the library), ${result.fetchedBytes shr 10} KB in " +
+                            "${(System.currentTimeMillis() - startedMs) / 1000} s" +
+                            (result.stopped?.let { " — stopped: $it" } ?: ""),
+                    )
+                }
+            }
+        }
+    }
 
     /**
      * Delete every source's downloaded audio, whichever source is active.
@@ -534,7 +618,10 @@ object App {
                     runCatching { downloader.refillMissingLyrics() }
                     topUpDownloads()
                 }
+                // And the covers of whatever the sync just brought in.
+                syncCovers()
             }
+            library.onCoversDropped = { sourceId, ids -> artwork.drop(sourceId, ids) }
             // A sync that worked is proof the server is answering, which is the
             // one moment worth retrying everything that happened while it wasn't.
             scope.launch { library.primePlaylists() }
@@ -613,6 +700,16 @@ object App {
                     .distinctUntilChanged()
                     .drop(1)
                     .collect { may -> if (may) topUpDownloads() }
+            }
+            // The covers a sync on cellular couldn't fetch, or a run that Wi-Fi
+            // dropping cut short. Its own edge rather than the one above:
+            // in Make it Hurt heavy bytes are always allowed, so that one never
+            // moves, and the cover sync is for free bytes whatever the mode.
+            scope.launch {
+                rules.map { it.unmetered && it.mayStream }
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collect { free -> if (free) syncCovers() }
             }
             // The permission to ask opening is a reason to ask, whatever opened
             // it. A network change is covered below; a *mode* change is not a
@@ -730,12 +827,21 @@ object App {
             // album's cover first, so the protected set is one file per
             // downloaded album rather than one per downloaded song, and the
             // per-song copies fall to the budget. See ArtworkLoader.trimToBudget.
+            //
+            // Before the budget, the expiry: what no library names and nobody
+            // has looked at in a month goes whether or not there is room for
+            // it, so the cache is a copy of the libraries and not a history of
+            // them. After both, whatever the library has that the phone
+            // doesn't is fetched, if the link is free — a launch inside the
+            // sync floor has no sync to do that for it.
             scope.launch {
                 settings.sources.first().forEach { source ->
                     runCatching { databaseFor(source).libraryDao().collapseTrackCovers() }
                         .onSuccess { if (it > 0) android.util.Log.i("AmpArt", "${source.name}: $it tracks now share their album's cover") }
                 }
+                claimedCoverFiles()?.let { artwork.expireUnclaimed(it) }
                 artwork.trimToBudget(protectedCoverFiles())
+                syncCovers()
             }
             // TEMPORARY, REMOVE BEFORE COMMUNITY REVIEW — the one-time repair
             // of mp3s downloaded before Amp wrote their index. Runs once per

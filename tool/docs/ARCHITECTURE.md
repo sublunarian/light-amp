@@ -133,6 +133,23 @@ priming and the downloader call `App.yieldToPlayback()` between requests. The
 reachability ping and the stream decision use each client's separate `quick`
 client, so they never queue behind bulk requests.
 
+**The artwork cache is a copy of the libraries, not a history of them.** One
+panel-sized file per cover in `files/artwork`, named by a hash of source and
+cover id — so a file can only be found through an id, and whoever removes an id
+has to name it. Three rules keep it honest. A cover goes when the library lets
+go of it: a sync names the ids its database held before and doesn't now
+(`LibraryRepository.onCoversDropped` → `ArtworkLoader.drop`), which covers a
+changed sleeve as well as a deleted album, since Navidrome's and Plex's cover
+ids carry the date the art last changed. A file no library names, unread for a
+month, is deleted at launch (`expireUnclaimed`) — the month is for covers that
+are legitimately nobody's, like a playlist track from a library never synced.
+And the whole is held to a budget, least recently read first, never at the
+expense of a downloaded album's sleeve (`trimToBudget`). Filling it is
+`App.syncCovers`: after a library sync, on an unmetered link only, the chosen
+library's missing covers are fetched one at a time, stepping aside for a
+starting stream. The decisions are in `CoverSync`, which touches nothing and is
+tested against fakes.
+
 **Every socket goes through `NetworkGate`.** Wi-Fi Only is a wall at the
 transport, not a set of checks: HTTP clients are built with
 `NetworkGate.httpClient`, the player asks the SDK's `LightAudioNetworkPolicy`,
