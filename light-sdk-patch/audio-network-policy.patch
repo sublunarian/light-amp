@@ -1,9 +1,9 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicy.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicy.kt
 new file mode 100644
-index 0000000..f8efdba
+index 0000000..a850aec
 --- /dev/null
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicy.kt
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,99 @@
 +package com.thelightphone.sdk.audio
 +
 +import android.content.Context
@@ -66,7 +66,7 @@ index 0000000..f8efdba
 +    private var remote = false
 +
 +    override fun open(dataSpec: DataSpec): Long {
-+        remote = isRemoteScheme(dataSpec.uri.scheme)
++        remote = isRemoteScheme(dataSpec.uri.scheme) && !isLoopbackHost(dataSpec.uri.host)
 +        if (remote && !LightAudioNetworkPolicy.allowsNetwork()) {
 +            throw LightAudioNetworkBlockedException()
 +        }
@@ -89,16 +89,26 @@ index 0000000..f8efdba
 + * Whether a URI scheme leaves the phone. Everything the platform player can
 + * read from the device itself is named; anything else is a network fetch.
 + */
++/**
++ * An address on this phone. A tool may serve the player from its own process
++ * — a local proxy that fetches through the tool's gated client — and a fetch
++ * that never leaves the phone is not the network's business.
++ */
++internal fun isLoopbackHost(host: String?): Boolean = when (host?.lowercase()) {
++    "127.0.0.1", "localhost", "::1", "[::1]" -> true
++    else -> false
++}
++
 +internal fun isRemoteScheme(scheme: String?): Boolean = when (scheme?.lowercase()) {
 +    null, "", "file", "asset", "content", "rawresource", "android.resource", "data" -> false
 +    else -> true
 +}
 diff --git a/sdk/client/src/test/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicyTest.kt b/sdk/client/src/test/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicyTest.kt
 new file mode 100644
-index 0000000..443f24e
+index 0000000..1212cb5
 --- /dev/null
 +++ b/sdk/client/src/test/kotlin/com/thelightphone/sdk/audio/LightAudioNetworkPolicyTest.kt
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,44 @@
 +package com.thelightphone.sdk.audio
 +
 +import java.io.FileNotFoundException
@@ -118,6 +128,16 @@ index 0000000..443f24e
 +    fun anythingElseIsANetworkFetch() {
 +        for (scheme in listOf("http", "https", "HTTPS", "rtsp", "ftp", "udp")) {
 +            assertTrue(isRemoteScheme(scheme), "scheme $scheme should count as remote")
++        }
++    }
++
++    @Test
++    fun thisPhoneIsNotTheNetwork() {
++        for (host in listOf("127.0.0.1", "localhost", "LOCALHOST", "::1")) {
++            assertTrue(isLoopbackHost(host), "host $host should count as loopback")
++        }
++        for (host in listOf(null, "", "192.168.1.10", "music.example.com", "127.0.0.1.example.com")) {
++            assertFalse(isLoopbackHost(host), "host $host should not count as loopback")
 +        }
 +    }
 +

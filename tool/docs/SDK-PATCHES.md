@@ -3,11 +3,11 @@
 Amp needs some changes to `sdk/client` in Light's SDK — the `light-sdk`
 submodule. They fall into two groups, and the difference matters.
 
-**Additions** (§1–11) are small, self-contained and would be reasonable in the SDK
+**Additions** (§1–10) are small, self-contained and would be reasonable in the SDK
 as it stands. Every one is marked in the source with
 `SDK PATCH (additive, upstreamable)`.
 
-**Workarounds** (§12–16) exist only because there is no supported route. Every one
+**Workarounds** (§11–15) exist only because there is no supported route. Every one
 is marked `SPIKE` or `TEMPORARY`, carries revert instructions in its own comment,
 and must come out before a tool is submitted. What each is standing in for is
 explained in [SDK-GAPS.md](SDK-GAPS.md).
@@ -186,24 +186,19 @@ builders (`LightAudioPlayer`, `LightAudioService`) are built on it. Amp wires
 it to `App.networkAllowed` at boot, which is how Wi-Fi Only becomes a wall
 rather than a set of courtesy checks: a stream already in the queue used to
 play on over cellular, and the next one along with it. Local files, assets and
-other in-phone sources never ask. Revert: drop the two `setMediaSourceFactory`
+other in-phone sources never ask — nor does a loopback address, which is how
+Amp's own `StreamProxy` serves the player. While that proxy is on, this patch
+is only the net under it: it still stands in front of any server URL handed to
+the player directly (the proxy's self-test failed, or a queue built before it
+came up). It goes when the proxy has proven itself on devices. Revert: drop the two `setMediaSourceFactory`
 lines and the file; nothing else references it.
-
-### 11. `LightConnectivity` — the default-network callback
-
-`observeNetworkStatus()` registered one listen request for INTERNET-capable
-networks, which hears them appear, change capabilities and vanish — but not the
-phone moving its default from a weak Wi-Fi to cellular while both stay up,
-which is the one change that flips `isMetered`. A second callback,
-`registerDefaultNetworkCallback`, reports exactly that. Revert: remove it and
-its unregister.
 
 ## Workarounds
 
 Each of these is described in full — what it's standing in for, and how to
 remove it — in [SDK-GAPS.md](SDK-GAPS.md). In brief:
 
-### 12. ~~`audio/LightMediaService.kt`~~ — retired 31 Aug 2026
+### 11. ~~`audio/LightMediaService.kt`~~ — retired 31 Aug 2026
 
 The background-audio spike is gone: Amp adopted the SDK's official
 `detached-audio` capability. What replaced it in the patch set is
@@ -211,30 +206,37 @@ The background-audio spike is gone: Amp adopted the SDK's official
 (device-volume control and becoming-noisy on its player, a `sessionActivity`
 on its session), which belong with the additions above, not the workarounds.
 
-### 13. `transfer/LightTransferService.kt` + manifest
+### 12. `transfer/LightTransferService.kt` + manifest
 
 `dataSync` foreground service so downloads aren't throttled ~9× when the tool is
 backgrounded.
 
-### 14. `LightActivity` — volume key pass-through
+### 13. `LightActivity` — volume key pass-through
 
 Lets hardware volume keys reach the system so the media session can route them,
 which is what makes the rocker control a cast renderer rather than a silent
 local player.
 
-### 15. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
+### 14. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
 
 Switches LightOS's device-wide greyscale filter off while the tool is in front.
 Needs `WRITE_SECURE_SETTINGS`, declared in the `debug` and `release` manifest
 overlays but never in `src/main` — the plugin validates `src/main` only, so it
 cannot reach a submitted build.
 
-### 16. `cast/DlnaCast.kt`
+### 15. `cast/DlnaCast.kt`
 
 SSDP discovery and SOAP control, written by hand because the sandbox blocks the
 libraries that would normally do this.
 
 ---
+
+`DlnaCast.allowsNetwork` is the one switch in front of everything it sends —
+discovery, the two probes of the music server, the description fetch and every
+SOAP call. Amp wires it to `LinkRules.mayUseLan`: on Wi-Fi, and in Wi-Fi Only
+not on a metered hotspot. Off Wi-Fi a control call is a connection attempt to a
+private address over cellular, and a probe is real data on a forbidden link.
+
 
 ## Seeing them as a diff
 
@@ -271,5 +273,5 @@ carries its own revert steps, and this finds every one of them:
 grep -rn "SPIKE\|TEMPORARY" light-sdk/sdk tool/src
 ```
 
-The additions in §1–9 are a separate conversation with Light: they are useful to
+The additions in §1–10 are a separate conversation with Light: they are useful to
 any tool, not just this one, and are written to be upstreamable as they stand.

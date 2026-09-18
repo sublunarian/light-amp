@@ -1,9 +1,9 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/cast/DlnaCast.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/cast/DlnaCast.kt
 new file mode 100644
-index 0000000..da8dc07
+index 0000000..544f652
 --- /dev/null
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/cast/DlnaCast.kt
-@@ -0,0 +1,519 @@
+@@ -0,0 +1,538 @@
 +package com.thelightphone.sdk.cast
 +
 +import java.io.IOException
@@ -53,6 +53,21 @@ index 0000000..da8dc07
 +
 +object DlnaCast {
 +
++    /**
++     * Whether casting may touch the network right now. The tool wires this to
++     * its own rule; every function here that sends anything asks it first —
++     * discovery, the two probes of the music server, the description fetch and
++     * every SOAP call — and answers as it would had nobody replied.
++     *
++     * UPnP is a LAN protocol, so the rule a tool wants is "on Wi-Fi": off it,
++     * a control call is a connection attempt to a private address sent out
++     * over cellular, and a probe of the music server is real data on a link
++     * the user may have forbidden. One switch here covers all of them, the
++     * ones a caller forgot included.
++     */
++    @Volatile
++    var allowsNetwork: () -> Boolean = { true }
++
 +    private const val SSDP_ADDRESS = "239.255.255.250"
 +    private const val SSDP_PORT = 1900
 +    private const val AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
@@ -79,6 +94,7 @@ index 0000000..da8dc07
 +     * is enough — no multicast lock (and therefore no WifiManager) required.
 +     */
 +    suspend fun discover(timeoutMs: Long = 3_000): List<DlnaRenderer> = withContext(Dispatchers.IO) {
++        if (!allowsNetwork()) return@withContext emptyList()
 +        val locations = linkedSetOf<String>()
 +        try {
 +            DatagramSocket().use { socket ->
@@ -257,6 +273,7 @@ index 0000000..da8dc07
 +     * the bytes are the only reliable answer. Falls back to the header, then null.
 +     */
 +    suspend fun probeMime(url: String): String? = withContext(Dispatchers.IO) {
++        if (!allowsNetwork()) return@withContext null
 +        try {
 +            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
 +                requestMethod = "GET"
@@ -288,6 +305,7 @@ index 0000000..da8dc07
 +     * quietly ignored.
 +     */
 +    suspend fun supportsRanges(url: String): Boolean? = withContext(Dispatchers.IO) {
++        if (!allowsNetwork()) return@withContext null
 +        try {
 +            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
 +                requestMethod = "GET"
@@ -397,6 +415,7 @@ index 0000000..da8dc07
 +        action: String,
 +        arguments: String,
 +    ): String? = withContext(Dispatchers.IO) {
++        if (!allowsNetwork()) return@withContext null
 +        val envelope = """
 +            <?xml version="1.0" encoding="utf-8"?>
 +            <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
@@ -430,7 +449,7 @@ index 0000000..da8dc07
 +        }
 +    }
 +
-+    private fun httpGet(url: String): String? = try {
++    private fun httpGet(url: String): String? = if (!allowsNetwork()) null else try {
 +        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
 +            connectTimeout = HTTP_TIMEOUT_MS
 +            readTimeout = HTTP_TIMEOUT_MS
