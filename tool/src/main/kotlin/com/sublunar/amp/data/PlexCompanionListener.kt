@@ -46,12 +46,17 @@ class PlexCompanionListener(private val onTimeline: (String) -> Unit) {
     /** Open the port and start accepting. Idempotent; returns the port. */
     fun start(scope: CoroutineScope): Int? {
         if (server != null) return port
+        // A listening socket binds every interface, the cellular one included.
+        // With the wall closed there is no cast to steer, so there is nothing
+        // to listen for — see NetworkGate.
+        if (!NetworkGate.isOpen()) return null
         val opened = runCatching { ServerSocket(0) }.getOrNull() ?: return null
         server = opened
         job = scope.launch(Dispatchers.IO) {
             while (isActive && !opened.isClosed) {
                 val socket = runCatching { opened.accept() }.getOrNull() ?: break
-                runCatching { serve(socket) }
+                // Closed since the port was opened: hang up unread, unanswered.
+                if (NetworkGate.isOpen()) runCatching { serve(socket) }
                 runCatching { socket.close() }
             }
         }

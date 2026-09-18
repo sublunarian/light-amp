@@ -106,6 +106,8 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.sublunar.amp.ui.components.appClickable
 import kotlinx.coroutines.launch
 import com.sublunar.amp.data.NetworkGate
+import com.sublunar.amp.data.LocalLibrary
+import com.sublunar.amp.art.ArtworkNeed
 
 /** Where the active synced-lyric line sits in the pane, as a fraction of its height. */
 private const val LYRIC_ANCHOR = 0.38f
@@ -360,6 +362,11 @@ class NowPlayingScreen(
     ) {
         val drag = rememberDragReorderState<String>()
         val rowPx = with(LocalDensity.current) { px(160).toPx() }
+        // Read unconditionally, branch on the result — see ARCHITECTURE.md on
+        // conditional composable calls.
+        val rules by App.rules.collectAsState()
+        val onPhone by App.library.downloadedTrackIds.collectAsState()
+        val canStream = rules.mayStream
         // Only the upcoming portion of the queue (past current) can be dragged into.
         val minIndex = index + 1
         val orderedKeys = remember(queue) { queue.mapIndexed { i, t -> "$i-${t.id}" } }
@@ -419,6 +426,10 @@ class NowPlayingScreen(
                 itemsIndexed(queue, key = { i, t -> "$i-${t.id}" }) { i, track ->
                     val isCurrent = i == index
                     val isPast = i < index
+                    // A row that has to wait for the server stays in the queue
+                    // and says so the way a played row does: stepped back. It
+                    // plays again the moment the rules allow — see LinkRules.
+                    val mustWait = !canStream && track.id !in onPhone && !LocalLibrary.isLocal(track.id)
                     val rowKey = "$i-${track.id}"
                     val isDragging = rowKey in drag.draggingKeys
                     // Clear coords on dispose: LazyColumn recycles nodes, so a stale
@@ -433,7 +444,7 @@ class NowPlayingScreen(
                                 .height(px(160))
                                 .onGloballyPositioned { drag.rowCoords[rowKey] = it }
                                 // Real row goes invisible; DragOverlay draws the floating stand-in.
-                                .alpha(if (isDragging) 0f else if (isPast) 0.5f else 1f)
+                                .alpha(if (isDragging) 0f else if (isPast || mustWait) 0.5f else 1f)
                                 .rowClickable(
                                     onClick = {
                                         when {
@@ -596,11 +607,15 @@ class NowPlayingScreen(
     @Composable
     private fun ArtPlayer(current: Track) {
         val artwork by App.settings.artwork.collectAsState(initial = ArtworkMode.SMALL)
-        // Parked by the rule — see PlaybackController.waitingForWifi. The
+        // Parked — see PlaybackController.waitingFor. The
         // credit line carries it: the same words the downloads page uses for
         // the same wait, in the place the eye already goes for what is up.
-        val waiting by App.playback.waitingForWifi.collectAsState()
-        val credit = if (waiting) NetworkGate.WAITING_FOR_WIFI else current.artist
+        val waiting by App.playback.waitingFor.collectAsState()
+        // A stream that has been asked for and hasn't sounded yet. Without a
+        // word here the screen is indistinguishable from a paused player, and
+        // gets tapped again.
+        val buffering by App.playback.buffering.collectAsState()
+        val credit = waiting ?: if (buffering) "Buffering…" else current.artist
         // The words want the whole panel, so the title goes back to the header
         // it came from rather than sitting behind them.
         val heroTitle = artwork == ArtworkMode.NONE && !NowPlayingNav.lyricsOverlay.value
@@ -891,7 +906,9 @@ class NowPlayingScreen(
         onLongPress: () -> Unit,
     ) {
         // Decoded at the panel's own width, which is what a full-bleed cover fills.
-        val image = rememberArtwork(current.coverArtId, currentScale().windowWidthPx)
+        // The sleeve of what is playing: fetched wherever the music itself is —
+        // see ArtworkNeed.
+        val image = rememberArtwork(current.coverArtId, currentScale().windowWidthPx, ArtworkNeed.FOCUSED)
 
         // One panel, one occupant. Lyrics take the cover's place rather than
         // sitting over it: a wash dark enough to read against had already hidden

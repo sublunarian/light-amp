@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalWindowInfo
 
 /** How long to wait for the restored queue before giving up on the player. */
 private const val RESTORE_PLAYER_MS = 2_000L
@@ -105,6 +106,17 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
         LaunchedEffect(state) {
             // Runs in the app scope so it survives navigation into a list.
             if (state is BootState.Ready) App.library.syncInBackground()
+        }
+
+        // Coming back to the front is a reason to look at the link again. The
+        // SDK has no resume hook for a tool, and a process that was frozen in
+        // the background hears about a network change late, if at all — so
+        // the window regaining focus asks the system directly, and asks the
+        // server too if it was last seen silent. Two binder reads and at most
+        // one small request, once per return to the app.
+        val focused = LocalWindowInfo.current.isWindowFocused
+        LaunchedEffect(focused, state) {
+            if (focused && state is BootState.Ready) App.linkMayHaveChanged()
         }
 
         when (state) {

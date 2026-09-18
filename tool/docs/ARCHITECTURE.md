@@ -97,6 +97,42 @@ observer sees it. Swap sets inside one `@Transaction`.
 **A `graphicsLayer`'s `clip` applies before its transform.** Clipping a zooming
 image that way scales the clip rectangle too. Clip on an untransformed parent.
 
+**What the connection allows is one value: `App.rules`.** The link, its price,
+the data mode and whether the server answers are combined into a `LinkRules`,
+and the library filter, the queue's dimmed rows, playback, downloads and artwork
+all read that. Anything that keeps its own copy of part of it — a metered flag,
+a "reachable" latch — will disagree with the rest after a network switch for as
+long as its own update takes. A failure is a *suspicion*: `Reachability` settles
+it with one ping, at once and on every network change, never by waiting for a
+sync.
+
+**The player never talks to the music server; `StreamProxy` does.** The
+platform player fetches with its own HTTP stack, outside `NetworkGate`, preloads
+the next track, reconnects on whatever network is current, and keeps playing
+after the tool's screens are gone. So it is handed `https://127.0.0.1:port/s/…`
+addresses, and the proxy — in the app's process scope — fetches the real bytes
+through the gated client, deciding per request under the rules in force at that
+moment. That is why a network or data-mode change never needs the player's
+queue edited. TLS, because a store build permits no cleartext even to this
+phone; the certificate is made at launch (`LoopbackCert`) and trusted by one
+additive entry in the process's `HttpsURLConnection` defaults. It proves itself
+at start by fetching from itself; if that fails, `wrap()` returns the server's
+own URL and the About page says why. Anything that hands the player a URL must
+go through `App.streamProxy.wrap()` — there are three such places today.
+Between server and player sits a bounded read-ahead pipe fed by its own thread;
+a link change under a stream is re-fetched and spliced behind that slack — by
+range where the server honours ranges, otherwise re-encoded from the top with
+the delivered bytes skipped and checked head and tail — so the player never
+sees the break. It matters because media3 treats a length-less transcode as
+live and, shown an error, restarts the song from the top once its buffer runs
+dry.
+
+**Background work steps aside for a starting stream.** `PlaybackController.buffering`
+is true from a stream being asked for until its first sound; the sync, playlist
+priming and the downloader call `App.yieldToPlayback()` between requests. The
+reachability ping and the stream decision use each client's separate `quick`
+client, so they never queue behind bulk requests.
+
 **Every socket goes through `NetworkGate`.** Wi-Fi Only is a wall at the
 transport, not a set of checks: HTTP clients are built with
 `NetworkGate.httpClient`, the player asks the SDK's `LightAudioNetworkPolicy`,

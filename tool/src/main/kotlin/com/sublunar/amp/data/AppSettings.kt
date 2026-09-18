@@ -559,6 +559,23 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     private fun cachedPlaylistsKey(sourceId: String) =
         stringPreferencesKey("${CACHED_PLAYLISTS.name}.$sourceId")
 
+    /**
+     * When [sourceId] last finished a library sync, in epoch ms; 0 if never.
+     *
+     * Kept across launches because the "don't sync again so soon" floor used
+     * to live only in memory: every cold start walked the whole album index
+     * again, on whatever link the phone was on, in the first minutes — exactly
+     * when someone opens the app to play something.
+     */
+    suspend fun lastSyncedMs(sourceId: String): Long =
+        dataStore.data.first()[lastSyncedKey(sourceId)]?.toLongOrNull() ?: 0L
+
+    suspend fun setLastSyncedMs(sourceId: String, atMs: Long) =
+        putString(lastSyncedKey(sourceId), atMs.toString())
+
+    private fun lastSyncedKey(sourceId: String) =
+        stringPreferencesKey("state.lastSynced.$sourceId")
+
     /** Read once per operation rather than observed: see [PendingActions]. */
     suspend fun pendingActions(): String = dataStore.data.first()[PENDING_ACTIONS] ?: ""
 

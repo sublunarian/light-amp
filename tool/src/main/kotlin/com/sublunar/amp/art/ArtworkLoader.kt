@@ -25,11 +25,23 @@ import com.sublunar.amp.data.NetworkGate
  * are downsampled to the requested display size and kept in a small memory LRU.
  * RGB_565 halves bitmap memory, which suits both the display and the battery.
  */
+/**
+ * What a cover is wanted for, which decides whether it may cost cellular data.
+ * The distinction is the data mode's, not the loader's — see
+ * LinkRules.mayFetchFocusedArt and mayMoveHeavyBytes.
+ */
+enum class ArtworkNeed {
+    /** The cover in front of the user: the playing track, the open album. */
+    FOCUSED,
+    /** A row or a tile in a list the user is scrolling past. */
+    BROWSING,
+}
+
 class ArtworkLoader(
     filesDir: File,
     private val serverClient: StateFlow<MusicServer?>,
-    /** Whether a cover may be fetched over the network now — see App.heavyDataAllowed. */
-    private val fetchAllowed: () -> Boolean = { true },
+    /** Whether a cover may be fetched over the network now, for that need — see LinkRules. */
+    private val fetchAllowed: (ArtworkNeed) -> Boolean = { true },
     /**
      * Whether covers are switched off entirely — see App.hideArtwork.
      *
@@ -72,7 +84,7 @@ class ArtworkLoader(
     private fun memoryKey(coverArtId: String, bucket: Int) =
         "${sourceId()}|$coverArtId@$bucket"
 
-    suspend fun load(coverArtId: String?, targetSizePx: Int): ImageBitmap? {
+    suspend fun load(coverArtId: String?, targetSizePx: Int, need: ArtworkNeed = ArtworkNeed.BROWSING): ImageBitmap? {
         if (coverArtId.isNullOrBlank()) return null
         val bucket = sizeBucket(targetSizePx)
         val memKey = memoryKey(coverArtId, bucket)
@@ -86,7 +98,7 @@ class ArtworkLoader(
             val source = sourceId()
             val cached = readDisk(source, coverArtId)?.takeIf { looksLikeImage(it) }
             if (cached == null) diskFile(source, coverArtId).delete()
-            val bytes = cached ?: fetch(serverClient.value, coverArtId)?.also { writeDisk(source, coverArtId, it) }
+            val bytes = cached ?: fetch(serverClient.value, coverArtId, need)?.also { writeDisk(source, coverArtId, it) }
                 ?: return@withContext null
             val bitmap = decodeDownsampled(bytes, bucket) ?: return@withContext null
             val image = bitmap.asImageBitmap()
@@ -115,21 +127,28 @@ class ArtworkLoader(
         if (artworkOff()) return
         withContext(Dispatchers.IO) {
             if (diskFile(sourceId, coverArtId).let { it.exists() && it.length() > 0 }) return@withContext
-            fetch(client, coverArtId)?.let { writeDisk(sourceId, coverArtId, it) }
+            fetch(client, coverArtId, ArtworkNeed.BROWSING)?.let { writeDisk(sourceId, coverArtId, it) }
         }
     }
 
-    private suspend fun fetch(client: MusicServer?, coverArtId: String): ByteArray? {
+    private suspend fun fetch(client: MusicServer?, coverArtId: String, need: ArtworkNeed): ByteArray? {
         // A local track's cover id is its own path: the sleeve is inside the
         // file, and there is no server to ask for it.
         LocalLibrary.fileOf(coverArtId)?.let { return embedded(it) }
-        // A cover is a quarter-megabyte at panel size, so it waits for cheap
-        // bytes: the placeholder shows, nothing is cached, and the next look
-        // on Wi-Fi fetches as though this never happened.
-        if (!fetchAllowed()) return null
+        // A cover is a quarter-megabyte at panel size. One for what is playing
+        // is nothing next to the song; a listful is not, so those wait for
+        // cheap bytes: the placeholder shows, nothing is cached, and the next
+        // look on Wi-Fi fetches as though this never happened.
+        if (!fetchAllowed(need)) {
+            // Logged only for the cover in front of the user: a list refusing
+            // its hundred rows on cellular is the design, not news.
+            if (need == ArtworkNeed.FOCUSED) android.util.Log.i("AmpArt", "focused cover not fetched: rules forbid it")
+            return null
+        }
         if (client == null) return null
         val sized = client.coverArtUrl(coverArtId, panelWidthPx)
         val original = client.coverArtUrl(coverArtId)
+        val startedMs = System.currentTimeMillis()
         // Not all at once. A grid asks for a screenful of covers the moment it
         // appears, and thirty of those in flight over a connection that leaves
         // the house is how they all become slow and some of them time out.
@@ -138,16 +157,34 @@ class ArtworkLoader(
             // resize, or a resizer that isn't answering, should cost a slower
             // cover rather than a missing one.
             download(sized) ?: download(original.takeIf { it != sized })
+        }.also { bytes ->
+            if (need == ArtworkNeed.FOCUSED || bytes == null) {
+                android.util.Log.i(
+                    "AmpArt",
+                    "${need.name.lowercase()} cover ${if (bytes != null) "${bytes.size / 1024} KB" else "FAILED ($lastFailure)"} " +
+                        "in ${System.currentTimeMillis() - startedMs} ms",
+                )
+            }
         }
     }
+
+    /** Why the most recent download came back empty — for the log line above. */
+    @Volatile
+    private var lastFailure: String = "no answer"
 
     private suspend fun download(url: String?): ByteArray? {
         if (url == null) return null
         return try {
             val response = http.get(url)
-            if (!response.status.isSuccess()) return null
-            response.body<ByteArray>().takeIf { it.isNotEmpty() }
-        } catch (_: Exception) {
+            if (!response.status.isSuccess()) {
+                lastFailure = "HTTP ${response.status.value}"
+                return null
+            }
+            response.body<ByteArray>().takeIf { it.isNotEmpty() } ?: null.also { lastFailure = "empty body" }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            lastFailure = "${e::class.simpleName}: ${e.message?.take(80)}"
             null
         }
     }

@@ -35,6 +35,7 @@ import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightThemeTokens
+import com.sublunar.amp.art.ArtworkNeed
 
 /**
  * An album's cover at full width, from its own page.
@@ -60,7 +61,7 @@ class AlbumArtworkScreen(
     override fun Content() {
         val albums by App.library.albums.collectAsState()
         val album = remember(albums, albumId) { albums.firstOrNull { it.id == albumId } }
-        val image = rememberArtwork(album?.coverArtId, currentScale().windowWidthPx)
+        val image = rememberArtwork(album?.coverArtId, currentScale().windowWidthPx, ArtworkNeed.FOCUSED)
 
         PlayerTheme {
             Column(modifier = Modifier.fillMaxSize()) {

@@ -838,7 +838,11 @@ private fun PlaylistsTab(actions: ShellActions, header: Boolean = true) {
     val downloadedPlaylists by App.library.downloadedPlaylistIds.collectAsState()
     // getPlaylists only returns metadata, not membership — so the badge above
     // has nothing to go on until each playlist's tracks are fetched once here.
-    LaunchedEffect(playlists) {
+    // Keyed on the link as well as the list: on a metered connection the
+    // priming is put off (see primePlaylistTrackIds), and Wi-Fi arriving while
+    // this tab is open is the moment to do it.
+    val bulkAllowed = App.rules.collectAsState().value.mayMoveHeavyBytes
+    LaunchedEffect(playlists, bulkAllowed) {
         App.library.primePlaylistTrackIds(playlists.map { it.id })
     }
     // A server that can only create a playlist with songs in it has no use for a

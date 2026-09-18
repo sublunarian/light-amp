@@ -11,6 +11,26 @@
 
 ### Changed
 
+- Switching between Wi-Fi and cellular is followed at once, in every data
+  mode. The library, the queue and playback change together, and a server
+  that stopped answering is asked again as soon as the connection changes,
+  instead of staying "offline" until the next sync.
+- The same queue keeps working through a network or data-mode change. Songs
+  that can't play right now stay in it, dimmed, and are skipped; they play
+  again the moment they can. With nothing playable left, the player says what
+  it is waiting for.
+- A stream cut off by a change of network picks up where it stopped.
+- Network speakers are a Wi-Fi feature: off Wi-Fi they aren't searched for,
+  can't be cast to, and a cast in progress ends on the phone without anything
+  starting to play.
+- Starting up on a slow connection: a song you tap starts sooner. The
+  library sync no longer runs at every launch (at most every six hours on
+  cellular; Sync Now is unchanged), playlists' contents are only fetched in
+  bulk on Wi-Fi, and background work waits while a stream is starting.
+- "Buffering…" shows while a stream is starting, and tapping the same song
+  again no longer starts it over.
+- Low Data shows the cover of what's playing and of the album you open, on
+  cellular too. Library covers still wait for Wi-Fi.
 - Lists in select mode show each song's cover, dimmed, behind its check circle.
 - A playlist can only be edited while the whole of it is on screen — not
   offline, and not when only part of it could be loaded. An edit that doesn't
@@ -18,6 +38,16 @@
 
 ### Fixed
 
+- Wi-Fi Only: switching into the mode now closes any connection still open
+  over cellular, and redirects and downloads go through the same check as
+  everything else.
+- A download could save a server's error message as the song.
+- Tapping a queue row while waiting for Wi-Fi did nothing.
+- A slow server was sometimes taken for an unreachable one, which hid
+  everything that wasn't downloaded for a few minutes after launch.
+- A track the server refused left the player silent with nothing on screen
+  to say so.
+- A playlist that couldn't be loaded on a bad connection opened empty.
 - Deleting several songs from a Plex or Jellyfin playlist did nothing.
 - Removing one copy of a song that a playlist holds twice removed both.
 

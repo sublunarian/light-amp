@@ -57,6 +57,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
+import kotlinx.coroutines.flow.collectLatest
+import com.sublunar.amp.data.LinkRules
+import com.sublunar.amp.data.StreamProxy
 
 /**
  * The single, app-scoped playback engine. Wraps one [LightAudioPlayer] (created
@@ -224,17 +227,77 @@ class PlaybackController(
     private var retriedTrackId: String? = null
 
     /**
-     * Parked by the rule: the player refused its own connection because the
-     * bytes would have cost cellular data in Wi-Fi Only — see the SDK's
-     * LightAudioNetworkPolicy, wired to App.networkAllowed. The one failure a
-     * stream can raise that is neither the server's nor the network's doing,
-     * so the one the screen names. The player sits in its error state until
-     * [resumeAfterWait] prepares it again: when the link is free again, cued
-     * where it stood; on a press before that, left parked, which is the
-     * screen keeping its word.
+     * Parked: the current track needs the server and may not have it — the
+     * mode's rule, no link, or a server that isn't answering. The value is the
+     * reason in the screen's words (see LinkRules.waitingFor), null when not
+     * parked. The player sits in its error state until [resumeAfterWait]
+     * prepares it again: when the rules allow, cued where it stood; on a press
+     * before that, left parked, which is the screen keeping its word.
+     *
+     * Parking is the last resort. Playback that *arrived* at such a track on
+     * its own skips ahead to the next one that can play and leaves this one in
+     * the queue — see [blockedAtCurrent]. Only a track the user asked for, or a
+     * queue with nothing playable left in it, parks.
      */
-    private val _waitingForWifi = MutableStateFlow(false)
-    val waitingForWifi: StateFlow<Boolean> = _waitingForWifi
+    private val _waitingFor = MutableStateFlow<String?>(null)
+    val waitingFor: StateFlow<String?> = _waitingFor
+    private val parked: Boolean get() = _waitingFor.value != null
+
+    /** Parked because of the track, not the link: the link changing is no reason to try it again. */
+    private val parkedOnTheTrackItself: Boolean
+        get() = _waitingFor.value.let { it == CANT_PLAY_FILE || it == CANT_PLAY_FORMAT || it == CANT_PLAY_THIS }
+
+    /**
+     * The queue position the user last asked for by hand — a tap on a row, a
+     * new queue, next or previous. Playback reaching a position by itself is
+     * not that, and the difference decides between parking and skipping.
+     */
+    private var pickedIndex: Int = -1
+
+    /**
+     * A stream has been asked to start and hasn't made a sound yet.
+     *
+     * Two readers. The screen, which otherwise shows a track sitting there
+     * looking paused for as long as a slow link takes — and a player that
+     * looks like it ignored the tap gets tapped again, which used to tear the
+     * half-buffered stream down and start it over, so that on a weak link it
+     * never did start. And the background work (sync, playlist fetching,
+     * downloads), which steps aside while this is true — see
+     * App.yieldToPlayback. Cleared by sound, by failure, by a pause, and by a
+     * timeout, so nothing waits on it for ever.
+     */
+    private val _buffering = MutableStateFlow(false)
+    val buffering: StateFlow<Boolean> = _buffering
+
+    /** Mark a start at [index] — buffering only if that row is a stream. */
+    private fun starting(index: Int) {
+        _buffering.value = queuedSources.getOrNull(index) is LightAudioSource.UrlSource
+    }
+
+    /** Bumped by anything that supersedes a pending stream decision — see [withStreamDecision]. */
+    private var decisionGeneration = 0
+
+    /**
+     * Whatever start was pending is off: a pause, a stop, a cast taking over.
+     * A play() deferred behind the server's decision must not land after one
+     * of those — under a cast it would be a second song out of the phone's
+     * own speaker — and nothing should go on waiting for a stream that is no
+     * longer being started.
+     */
+    private fun supersedeStart() {
+        decisionGeneration++
+        _buffering.value = false
+    }
+
+    /**
+     * Where the last automatic skip landed. If *that* track is refused too,
+     * the rules are not what the skip believed — a link that moved with no
+     * callback yet, a server that answered and then didn't — and skipping
+     * again would march through the queue, rebuilding it at every row, and
+     * lose the user's place. One skip; a second refusal in a row parks.
+     * Cleared once something actually plays.
+     */
+    private var lastSkipTarget: Int = -1
 
     /**
      * Tracks whose stream failed, which play from disk instead.
@@ -447,12 +510,29 @@ class PlaybackController(
             if (streamOffsetMs > 0L) seekTo(0)
         }
         p.onPlaybackError = { error ->
-            if (error.refusedByGate()) {
+            _buffering.value = false
+            val fromFile = queuedSources.getOrNull(_index.value) is LightAudioSource.FileSource
+            val network = error.errorCode in PlaybackException.ERROR_CODE_IO_UNSPECIFIED..
+                PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE
+            android.util.Log.i(
+                "AmpNet",
+                "player error ${error.errorCodeName} at idx=${_index.value} " +
+                    "(${if (fromFile) "file" else "stream"})",
+            )
+            if (fromFile || !network) {
+                // Not a matter for the network at all: a file on the phone, or
+                // audio that arrived and would not decode. Nothing about the
+                // link or the server can change it, so it is neither retried
+                // nor blamed on them — a local file once sat here saying
+                // "Waiting for server". It says what it is, and playback moves
+                // on if it was moving.
+                blockedAtCurrent(because = if (fromFile) CANT_PLAY_FILE else CANT_PLAY_FORMAT)
+            } else if (error.refusedByGate()) {
                 // Not the server's failure and not the network's: the app's
                 // own rule, at the player's own connection. Nothing to fall
                 // back to and nothing to latch — the server is not unreachable,
                 // it is unasked.
-                stallForWifi()
+                blockedAtCurrent()
             } else {
                 // A bad HTTP status is proof the server is *there*: it answered, it
                 // just didn't like the request. Treating that as "unreachable" takes
@@ -472,6 +552,12 @@ class PlaybackController(
                 _isPlaying.value = playing
                 if (playing) {
                     hasPlayed = true
+                    // The pick has been honoured. From here on, whatever
+                    // happens to this track happened to playback, not to a
+                    // request — see blockedAtCurrent.
+                    pickedIndex = -1
+                    lastSkipTarget = -1
+                    _buffering.value = false
                 } else if (hasPlayed) {
                     rewindIfQueueFinished(p)
                 }
@@ -570,6 +656,12 @@ class PlaybackController(
                                 "${f.name} ${f.length()}B ${fmt.id}"
                             } ?: "stream"}",
                     )
+                    // Gapless into the next track: sound never stopped, so there is
+                    // no new "playing" for the collector above to clear this on.
+                    if (p.isPlaying.value) _buffering.value = false
+                    // Landed somewhere other than where the user pointed: that
+                    // request is history, and must not decide a later refusal.
+                    if (idx != pickedIndex) pickedIndex = -1
                     _index.value = idx
                     // A new track is a fresh stream from its own beginning —
                     // the position as much as the offset. Left standing, the
@@ -653,16 +745,81 @@ class PlaybackController(
                 }
             }
         }
+        // The connectivity callback hears networks come and go, but not the
+        // phone moving its default from a weak Wi-Fi to cellular while both
+        // stay up — and that is the change that decides which format the next
+        // track is asked for, and whether a parked one may resume. So while
+        // sound is coming out, or being waited for, the system is asked
+        // directly every few seconds: two binder reads, on a CPU that is
+        // awake for the music anyway. Idle, nothing runs.
         scope.launch {
-            Connectivity.unmetered.collect {
-                unmetered = it
-                reresolveQueue()
-                if (it) cueIfParked()
+            combine(_isPlaying, _waitingFor) { playing, waiting -> playing to (waiting != null) }
+                .distinctUntilChanged()
+                .collectLatest { (playing, waiting) ->
+                    var parkedForMs = 0L
+                    while (playing || (waiting && parkedForMs < PARKED_POLL_LIMIT_MS)) {
+                        delay(LINK_POLL_MS)
+                        if (!playing) parkedForMs += LINK_POLL_MS
+                        Connectivity.refresh()
+                    }
+                }
+        }
+        scope.launch { App.streamProxy.state.collect { reresolveQueue() } }
+        // Nothing may wait on "buffering" for ever: a start that produced
+        // neither sound nor an error in this long is not holding anyone back.
+        scope.launch {
+            _buffering.collectLatest { on ->
+                if (on) {
+                    delay(BUFFERING_LIMIT_MS)
+                    _buffering.value = false
+                }
             }
         }
-        // The rule can also open by the mode changing — Wi-Fi Only switched
-        // off while on cellular — with nothing about the connection changing.
-        scope.launch { App.dataMode.collect { cueIfParked() } }
+        // One collector for everything the rules can change — the link, its
+        // price, the mode, the server — so playback hears of any of them in
+        // the same moment the library and the queue view do. See LinkRules.
+        scope.launch {
+            App.rules.collect { rules ->
+                unmetered = rules.unmetered
+                if (rules.mayStream) {
+                    // Streaming is allowed again, so nothing learnt while it
+                    // wasn't should outlive that: the pin to local files, the
+                    // tracks whose stream failed, the one-retry marker. These
+                    // used to wait for "reachable" to go false and come back —
+                    // which a ping that simply keeps succeeding never does.
+                    forceOffline = false
+                    retriedTrackId = null
+                    streamFailed.clear()
+                }
+                reresolveQueue()
+                if (!rules.mayUseLan && _castRenderer.value != null) {
+                    // Off Wi-Fi the speaker is out of reach: the cast is over
+                    // here, whatever the speaker goes on doing at home. Nothing
+                    // is sent to say so — there is nobody to hear it — and
+                    // nothing starts playing on the phone: leaving the house
+                    // is not a press of play.
+                    android.util.Log.i("AmpCast", "Wi-Fi gone — cast dropped")
+                    withContext(Dispatchers.Main.immediate) {
+                        stopCasting(resumeLocally = false, tellRenderer = false)
+                    }
+                }
+                if (rules.mayStream) {
+                    cueIfParked()
+                } else {
+                    // Still parked, possibly for a different reason now: keep
+                    // the words on the screen true. On Main, where every other
+                    // writer of this is — a check-then-set here could re-park a
+                    // player the user un-parked in between.
+                    withContext(Dispatchers.Main.immediate) {
+                        // Only a wait that is *about* the link is reworded by
+                        // it; a file that won't decode stays what it says.
+                        if (parked && !parkedOnTheTrackItself) {
+                            _waitingFor.value = rules.waitingFor ?: _waitingFor.value
+                        }
+                    }
+                }
+            }
+        }
         // Shared with the library rather than queried again here — one read of
         // the downloads table feeds both. It also fixes a subtler thing: this
         // used to resolve `dao` once, at bind, and so stayed subscribed to
@@ -780,6 +937,13 @@ class PlaybackController(
         withTimeoutOrNull(DOWNLOADS_READY_TIMEOUT_MS) {
             App.library.downloadsLoaded.first { it }
         }
+        // And for the loopback door to say whether it is up, for the same
+        // reason: the current track's address is fixed when the queue is built,
+        // and built a moment too early it would be the server's own. Bounded;
+        // the self-test takes a fraction of a second.
+        withTimeoutOrNull(PROXY_READY_TIMEOUT_MS) {
+            App.streamProxy.state.first { it !is StreamProxy.State.Starting }
+        }
         val localIds = settings.savedQueueIds.first()
         val saved = if (localIds.isNotEmpty()) {
             SavedQueue(
@@ -812,6 +976,9 @@ class PlaybackController(
             nowPlayingId = null
             // Start position goes in at prepare time: seekTo() clamps to the
             // duration, which is still unknown this early, so it would land on 0.
+            // The track the user was on when they left. If it can't be had
+            // right now it waits here, where they left it — it is not skipped.
+            pickedIndex = index
             rebuildQueueAt(p, tracks, index, position)
             // Deliberately not p.play(): restoring should cue the track up, not
             // start making noise on its own the moment the app is opened.
@@ -880,6 +1047,26 @@ class PlaybackController(
     /** Replace the queue with [tracks] and start at [startIndex]; see [queueName]. */
     fun playQueue(tracks: List<Track>, startIndex: Int = 0, name: String? = null) {
         if (tracks.isEmpty()) return
+        // The same row of the same list, while it is still starting: leave it
+        // alone. Rebuilding here throws away what has buffered and asks the
+        // server for a new stream — on Plex a new transcode — so each
+        // impatient tap on a slow link put the first sound further off.
+        if (_buffering.value && !_shuffle.value) {
+            val playing = _queue.value
+            val at = _index.value
+            // The same *list*, not just the same song: every list of five
+            // hundred or more is the same length once capped, so the name and
+            // the rows either side are compared too.
+            if (name == _queueName.value &&
+                tracks.getOrNull(startIndex)?.id == playing.getOrNull(at)?.id &&
+                tracks.getOrNull(startIndex + 1)?.id == playing.getOrNull(at + 1)?.id &&
+                tracks.getOrNull(startIndex - 1)?.id == playing.getOrNull(at - 1)?.id &&
+                playing.size == minOf(tracks.size, MAX_QUEUE)
+            ) {
+                android.util.Log.i("AmpNet", "tap on a row that is already starting — left alone")
+                return
+            }
+        }
         _queueName.value = name
         // A new queue is a new listening session, so the ids derived from it are
         // new too — otherwise playing the same track again an hour later would
@@ -935,10 +1122,24 @@ class PlaybackController(
             return
         }
         val p = player ?: return
-        val wasPlaying = _isPlaying.value
+        // Parked: a play on the player as it stands is silence — see [play].
+        if (parked) {
+            play()
+            return
+        }
+        // "Playing" includes a start that hasn't sounded yet: the button shows
+        // play while a stream buffers, and a press then means stop trying, not
+        // try again — which is what it used to do.
+        val wasPlaying = _isPlaying.value || _buffering.value
         // Resuming needs the server's decision first, exactly as [play] does —
         // this is the button that actually starts a restored queue.
-        if (wasPlaying) p.pause() else withStreamDecision { p.play() }
+        if (wasPlaying) {
+            supersedeStart()
+            p.pause()
+        } else {
+            starting(_index.value)
+            withStreamDecision { p.play() }
+        }
         reportTimeline(if (wasPlaying) TimelineState.PAUSED else TimelineState.PLAYING)
     }
 
@@ -958,7 +1159,10 @@ class PlaybackController(
         // Parked by the rule: a play on the player as it stands is silence
         // (it is in its error state). Prepare it again where it stood, or,
         // if the rule still says no, leave it parked and let the screen say so.
-        if (_waitingForWifi.value) {
+        if (parked) {
+            // A press is also a reason to ask the server again, if it is the
+            // server being waited for: the answer arrives through App.rules.
+            if (!App.rules.value.serverReachable) App.reachability.check(delayMs = 0L)
             resumeAfterWait(play = true)
             return
         }
@@ -966,18 +1170,81 @@ class PlaybackController(
         // Starting the player before it is settled is what left a restored
         // queue dead: the stream went out with no decision behind it and came
         // back 400, which then took the whole library offline.
+        starting(_index.value)
         withStreamDecision { player?.play() }
         reportTimeline(TimelineState.PLAYING)
     }
 
     /** Whether the player's own connection was refused by the network rule. */
     private fun PlaybackException.refusedByGate(): Boolean =
-        generateSequence<Throwable>(this) { it.cause }.any { it is LightAudioNetworkBlockedException }
+        generateSequence<Throwable>(this) { it.cause }.any {
+            // The SDK patch's own refusal, or the loopback door's — which
+            // reaches here as the player's "Response code: 470".
+            it is LightAudioNetworkBlockedException ||
+                it.message?.contains("Response code: ${StreamProxy.GATE_STATUS}") == true
+        }
 
-    private fun stallForWifi() {
-        _waitingForWifi.value = true
-        _isPlaying.value = false
-        android.util.Log.i("AmpNet", "refused by the rule at idx=${_index.value} pos=${_positionMs.value}")
+    /** Whether [track] can play under the rules as they stand — for the screens. */
+    fun isPlayable(track: Track): Boolean = isPlayable(track, App.rules.value)
+
+    private fun isPlayable(track: Track, rules: LinkRules): Boolean =
+        LocalLibrary.isLocal(track.id) || localFiles.containsKey(track.id) || rules.mayStream
+
+    /**
+     * The current track needs the server and can't have it. Main only.
+     *
+     * If the user asked for this track, stay on it and say why — they chose
+     * it, and jumping elsewhere would be answering a different question. If
+     * playback arrived here by itself *and was meant to be making sound*,
+     * carry on with the next track that can play and leave this one where it
+     * is: the queue is the same queue, it just has rows that have to wait, and
+     * they play again the moment the rules allow. With nothing playable left,
+     * or a player that was paused — a restored queue, a track the user had
+     * stopped — park: a failure is never a reason to start making noise.
+     *
+     * Decided from [App.rulesNow], not the flow: this runs in the same breath
+     * as the refusal, and the flow is a few hops behind it.
+     */
+    private fun blockedAtCurrent(because: String? = null) {
+        _buffering.value = false
+        val p = player ?: return
+        // The renderer is playing, not this player, which only sits loaded so
+        // that coming back is instant. Its failures move nothing.
+        if (isCasting) return
+        val tracks = _queue.value
+        val at = _index.value
+        val rules = App.rulesNow()
+        // If the rules say streaming is fine and it still failed, it is the
+        // server that isn't delivering — never "Wi-Fi", which would send the
+        // user looking for the wrong thing.
+        val reason = because ?: rules.waitingFor ?: LinkRules.WAITING_FOR_SERVER
+        val wanted = p.playWhenReady
+        val next = when {
+            !wanted || at == pickedIndex || at == lastSkipTarget -> null
+            else -> nextPlayableAfter(at, rules)
+        }
+        android.util.Log.i(
+            "AmpNet",
+            "blocked at idx=$at picked=$pickedIndex wanted=$wanted → ${next ?: "park ($reason)"}",
+        )
+        if (next == null) {
+            _waitingFor.value = reason
+            _isPlaying.value = false
+            return
+        }
+        _waitingFor.value = null
+        lastSkipTarget = next
+        rebuildQueueAt(p, tracks, next, 0L)
+        starting(next)
+        p.play()
+    }
+
+    /** The next queue position after [from] whose track can play; wraps only under repeat-queue. */
+    private fun nextPlayableAfter(from: Int, rules: LinkRules): Int? {
+        val tracks = _queue.value
+        val ahead = (from + 1..tracks.lastIndex).firstOrNull { isPlayable(tracks[it], rules) }
+        if (ahead != null || _repeatMode.value != RepeatMode.QUEUE) return ahead
+        return (0 until from).firstOrNull { isPlayable(tracks[it], rules) }
     }
 
     /**
@@ -994,13 +1261,33 @@ class PlaybackController(
         val tracks = _queue.value
         val index = _index.value
         if (index !in tracks.indices) {
-            _waitingForWifi.value = false
+            _waitingFor.value = null
             return
         }
-        if (tracks[index].source() is LightAudioSource.UrlSource && !NetworkGate.isOpen()) return
-        _waitingForWifi.value = false
+        val track = tracks[index]
+        val rules = App.rulesNow()
+        if (!isPlayable(track, rules) || (!localFiles.containsKey(track.id) && !LocalLibrary.isLocal(track.id) && !NetworkGate.isOpen())) {
+            // Still not allowed. Say why as of now — the reason can have
+            // changed since the park — and leave the player alone.
+            _waitingFor.value = rules.waitingFor ?: _waitingFor.value
+            return
+        }
+        // On the phone, but the stream would have been preferred and may not
+        // be had: play the copy. Without this source() hands out the URL
+        // again and the track parks with its file sitting on the disk.
+        if (!rules.mayStream && localFiles.containsKey(track.id)) streamFailed += track.id
+        _waitingFor.value = null
+        // Whatever is prepared here was asked for — by a press, or by the
+        // rules opening on the track the user was waiting on. If it is
+        // refused after all, it parks again rather than skipping away.
+        pickedIndex = index
         rebuildQueueAt(p, tracks, index, _positionMs.value)
-        if (play) p.play() else p.pause()
+        if (play) {
+            starting(index)
+            p.play()
+        } else {
+            p.pause()
+        }
     }
 
     /**
@@ -1012,7 +1299,7 @@ class PlaybackController(
      * silence.
      */
     private suspend fun cueIfParked() {
-        if (!_waitingForWifi.value || isCasting) return
+        if (!parked || isCasting || parkedOnTheTrackItself) return
         withContext(Dispatchers.Main.immediate) { resumeAfterWait(play = false) }
     }
 
@@ -1031,6 +1318,18 @@ class PlaybackController(
             else -> _index.value + delta
         }
         if (target !in 0 until size) return
+        goWhileParked(target)
+    }
+
+    /** [index] as the player will take it: wrapped under repeat-queue, otherwise as given. */
+    private fun wrapped(index: Int): Int {
+        val size = _queue.value.size
+        return if (size > 0 && _repeatMode.value == RepeatMode.QUEUE) ((index % size) + size) % size else index
+    }
+
+    /** Move to [target] by hand while parked: a file plays, a stream parks there instead. */
+    private fun goWhileParked(target: Int) {
+        pickedIndex = target
         _index.value = target
         _positionMs.value = 0L
         resumeAfterWait(play = true)
@@ -1046,9 +1345,12 @@ class PlaybackController(
      * worse failure.
      */
     private fun withStreamDecision(start: () -> Unit) {
-        val track = currentTrack.value
+        // Read from the queue itself: [currentTrack] is a derived flow and is
+        // still the *previous* track in the instant after a new queue is set.
+        val track = _queue.value.getOrNull(_index.value)
         val source = queuedSources.getOrNull(_index.value)
         val client = serverClient.value
+        val generation = ++decisionGeneration
         if (track == null || client == null || source !is LightAudioSource.UrlSource) {
             start()
             return
@@ -1057,7 +1359,11 @@ class PlaybackController(
             withTimeoutOrNull(STREAM_DECISION_TIMEOUT_MS) {
                 client.prepareStream(track.id, effectiveFormat(), sessionIdFor(track.id))
             }
-            withContext(Dispatchers.Main.immediate) { start() }
+            withContext(Dispatchers.Main.immediate) {
+                // Overtaken while the server was deciding — a pause, a stop,
+                // another track. That press outranks this one.
+                if (generation == decisionGeneration) start()
+            }
         }
     }
 
@@ -1074,6 +1380,7 @@ class PlaybackController(
             reportTimeline(TimelineState.PAUSED)
             return
         }
+        supersedeStart()
         player?.pause()
         reportTimeline(TimelineState.PAUSED)
     }
@@ -1228,7 +1535,7 @@ class PlaybackController(
         // untouched, so a seek doesn't disturb what plays next.
         _positionMs.value = target
         val item = LightAudioItem(
-            source = LightAudioSource.UrlSource(url),
+            source = LightAudioSource.UrlSource(App.streamProxy.wrap(url, group = track.id)),
             metadata = LightMediaMetadata(
                 title = track.title,
                 artist = track.artist,
@@ -1260,6 +1567,7 @@ class PlaybackController(
 
     /** Stop playback and empty the queue. */
     fun stop() {
+        supersedeStart()
         reportTimeline(TimelineState.STOPPED)
         sessionTrackId = null
         _plexPlayer.value?.let { target ->
@@ -1299,7 +1607,8 @@ class PlaybackController(
         _queue.value = emptyList()
         _queueName.value = null
         _index.value = -1
-        _waitingForWifi.value = false
+        _waitingFor.value = null
+        pickedIndex = -1
         queuedSources = emptyList()
         streamOffsetMs = 0
         offsetItemTrackId = null
@@ -1328,10 +1637,14 @@ class PlaybackController(
             jumpTo(_index.value + 1)
             return
         }
-        if (_waitingForWifi.value) {
+        if (parked) {
             stepWhileWaiting(+1)
             return
         }
+        pickedIndex = wrapped(_index.value + 1)
+        // Only if it is meant to be making sound: next on a paused player moves
+        // the marker and starts nothing, and would be left "buffering".
+        if (player?.playWhenReady == true) starting(pickedIndex)
         player?.skipToNext()
     }
 
@@ -1351,10 +1664,11 @@ class PlaybackController(
             if (_positionMs.value > PREVIOUS_RESTART_MS) seekTo(0) else jumpTo(_index.value - 1)
             return
         }
-        if (_waitingForWifi.value) {
+        if (parked) {
             stepWhileWaiting(if (_positionMs.value > PREVIOUS_RESTART_MS) 0 else -1)
             return
         }
+        pickedIndex = if (_positionMs.value > PREVIOUS_RESTART_MS) _index.value else wrapped(_index.value - 1)
         val p = player ?: return
         if (_positionMs.value > PREVIOUS_RESTART_MS) {
             // The controller's seek, not the player's. A restored or
@@ -1422,8 +1736,20 @@ class PlaybackController(
             return
         }
         val p = player ?: return
+        if (parked) {
+            // A parked player is in its error state: a seek moves the marker
+            // and makes no sound. Prepare it on the row that was asked for.
+            goWhileParked(index)
+            return
+        }
+        pickedIndex = index
         p.seekToIndex(index)
         _index.value = index
+        if (cannotStreamNow(index)) {
+            blockedAtCurrent()
+            return
+        }
+        starting(index)
         p.play()
     }
 
@@ -1449,6 +1775,7 @@ class PlaybackController(
      * copy would leave it to play twice.
      */
     fun playNext(tracks: List<Track>) {
+        pickedIndex = -1 // indices are about to move under it
         val p = player ?: return
         if (tracks.isEmpty()) return
         if (_queue.value.isEmpty()) {
@@ -1507,6 +1834,7 @@ class PlaybackController(
     }
 
     fun removeFromQueue(index: Int) {
+        pickedIndex = -1 // indices are about to move under it
         val p = player ?: return
         val q = _queue.value
         if (index !in q.indices) return
@@ -1528,6 +1856,7 @@ class PlaybackController(
      * wrong track.
      */
     fun removeFromQueue(ids: Set<String>) {
+        pickedIndex = -1 // indices are about to move under it
         val p = player ?: return
         if (ids.isEmpty()) return
         val q = _queue.value
@@ -1549,6 +1878,7 @@ class PlaybackController(
     }
 
     fun moveInQueue(from: Int, to: Int) {
+        pickedIndex = -1 // indices are about to move under it
         val p = player ?: return
         val q = _queue.value
         if (from !in q.indices || to !in q.indices || from == to) return
@@ -1570,6 +1900,7 @@ class PlaybackController(
      * has no batch API.
      */
     fun moveGroupInQueue(fromIndices: Set<Int>, insertAt: Int) {
+        pickedIndex = -1 // indices are about to move under it
         val p = player ?: return
         if (fromIndices.isEmpty()) return
         val q = _queue.value
@@ -1704,6 +2035,7 @@ class PlaybackController(
      * upcoming tracks back into their pre-shuffle order.
      */
     fun toggleShuffle() {
+        pickedIndex = -1 // indices are about to move under it
         val on = !_shuffle.value
         _shuffle.value = on
         val q = _queue.value
@@ -1782,6 +2114,7 @@ class PlaybackController(
      * at it from the position we'd reached, and start mirroring its reports.
      */
     fun castToPlex(target: PlexPlayer) {
+        supersedeStart()
         val client = plexClient() ?: return
         // One route at a time; a DLNA renderer in progress is stopped quietly.
         if (_castRenderer.value != null) stopCasting(resumeLocally = false)
@@ -2148,9 +2481,11 @@ class PlaybackController(
 
     /** Find renderers on the network. Blocking on the network for a few seconds. */
     suspend fun findCastDevices(): List<DlnaRenderer> =
-        // A LAN broadcast, but the LAN could be a hotspot — metered, and so
-        // cellular as far as Wi-Fi Only is concerned. Same wall as every socket.
-        if (NetworkGate.isOpen()) DlnaCast.discover() else emptyList()
+        // Only on Wi-Fi — see LinkRules.mayUseLan. DlnaCast asks the same
+        // question itself before it sends anything; asking here as well means
+        // the search returns at once instead of listening to nothing for
+        // three seconds.
+        if (App.rulesNow().mayUseLan) DlnaCast.discover() else emptyList()
 
     /**
      * Move playback to [renderer]: stop this device, hand the current track's
@@ -2158,6 +2493,10 @@ class PlaybackController(
      * it for progress.
      */
     fun castTo(renderer: DlnaRenderer) {
+        // No Wi-Fi, no speaker: a renderer found a minute ago is out of reach
+        // now, and playback must not be taken off this device for it.
+        if (!App.rulesNow().mayUseLan) return
+        supersedeStart()
         // One route at a time — a Companion cast in progress hands over quietly.
         if (_plexPlayer.value != null) stopPlexCasting(resumeLocally = false)
         player?.pause()
@@ -2180,7 +2519,7 @@ class PlaybackController(
      * Stop casting and (by default) pick playback back up on this device from
      * wherever the renderer had reached.
      */
-    fun stopCasting(resumeLocally: Boolean = true) {
+    fun stopCasting(resumeLocally: Boolean = true, tellRenderer: Boolean = true) {
         val renderer = _castRenderer.value ?: return
         val at = _positionMs.value
         castJob?.cancel()
@@ -2188,7 +2527,7 @@ class PlaybackController(
         _castRenderer.value = null
         castOffsetMs = 0L
         castSeekPending = -1L
-        scope.launch { DlnaCast.stop(renderer) }
+        if (tellRenderer) scope.launch { DlnaCast.stop(renderer) }
         val p = player ?: return
         _volume.value = p.deviceVolume.value
         if (resumeLocally) {
@@ -2408,6 +2747,8 @@ class PlaybackController(
             format,
             estimateContentLength = false,
         ) ?: return null
+        // The probe goes to the music server, not the speaker, on a stack
+        // outside NetworkGate — DlnaCast.allowsNetwork stands in front of it.
         return DlnaCast.supportsRanges(probeUrl)?.also { castSeekable[key] = it }
     }
 
@@ -2512,6 +2853,8 @@ class PlaybackController(
 
         val client = serverClient.value
         val sink = runCatching { DlnaCast.sinkFormats(renderer) }.getOrDefault(emptySet())
+        // Same as probeSeekable: this asks the music server; DlnaCast's own
+        // switch stands in front of it.
         val mime = client?.let { DlnaCast.probeMime(it.streamUrl(track, desired)) }
             ?: assumedMime(desired)
         val choice = if (sinkAccepts(sink, mime)) {
@@ -2821,8 +3164,11 @@ class PlaybackController(
         lastScrobbledId = null
         // Keep the local player loaded even while casting, so switching back to
         // this device resumes instantly instead of re-preparing the queue.
-        queuedSources = tracks.map { it.source() }
-        p.setMediaQueue(tracks.map { it.toAudioItem() }, startIndex)
+        // Resolved once and handed on: toAudioItem() would resolve each of up
+        // to five hundred tracks a second time, on the main thread.
+        val sources = tracks.map { it.source() }
+        queuedSources = sources
+        p.setMediaQueue(tracks.mapIndexed { i, track -> track.toAudioItem(sources[i]) }, startIndex)
         _index.value = startIndex
         // A new queue plays from the start of whatever it opens on. Any offset
         // still set belongs to a stream that was seeked before this one, and
@@ -2835,8 +3181,10 @@ class PlaybackController(
         offsetItemTrackId = null
         // Picking something new to play is reason enough to try the server again.
         streamFailed.clear()
-        // A new queue is prepared afresh, so a park on the old one is over.
-        _waitingForWifi.value = false
+        // A new queue is prepared afresh, so a park on the old one is over —
+        // and where it starts is where the user asked it to.
+        _waitingFor.value = null
+        pickedIndex = startIndex
         // Right from the first frame, rather than whenever the stream gets round
         // to declaring a length — see the durationMs collector in ensurePlayer.
         tracks.getOrNull(startIndex)?.durationMs
@@ -2861,8 +3209,24 @@ class PlaybackController(
             }
             return
         }
-        p.play()
+        // The decision first, then the sound — the same order [play] keeps,
+        // and for the same reason: a Plex stream started with no decision
+        // behind it comes back 400. A file has nothing to decide and starts
+        // at once.
+        if (cannotStreamNow(startIndex)) {
+            // Known before asking: the player would only find out through the
+            // loopback door, whose refusal it retries for a few seconds first.
+            blockedAtCurrent()
+            return
+        }
+        starting(startIndex)
+        withStreamDecision { p.play() }
     }
+
+    /** The row at [index] is a stream and the rules, read now, forbid streaming. */
+    private fun cannotStreamNow(index: Int): Boolean =
+        queuedSources.getOrNull(index) is LightAudioSource.UrlSource &&
+            (!NetworkGate.isOpen() || !App.rulesNow().mayStream)
 
     /** Sort [tracks] back into the relative order they had in [original]. */
     private fun restoreOrder(tracks: List<Track>, original: List<Track>): List<Track> {
@@ -2886,23 +3250,100 @@ class PlaybackController(
     private fun fallBackOffline(serverAnswered: Boolean) {
         val p = player ?: return
         val track = _queue.value.getOrNull(_index.value) ?: return
-        if (!serverAnswered) App.reportServerReachable(false)
-        // Nothing local to fall back to: let the error stand rather than
-        // restarting a stream that just failed.
-        if (!localFiles.containsKey(track.id)) return
+        val resumeAt = _positionMs.value
+        if (!localFiles.containsKey(track.id)) {
+            // Nothing local to fall back to. A bad status is the server's own
+            // answer about this one track, and stands. Silence is different:
+            // it is what a Wi-Fi-to-cellular handover sounds like from here,
+            // and the player's own retries gave up on the network it started
+            // on. So ask the server, once: if it answers and the rules still
+            // allow streaming, pick the track up where it stopped; if not,
+            // this track has to wait like any other that needs the server.
+            if (isCasting) return
+            if (serverAnswered) {
+                // The server answered and the answer was no — for this track.
+                // It used to end here, silently: a player in its error state
+                // under a screen that looked ready, where play did nothing and
+                // only a new tap recovered. Now it is said, and playback moves
+                // on if it was moving.
+                blockedAtCurrent(because = CANT_PLAY_THIS)
+                return
+            }
+            if (retriedTrackId == track.id) {
+                // Already picked up once and it died again. Not silently: this
+                // track waits like any other that can't be had, and playback
+                // moves on if it can.
+                blockedAtCurrent()
+                return
+            }
+            retriedTrackId = track.id
+            scope.launch {
+                // Bounded here, because the ping itself may be queued behind
+                // one already out on the link that just died, and the player
+                // is sitting silent meanwhile. No answer in time counts as no.
+                // Three answers, not two. Yes; no; and *nothing yet* — the
+                // wait ran out, or the rules forbade asking. On a slow link
+                // nothing-yet is the common one, and reading it as "no" parked
+                // a track whose server was perfectly fine, just slow to say so.
+                val verdict = withTimeoutOrNull(VERIFY_WAIT_MS) { App.reachability.verify() }
+                val there = verdict != false
+                // A "no" from one ping is a suspicion, not a verdict: keep
+                // asking in the background, so the answer changing reaches the
+                // rules — and through them this player — without a press.
+                if (verdict != true) App.reachability.check()
+                withContext(Dispatchers.Main.immediate) {
+                    // The user may have moved on, paused, started a cast or
+                    // got the sound back by other means while the question
+                    // was out. Any of those outranks this recovery.
+                    if (_queue.value.getOrNull(_index.value)?.id != track.id) return@withContext
+                    if (isCasting || p.isPlaying.value) return@withContext
+                    if (there && App.rulesNow().mayStream) {
+                        val at = _positionMs.value
+                        android.util.Log.i("AmpNet", "stream died, server answers — resuming at $at")
+                        val wanted = p.playWhenReady
+                        rebuildQueueAt(p, _queue.value, _index.value, at)
+                        if (wanted) {
+                            starting(_index.value)
+                            p.play()
+                        } else {
+                            p.pause()
+                        }
+                    } else {
+                        blockedAtCurrent()
+                    }
+                }
+            }
+            return
+        }
         // One attempt per track, so a file that is itself unplayable (a codec the
         // device can't decode) can't spin here.
         if (retriedTrackId == track.id) return
         retriedTrackId = track.id
         streamFailed += track.id
         // Only a server that never answered is grounds for pinning *everything*
-        // to local files. That latch is released when the server answers again —
-        // which never happens if we never called it unreachable.
-        if (!serverAnswered) forceOffline = true
-        val resumeAt = _positionMs.value
+        // to local files — and only until it is asked and answers. The pin
+        // keeps the music going from the disk right now; the question below
+        // decides whether it stays. It used to stay until the next sync.
+        if (!serverAnswered) {
+            forceOffline = true
+            scope.launch {
+                if (withTimeoutOrNull(VERIFY_WAIT_MS) { App.reachability.verify() } == true) {
+                    forceOffline = false
+                    reresolveQueue()
+                } else {
+                    // Keep asking; the rules collector lifts the pin when the
+                    // server answers.
+                    App.reachability.check()
+                }
+            }
+        }
         scope.launch(Dispatchers.Main.immediate) {
+            // Read before the rebuild: a stream can die while *paused* — the
+            // player buffers regardless — and that is no reason to start
+            // making sound from the copy on the disk.
+            val wanted = p.playWhenReady
             p.setMediaQueueAt(_queue.value.map { it.toAudioItem() }, _index.value, resumeAt)
-            p.play()
+            if (wanted) p.play() else p.pause()
         }
     }
 
@@ -3087,6 +3528,8 @@ class PlaybackController(
                 streamed.qualityRank > downloadedFormat.qualityRank
             if (!preferStream) return LightAudioSource.FileSource(file)
         }
+        // Through the loopback door when it is up — see StreamProxy — so the
+        // player never holds the server's address, only this phone's.
         return LightAudioSource.UrlSource(
             // No estimated Content-Length, which is what made a long track take
             // minutes to start.
@@ -3105,12 +3548,15 @@ class PlaybackController(
             // Only Subsonic reads the flag; Jellyfin and Plex ignore it. Passing
             // it here covers every source that ever might, and costs the other
             // two nothing.
-            serverClient.value?.streamUrl(
-                this,
-                effectiveFormat(),
-                estimateContentLength = false,
-                sessionId = sessionIdFor(id),
-            ).orEmpty(),
+            App.streamProxy.wrap(
+                serverClient.value?.streamUrl(
+                    this,
+                    effectiveFormat(),
+                    estimateContentLength = false,
+                    sessionId = sessionIdFor(id),
+                ).orEmpty(),
+                group = id,
+            ),
         )
     }
 
@@ -3156,7 +3602,7 @@ class PlaybackController(
             offsetItemTrackId = track.id
             p.setMediaQueue(
                 tracks.mapIndexed { i, it ->
-                    if (i == index) it.toAudioItem(LightAudioSource.UrlSource(url)) else it.toAudioItem()
+                    if (i == index) it.toAudioItem(LightAudioSource.UrlSource(App.streamProxy.wrap(url, group = track.id))) else it.toAudioItem()
                 },
                 index,
             )
@@ -3181,6 +3627,32 @@ class PlaybackController(
 
     companion object {
         private const val PREVIOUS_RESTART_MS = 3_000L
+
+        /** Shown when the server itself refused the track — a bad status, not a bad link. */
+        private const val CANT_PLAY_THIS = "Server can't play this track"
+
+        /** A file on the phone that would not open or decode. */
+        private const val CANT_PLAY_FILE = "Can't play this file"
+
+        /** A stream that arrived and would not decode. */
+        private const val CANT_PLAY_FORMAT = "Can't play this format"
+
+        /** How often the link is re-read while playing or parked — see bind. */
+        private const val LINK_POLL_MS = 3_000L
+
+        /**
+         * How long a *parked* player keeps re-reading the link before leaving
+         * it to the callback, a press, or the app coming back to the front. A
+         * phone parked on "Waiting for Wi-Fi" in a pocket should not be asking
+         * the system anything all afternoon.
+         */
+        private const val PARKED_POLL_LIMIT_MS = 10 * 60 * 1000L
+
+        /** The longest a stream start is treated as "in progress" — see [buffering]. */
+        private const val BUFFERING_LIMIT_MS = 45_000L
+
+        /** How long a dead stream waits on the reachability ping before treating it as a no. */
+        private const val VERIFY_WAIT_MS = 2_500L
         /**
          * How close a seeked stream's duration has to be to the whole track
          * before we conclude the server ignored the offset. Generous, because a
@@ -3303,6 +3775,7 @@ class PlaybackController(
         /** How often the queue snapshot is written while playing. */
         /** How long a restore waits to learn what is downloaded before deciding. */
         private const val DOWNLOADS_READY_TIMEOUT_MS = 4_000L
+        private const val PROXY_READY_TIMEOUT_MS = 3_000L
 
         private const val SAVE_STATE_INTERVAL_MS = 5_000L
         private const val SAVE_STATE_TIMEOUT_MS = 1_000L

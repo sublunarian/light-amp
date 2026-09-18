@@ -10,7 +10,11 @@ import com.thelightphone.sdk.LightJobResult
  */
 @LightJob("library-sync")
 val librarySyncJob: LightJobHandler = { _, _ ->
-    if (App.isReady) {
+    // Bulk work, by the same test as everything else that is: on a metered
+    // link outside Make it Hurt it waits. Left alone, this walked the whole
+    // album index every half hour of a cellular listening session, against
+    // the stream being played — the launch sync's floor did not cover it.
+    if (App.isReady && App.heavyDataAllowed()) {
         runCatching { App.library.sync() }
     }
     LightJobResult.Success()

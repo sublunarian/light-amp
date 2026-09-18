@@ -59,6 +59,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -71,6 +72,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.minutes
 import com.sublunar.amp.data.NetworkGate
 import com.thelightphone.sdk.audio.LightAudioNetworkPolicy
+import com.sublunar.amp.data.LinkRules
+import com.sublunar.amp.data.Reachability
+import com.sublunar.amp.data.StreamProxy
+import kotlinx.coroutines.withTimeoutOrNull
+import com.thelightphone.sdk.cast.DlnaCast
+import com.sublunar.amp.art.ArtworkNeed
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.FlowPreview
 
 /**
  * App-scoped service locator. Initialized once from the boot screen (which owns
@@ -259,35 +268,64 @@ object App {
     }
 
     /**
-     * Whether the server looks reachable. Inferred from whether requests succeed —
-     * a tool can't query connectivity directly (ConnectivityManager is blocked by
-     * the plugin sandbox), so the sync path reports into this rather than us
-     * observing the network.
+     * Whether the browsed server is answering — see [Reachability], which finds
+     * out by asking rather than by waiting for a sync to say so.
      */
-    private val _serverReachable = MutableStateFlow(true)
-    val serverReachable: StateFlow<Boolean> = _serverReachable
+    val reachability: Reachability by lazy {
+        Reachability(scope, client = { serverClient.value }, mayAsk = { rules.value.mayTalkToServer })
+    }
+    val serverReachable: StateFlow<Boolean> get() = reachability.reachable
 
+    /**
+     * True is proof, and is taken as such. False is a *suspicion* — one stream
+     * that died, one sync that failed — and is settled by asking the server,
+     * at once, instead of being believed until the next sync.
+     */
     fun reportServerReachable(reachable: Boolean) {
-        _serverReachable.value = reachable
+        if (reachable) reachability.report(true) else reachability.check(delayMs = 0L)
     }
 
     /**
-     * True when the library should show only downloaded media: the user asked for
-     * Wi-Fi only *and* there is no Wi-Fi, or the server isn't answering at all.
+     * What the connection and the mode allow right now — see [LinkRules]. The
+     * one state the library, the queue, playback, downloads and artwork read,
+     * so that a network or mode change reaches all of them in the same moment.
      */
-    val offlineOnly: Flow<Boolean> by lazy {
-        combine(
-            settings.dataMode,
-            serverReachable,
-            Connectivity.unmetered,
-        ) { mode, reachable, unmetered ->
-            // "Wi-Fi only" restricts the library on *metered* data, not
-            // everywhere — and the network state comes from the SDK's
-            // ConnectivityManager hooks, which answer for the route the bytes
-            // actually take rather than for which interfaces hold an address.
-            (mode == DataMode.WIFI_ONLY && !unmetered) || !reachable
-        }
+    val rules: StateFlow<LinkRules> by lazy {
+        combine(Connectivity.network, dataMode, reachability.reachable) { net, mode, reachable ->
+            LinkRules(
+                connected = net.isConnected,
+                unmetered = net.isConnected && !net.isMetered,
+                mode = mode,
+                serverReachable = reachable,
+                wifi = net.isConnected && net.isWifi,
+            )
+        }.stateIn(scope, SharingStarted.Eagerly, LinkRules.UNKNOWN)
     }
+
+    /**
+     * True when the library should show only what is on the phone: nothing
+     * else can be played right now, whatever the reason — the mode's rule, no
+     * link, or a server that isn't answering.
+     */
+    @OptIn(FlowPreview::class)
+    val offlineOnly: Flow<Boolean> by lazy {
+        // Two reasons, two speeds. The link or the mode forbidding streams is
+        // a fact, and the lists follow it at once. The server not answering
+        // is a *suspicion* until it has lasted: on poor reception one ping in
+        // six seconds is missed all the time, and the library used to shrink
+        // to downloads on that one miss and grow back on the next ping — a
+        // flicker that reads as the app not knowing what it has. Playback
+        // still reacts to the first miss (a track that can't be had parks or
+        // is skipped); only the lists wait to see whether the silence holds.
+        combine(
+            rules.map { !it.mayTalkToServer }.distinctUntilChanged(),
+            rules.map { !it.serverReachable }.distinctUntilChanged()
+                .debounce { gone -> if (gone) SERVER_GONE_SETTLE_MS else 0L },
+        ) { link, server -> link || server }.distinctUntilChanged()
+    }
+
+    /** How long the server must stay silent before the lists narrow to downloads. */
+    private const val SERVER_GONE_SETTLE_MS = 20_000L
 
     /** The mode as it stands, for gates that must answer synchronously. */
     val dataMode: StateFlow<DataMode> by lazy {
@@ -301,8 +339,78 @@ object App {
      * alone is hundreds of requests: off an unmetered link it means none. The
      * other modes allow metadata anywhere; what they restrict is real bytes.
      */
-    fun metadataAllowed(): Boolean =
-        dataMode.value != DataMode.WIFI_ONLY || Connectivity.isUnmetered()
+    fun metadataAllowed(): Boolean = rules.value.mayTalkToServer
+
+    /**
+     * Step aside while the player is trying to start a stream.
+     *
+     * The player fetches on the same link as everything else, and on a slow
+     * one a launch sync six requests wide leaves it a sixth of very little:
+     * the song takes a minute to start, looks like nothing happened, gets
+     * tapped again, and starts over. Background loops call this between
+     * requests. Bounded, so a stream that never starts can't hold them for
+     * ever — and free when nothing is starting, which is nearly always.
+     */
+    suspend fun yieldToPlayback() {
+        if (!coreReady || !playback.buffering.value) return
+        withTimeoutOrNull(YIELD_TO_PLAYBACK_MS) { playback.buffering.first { !it } }
+    }
+
+    private const val YIELD_TO_PLAYBACK_MS = 20_000L
+
+    /** The loopback door between the platform player and the music server — see [StreamProxy]. */
+    val streamProxy: StreamProxy by lazy {
+        StreamProxy(
+            gateOpen = { NetworkGate.isOpen() },
+            upstream = { proxyUpstream },
+            log = { android.util.Log.i("AmpProxy", it) },
+            // Less slack on a link that costs money: read-ahead spent on a
+            // track that is then skipped is data spent on nothing.
+            readAheadBytes = {
+                if (Connectivity.isUnmetered()) StreamProxy.READ_AHEAD_BYTES else StreamProxy.READ_AHEAD_METERED_BYTES
+            },
+        )
+    }
+    /**
+     * No more patient than the player is. It gives a connection eight seconds
+     * and then tries again through the door; an upstream request still waiting
+     * after that is one the player has already abandoned, and on a slow link
+     * each retry would otherwise stack another stream — another transcode —
+     * on top of the ones still trickling in.
+     */
+    private val proxyUpstream by lazy { NetworkGate.transferClient(connectTimeoutMs = 7_000L, readTimeoutMs = 8_000L) }
+
+    /**
+     * [rules], computed on the spot from a fresh look at the link.
+     *
+     * The flow is a few dispatch hops behind its inputs — it is combined on a
+     * background thread — and a decision made in the same breath as the event
+     * that changed them reads the old answer. Playback decides exactly then:
+     * a stream has just been refused, or a ping has just failed, and the next
+     * track to try is chosen on the spot. Two binder reads.
+     */
+    fun rulesNow(): LinkRules {
+        Connectivity.refresh()
+        val net = Connectivity.network.value
+        return LinkRules(
+            connected = net.isConnected,
+            unmetered = net.isConnected && !net.isMetered,
+            mode = dataMode.value,
+            serverReachable = reachability.reachable.value,
+            wifi = net.isConnected && net.isWifi,
+        )
+    }
+
+    /**
+     * Something happened that the connectivity callback may have missed — the
+     * app came back to the front. Re-read the link, and if the server was last
+     * seen silent, ask it again. Cheap enough to call on every return.
+     */
+    fun linkMayHaveChanged() {
+        if (!coreReady) return
+        Connectivity.refresh()
+        if (!serverReachable.value) reachability.check(delayMs = 0L)
+    }
 
     /**
      * The one rule every byte answers to: may the network be used right now?
@@ -330,8 +438,7 @@ object App {
      * Free on an unmetered link. On a metered one, only Make it Hurt, whose
      * name is the consent: everything passes through there, by design.
      */
-    fun heavyDataAllowed(): Boolean =
-        Connectivity.isUnmetered() || dataMode.value == DataMode.MAKE_IT_HURT
+    fun heavyDataAllowed(): Boolean = rules.value.mayMoveHeavyBytes
 
     private var coreReady = false
     val isReady: Boolean get() = coreReady
@@ -349,11 +456,26 @@ object App {
             // — attached or the detached service, same process — asks the
             // same rule at its own connections.
             NetworkGate.policy = ::networkAllowed
+            // The door the player streams through — see StreamProxy. Started
+            // here, before anything builds a queue, and proven before it is
+            // used: until its self-test passes, the player gets the server's
+            // own URLs, which the SDK patch below still stands in front of.
+            streamProxy.start(scope)
+            NetworkGate.isMetered = { Connectivity.network.value.let { !it.isConnected || it.isMetered } }
+            // DLNA is a Wi-Fi feature, full stop: no search, no cast, no probe
+            // and no control call anywhere else. Asked of the system each time
+            // — a cast is a handful of calls a second, not a stream of bytes.
+            DlnaCast.allowsNetwork = { rulesNow().mayUseLan }
             LightAudioNetworkPolicy.allowsNetwork = ::networkAllowed
             artwork = ArtworkLoader(
                 context.filesDir,
                 serverClient,
-                fetchAllowed = { heavyDataAllowed() },
+                fetchAllowed = { need ->
+                    when (need) {
+                        ArtworkNeed.FOCUSED -> rules.value.mayFetchFocusedArt
+                        ArtworkNeed.BROWSING -> rules.value.mayMoveHeavyBytes
+                    }
+                },
                 artworkOff = { hideArtwork.value },
             ) { _source.value.id }
             // Whatever was last in use, resolved before anything reads the
@@ -376,6 +498,8 @@ object App {
                 libraryId = settings.libraryId,
                 offlineOnly = offlineOnly,
                 metadataAllowed = ::metadataAllowed,
+                bulkAllowed = ::heavyDataAllowed,
+                yieldToPlayback = ::yieldToPlayback,
                 pending = pending,
                 settings = settings,
                 scope = scope,
@@ -389,13 +513,15 @@ object App {
                 scope = scope,
                 lightContext = context,
                 heavyDataAllowed = ::heavyDataAllowed,
+                waitingLabel = { rules.value.heavyWaitingFor ?: NetworkGate.WAITING_FOR_WIFI },
+                yieldToPlayback = ::yieldToPlayback,
             )
             playback = PlaybackController(
                 settings, serverClient, ::dao, downloads, scope,
                 metadataAllowed = ::metadataAllowed,
             )
 
-            // Sync is our only reliable connectivity signal, and the moment fresh
+            // A finished sync is proof the server is there, and the moment fresh
             // library data exists is also the right moment to top up downloads.
             library.onSyncSucceeded = {
                 reportServerReachable(true)
@@ -439,6 +565,90 @@ object App {
             // nothing about the connection has changed; watching the client
             // alone misses Wi-Fi arriving later. Cheap when it is not the
             // moment — flushPending asks whether it may send before it sends.
+            // One line per change of the rules, for the log: which of the
+            // inputs moved and what it now allows. This is the first thing to
+            // read when the library or the player did something unexpected.
+            scope.launch {
+                rules.collect { r ->
+                    android.util.Log.i(
+                        "AmpNet",
+                        "rules: connected=${r.connected} unmetered=${r.unmetered} wifi=${r.wifi} " +
+                            "mode=${r.mode} server=${r.serverReachable} → talk=${r.mayTalkToServer} " +
+                            "stream=${r.mayStream} heavy=${r.mayMoveHeavyBytes} lan=${r.mayUseLan}",
+                    )
+                }
+            }
+            // Closing the wall is not only refusing new connections. A socket
+            // opened over cellular in another mode stays usable for minutes,
+            // and the rule answers for the phone's default network, not for
+            // the network a socket is on — so entering Wi-Fi Only shuts every
+            // connection there is, as does the rule reading closed.
+            //
+            // Only on those two edges, and only as much as each needs. Closing
+            // shuts everything. *Entering* the mode shuts just what was opened
+            // on a metered link: on Wi-Fi the rest is free, and shutting it
+            // would fail the downloads and the sync in flight and tell the
+            // reachability ping that a server which is plainly there has gone.
+            // The rule *opening* shuts nothing — that is the moment everything
+            // held back starts again.
+            scope.launch {
+                var wasWifiOnly = false
+                var wasClosed = false
+                rules.map { (it.mode == DataMode.WIFI_ONLY) to (it.mode == DataMode.WIFI_ONLY && !it.unmetered) }
+                    .distinctUntilChanged()
+                    .collect { (wifiOnly, closed) ->
+                        when {
+                            closed && !wasClosed -> NetworkGate.slam()
+                            wifiOnly && !wasWifiOnly -> NetworkGate.slamMetered()
+                        }
+                        wasWifiOnly = wifiOnly
+                        wasClosed = closed
+                    }
+            }
+            // Bulk work put off on a metered link — every playlist's contents,
+            // and with them the playlist downloads and badges — is picked up
+            // the moment the link stops costing money, not at the next launch.
+            scope.launch {
+                rules.map { it.mayMoveHeavyBytes }
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collect { may -> if (may) topUpDownloads() }
+            }
+            // The permission to ask opening is a reason to ask, whatever opened
+            // it. A network change is covered below; a *mode* change is not a
+            // network change, and without this a server last seen silent on a
+            // dying Wi-Fi stayed "gone" after switching to a mode that may use
+            // the cellular link it is perfectly reachable on.
+            scope.launch {
+                rules.map { it.mayTalkToServer }
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collect { may -> if (may) reachability.check(delayMs = 0L) }
+            }
+            // A change of link is the end of every connection: they all belong
+            // to the network the phone just left. Dropped here, on the same
+            // emission that tells the rest of the app — before the 400 ms the
+            // reachability check waits, so its ping goes out on a fresh one.
+            scope.launch {
+                Connectivity.network
+                    .map { Triple(it.isConnected, it.isMetered, it.isWifi) }
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collect {
+                        android.util.Log.i("AmpNet", "link changed → dropping every connection")
+                        NetworkGate.linkChanged()
+                    }
+            }
+            // Every change of connection is a reason to ask the server again:
+            // a LAN address stops answering on cellular, and starts again at
+            // home, and neither is something a sync should have to discover.
+            scope.launch {
+                Connectivity.network
+                    .map { Triple(it.isConnected, it.isMetered, it.isWifi) }
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collect { reachability.check() }
+            }
             scope.launch {
                 combine(serverClient, Connectivity.changed) { client, (connected, _) ->
                     client != null && connected
@@ -887,6 +1097,9 @@ object App {
         _dao.value = databaseFor(next).libraryDao()
         // Last, so that anything it wakes finds the rest already in place.
         _source.value = next
+        // What was known about the server being left says nothing about this
+        // one: assume it is there, and ask.
+        reachability.reset()
     }
 
     /**

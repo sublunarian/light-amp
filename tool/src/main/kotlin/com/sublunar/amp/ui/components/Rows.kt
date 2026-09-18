@@ -42,6 +42,7 @@ import com.sublunar.amp.ui.CANVAS_W_PX
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.ui.LightThemeTokens
+import com.sublunar.amp.art.ArtworkNeed
 
 @Composable
 fun AppArtwork(
@@ -50,12 +51,13 @@ fun AppArtwork(
     modifier: Modifier = Modifier,
     corner: Dp = px(10),
     fallback: ImageVector = AppIcons.MusicNote,
+    need: ArtworkNeed = ArtworkNeed.BROWSING,
 ) {
     // Not even the placeholder tile: a column of identical glyphs is the thing
     // the setting is trying to be rid of.
     if (App.hideArtwork.collectAsState().value) return
     val px = with(LocalDensity.current) { size.roundToPx() }
-    val image = rememberArtwork(coverArtId, px)
+    val image = rememberArtwork(coverArtId, px, need)
     Box(
         modifier = modifier
             .size(size)

@@ -48,6 +48,7 @@ import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import kotlinx.coroutines.launch
+import com.sublunar.amp.art.ArtworkNeed
 
 class AlbumDetailScreen(
     sealed: SealedLightActivity,
@@ -175,6 +176,8 @@ class AlbumDetailScreen(
                 coverArtId = album.coverArtId,
                 size = px(CARD_ART_PX),
                 fallback = AppIcons.Album,
+                // The album that is open, not one in a list — see ArtworkNeed.
+                need = ArtworkNeed.FOCUSED,
                 // Held, not tapped. The sleeve sits at the top of a list you
                 // scroll past constantly, and a tap target there is one flicked
                 // thumb away from a full-screen picture nobody asked for. The

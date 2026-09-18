@@ -110,6 +110,22 @@ since the 0.1.1 pin it is plain upstream code and the backport patch is gone.
 The tool's `Connectivity.kt` remains only as a thin metered-ness wrapper for
 the data-mode gates.
 
+## Data modes — what "Wi-Fi Only" cannot be given today
+
+Amp has a mode whose promise is that no cellular data is used. Everything the
+tool's own code sends goes through one wall (`NetworkGate`) and is store-legal
+as it stands. Three things it cannot reach from inside the sandbox, as of
+`fb68d75`. None of them is a dependency: Amp works around each, and says below
+what the workaround costs. **These are requests, not blockers.**
+
+| Request | Why | What Amp does meanwhile |
+|---|---|---|
+| **A network policy for the player** — a tool-supplied predicate (or `DataSource.Factory`) consulted before the platform player opens or reads a remote source, for both the attached player and `LightAudioService`. | The player fetches with its own HTTP stack: the next item ahead of time, and a dropped stream again at once, on whatever network is then the default. A tool with a Wi-Fi-only setting has no say, and after the user backs out of the tool there is no tool code left running that could stop it. PR #127's deferred byte-reader API could carry this. | `light-sdk-patch/audio-network-policy.patch` (side-load builds only). A store build has no equivalent yet. |
+| **Sockets bound to a network** — e.g. `LightConnectivity.unmeteredNetwork(): Network?`, or a `SocketFactory` bound to it. | The rule can only be asked about the phone's *default* network. If the default moves from Wi-Fi to cellular between the check and `connect()`, one TLS handshake (a few KB) leaves on cellular before the request is refused. `Network.bindSocket` closes that race; it needs `ConnectivityManager`, which a tool is not given. | Check before DNS, before the socket, and again on the wire; close every socket when the rule closes. No request or response byte leaks; one handshake can. |
+| **The default-network callback in `observeNetworkStatus()`** | `registerNetworkCallback(request)` hears networks appear, change and vanish, but is not guaranteed to fire when the default moves from a weak Wi-Fi to cellular while both stay up — the one change that flips `isMetered`. | Re-read `currentStatus` every 3 s while playing or waiting, once a second while a download queue is held, and when the window regains focus. |
+| **A resume hook for screens** — the counterpart of `onAppPause()`. | A process frozen in the background hears of a network change late or not at all; returning to the tool is the moment to look again. | Compose's `LocalWindowInfo.isWindowFocused`. |
+| **Cleartext to LAN servers and to loopback** — a `networkSecurityConfig` a tool can opt into from `lighttool.toml`. | Self-hosted music servers on a LAN are normally plain `http://`. Store builds get only the generated manifest, so they cannot reach one. | `tool/src/release/AndroidManifest.xml`, which never reaches a store build. |
+
 ## Smaller additions
 
 Already written as patches; see [SDK-PATCHES.md](SDK-PATCHES.md), which is the

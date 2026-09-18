@@ -67,7 +67,7 @@ private const val MODE_DETAIL_LINES = 2
 
 private fun dataModeDetail(mode: DataMode): String = when (mode) {
     DataMode.MAKE_IT_HURT -> "No limits — streaming, downloads and artwork all use cellular data when there's no Wi-Fi"
-    DataMode.LOW_DATA -> "Streams music on cellular data, but downloads and artwork wait for Wi-Fi"
+    DataMode.LOW_DATA -> "Streams music on cellular data. Downloads and library artwork wait for Wi-Fi; the cover of what's playing doesn't"
     DataMode.WIFI_ONLY -> "Never uses cellular data. Without Wi-Fi, only your downloads play"
 }
 

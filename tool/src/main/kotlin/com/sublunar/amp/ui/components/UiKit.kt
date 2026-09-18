@@ -36,11 +36,20 @@ import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.ui.lightClickable
+import com.sublunar.amp.art.ArtworkNeed
+import kotlinx.coroutines.delay
 
 // --- Artwork ----------------------------------------------------------------
 
+/** Waits between tries for the cover in front of the user — see [rememberArtwork]. */
+private val FOCUSED_RETRY_MS = longArrayOf(3_000L, 8_000L, 20_000L)
+
 @Composable
-fun rememberArtwork(coverArtId: String?, sizePx: Int): ImageBitmap? {
+fun rememberArtwork(
+    coverArtId: String?,
+    sizePx: Int,
+    need: ArtworkNeed = ArtworkNeed.BROWSING,
+): ImageBitmap? {
     // Gated here rather than at each drawing site: this is the only way into the
     // artwork cache, so switching covers off also stops fetching and decoding
     // them, which is most of what they cost.
@@ -55,12 +64,30 @@ fun rememberArtwork(coverArtId: String?, sizePx: Int): ImageBitmap? {
     // a cover already in the memory cache, which returns early rather than
     // loading, never assigned anything and the old bitmap simply stayed.
     var image by remember(coverArtId, sizePx, hidden) { mutableStateOf(cached) }
-    LaunchedEffect(coverArtId, sizePx, hidden) {
+    // Whether this cover may be fetched right now is part of the question, so
+    // it is part of the key: an empty answer used to be final until the cover
+    // itself changed, which left the playing sleeve blank for the whole song
+    // after one missed fetch, and a list of placeholders blank after Wi-Fi had
+    // arrived. Read unconditionally — see ARCHITECTURE.md on conditional reads.
+    val rules by App.rules.collectAsState()
+    val allowed = when (need) {
+        ArtworkNeed.FOCUSED -> rules.mayFetchFocusedArt
+        ArtworkNeed.BROWSING -> rules.mayMoveHeavyBytes
+    }
+    LaunchedEffect(coverArtId, sizePx, hidden, allowed) {
         if (image != null) return@LaunchedEffect
-        image = if (hidden || coverArtId.isNullOrBlank()) {
-            null
-        } else {
-            App.artwork.load(coverArtId, sizePx)
+        if (hidden || coverArtId.isNullOrBlank()) return@LaunchedEffect
+        image = App.artwork.load(coverArtId, sizePx, need)
+        // The cover in front of the user is worth asking for again: on poor
+        // reception the first request loses to the song it belongs to. A few
+        // tries, further apart each time, and only while it may be fetched. A
+        // row in a list is not — there are hundreds, and the next scroll asks.
+        if (need == ArtworkNeed.FOCUSED && allowed) {
+            for (wait in FOCUSED_RETRY_MS) {
+                if (image != null) break
+                delay(wait)
+                image = App.artwork.load(coverArtId, sizePx, need)
+            }
         }
     }
     return image

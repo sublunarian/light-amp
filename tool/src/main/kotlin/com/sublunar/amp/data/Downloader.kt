@@ -87,6 +87,14 @@ class Downloader(
      * answered — reachability was the only thing ever consulted.
      */
     private val heavyDataAllowed: () -> Boolean,
+    /**
+     * What a held queue is waiting for, in the screens' words — Wi-Fi in the
+     * modes that keep heavy bytes off cellular, a connection in the one that
+     * doesn't. See LinkRules.heavyWaitingFor.
+     */
+    private val waitingLabel: () -> String = { NetworkGate.WAITING_FOR_WIFI },
+    /** Suspends while the player is starting a stream — see App.yieldToPlayback. */
+    private val yieldToPlayback: suspend () -> Unit = {},
 ) {
     private val _progress = MutableStateFlow(DownloadProgress())
     val progress: StateFlow<DownloadProgress> = _progress
@@ -402,6 +410,13 @@ class Downloader(
     private companion object {
         const val PAUSE_POLL_MS = 1_000L
 
+        /** Seconds between link re-reads after [heldSeconds] held: 1, then 5, then 30. */
+        private fun refreshEvery(heldSeconds: Long): Long = when {
+            heldSeconds < 30 -> 1L
+            heldSeconds < 300 -> 5L
+            else -> 30L
+        }
+
         /** How many lyric refills one pass will attempt — see refillMissingLyrics. */
         private const val LYRICS_REFILL_PER_RUN = 200
 
@@ -472,17 +487,29 @@ class Downloader(
         val limit = settings.downloadLimit.first()
         var completed = 0
 
+        var heldTicks = 0L
         while (true) {
             // The pauses that hold everyone: the user's, and the data mode's.
             // Checked between tracks, so a sync starting mid-file lets that file
             // finish rather than abandoning the bytes already fetched.
             while (userPaused || !heavyDataAllowed()) {
                 _progress.value = _progress.value.copy(
-                    currentTitle = if (userPaused) "Paused" else NetworkGate.WAITING_FOR_WIFI,
+                    currentTitle = if (userPaused) "Paused" else waitingLabel(),
                     currentSource = null,
                 )
+                // Nothing else is going to end this wait if the callback misses
+                // the change — see Connectivity.refresh. Once a second, only
+                // while a queue is actually held.
+                // Every second at first, then less and less often: a queue can
+                // be held for Wi-Fi all day, and a change of network is also
+                // heard through the callback and on returning to the app.
+                if (!userPaused && heldTicks++ % refreshEvery(heldTicks) == 0L) Connectivity.refresh()
                 delay(PAUSE_POLL_MS)
             }
+            heldTicks = 0L
+            // A transfer is the greediest thing on the link; a stream being
+            // started waits for nobody else — see App.yieldToPlayback.
+            yieldToPlayback()
 
             // Manual lane first, always, of whichever source can be asked right
             // now — see [DownloadQueue.next]. Which lane it came from travels

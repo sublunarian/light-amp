@@ -69,6 +69,15 @@ object Connectivity {
     val network: StateFlow<NetworkStatus> = status
 
     /**
+     * Ask the system now and publish the answer — for the moments a callback
+     * can't be relied on: the app returning to the front, and a wait that
+     * nothing else is going to end. See [isUnmeteredNow] for the cost.
+     */
+    fun refresh() {
+        isUnmeteredNow()
+    }
+
+    /**
      * Whether there is a local network to speak to at all.
      *
      * Distinct from [isUnmetered], and the two must not be confused: a phone

@@ -34,6 +34,7 @@ import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
 import com.thelightphone.sdk.SimpleLightScreen
+import com.sublunar.amp.data.StreamProxy
 
 /**
  * The page's own menu: where its music comes from, and the three ways of
@@ -395,6 +396,21 @@ class AboutScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed)
             ) {
                 AppText("amp", pxSp(LightType.HEADING_PX))
                 AppText("Version ${BuildConfig.VERSION_NAME}", pxSp(LightType.DETAIL_PX), dim = true)
+                // TEMPORARY (proxy spike): whether the loopback stream door came
+                // up on this phone, and why not if it didn't — the one fact
+                // about this build that can't be seen any other way without a
+                // cable. Goes when the proxy is either kept or dropped.
+                val proxy by App.streamProxy.state.collectAsState()
+                AppText(
+                    when (val state = proxy) {
+                        is StreamProxy.State.On -> "Stream proxy on"
+                        is StreamProxy.State.Off -> "Stream proxy off — ${state.reason}"
+                        StreamProxy.State.Starting -> "Stream proxy starting"
+                    },
+                    pxSp(LightType.DETAIL_PX),
+                    dim = true,
+                    align = TextAlign.Center,
+                )
                 AppText(
                     "(A)nother (M)usic (P)layer — for the Light Phone III. Streams " +
                         "and downloads from your own Navidrome, Subsonic, Plex or " +

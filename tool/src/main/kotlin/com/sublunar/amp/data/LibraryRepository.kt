@@ -94,6 +94,17 @@ class LibraryRepository(
     offlineOnly: Flow<Boolean>,
     /** Whether the server may be spoken to at all — see App.metadataAllowed. */
     private val metadataAllowed: () -> Boolean = { true },
+    /**
+     * Whether bulk background fetching is worth the link right now — false on
+     * a metered connection outside Make it Hurt. See [primePlaylistTrackIds].
+     */
+    private val bulkAllowed: () -> Boolean = { true },
+    /**
+     * Suspends while the player is trying to start a stream, so background
+     * work steps aside for the one thing the user is waiting on. Bounded by
+     * the caller — see App.yieldToPlayback.
+     */
+    private val yieldToPlayback: suspend () -> Unit = {},
     /** Where likes and ratings go when the server can't be told about them. */
     private val pending: PendingActions,
     /** For the handful of things cached in preferences rather than in a table. */
@@ -668,8 +679,12 @@ class LibraryRepository(
         // The rebuild is a guess at what the server holds, not a reading of it:
         // the cached membership can be stale and the library can be missing rows
         // for ids it names, so nothing built here is safe to edit against.
-        val ids = (_playlists.value.firstOrNull { it.id == id } ?: return PlaylistView(emptyList(), false))
-            .trackIds
+        // Membership already fetched this session first: no server returns
+        // songs with the list of playlists, so [Playlist.trackIds] is usually
+        // empty — and an empty rebuild is a playlist that opens with nothing
+        // in it, on exactly the slow link that made the request fail.
+        val ids = _playlistTrackIds.value[id]
+            ?: (_playlists.value.firstOrNull { it.id == id } ?: return PlaylistView(emptyList(), false)).trackIds
         return PlaylistView(getTracksByIds(ids), complete = false)
     }
 
@@ -742,9 +757,22 @@ class LibraryRepository(
      * server apart either.
      */
     suspend fun primePlaylistTrackIds(ids: List<String>) = coroutineScope {
+        // Every playlist's full contents, six at a time, is the heaviest thing
+        // launch does after the sync — one playlist was measured at 1.3 MB —
+        // and all it buys is download badges and the download top-up. On a
+        // metered link outside Make it Hurt nothing can be downloaded anyway,
+        // so it waits for Wi-Fi. Opening a playlist still fetches that one.
+        if (!bulkAllowed() && !playlistsAreLocal()) return@coroutineScope
         val gate = Semaphore(SYNC_CONCURRENCY)
         ids.filterNot { it in _playlistTrackIds.value }
-            .map { id -> launch { gate.withPermit { primePlaylistTrackIds(id) } } }
+            .map { id ->
+                launch {
+                    gate.withPermit {
+                        yieldToPlayback()
+                        primePlaylistTrackIds(id)
+                    }
+                }
+            }
             .joinAll()
     }
 
@@ -922,7 +950,17 @@ class LibraryRepository(
     }
 
     private fun syncErrorMessage(e: Exception): String {
-        val code = Regex("""\b(\d{3})\b""").find(e.message.orEmpty())?.value?.toIntOrNull()
+        // The status the server actually sent, from the exception that carries
+        // it. This used to scrape any three-digit number out of the message —
+        // and a timeout's message names the URL it was fetching, whose
+        // `Container-Size=500` read as "the server had an error (500)".
+        val code = when (e) {
+            is SubsonicException -> e.status
+            is PlexException -> e.status
+            is JellyfinException -> e.status
+            else -> null
+        }
+        if (code == null && e is java.io.IOException) return "Couldn't reach the server"
         return when {
             code == null -> e.message?.takeIf { it.length < 60 } ?: "Couldn't reach the server"
             // 52x are Cloudflare's: it answered, the server behind it didn't.
@@ -1209,10 +1247,12 @@ class LibraryRepository(
                 settings.setParserGeneration(source.id, TRACK_PARSER_GENERATION)
             }
 
+            val finishedAt = System.currentTimeMillis()
             _syncState.value = SyncState(
                 syncing = false,
-                lastSyncedMs = System.currentTimeMillis(),
+                lastSyncedMs = finishedAt,
             )
+            runCatching { settings.activeSource.first()?.id?.let { settings.setLastSyncedMs(it, finishedAt) } }
             onSyncSucceeded?.invoke()
         } catch (e: CancellationException) {
             // A library switch cancelled this sync; don't record it as an error.
@@ -1271,10 +1311,12 @@ class LibraryRepository(
             dao.clearAlbums()
             dao.upsertAlbums(scan.albums.map { it.toEntity() })
             dao.upsertTracks(scan.tracks.map { it.toEntity() })
+            val finishedAt = System.currentTimeMillis()
             _syncState.value = SyncState(
                 syncing = false,
-                lastSyncedMs = System.currentTimeMillis(),
+                lastSyncedMs = finishedAt,
             )
+            runCatching { settings.activeSource.first()?.id?.let { settings.setLastSyncedMs(it, finishedAt) } }
             onSyncSucceeded?.invoke()
         } catch (e: CancellationException) {
             _syncState.value = _syncState.value.copy(syncing = false)
@@ -1319,6 +1361,7 @@ class LibraryRepository(
             val fetched = batch.map { album ->
                 async {
                     gate.withPermit {
+                        yieldToPlayback()
                         val songs = try {
                             client.getAlbumTracks(album.id)
                         } catch (_: Exception) {
@@ -1376,9 +1419,39 @@ class LibraryRepository(
         //
         // Sync Now is deliberately exempt — see scanAndSyncInBackground. Asking
         // by hand is asking to go now, whatever this would have said.
-        if (System.currentTimeMillis() - _syncState.value.lastSyncedMs < SYNC_MIN_INTERVAL_MS) return
+        // "in 0 until", not "<": a time in the future — a sync recorded while the
+        // clock was wrong — is not a recent sync, and would otherwise switch
+        // automatic syncing off until the clock caught up.
+        if (System.currentTimeMillis() - _syncState.value.lastSyncedMs in 0 until SYNC_MIN_INTERVAL_MS) return
         _syncState.value = _syncState.value.copy(syncing = true, error = null, phase = "Connecting")
-        syncJob = scope.launch { sync() }
+        syncJob = scope.launch {
+          try {
+            // The floor above only knows this process. A cold start has no
+            // memory of the sync that finished a minute before it, so the
+            // stored time is asked too — and on a metered link the floor is
+            // hours, not minutes: an automatic sync is hundreds of requests
+            // spent on a library that rarely changed, in the minutes someone
+            // opened the app to play something. Sync Now ignores all of this.
+            val last = runCatching {
+                settings.activeSource.first()?.id?.let { settings.lastSyncedMs(it) }
+            }.getOrNull() ?: 0L
+            val floor = if (bulkAllowed()) SYNC_MIN_INTERVAL_MS else SYNC_MIN_INTERVAL_METERED_MS
+            if (System.currentTimeMillis() - last in 0 until floor) {
+                android.util.Log.i("AmpSync", "launch sync skipped: last one ${(System.currentTimeMillis() - last) / 60_000} min ago")
+                _syncState.value = _syncState.value.copy(syncing = false, phase = "", lastSyncedMs = last)
+                return@launch
+            }
+            sync()
+          } catch (e: Throwable) {
+            // The claim above was made before this coroutine ran. runSync
+            // releases it on its own paths — but a cancellation (a source
+            // switch) or a failed settings read can end this before runSync
+            // ever starts, and a claim left standing turns every later sync
+            // away, Sync Now included, until the app is restarted.
+            _syncState.value = _syncState.value.copy(syncing = false)
+            throw e
+          }
+        }
     }
 
     /**
@@ -1867,6 +1940,9 @@ class LibraryRepository(
  * Sync Now both mean "now".
  */
 private const val SYNC_MIN_INTERVAL_MS = 5L * 60 * 1000
+
+/** The same floor on a metered link, where an automatic sync costs the user data and their first minutes. */
+private const val SYNC_MIN_INTERVAL_METERED_MS = 6L * 60 * 60 * 1000
 
 private const val RADIO_LENGTH = 50
 
