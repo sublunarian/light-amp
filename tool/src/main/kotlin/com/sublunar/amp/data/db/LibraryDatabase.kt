@@ -431,8 +431,10 @@ interface LibraryDao {
     ],
     version = 12,
     exportSchema = true,
-    // Generated from the committed schemas (tool/schemas), so existing installs
-    // keep their libraries and downloads across the bump. Every schema change
+    // Generated from the committed schemas (tool/src/main/assets/schemas), so
+    // existing installs keep their libraries and downloads across the bump —
+    // they sit in assets because that is what Light's store builder copies.
+    // Every schema change
     // from here on should add a step here rather than lean on the SDK's
     // drop-everything fallback.
     autoMigrations = [

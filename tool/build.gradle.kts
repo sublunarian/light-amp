@@ -81,6 +81,14 @@ android {
         }
     }
 
+    // The Room schemas sit under assets so Light's builder has them (see the
+    // ksp block below); they are build inputs, and no APK needs to carry them.
+    // The rest is AGP's default list, which setting this replaces.
+    androidResources {
+        ignoreAssetsPattern =
+            "!.svn:!.git:!.ds_store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:<dir>schemas"
+    }
+
     lint {
         warningsAsErrors = false
         error += "RestrictedApi"
@@ -137,5 +145,8 @@ dependencies {
  * and Room uses one whenever the two versions' schemas are here to diff.
  */
 ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
+    // Under src/main/assets because that is one of the four trees Light's store
+    // builder copies out of a tool's repository — anywhere else and the build
+    // there has no schemas to diff, and stops at the first AutoMigration.
+    arg("room.schemaLocation", "$projectDir/src/main/assets/schemas")
 }
