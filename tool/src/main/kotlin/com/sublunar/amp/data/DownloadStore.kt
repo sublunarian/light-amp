@@ -4,9 +4,12 @@ import android.os.StatFs
 import android.util.Log
 import java.io.BufferedOutputStream
 import java.io.File
-import java.net.URL
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.Request
 
 /**
  * The on-disk half of offline playback: downloaded audio under the tool's private
@@ -22,6 +25,11 @@ import kotlinx.coroutines.withContext
  * so none of this needs SDK support.
  */
 class DownloadStore(private val filesDir: File) {
+
+    /** Behind the wall, built on first use — see NetworkGate.transferClient. */
+    private val http by lazy {
+        NetworkGate.transferClient(CONNECT_TIMEOUT_MS.toLong(), READ_TIMEOUT_MS.toLong())
+    }
 
     private val downloadsDir: File get() = File(filesDir, "downloads")
 
@@ -98,31 +106,48 @@ class DownloadStore(private val filesDir: File) {
             val partial = File(target.parentFile, "${target.name}$PART_SUFFIX")
             try {
                 val startedMs = System.currentTimeMillis()
-                // The wall, not the courtesy: Downloader asks heavyDataAllowed
-                // between tracks, and this asks NetworkGate before the
-                // connection and again between reads, so a mode switched to
-                // Wi-Fi Only mid-transfer, or a link that turned metered, stops
-                // the file here rather than at its end.
-                NetworkGate.check()
-                val connection = URL(url).openConnection()
-                // Without these a half-open connection parks the worker forever,
-                // which reads as "downloads have stopped" rather than as an error.
-                connection.connectTimeout = CONNECT_TIMEOUT_MS
-                connection.readTimeout = READ_TIMEOUT_MS
-                connection.getInputStream().use { input ->
-                    // 8 KiB (copyTo's default) into an unbuffered FileOutputStream
-                    // is a write syscall every 8 KiB; on this hardware that costs
-                    // more than the transfer does.
-                    BufferedOutputStream(partial.outputStream(), BUFFER_BYTES).use { output ->
-                        val buffer = ByteArray(BUFFER_BYTES)
-                        while (true) {
-                            NetworkGate.check()
-                            val n = input.read(buffer)
-                            if (n < 0) break
-                            output.write(buffer, 0, n)
+                // Through the wall, like every other byte — see NetworkGate. This
+                // used to be a bare URLConnection with a check in front of it and
+                // one between reads, which left the connect, the TLS handshake, any
+                // redirect and any silent retry ungated, on a stack whose socket
+                // nothing here could close. The gated client asks at each of
+                // those, cuts the body when the rule closes, and can be slammed.
+                val call = http.newCall(Request.Builder().url(url).build())
+                // A cancelled download lets go of the socket instead of reading
+                // on to the end of a file nobody wants any more. A completion
+                // handler can't do this — the job can't complete while its body
+                // is blocked in the read — so a sibling waits for the
+                // cancellation itself and closes the call from outside.
+                val onCancel = launch { try { awaitCancellation() } finally { call.cancel() } }
+                try {
+                    call.execute().use { response ->
+                        if (!response.isSuccessful) {
+                            lastError = "Server said ${response.code}"
+                            return@withContext null
+                        }
+                        // A server can answer 200 with an error *document* — Subsonic
+                        // does — and saved under the track's name that would be "the
+                        // song" from then on: a file that never plays and is never
+                        // fetched again.
+                        val type = response.body.contentType()
+                        if (type != null && (type.type == "text" || type.subtype in NOT_AUDIO_SUBTYPES)) {
+                            lastError = "Server sent $type instead of audio"
+                            return@withContext null
+                        }
+                        response.body.byteStream().use { input ->
+                            // 8 KiB (copyTo's default) into an unbuffered FileOutputStream
+                            // is a write syscall every 8 KiB; on this hardware that costs
+                            // more than the transfer does.
+                            BufferedOutputStream(partial.outputStream(), BUFFER_BYTES).use { output ->
+                                input.copyTo(output, BUFFER_BYTES)
+                            }
                         }
                     }
+                } finally {
+                    onCancel.cancel()
                 }
+                // Cancelled while the last bytes arrived: not a download.
+                ensureActive()
                 val elapsedMs = System.currentTimeMillis() - startedMs
                 val bytes = partial.length()
                 if (elapsedMs > 0) {
@@ -284,6 +309,8 @@ class DownloadStore(private val filesDir: File) {
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 30_000
         private const val PART_SUFFIX = ".part"
+        /** Content types that are an answer *about* a track, never the track. */
+        private val NOT_AUDIO_SUBTYPES = setOf("json", "xml", "html")
         // 64 GB is reachable on the LP3's 128 GB of storage only if we're willing
         // to claim more than half of what's free, so the share goes up with the
         // ceiling; a quarter of free space still stays behind for the OS and the
