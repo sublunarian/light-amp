@@ -121,6 +121,46 @@ data class DownloadEntity(
     val downloadedAtMs: Long,
 )
 
+/**
+ * One song's place in one playlist.
+ *
+ * Playlists themselves are still not a table — they are fetched live and cached
+ * in preferences (see LibraryRepository.refreshPlaylists). Their *membership* is
+ * here because it is the one part no server sends with the list, has to be
+ * fetched per playlist at real cost, and is needed precisely when the server
+ * can't be asked: it backs both the download badge and the offline rebuild of a
+ * playlist's page.
+ *
+ * Two timestamps, because they answer different questions. [stampedAtMs] is the
+ * playlist's own [Playlist.updatedAt] as it stood when these rows were written —
+ * the version this membership belongs to, and what lets a playlist that hasn't
+ * moved be skipped. [fetchedAtMs] is when we actually asked, which is the only
+ * thing that bounds staleness on a server whose stamp can't be trusted:
+ * Jellyfin reports a playlist's creation date as its update time, so its stamp
+ * never moves no matter how the playlist changes.
+ */
+@Entity(tableName = "playlist_tracks", primaryKeys = ["playlistId", "position"])
+data class PlaylistTrackEntity(
+    val playlistId: String,
+    val position: Int,
+    val trackId: String,
+    val stampedAtMs: Long,
+    val fetchedAtMs: Long,
+)
+
+/** One playlist's membership, in order — see [LibraryDao.observePlaylistTracks]. */
+data class PlaylistTrackRow(
+    val playlistId: String,
+    val trackId: String,
+)
+
+/** What version of each playlist the stored membership belongs to, and when it was asked for. */
+data class PlaylistStamp(
+    val playlistId: String,
+    val stampedAtMs: Long,
+    val fetchedAtMs: Long,
+)
+
 /** A downloaded file, without the lyrics blob — see [LibraryDao.observeDownloads]. */
 data class DownloadFile(
     val trackId: String,
@@ -371,6 +411,54 @@ interface LibraryDao {
     suspend fun download(trackId: String): DownloadEntity?
 
     /**
+     * All stored membership, read once when a database opens — see
+     * [LibraryRepository.seedPlaylistTrackIds].
+     *
+     * Read rather than observed, unlike the downloads table. Membership has one
+     * writer, which already holds the live answer in memory the instant it is
+     * set; observing it back would only add a window in which a second caller
+     * sees "not known yet" and fetches the same playlist again. Ordered so the
+     * grouping downstream keeps each playlist's own order, which the offline
+     * rebuild shows and the badge doesn't care about. A projection again: the
+     * stamps are only wanted when deciding what to re-fetch, and
+     * [playlistStamps] asks for those on their own.
+     */
+    @Query("SELECT playlistId, trackId FROM playlist_tracks ORDER BY playlistId, position")
+    suspend fun storedPlaylistTracks(): List<PlaylistTrackRow>
+
+    /** The version each stored playlist's membership belongs to, and when it was fetched. */
+    @Query(
+        "SELECT playlistId, MAX(stampedAtMs) AS stampedAtMs, MAX(fetchedAtMs) AS fetchedAtMs " +
+            "FROM playlist_tracks GROUP BY playlistId",
+    )
+    suspend fun playlistStamps(): List<PlaylistStamp>
+
+    @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId")
+    suspend fun clearPlaylistTracks(playlistId: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPlaylistTracks(rows: List<PlaylistTrackEntity>)
+
+    /**
+     * Replace one playlist's membership outright.
+     *
+     * Rows are positional, so a shorter list has to clear first or the tail of
+     * the previous one survives underneath it.
+     */
+    @Transaction
+    suspend fun setPlaylistTracks(playlistId: String, rows: List<PlaylistTrackEntity>) {
+        clearPlaylistTracks(playlistId)
+        if (rows.isNotEmpty()) insertPlaylistTracks(rows)
+    }
+
+    /** Drop membership for playlists the server no longer lists. */
+    @Query("DELETE FROM playlist_tracks WHERE playlistId NOT IN (:keep)")
+    suspend fun prunePlaylistTracks(keep: List<String>)
+
+    @Query("DELETE FROM playlist_tracks")
+    suspend fun clearAllPlaylistTracks()
+
+    /**
      * Downloads with no words stored — see [Downloader.refillMissingLyrics].
      *
      * Ids only, deliberately: selecting the lyrics column across every row is
@@ -428,8 +516,9 @@ interface LibraryDao {
         LikedArtistEntity::class,
         DownloadEntity::class,
         TopSongEntity::class,
+        PlaylistTrackEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
     // Generated from the committed schemas (tool/schemas), so existing installs
     // keep their libraries and downloads across the bump. Every schema change
@@ -439,6 +528,11 @@ interface LibraryDao {
         AutoMigration(from = 9, to = 10),
         AutoMigration(from = 10, to = 11),
         AutoMigration(from = 11, to = 12),
+        // Adds playlist_tracks. A pure addition, so existing libraries and
+        // downloads come across untouched and the table simply starts empty —
+        // which reads as "nothing primed yet" and refills on the next
+        // unmetered visit, exactly as a fresh install would.
+        AutoMigration(from = 12, to = 13),
     ],
 )
 abstract class LibraryDatabase : RoomDatabase() {
