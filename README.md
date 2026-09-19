@@ -12,9 +12,6 @@ Plays your own library - a Subsonic server, Plex, Jellyfin or files on the phone
 </p>
 
 > Side-load only for now. The tool store isn't open yet.
->
-> For advanced users at this stage — installing means USB debugging and `adb`,
-> and things will break.
 
 ## Features
 
