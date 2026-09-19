@@ -566,6 +566,8 @@ class LibraryRepository(
      */
     private suspend fun storeMembership(id: String, trackIds: List<String>, stamp: Long) {
         _playlistTrackIds.update { it + (id to trackIds) }
+        // This *is* the replacement the mark was asking for.
+        staleMembership.update { it - id }
         val now = System.currentTimeMillis()
         runCatching {
             dao.setPlaylistTracks(
@@ -580,6 +582,30 @@ class LibraryRepository(
     /** The stamp to file membership under, from the playlist list as it stands. */
     private fun stampFor(id: String): Long =
         _playlists.value.firstOrNull { it.id == id }?.updatedAt ?: 0L
+
+    /**
+     * Playlists whose stored songs are known to be out of date but are being
+     * kept until they can be replaced.
+     *
+     * Held in memory rather than written down, and that is the right place for
+     * it: the mark comes from comparing against a server answer, so a session
+     * that never reaches the server has nothing to say about staleness and
+     * should serve what it has. The next successful refresh re-derives it.
+     *
+     * What it buys is the difference between "don't trust this" and "don't show
+     * this". A stale list still opens the playlist and still plays, which
+     * offline is the entire value of having it; the mark only tells the priming
+     * to fetch this one again even though it is already known.
+     */
+    private val staleMembership = MutableStateFlow<Set<String>>(emptySet())
+
+    private fun markMembershipStale(id: String) {
+        staleMembership.update { it + id }
+    }
+
+    /** Whether a prime should run for [id] even though membership is already held. */
+    private fun membershipWanted(id: String): Boolean =
+        id !in _playlistTrackIds.value || id in staleMembership.value
 
     /**
      * Apply a local edit to stored membership, if we hold any for this playlist.
@@ -608,6 +634,7 @@ class LibraryRepository(
      */
     private suspend fun dropMembership(id: String) {
         _playlistTrackIds.update { it - id }
+        staleMembership.update { it - id }
         runCatching { dao.clearPlaylistTracks(id) }
     }
 
@@ -727,8 +754,15 @@ class LibraryRepository(
                 continue
             }
             val moved = playlist.updatedAt > 0L && playlist.updatedAt != stamp.stampedAtMs
-            val stale = now - stamp.fetchedAtMs > PLAYLIST_MEMBERSHIP_TTL_MS
-            if (moved || stale) dropMembership(stamp.playlistId)
+            val aged = now - stamp.fetchedAtMs > PLAYLIST_MEMBERSHIP_TTL_MS
+            // Marked, not dropped. Knowing the songs are out of date is not the
+            // same as being able to fetch the new ones: the playlist list is
+            // allowed on a metered link, the membership fetch behind it is not.
+            // Dropping here would empty every stored playlist the moment the
+            // app was opened on cellular, with no way to refill until Wi-Fi —
+            // which is the failure this whole table exists to prevent. The
+            // stale copy keeps serving and the next prime replaces it.
+            if (moved || aged) markMembershipStale(stamp.playlistId)
         }
         // Guarded: Room expands an empty list to `NOT IN ()`, which SQLite
         // rejects outright. A server that returned no playlists at all has
@@ -841,11 +875,11 @@ class LibraryRepository(
      * for the rest of the session.
      */
     suspend fun primePlaylistTrackIds(id: String) {
-        if (id in _playlistTrackIds.value) return
+        if (!membershipWanted(id)) return
         val prime = playlistPrimeLock.withLock {
             // Re-read inside the lock: the fetch this caller would have started
             // may have finished while it waited for the lock.
-            if (id in _playlistTrackIds.value) return
+            if (!membershipWanted(id)) return
             val running = playlistPrimes[id]
             // A finished prime is not a running one. It may have failed, and
             // the next caller deserves a fresh attempt rather than a share of
@@ -899,7 +933,7 @@ class LibraryRepository(
         // that — see storeMembership.
         if (!bulkAllowed() && !playlistsAreLocal()) return@coroutineScope
         val gate = Semaphore(SYNC_CONCURRENCY)
-        ids.filterNot { it in _playlistTrackIds.value }
+        ids.filter { membershipWanted(it) }
             .map { id ->
                 launch {
                     gate.withPermit {
@@ -2044,6 +2078,7 @@ class LibraryRepository(
         // ones have been fetched over the network, which is long enough to read.
         _playlists.value = emptyList()
         _playlistTrackIds.value = emptyMap()
+        staleMembership.value = emptySet()
         topSongs.clear()
         artistIds = null
         _artistImages.value = emptyMap()
