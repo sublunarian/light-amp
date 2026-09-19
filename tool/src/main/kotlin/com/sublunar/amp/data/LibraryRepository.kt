@@ -804,13 +804,30 @@ class LibraryRepository(
         // would leave that playlist's badge off until the app restarted.
         if (tracks.isNotEmpty()) {
             val ids = tracks.map { track -> track.id }
-            // Only a whole read earns a place on disk. An offline rebuild's ids
-            // came out of this same membership, so writing them back says
-            // nothing new — and it would renew the fetch stamp on a copy that
-            // nothing has actually re-checked, pushing the TTL out on the
-            // strength of our own guess.
-            if (whole) storeMembership(id, ids, stampFor(id))
-            else _playlistTrackIds.update { it + (id to ids) }
+            // Only a whole read is worth keeping, and a rebuild is not one.
+            //
+            // A rebuild resolves the ids we already hold against the library
+            // table, and getTracksByIds drops every id with no row there — a
+            // track the sync hasn't reached, or one pruned since. So its ids
+            // are a *subset* of the membership it was built from, and writing
+            // them anywhere can only shrink what we know. Stored, that loses
+            // songs for good and leaves the badge asking "are all of them
+            // downloaded?" of a shorter list than the playlist really has.
+            // Held, it does the same for the rest of the session.
+            //
+            // Storing one would also renew the fetch time on a copy nothing
+            // re-checked, deferring the age backstop — which on a server whose
+            // modification time never moves is the only thing that ever
+            // refreshes a playlist at all.
+            //
+            // The map is only filled from a rebuild when it holds nothing for
+            // this playlist, where the ids came from the cached list rather
+            // than from the map and are the first thing known about it.
+            if (whole) {
+                storeMembership(id, ids, stampFor(id))
+            } else if (id !in _playlistTrackIds.value) {
+                _playlistTrackIds.update { it + (id to ids) }
+            }
         }
         if (!offline.value) return PlaylistView(tracks, whole)
         // A song from the phone's own folder needs no server, so it stays whatever
