@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.data.Cleartext
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.newSourceId
@@ -243,8 +244,13 @@ class ServerScreen(
         if (address.isBlank() || username.isBlank()) {
             return SaveOutcome.Said("Enter an address and username.")
         }
+        // A plain http:// spelling this build may not send is not tried: the
+        // platform would refuse it in words meant for a developer. Without a
+        // scheme the https:// try is still made, and its failure explained.
+        val candidates = SubsonicConfig.candidates(address).filterNot { Cleartext.refuses(it) }
+        if (candidates.isEmpty()) return SaveOutcome.Said(Cleartext.REFUSED)
         var lastError: Throwable? = null
-        for (candidate in SubsonicConfig.candidates(address)) {
+        for (candidate in candidates) {
             val config = SubsonicConfig(candidate, username, password)
             val client = SubsonicClient(config)
             val ok = runCatching { client.ping() }

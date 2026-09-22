@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.data.Cleartext
 import com.sublunar.amp.data.JellyfinSignIn
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
@@ -87,6 +88,12 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                         if (checking) return@TextRow
                         if (address.isBlank() || username.isBlank()) {
                             status = "An address and a username, at least."
+                            return@TextRow
+                        }
+                        // Said before trying: the sign-in below can only report
+                        // that it failed, not that this build refused to send it.
+                        if (Cleartext.refuses(address)) {
+                            status = Cleartext.REFUSED
                             return@TextRow
                         }
                         signIn()

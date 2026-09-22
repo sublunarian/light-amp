@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
+import com.sublunar.amp.data.Cleartext
 import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.PlexClient
@@ -284,6 +285,12 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                         if (checking) return@TextRow
                         if (name.isBlank() || address.isBlank() || token.isBlank()) {
                             status = "Fill in all three."
+                            return@TextRow
+                        }
+                        // Said before trying, as on the Jellyfin form: the check
+                        // below can only report that it didn't get in.
+                        if (Cleartext.refuses(address)) {
+                            status = Cleartext.REFUSED
                             return@TextRow
                         }
                         checking = true
