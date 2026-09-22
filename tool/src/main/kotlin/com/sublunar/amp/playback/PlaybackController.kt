@@ -32,15 +32,18 @@ import com.sublunar.amp.data.qualityRank
 import com.thelightphone.sdk.audio.LightAudio
 import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayer
+import com.thelightphone.sdk.audio.LightAudioPlayerAvailability
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightAudioPlayback
 import com.thelightphone.sdk.audio.LightAudioUsage
 import com.thelightphone.sdk.audio.LightMediaMetadata
+import com.thelightphone.sdk.audio.NO_MEDIA_ITEM
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -272,10 +275,17 @@ class PlaybackController(
     /** Mark a start at [index] — buffering only if that row is a stream. */
     private fun starting(index: Int) {
         _buffering.value = queuedSources.getOrNull(index) is LightAudioSource.UrlSource
+        if (_buffering.value) bufferingSinceMs = android.os.SystemClock.elapsedRealtime()
     }
+
+    /** When the start now buffering began, so its limit counts from then — see [bind]. */
+    private var bufferingSinceMs = 0L
 
     /** Bumped by anything that supersedes a pending stream decision — see [withStreamDecision]. */
     private var decisionGeneration = 0
+
+    /** The decision [withStreamDecision] is still waiting on, or 0 — see [release]. */
+    private var awaitedDecision = 0
 
     /**
      * Whatever start was pending is off: a pause, a stop, a cast taking over.
@@ -432,6 +442,24 @@ class PlaybackController(
     val bound: StateFlow<Boolean> = _bound
 
     /**
+     * The collectors [bind] started on the player handle's own flows. A
+     * released handle's flows simply stop, so without this they would sit on
+     * it for the life of the process, one more set with every reopen. They
+     * are cancelled with the handle in [release].
+     */
+    private var handleJob: Job? = null
+
+    /**
+     * Everything else [bind] started: the collectors of this controller's own
+     * state and the app's, and the loops. These outlive the handle on purpose
+     * — the detached service goes on playing with the screens gone, and the
+     * heartbeat, the snapshot, the link poll and the buffering limit go on
+     * with it. The next bind replaces them rather than adding a second set
+     * beside them.
+     */
+    private var bindJob: Job? = null
+
+    /**
      * A finished queue goes back to its first track and stays stopped.
      *
      * ExoPlayer leaves a queue that has run out parked on the last song at its
@@ -486,6 +514,8 @@ class PlaybackController(
         // than inside, so a second emission arriving before that block runs
         // can't queue a second rewind behind it.
         scope.launch(Dispatchers.Main.immediate) {
+            // Released while this was on its way: a gone handle throws.
+            if (player !== p) return@launch
             p.pause()
             p.seekToIndex(0)
         }
@@ -494,9 +524,23 @@ class PlaybackController(
         hasPlayed = false
     }
 
-    /** Attach the audio stack from the current activity. Idempotent per process. */
+    /** Attach the audio stack from the current activity. Idempotent until [release]. */
     fun bind(audio: LightAudio) {
         if (player != null) return
+        // A reopen. The last bind's collectors are still running, and left
+        // there they would run beside this one's — two heartbeats, two
+        // snapshots, two chances at every scrobble. The fresh set below picks
+        // up everything they watched from where it stands now.
+        bindJob?.cancel()
+        val bound = SupervisorJob(scope.coroutineContext[Job])
+        val handle = SupervisorJob(scope.coroutineContext[Job])
+        bindJob = bound
+        handleJob = handle
+        // What this controller carried across a reopen, read before the new
+        // handle's first readings overwrite it — see the re-cue further down.
+        val carried = _queue.value
+        val carriedIndex = _index.value
+        val carriedPositionMs = _positionMs.value
         // Detached: playback lives in the SDK's own service, so it survives the
         // screen going off — and the activity going away — officially.
         val p = audio.newPlayer(LightAudioUsage.Music, LightAudioPlayback.Detached)
@@ -546,7 +590,7 @@ class PlaybackController(
         // While casting, the renderer is the source of truth for these — the local
         // player sits paused and would otherwise report position 0 / not-playing
         // straight over the cast state.
-        scope.launch {
+        scope.launch(handle) {
             p.isPlaying.collect { playing ->
                 if (isCasting) return@collect
                 _isPlaying.value = playing
@@ -565,8 +609,8 @@ class PlaybackController(
         }
         // A server-seeked stream starts at 0:00 of a shorter file, so both
         // readouts are shifted back into the track's own timeline.
-        scope.launch { p.positionMs.collect { if (!isCasting) _positionMs.value = it + streamOffsetMs } }
-        scope.launch {
+        scope.launch(handle) { p.positionMs.collect { if (!isCasting) _positionMs.value = it + streamOffsetMs } }
+        scope.launch(handle) {
             p.durationMs.collect { reported ->
                 if (isCasting) return@collect
                 // What the library says the track runs to, which is a real number
@@ -593,7 +637,7 @@ class PlaybackController(
                 ) {
                     val target = streamOffsetMs
                     streamOffsetMs = 0L
-                    scope.launch(Dispatchers.Main.immediate) { p.seekTo(target) }
+                    scope.launch(Dispatchers.Main.immediate) { if (player === p) p.seekTo(target) }
                     _durationMs.value = reported
                     return@collect
                 }
@@ -632,7 +676,7 @@ class PlaybackController(
         // down toward the reference and quiet ones play untouched, so no
         // boost can ever clip. Sources that measure nothing leave it at 1.
         // Not applied while casting: the renderer plays its own copy.
-        scope.launch {
+        scope.launch(handle) {
             combine(p.currentMediaItemIndex, _queue, replayGain) { idx, q, on ->
                 val db = if (on) q.getOrNull(idx)?.gainDb else null
                 db?.let { 10.0.pow(it / 20.0).toFloat().coerceAtMost(1f) } ?: 1f
@@ -640,7 +684,7 @@ class PlaybackController(
                 withContext(Dispatchers.Main.immediate) { p.playbackGain = factor }
             }
         }
-        scope.launch {
+        scope.launch(handle) {
             p.currentMediaItemIndex.collect { idx ->
                 if (isCasting) return@collect
                 if (idx >= 0 && idx != _index.value) {
@@ -696,6 +740,7 @@ class PlaybackController(
                             val original = q.getOrNull(stubIdx)
                             if (stubIdx >= 0 && original != null) {
                                 scope.launch(Dispatchers.Main.immediate) {
+                                    if (player !== p) return@launch
                                     p.replaceRange(stubIdx, stubIdx + 1, listOf(original.toAudioItem()))
                                 }
                             }
@@ -722,7 +767,7 @@ class PlaybackController(
         // has to be pushed to the renderer, which is holding a URI we chose
         // earlier. Debounced because a single edit moves several of these at once.
         @OptIn(kotlinx.coroutines.FlowPreview::class)
-        scope.launch {
+        scope.launch(bound) {
             combine(_queue, _index, _repeatMode) { _, _, _ -> Unit }
                 .debounce(CAST_REQUEUE_DEBOUNCE_MS)
                 .collect {
@@ -736,7 +781,7 @@ class PlaybackController(
         }
         // The server answering again is the signal to stop pinning playback to
         // local files; the next track resolves normally.
-        scope.launch {
+        scope.launch(bound) {
             App.serverReachable.collect { reachable ->
                 if (reachable) {
                     forceOffline = false
@@ -752,7 +797,7 @@ class PlaybackController(
         // sound is coming out, or being waited for, the system is asked
         // directly every few seconds: two binder reads, on a CPU that is
         // awake for the music anyway. Idle, nothing runs.
-        scope.launch {
+        scope.launch(bound) {
             combine(_isPlaying, _waitingFor) { playing, waiting -> playing to (waiting != null) }
                 .distinctUntilChanged()
                 .collectLatest { (playing, waiting) ->
@@ -764,13 +809,17 @@ class PlaybackController(
                     }
                 }
         }
-        scope.launch { App.streamProxy.state.collect { reresolveQueue() } }
+        scope.launch(bound) { App.streamProxy.state.collect { reresolveQueue() } }
         // Nothing may wait on "buffering" for ever: a start that produced
         // neither sound nor an error in this long is not holding anyone back.
-        scope.launch {
+        scope.launch(bound) {
             _buffering.collectLatest { on ->
                 if (on) {
-                    delay(BUFFERING_LIMIT_MS)
+                    // Counted from the start, not from when this collector
+                    // first saw it: a reopen replaces the collector mid-start,
+                    // and a fresh 45 s from there would hold everything longer.
+                    val elapsed = android.os.SystemClock.elapsedRealtime() - bufferingSinceMs
+                    delay(BUFFERING_LIMIT_MS - elapsed)
                     _buffering.value = false
                 }
             }
@@ -778,7 +827,7 @@ class PlaybackController(
         // One collector for everything the rules can change — the link, its
         // price, the mode, the server — so playback hears of any of them in
         // the same moment the library and the queue view do. See LinkRules.
-        scope.launch {
+        scope.launch(bound) {
             App.rules.collect { rules ->
                 unmetered = rules.unmetered
                 if (rules.mayStream) {
@@ -827,7 +876,7 @@ class PlaybackController(
         // still described the *previous* source's downloads, whose track ids
         // match nothing in the new one, so downloaded audio quietly stopped
         // being used at all.
-        scope.launch {
+        scope.launch(bound) {
             App.library.downloadFiles.collect { rows ->
                 localFiles = rows.mapNotNull { row ->
                     downloads.existing(App.source.value.id, row.fileName)?.let { file ->
@@ -843,7 +892,7 @@ class PlaybackController(
         // casting controls a player that isn't making the sound. Forwarding it to
         // the renderer makes the buttons act on whatever is actually playing —
         // without intercepting the keys, which the tool sandbox can't do.
-        scope.launch {
+        scope.launch(handle) {
             p.deviceVolume.collect { level ->
                 _volume.value = level
                 val renderer = _castRenderer.value ?: return@collect
@@ -853,11 +902,11 @@ class PlaybackController(
 
         // A play is submitted part-way through rather than at the start, so the
         // position is what decides when — see maybeSubmitPlay.
-        scope.launch { _positionMs.collect { maybeSubmitPlay(it) } }
+        scope.launch(bound) { _positionMs.collect { maybeSubmitPlay(it) } }
         // Snapshot the queue periodically rather than on every position tick: the
         // point is to survive a kill, and a few seconds of lost progress is a fair
         // trade against writing to DataStore once a second forever.
-        scope.launch {
+        scope.launch(bound) {
             while (true) {
                 delay(SAVE_STATE_INTERVAL_MS)
                 persistState()
@@ -868,11 +917,43 @@ class PlaybackController(
         // for a while — the same idea as a UPnP lease. Only while something is
         // actually playing: a paused session was already told once and doesn't
         // need repeating, and an idle queue has no session at all.
-        scope.launch {
+        scope.launch(bound) {
             while (true) {
                 delay(TIMELINE_INTERVAL_MS)
                 if (_isPlaying.value) reportTimeline(TimelineState.PLAYING)
             }
+        }
+        // A reopen onto a service that stopped itself while the screens were
+        // gone — paused, with no handle, for its idle limit — finds a player
+        // holding nothing under a queue that still shows, and play then does
+        // nothing at all. restoreState can't help: it runs once per process,
+        // and this process never ended. So the queue goes back in where it was
+        // left, cued and paused, the way a cold start restores it. Only in that
+        // case: a service that kept its queue is where the truth is, and a
+        // queue touched since, a cast or a park each prepare the player their
+        // own way. On Main, where the player lives.
+        scope.launch(handle + Dispatchers.Main.immediate) {
+            if (!p.awaitReady()) return@launch
+            val recue = carriedIndex in carried.indices && needsRecue(
+                carriedOver = _queue.value === carried && _index.value == carriedIndex,
+                playerIndex = p.currentMediaItemIndex.value,
+                playerPlaying = p.isPlaying.value,
+                casting = isCasting,
+                parked = parked,
+            )
+            if (!recue) {
+                // The collectors above may have wanted a source changed while
+                // the handle was connecting; reresolveQueue waits for this.
+                reresolveQueue()
+                return@launch
+            }
+            android.util.Log.i("AmpNet", "reopened onto an empty player — cueing idx=$carriedIndex again")
+            pickedIndex = carriedIndex
+            rebuildQueueAt(p, carried, carriedIndex, carriedPositionMs)
+            // The service's player is a new one, so repeat is off in it
+            // whatever the screen shows. Not casting, so this is the player only.
+            setRepeat(_repeatMode.value)
+            p.pause()
         }
         _bound.value = true
     }
@@ -1023,6 +1104,17 @@ class PlaybackController(
             }
         }
         sessionTrackId = null
+        // A start still waiting on the server's decision would land on this
+        // handle after it is gone, and a released handle throws — on Main,
+        // taking the process and the playing service down with it. It is
+        // dropped: the track stays cued in the service for the next press.
+        // Buffering goes off only if that start was the reason for it; a
+        // stream already starting in the service still holds the rest back.
+        if (awaitedDecision != 0 && awaitedDecision == decisionGeneration) _buffering.value = false
+        decisionGeneration++
+        // The handle's own collectors go with it. The rest stay: see bindJob.
+        handleJob?.cancel()
+        handleJob = null
         player?.release()
         player = null
     }
@@ -1355,13 +1447,15 @@ class PlaybackController(
             start()
             return
         }
+        awaitedDecision = generation
         scope.launch {
             withTimeoutOrNull(STREAM_DECISION_TIMEOUT_MS) {
                 client.prepareStream(track.id, effectiveFormat(), sessionIdFor(track.id))
             }
             withContext(Dispatchers.Main.immediate) {
+                if (awaitedDecision == generation) awaitedDecision = 0
                 // Overtaken while the server was deciding — a pause, a stop,
-                // another track. That press outranks this one.
+                // another track, the handle released. That outranks this press.
                 if (generation == decisionGeneration) start()
             }
         }
@@ -1503,6 +1597,7 @@ class PlaybackController(
             }
             delay(SEEK_VERIFY_MS)
             if (generation != seekGeneration) return@launch
+            if (player !== p) return@launch
             if (_castRenderer.value != null) return@launch
             if (_queue.value.getOrNull(_index.value)?.id != track.id) return@launch
             val landed = p.positionMs.value + streamOffsetMs
@@ -1544,6 +1639,8 @@ class PlaybackController(
             ),
         )
         scope.launch(Dispatchers.Main.immediate) {
+            // Released while the URL was being built: a gone handle throws.
+            if (player !== p) return@launch
             // Intent, not the instantaneous state: isPlaying is false during a
             // rebuffer, and a seek issued in that window read it as "paused"
             // and left the replacement stream parked.
@@ -3114,6 +3211,11 @@ class PlaybackController(
     private fun reresolveQueue() {
         val p = player ?: return
         if (isCasting) return
+        // Not until the handle has connected. Before then there is no knowing
+        // whether the service kept this queue or came back empty after its
+        // idle limit, and edits sent ahead land on whichever it is — on an
+        // empty one they become the queue. bind asks again once connected.
+        if (p.availability.value != LightAudioPlayerAvailability.Ready) return
         val tracks = _queue.value
         if (tracks.isEmpty()) return
         val current = _index.value.coerceIn(0, tracks.lastIndex)
@@ -3124,6 +3226,7 @@ class PlaybackController(
         queuedSources = rebuilt
         // ExoPlayer's looper is Main and it enforces that — see restoreState.
         scope.launch(Dispatchers.Main.immediate) {
+            if (player !== p) return@launch
             if (current > 0) {
                 p.replaceRange(0, current, tracks.subList(0, current).map { it.toAudioItem() })
             }
@@ -3295,6 +3398,7 @@ class PlaybackController(
                     // The user may have moved on, paused, started a cast or
                     // got the sound back by other means while the question
                     // was out. Any of those outranks this recovery.
+                    if (player !== p) return@withContext
                     if (_queue.value.getOrNull(_index.value)?.id != track.id) return@withContext
                     if (isCasting || p.isPlaying.value) return@withContext
                     if (there && App.rulesNow().mayStream) {
@@ -3801,3 +3905,20 @@ class PlaybackController(
         private const val MAX_SAVED_QUEUE = 100
     }
 }
+
+/**
+ * Whether a reopen has to put the queue back into the player — see the
+ * re-cue at the end of [PlaybackController.bind].
+ *
+ * Only for a handle that connected holding nothing and making no sound, under
+ * the very queue and track the controller carried across. Silence is asked
+ * for as well as emptiness: a service making sound has a queue, and cueing
+ * over it would stop the music the user came back to.
+ */
+internal fun needsRecue(
+    carriedOver: Boolean,
+    playerIndex: Int,
+    playerPlaying: Boolean,
+    casting: Boolean,
+    parked: Boolean,
+): Boolean = carriedOver && playerIndex == NO_MEDIA_ITEM && !playerPlaying && !casting && !parked
