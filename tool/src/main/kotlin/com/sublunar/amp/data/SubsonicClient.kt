@@ -36,7 +36,16 @@ data class SubsonicConfig(
 }
 
 /** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */
-class SubsonicException(message: String, val status: Int? = null) : Exception(message)
+class SubsonicException(
+    message: String,
+    val status: Int? = null,
+    /**
+     * The server answered, but not in Subsonic's envelope — what Bandcamp sends
+     * for an endpoint it doesn't have (`{"error":true,"error_message":"bad
+     * version"}`), where a full server would say `status: failed` inside one.
+     */
+    val notSubsonic: Boolean = false,
+) : Exception(message)
 
 /**
  * Navidrome / Subsonic API client. Ported from the React Native `navidrome.ts`.
@@ -178,7 +187,7 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
             throw SubsonicException("Server returned HTTP ${response.status.value}.", response.status.value)
         }
         val body = json.decodeFromString<SubsonicEnvelope>(response.bodyAsText()).response
-            ?: throw SubsonicException("Unexpected response from server.")
+            ?: throw SubsonicException("Unexpected response from server.", notSubsonic = true)
         if (body.status != "ok") {
             throw SubsonicException(body.error?.message ?: "Request failed.")
         }
@@ -251,11 +260,29 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         return body.album?.song.orEmpty().map { it.toTrack(albumName, albumArtist, body.album?.coverArt) }
     }
 
+    /**
+     * What this account has liked, asked for with `getStarred2` — and, only
+     * where the server has no such endpoint, the older `getStarred`.
+     *
+     * Bandcamp is the one found so far: it implements `getStarred`, `star` and
+     * `unstar` but not `getStarred2`, and the sync asks for likes before
+     * anything else, so without this a Bandcamp library never loaded. Only the
+     * not-Subsonic answer falls back; a full server's own error (a failed
+     * status inside the envelope) is still an error, so Navidrome and gonic
+     * take the path they always did. The two replies differ only in the shape
+     * of their album entries, and the ids are all that is read here.
+     */
     override suspend fun getStarred(musicFolderId: String?): Starred {
-        val body = request("getStarred2", musicFolderParam(musicFolderId))
-        val songs = body.starred2?.song.orEmpty().map { it.id }.toSet()
-        val albums = body.starred2?.album.orEmpty().map { it.id }.toSet()
-        val artists = body.starred2?.artist.orEmpty().mapNotNull { it.name }.toSet()
+        val params = musicFolderParam(musicFolderId)
+        val starred = try {
+            request("getStarred2", params).starred2
+        } catch (e: SubsonicException) {
+            if (!e.notSubsonic) throw e
+            request("getStarred", params).starred
+        }
+        val songs = starred?.song.orEmpty().map { it.id }.toSet()
+        val albums = starred?.album.orEmpty().map { it.id }.toSet()
+        val artists = starred?.artist.orEmpty().mapNotNull { it.name }.toSet()
         return Starred(songIds = songs, albumIds = albums, artistNames = artists)
     }
 
