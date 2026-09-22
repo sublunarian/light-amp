@@ -2,8 +2,9 @@
 
 Amp ships today, but parts of it are built around the SDK because there is no
 supported route. Each item below is a workaround we would delete the day an API
-exists. Checked against `upstream/main` at `3df3c24` (SDK 0.1.1, 30 Aug 2026) —
-which is also the commit the `light-sdk` submodule is pinned to.
+exists. Checked against `upstream/main` at `3df3c24` (SDK 0.1.1, 30 Aug 2026).
+The `light-sdk` submodule is pinned to `15b1ca1` (18 Sep 2026); the commits
+between touch none of these gaps.
 
 ## Workarounds we would drop
 
@@ -90,6 +91,19 @@ minutes, where the spike held on indefinitely.
 - **Revert:** delete `cast/DlnaCast.kt` and the DLNA section of
   `PlaybackController.kt`.
 
+### Allow-listed libraries in the store build
+
+- **Need:** a dependency on the plugin's allow-list builds in Light's store
+  builder too.
+- **Now:** the builder runs offline, and its cache holds only what the SDK's
+  sample tool resolves. `material-icons-extended` is allow-listed but not in it,
+  so the 46 glyphs Amp uses are vendored in `ui/components/MaterialGlyphs.kt`
+  and held against the library by `MaterialGlyphsTest`.
+- **Would replace it:** a cache warmed with every allow-listed artifact, or an
+  allow-list that names only what the cache holds.
+- **Revert:** delete `MaterialGlyphs.kt`, and restore the `implementation` line
+  in `tool/build.gradle.kts` and the icon imports in `Primitives.kt`.
+
 ## Answered upstream, not yet adopted
 
 ### Detached audio — PR #148: ADOPTED, 31 Aug 2026
@@ -124,7 +138,7 @@ what the workaround costs. **These are requests, not blockers.**
 | **Sockets bound to a network** — e.g. `LightConnectivity.unmeteredNetwork(): Network?`, or a `SocketFactory` bound to it. | The rule can only be asked about the phone's *default* network. If the default moves from Wi-Fi to cellular between the check and `connect()`, one TLS handshake (a few KB) leaves on cellular before the request is refused. `Network.bindSocket` closes that race; it needs `ConnectivityManager`, which a tool is not given. | Check before DNS, before the socket, and again on the wire; close every socket when the rule closes. No request or response byte leaks; one handshake can. |
 | **The default-network callback in `observeNetworkStatus()`** | `registerNetworkCallback(request)` hears networks appear, change and vanish, but is not guaranteed to fire when the default moves from a weak Wi-Fi to cellular while both stay up — the one change that flips `isMetered`. | Re-read `currentStatus` every 3 s while playing or waiting, once a second while a download queue is held, and when the window regains focus. |
 | **A resume hook for screens** — the counterpart of `onAppPause()`. | A process frozen in the background hears of a network change late or not at all; returning to the tool is the moment to look again. | Compose's `LocalWindowInfo.isWindowFocused`. |
-| **Cleartext to LAN servers and to loopback** — a `networkSecurityConfig` a tool can opt into from `lighttool.toml`. | Self-hosted music servers on a LAN are normally plain `http://`. Store builds get only the generated manifest, so they cannot reach one. | `tool/src/release/AndroidManifest.xml`, which never reaches a store build. |
+| **Cleartext to LAN servers and to loopback** — a `networkSecurityConfig` a tool can opt into from `lighttool.toml`. | Self-hosted music servers on a LAN are normally plain `http://`. Store builds get only the generated manifest, so they cannot reach one. | `tool/src/release/AndroidManifest.xml`, which never reaches a store build. A store build says in words that it reaches only `https://` servers (`data/Cleartext.kt`). |
 
 ## Smaller additions
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Groundwork toward getting Amp into Light's Tool Library.
+
+### Fixed
+
+- Reopening Amp after a long pause could leave the play button doing nothing.
+- Leaving Amp just after starting a song could crash it.
+
 ## 0.7.0
 
 ### Added

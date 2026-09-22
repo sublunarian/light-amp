@@ -30,6 +30,9 @@ If a change isn't marked, it isn't ours.
   more than a patch without one.
 - **Make it build.** `./gradlew :tool:compileDebugKotlin` at minimum; `./gradlew
   check` if you have touched anything shared.
+- **Don't add to what stops a store build.** `scripts/store-build-check.sh`
+  builds Amp the way Light's store builder will and lists what stands in its
+  way. A change shouldn't make that list longer.
 - **Try it on a phone.** The LP3's panel, its greyscale filter and its sandbox
   all behave differently from an emulator, and most of the interesting bugs in
   this app only appeared on hardware.
