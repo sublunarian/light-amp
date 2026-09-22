@@ -11,8 +11,8 @@ import androidx.compose.ui.unit.dp
  * Icons set has no equivalent of.
  *
  * Built from Google's own path data rather than drawn by hand: Symbols are a
- * different artifact from the `material-icons-extended` the rest of the app
- * pulls from, and adding that dependency for one glyph would pull thousands.
+ * different set from the Material Icons the rest of the app vendors in
+ * MaterialGlyphs.kt, and adding a dependency for one glyph would pull thousands.
  * The source viewBox is 0 -960 960 960 (Symbols' own y-up coordinates), so the
  * vector declares those bounds and the path is used unchanged.
  */

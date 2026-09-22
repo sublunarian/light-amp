@@ -109,10 +109,9 @@ kotlin {
 dependencies {
     implementation(project(":sdk:client"))
 
-    // Exact Material icons matching the original app (album, music-note,
-    // record-voice-over, graphic-eq, …) with per-use tint control.
-    implementation(platform(libs.compose.bom))
-    implementation("androidx.compose.material:material-icons-extended")
+    // The Material icons Amp draws are vendored in ui/components/MaterialGlyphs.kt
+    // rather than taken from material-icons-extended: that artifact is on Light's
+    // allow-list but not in their store builder's offline cache.
 
     // Networking (Subsonic API over ktor + okhttp engine)
     implementation(libs.ktor.client.core)
@@ -135,6 +134,13 @@ dependencies {
 
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.kotlin.test)
+
+    // Only so MaterialGlyphsTest can hold the vendored glyphs against the real
+    // ones. It is on no release classpath, and although Light's plugin resolves
+    // test configurations too, it passes over one it can't resolve offline — so
+    // a store build without the artifact in its cache is unaffected.
+    testImplementation(platform(libs.compose.bom))
+    testImplementation("androidx.compose.material:material-icons-extended")
 }
 
 /**
