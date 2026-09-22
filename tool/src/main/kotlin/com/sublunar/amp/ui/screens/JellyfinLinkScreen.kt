@@ -78,10 +78,12 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                 item {
                     // Jellyfin allows an empty password, and a server set up that
                     // way is a normal thing to point at — so this is not required.
+                    // Seen while typed and never again, so the keyboard opens
+                    // empty; what is submitted replaces it, and nothing is none.
                     TextRow(
                         title = "Password",
                         value = if (password.isBlank()) "Leave blank if none" else "••••••••",
-                    ) { edit("Password", password) { password = it } }
+                    ) { edit("Password", "") { password = it } }
                 }
                 item {
                     TextRow(title = if (checking) "Checking…" else "Sign In") {

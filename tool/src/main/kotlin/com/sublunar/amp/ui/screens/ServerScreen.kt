@@ -162,13 +162,11 @@ class ServerScreen(
                             newPass != null -> "$dots · changed"
                             else -> dots
                         },
-                        // Always opens empty and masks as you type. Submitting
-                        // nothing leaves the stored password alone.
+                        // Light's model: a password is seen while it is typed and
+                        // never again, so the keyboard always opens empty.
+                        // Submitting nothing leaves the stored password alone.
                         onClick = {
-                            navigateTo<String?>(
-                                { PasswordEntryScreen(it, title = "New password") },
-                                resultCallback = { text -> if (text != null) newPass = text },
-                            )
+                            edit("New password", "") { if (it.isNotEmpty()) newPass = it }
                         },
                     )
                 }

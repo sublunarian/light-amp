@@ -1,13 +1,11 @@
 package com.sublunar.amp.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.ui.text.font.FontWeight
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.components.AppText
-import com.sublunar.amp.ui.components.TextRole
+import com.sublunar.amp.ui.components.ChoiceButton
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,7 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.ui.PlayerTheme
-import com.sublunar.amp.ui.components.appClickable
 
 /**
  * First run: pick where the music comes from.
@@ -59,10 +56,10 @@ fun WelcomeContent(
                     .padding(bottom = px(80)),
             )
 
-            SourceChoice("SUBSONIC SERVER", onSubsonic)
-            SourceChoice("PLEX SERVER", onPlex)
-            SourceChoice("JELLYFIN SERVER", onJellyfin)
-            SourceChoice("MUSIC ON THIS PHONE", onLocal)
+            ChoiceButton("SUBSONIC SERVER", onSubsonic)
+            ChoiceButton("PLEX SERVER", onPlex)
+            ChoiceButton("JELLYFIN SERVER", onJellyfin)
+            ChoiceButton("MUSIC ON THIS PHONE", onLocal)
 
             Spacer(Modifier.height(px(60)))
 
@@ -81,27 +78,5 @@ fun WelcomeContent(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-    }
-}
-
-/** One of the three, all drawn identically so none reads as the default. */
-@Composable
-private fun SourceChoice(label: String, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .appClickable(onClick = onClick)
-            .padding(vertical = px(40)),
-        contentAlignment = Alignment.Center,
-    ) {
-        // Light's Button tracking at its Button size — but at the Regular
-        // weight: the style asks for Medium, which the phone lacks, and
-        // AppText would round it up to Bold, which shouts.
-        AppText(
-            label,
-            pxSp(LightType.COPY_PX),
-            role = TextRole.Button,
-            weight = FontWeight.Normal,
-        )
     }
 }

@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.ui.LightType
@@ -313,6 +314,32 @@ private const val MENU_PAD_PX = 32
 
 /** Between a leading glyph and the text: one unit. */
 private const val MENU_GAP_PX = 40
+
+/**
+ * One of Light's centred verbs: a word in capitals, on its own line, that does
+ * its thing when tapped. The first-run source list, and the Copy / Paste /
+ * Clear a held field offers.
+ */
+@Composable
+fun ChoiceButton(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .appClickable(onClick = onClick)
+            .padding(vertical = px(40)),
+        contentAlignment = Alignment.Center,
+    ) {
+        // Light's Button tracking at its Button size — but at the Regular
+        // weight: the style asks for Medium, which the phone lacks, and
+        // AppText would round it up to Bold, which shouts.
+        AppText(
+            label,
+            pxSp(LightType.COPY_PX),
+            role = TextRole.Button,
+            weight = FontWeight.Normal,
+        )
+    }
+}
 
 @Composable
 fun EmptyState(text: String, modifier: Modifier = Modifier) {

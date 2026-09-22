@@ -104,6 +104,20 @@ minutes, where the spike held on indefinitely.
 - **Revert:** delete `MaterialGlyphs.kt`, and restore the `implementation` line
   in `tool/build.gradle.kts` and the icon imports in `Primitives.kt`.
 
+### Copy and paste in text entry — light-sdk#45, in progress at Light
+
+- **Need:** paste what was copied in LightOS (Notes, Messages) into a field —
+  Bandcamp's generated logins are too long to type — through LightOS's own
+  hold-the-text menu of Copy, Paste and Clear.
+- **Now:** LightOS keeps its own clipboard and no service method reaches it, so
+  Amp offers Clear alone. To draw even that, `TextEntryScreen` carries its own
+  copy of `LightTextInputEditor`'s layout, whose text area takes every touch and
+  offers no hold; the menu sits in `LightEmbeddedLp3Keyboard`'s `overlay`.
+- **Would replace it:** #45 — copy/paste in the SDK's text inputs and to and
+  from LightOS. Light is doing it internally and asks for no duplicates or PRs.
+- **Revert:** once the stock editor has it, go back to `LightTextInputEditor` in
+  `TextEntryScreen` and drop `TextEditor`, `EditMenu` and the helpers after them.
+
 ## Answered upstream, not yet adopted
 
 ### Detached audio — PR #148: ADOPTED, 31 Aug 2026

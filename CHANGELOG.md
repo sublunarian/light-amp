@@ -4,6 +4,8 @@
 
 ### Changed
 
+- While typing, hold the text to clear it, as in Notes.
+- Passwords show while you type them and stay hidden after.
 - Groundwork toward getting Amp into Light's Tool Library.
 
 ### Fixed

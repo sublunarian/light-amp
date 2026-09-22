@@ -22,11 +22,11 @@ import com.thelightphone.sdk.ui.keyboard.LightEmbeddedLp3Keyboard
  *
  * Nothing in the SDK is patched or worked around to do this. The one thing not
  * reused is `TextInputKeyboardCallback`, which is `internal`, so
- * [SearchKeyboardCallback] below implements the same public interface instead.
+ * [EditingKeyboardCallback] below implements the same public interface instead.
  */
 @Composable
 fun SearchKeyboard(state: TextFieldState, onReturn: () -> Unit) {
-    val callback = remember(state) { SearchKeyboardCallback(state, onReturn) }
+    val callback = remember(state) { EditingKeyboardCallback(state, onReturn = onReturn) }
     val options = rememberPhoneKeyboardOptions()
     // Held in remember rather than through viewModel(): the tool doesn't carry
     // lifecycle-viewmodel-compose, and this is a state holder for a view that
@@ -42,18 +42,20 @@ fun SearchKeyboard(state: TextFieldState, onReturn: () -> Unit) {
 }
 
 /**
- * What the keys do to the query.
+ * What the keys do to the text — the search query here, and every field typed
+ * in [TextEntryScreen].
  *
  * A port of the SDK's own `TextInputKeyboardCallback`, which is `internal` and so
- * cannot be reused from a tool. Single-line throughout — a search is one line —
- * so Return ends the typing rather than inserting a break.
+ * cannot be reused from a tool. On a [singleLine] field Return ends the typing
+ * rather than inserting a break.
  *
  * **If the SDK's editing behaviour changes, this will not follow.** It is a copy
  * of a private thing, which is the one real cost of hosting the keyboard here;
  * the alternative was to make that class public, which means patching the SDK.
  */
-private class SearchKeyboardCallback(
+internal class EditingKeyboardCallback(
     private val state: TextFieldState,
+    private val singleLine: Boolean = true,
     private val onReturn: () -> Unit,
 ) : Lp3RepeatableKeyboardCallback {
 
@@ -71,7 +73,7 @@ private class SearchKeyboardCallback(
         when (key) {
             // Surrogate-aware, or deleting an emoji leaves half of one behind.
             SpecialKey.Backspace -> deleteBefore(surrogateAwareCount())
-            SpecialKey.Return -> onReturn()
+            SpecialKey.Return -> if (singleLine) onReturn() else insert("\n")
             else -> Unit
         }
     }
