@@ -152,6 +152,13 @@ data class MusicSource(
      * against the next one instead.
      */
     val connections: List<String> = emptyList(),
+    /**
+     * What this server turned out to implement, learned after a sync and kept
+     * until the server says it is a different version — see [ServerFeatures].
+     * Null until it has been asked, which reads as "everything", so a source
+     * saved before this existed behaves exactly as it did.
+     */
+    val features: ServerFeatures? = null,
 ) {
     /**
      * The formats this source can actually serve, asked of the client that talks
@@ -182,7 +189,17 @@ data class MusicSource(
      */
     val wifiFormat: StreamFormat get() = supported(streamFormatId)
     val cellularFormat: StreamFormat get() = supported(cellularFormatId ?: streamFormatId)
-    val downloadFormat: StreamFormat get() = supported(downloadFormatId)
+    /**
+     * Downloading quality. Where the server has no `download` call, a stored
+     * choice of the original file can't be honoured and can't be left to fail
+     * either, so it reads as the default — the one place the fallback goes to
+     * something smaller rather than to the original, because the original is
+     * the thing that isn't there.
+     */
+    val downloadFormat: StreamFormat get() {
+        val wanted = supported(downloadFormatId)
+        return if (wanted in downloadFormats || downloadFormats.isEmpty()) wanted else StreamFormat.DEFAULT
+    }
 
     val offlineMode: OfflineMode
         get() = offlineModeName?.let { name ->
@@ -240,14 +257,27 @@ data class MusicSource(
      * are missing opposite halves of the same idea.
      */
     val supportsLikes: Boolean get() = kind == SourceKind.SUBSONIC || kind == SourceKind.JELLYFIN
-    val supportsRatings: Boolean get() = kind == SourceKind.SUBSONIC || kind == SourceKind.PLEX
+
+    /**
+     * Subsonic's own `setRating`, which not every server that speaks Subsonic
+     * has — asked of this one rather than assumed of the protocol.
+     */
+    val supportsRatings: Boolean get() = when (kind) {
+        SourceKind.SUBSONIC -> implements(ServerFeatures.SET_RATING)
+        SourceKind.PLEX -> true
+        else -> false
+    }
 
     /**
      * A radio seeded by one song — see [MusicServer.getSimilarSongs]. Every
      * server has one: Subsonic's `getSimilarSongs`, Plex's stations, Jellyfin's
      * instant mix. The phone's own files have no one to ask.
      */
-    val supportsRadio: Boolean get() = kind != SourceKind.LOCAL
+    val supportsRadio: Boolean get() = when (kind) {
+        SourceKind.LOCAL -> false
+        SourceKind.SUBSONIC -> implements(ServerFeatures.SIMILAR_SONGS)
+        else -> true
+    }
     /** The phone keeps its own, as m3u8 files — see [LocalPlaylists]. */
     val supportsPlaylists: Boolean get() = true
 
@@ -263,6 +293,44 @@ data class MusicSource(
 
     /** Downloading only means something when the audio is somewhere else. */
     val supportsDownloads: Boolean get() = kind != SourceKind.LOCAL
+
+    /**
+     * Whether a download can keep the original file.
+     *
+     * That is `download`'s job and no other endpoint's: streaming the same song
+     * is a *playback* request, which a server may count as a play — see
+     * SubsonicClient.downloadUrl. A server without it can still download, in
+     * one of the transcoded qualities, so the quality is what narrows rather
+     * than downloading itself.
+     */
+    val supportsOriginalDownload: Boolean get() = when (kind) {
+        SourceKind.SUBSONIC -> implements(ServerFeatures.DOWNLOAD)
+        else -> true
+    }
+
+    /**
+     * Whether the server can be asked to go and look for new files.
+     *
+     * Missing and refusing are different things and the Refresh row says so:
+     * a server that has the call but won't run it for this account leaves the
+     * library stale, which is worth saying; one without the call at all keeps
+     * its library current by itself and has nothing to refuse.
+     */
+    val supportsServerScan: Boolean get() = when (kind) {
+        SourceKind.SUBSONIC -> implements(ServerFeatures.SCAN_STATUS)
+        SourceKind.LOCAL -> false
+        else -> true
+    }
+
+    /** What this source knows it cannot do; unasked reads as "everything". */
+    private fun implements(endpoint: String): Boolean = features?.has(endpoint) ?: true
+
+    /**
+     * The qualities a download here can be kept in: what can be streamed, less
+     * the original where the server has no call that hands one over.
+     */
+    val downloadFormats: List<StreamFormat> get() =
+        if (supportsOriginalDownload) streamFormats else streamFormats - StreamFormat.RAW
 
     /**
      * Separate libraries to browse: Subsonic's music folders and Plex's library

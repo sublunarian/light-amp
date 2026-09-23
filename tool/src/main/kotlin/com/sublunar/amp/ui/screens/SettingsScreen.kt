@@ -543,7 +543,9 @@ class SourceDownloadFormatScreen(
         val current = source?.downloadFormat ?: StreamFormat.DEFAULT
         ListScreen(onBack = { goBack() }, title = "Download quality") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                items(source?.streamFormats ?: StreamFormat.entries.toList()) { format ->
+                // Not streamFormats: a server with no `download` call can still
+                // download, but never the original file — see downloadFormats.
+                items(source?.downloadFormats ?: StreamFormat.entries.toList()) { format ->
                     TextRow(
                         title = formatLabel(format),
                         onClick = {

@@ -1263,6 +1263,7 @@ class LibraryRepository(
                 lastSyncedMs = finishedAt,
             )
             runCatching { settings.activeSource.first()?.id?.let { settings.setLastSyncedMs(it, finishedAt) } }
+            learnServerFeatures(dao, client, source)
             onSyncSucceeded?.invoke()
         } catch (e: CancellationException) {
             // A library switch cancelled this sync; don't record it as an error.
@@ -1299,6 +1300,32 @@ class LibraryRepository(
      * cache of something already local. Likes, ratings and play counts have
      * nowhere to live on a local source, so there is nothing to reconcile.
      */
+    /**
+     * Ask the server what it implements, once a sync has just proved it answers.
+     *
+     * Here rather than at Save for two reasons: the probes that need a real song
+     * need a library first, and a server that has just served a whole sync is
+     * known to be reachable and logged in — so an endpoint it calls missing is
+     * missing, not a proxy or a dead link talking. Anything thrown leaves what
+     * was known alone. See [ServerFeatures].
+     */
+    private suspend fun learnServerFeatures(
+        dao: LibraryDao,
+        client: MusicServer?,
+        source: MusicSource?,
+    ) {
+        if (client == null || source == null) return
+        runCatching {
+            val learned = client.probeFeatures(source.features, dao.anyTrackId())
+            if (learned == null || learned == source.features) return@runCatching
+            // Re-read the source: a sync is long, and what it was started with
+            // may have been edited since — only the features are ours to write.
+            val current = settings.sources.first().firstOrNull { it.id == source.id }
+                ?: return@runCatching
+            settings.saveSource(current.copy(features = learned))
+        }
+    }
+
     private suspend fun runLocalScan(dao: LibraryDao, sourceId: String) {
         _syncState.value = _syncState.value.copy(
             syncing = true,
@@ -1546,18 +1573,29 @@ class LibraryRepository(
             previous?.cancelAndJoin()
             val client = serverClient.value
             val folder = libraryId.first()
-            val asked = client != null &&
-                runCatching { client.startServerScan(folder) }.getOrDefault(false)
+            // A server already known to have no scan call isn't asked at all —
+            // see MusicSource.supportsServerScan. Refreshing still fetches the
+            // library, which for such a server is the whole of what a refresh
+            // ever was.
+            val canScan = settings.activeSource.first()?.supportsServerScan ?: true
+            val outcome = if (client != null && canScan) {
+                runCatching { client.startServerScan(folder) }
+                    .getOrDefault(ScanRequest.REFUSED)
+            } else {
+                ScanRequest.ABSENT
+            }
+            val asked = outcome == ScanRequest.STARTED
             // Said plainly rather than left to look like an empty scan. On Plex
             // this is what a library someone shared with you does — scanning
-            // belongs to whoever owns the server.
-            scanRefused = client != null && !asked
+            // belongs to whoever owns the server. A server with no such call
+            // has refused nothing, so it says nothing.
+            scanRefused = outcome == ScanRequest.REFUSED
             if (asked) {
                 var waited = 0L
                 while (waited < SCAN_WAIT_MS) {
                     delay(SCAN_POLL_MS)
                     waited += SCAN_POLL_MS
-                    val busy = runCatching { client.serverScanning(folder) }.getOrDefault(false)
+                    val busy = runCatching { client?.serverScanning(folder) }.getOrDefault(false) == true
                     if (!busy) break
                 }
             }

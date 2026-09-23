@@ -4,6 +4,9 @@
 
 ### Changed
 
+- A Subsonic server is now offered only what it actually implements: ratings,
+  song radio and keeping the original file are asked of the server itself and
+  hidden where it hasn't got them. Bandcamp has none of the three.
 - While typing, hold the text to clear it, as in Notes.
 - Passwords show while you type them and stay hidden after.
 - Groundwork toward getting Amp into Light's Tool Library.

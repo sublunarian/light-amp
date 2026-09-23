@@ -6,6 +6,11 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
 import java.net.URLEncoder
 import java.time.Instant
+import io.ktor.client.request.header
+import io.ktor.client.request.prepareGet
+import io.ktor.http.HttpHeaders
+import io.ktor.http.contentType
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlin.random.Random
 
@@ -36,6 +41,9 @@ data class SubsonicConfig(
 }
 
 /** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */
+/** An id no server can hold, for a probe that must not touch anything real. */
+private const val PROBE_ID = "amp-capability-probe"
+
 class SubsonicException(
     message: String,
     val status: Int? = null,
@@ -45,7 +53,17 @@ class SubsonicException(
      * version"}`), where a full server would say `status: failed` inside one.
      */
     val notSubsonic: Boolean = false,
-) : Exception(message)
+) : Exception(message) {
+    /**
+     * The server has no such endpoint — as opposed to having one and refusing.
+     *
+     * A Subsonic reply of any kind, an error included, means the endpoint is
+     * there; this is the other case: an answer that isn't Subsonic at all, or
+     * the HTTP status of a route that doesn't exist. Nothing about the network
+     * or the login reaches here — those throw something else entirely.
+     */
+    val endpointMissing: Boolean get() = notSubsonic || status == 404 || status == 501
+}
 
 /**
  * Navidrome / Subsonic API client. Ported from the React Native `navidrome.ts`.
@@ -186,7 +204,16 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         if (!response.status.isSuccess()) {
             throw SubsonicException("Server returned HTTP ${response.status.value}.", response.status.value)
         }
-        val body = json.decodeFromString<SubsonicEnvelope>(response.bodyAsText()).response
+        val text = response.bodyAsText()
+        // Not JSON at all (a proxy's HTML, a 200 from a server that routes
+        // unknown paths to a page) is as much "not a Subsonic answer" as JSON
+        // in the wrong shape, and reads the same to everything above.
+        val envelope = try {
+            json.decodeFromString<SubsonicEnvelope>(text)
+        } catch (e: SerializationException) {
+            throw SubsonicException("Unexpected response from server.", notSubsonic = true)
+        }
+        val body = envelope.response
             ?: throw SubsonicException("Unexpected response from server.", notSubsonic = true)
         if (body.status != "ok") {
             throw SubsonicException(body.error?.message ?: "Request failed.")
@@ -198,6 +225,85 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
     override suspend fun ping() {
         request("ping", via = quick)
     }
+
+    /**
+     * What this server implements, asked once and kept — see [ServerFeatures].
+     *
+     * Every probe is a well-formed request that cannot change anything and does
+     * not need to succeed, because only the shape of the answer is read. The
+     * radio and download probes name a song the library already holds and only
+     * read; the ratings probe rates a song id no server can have, so a server
+     * that implements it answers "not found" — proof enough — and has nothing
+     * to act on. Nothing is asked of a server whose [known] answers still match
+     * what it calls itself.
+     *
+     * Returns [known] unchanged when there is nothing new to learn, and null
+     * when the server couldn't be reached — an unreachable server must never
+     * read as one missing everything, so the ping goes first and a throw from
+     * anywhere here leaves what was known alone.
+     */
+    override suspend fun probeFeatures(known: ServerFeatures?, sampleTrackId: String?): ServerFeatures? {
+        // Doubles as the guard the whole thing rests on: the address and login
+        // are working right now, so anything answering "no such endpoint" below
+        // is the server saying so, not a proxy in front of it or a dead link.
+        val server = request("ping", via = quick)
+        val tag = listOfNotNull(server.version, server.type, server.serverVersion)
+            .joinToString("/")
+            .ifBlank { "unknown" }
+        val asked = known != null &&
+            known.checkedVersion == tag &&
+            known.generation == ServerFeatures.GENERATION
+        if (asked) return known
+
+        val missing = mutableListOf<String>()
+        if (!implements(ServerFeatures.SCAN_STATUS, emptyList())) {
+            missing += ServerFeatures.SCAN_STATUS
+        }
+        if (!implements(ServerFeatures.SET_RATING, listOf("id" to PROBE_ID, "rating" to "1"))) {
+            missing += ServerFeatures.SET_RATING
+        }
+        if (sampleTrackId != null) {
+            val similar = listOf("id" to sampleTrackId, "count" to "1")
+            if (!implements(ServerFeatures.SIMILAR_SONGS, similar)) {
+                missing += ServerFeatures.SIMILAR_SONGS
+            }
+            if (!implementsDownload(sampleTrackId)) missing += ServerFeatures.DOWNLOAD
+        }
+        android.util.Log.i("AmpSync", "features of $tag: missing ${missing.ifEmpty { listOf("nothing") }}")
+        return ServerFeatures(
+            checkedVersion = tag,
+            missing = missing,
+            generation = ServerFeatures.GENERATION,
+        )
+    }
+
+    /** True when the server has this endpoint at all, whatever it answers. */
+    private suspend fun implements(endpoint: String, params: List<Pair<String, String>>): Boolean =
+        try {
+            request(endpoint, params, via = quick)
+            true
+        } catch (e: SubsonicException) {
+            !e.endpointMissing
+        }
+
+    /**
+     * `download` without downloading: the first byte, and even that is refused
+     * by servers that would rather send the whole file, which is why the reply's
+     * own type settles it. Bandcamp answers this one in JSON, which no download
+     * of a song ever is.
+     */
+    private suspend fun implementsDownload(trackId: String): Boolean =
+        // prepareGet/execute rather than get(): the headers answer the question,
+        // and this way the body is never read — a server that ignores the range
+        // and starts sending a whole song is hung up on instead of downloaded.
+        quick.prepareGet(restUrl("download", listOf("id" to trackId))) {
+            header(HttpHeaders.Range, "bytes=0-0")
+        }.execute { response ->
+            when {
+                response.status.value == 404 || response.status.value == 501 -> false
+                else -> response.contentType()?.match("application/json") != true
+            }
+        }
 
     /** The server's libraries (Navidrome exposes each as a music folder). */
     override suspend fun getMusicFolders(): List<MusicFolder> {
@@ -308,8 +414,18 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
      */
     override val streamFormats: List<StreamFormat> get() = STREAM_FORMATS
 
-    override suspend fun startServerScan(musicFolderId: String?): Boolean =
-        runCatching { request("startScan") }.isSuccess
+    override suspend fun startServerScan(musicFolderId: String?): ScanRequest =
+        try {
+            request("startScan")
+            ScanRequest.STARTED
+        } catch (e: SubsonicException) {
+            // Told apart at the moment of asking, so the first sync of a new
+            // server is already right rather than waiting on what the probes
+            // learn at the end of it — see ServerFeatures.
+            if (e.endpointMissing) ScanRequest.ABSENT else ScanRequest.REFUSED
+        } catch (e: Exception) {
+            ScanRequest.REFUSED
+        }
 
     override suspend fun serverScanning(musicFolderId: String?): Boolean =
         runCatching { request("getScanStatus").scanStatus?.scanning }.getOrNull() ?: false

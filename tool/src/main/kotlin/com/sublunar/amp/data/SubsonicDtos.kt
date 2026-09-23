@@ -18,6 +18,9 @@ data class SubsonicEnvelope(
 data class SubsonicBody(
     val status: String = "failed",
     val version: String? = null,
+    /** OpenSubsonic servers name themselves and their own version in every reply. */
+    val type: String? = null,
+    val serverVersion: String? = null,
     val error: SubsonicError? = null,
     val albumList2: AlbumListDto? = null,
     val album: AlbumDto? = null,

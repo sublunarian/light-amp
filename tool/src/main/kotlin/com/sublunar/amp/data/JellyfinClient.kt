@@ -266,8 +266,8 @@ class JellyfinClient(
      * refusal is reported rather than swallowed, because a silent one looks
      * exactly like a scan that ran and found nothing.
      */
-    override suspend fun startServerScan(musicFolderId: String?): Boolean =
-        send("POST", "/Library/Refresh")
+    override suspend fun startServerScan(musicFolderId: String?): ScanRequest =
+        if (send("POST", "/Library/Refresh")) ScanRequest.STARTED else ScanRequest.REFUSED
 
     override suspend fun serverScanning(musicFolderId: String?): Boolean = runCatching {
         fetch<List<JellyfinTask>>("/ScheduledTasks")

@@ -448,6 +448,9 @@ class SourceDetailScreen(
                                     relativeTime(sync.lastSyncedMs)
                             sync.lastSyncedMs > 0L -> "Last synced ${relativeTime(sync.lastSyncedMs)}"
                             source.kind == SourceKind.LOCAL -> "Rescan this phone's music"
+                            // A server with no scan call of its own is only ever
+                            // read from — see MusicSource.supportsServerScan.
+                            !source.supportsServerScan -> "Fetch the library again"
                             else -> "Scan the server, then refresh"
                         },
                         onClick = { if (!sync.syncing) App.library.scanAndSyncInBackground() },

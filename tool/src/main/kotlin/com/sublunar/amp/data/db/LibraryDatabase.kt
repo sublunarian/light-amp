@@ -196,6 +196,10 @@ interface LibraryDao {
     @Query("SELECT * FROM tracks WHERE id IN (:ids)")
     suspend fun tracksByIds(ids: List<String>): List<TrackEntity>
 
+    /** Any one song, for the probes that need a real id — see ServerFeatures. */
+    @Query("SELECT id FROM tracks LIMIT 1")
+    suspend fun anyTrackId(): String?
+
     @Query("SELECT COUNT(*) FROM tracks")
     suspend fun trackCount(): Int
 
