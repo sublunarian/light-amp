@@ -104,6 +104,25 @@ minutes, where the spike held on indefinitely.
 - **Revert:** delete `MaterialGlyphs.kt`, and restore the `implementation` line
   in `tool/build.gradle.kts` and the icon imports in `Primitives.kt`.
 
+### Releasing a player handle mid-connect kills the app
+
+- **Need:** letting go of the detached player when the user leaves, at any
+  moment, without taking the process down.
+- **Now:** `LightAudioPlayer.release()` cancels a pending media3 connection and
+  then, if that connection completed in the same instant, releases the
+  controller media3 has already released. media3 unbinds its session service
+  twice and the `IllegalArgumentException` lands on the main looper from a
+  posted runnable, where no caller can catch it. Amp saw it once
+  (2026-09-22 10:18; `d3.h0` decoded from the R8 mapping to
+  `MediaControllerImplBase$SessionServiceConnection`). Amp releases a handle
+  that is still connecting only once it has connected —
+  `PlaybackController.releaseWhenConnected`.
+- **Would replace it:** the SDK guarding its own late release (a `runCatching`
+  around `connectedPlayer.release()` in `connectPlayer`, or not releasing a
+  controller whose future it just cancelled).
+- **Revert:** call `player?.release()` straight from `unbind()` again and delete
+  `releaseWhenConnected`.
+
 ### Copy and paste in text entry — light-sdk#45, in progress at Light
 
 - **Need:** paste what was copied in LightOS (Notes, Messages) into a field —
