@@ -1,23 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.7.1
 
 ### Changed
 
-- A Subsonic server is now offered only what it actually implements: ratings,
-  song radio and keeping the original file are asked of the server itself and
-  hidden where it hasn't got them. Bandcamp has none of the three.
 - While typing, hold the text to clear it, as in Notes.
 - Passwords show while you type them and stay hidden after.
+- Amp offers only what your server actually supports: ratings, song radio and
+  original-quality downloads are hidden where a server hasn't got them.
 - Groundwork toward getting Amp into Light's Tool Library.
 
 ### Fixed
 
-- A Bandcamp library never loaded ("Unexpected response from server").
-- Saving a server with the wrong password could look like it had worked.
-- Leaving Amp in the moment playback was starting could kill it.
+- Leaving Amp just as a song started could kill it.
 - Reopening Amp after a long pause could leave the play button doing nothing.
-- Leaving Amp just after starting a song could crash it.
+- Saving a server with the wrong password could look like it had worked.
+- A Bandcamp library never loaded ("Unexpected response from server").
 
 ## 0.7.0
 
