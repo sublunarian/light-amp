@@ -14,6 +14,7 @@
 ### Fixed
 
 - A Bandcamp library never loaded ("Unexpected response from server").
+- Saving a server with the wrong password could look like it had worked.
 - Reopening Amp after a long pause could leave the play button doing nothing.
 - Leaving Amp just after starting a song could crash it.
 

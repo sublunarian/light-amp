@@ -252,10 +252,26 @@ class ServerScreen(
             val config = SubsonicConfig(candidate, username, password)
             val client = SubsonicClient(config)
             val ok = runCatching { client.ping() }
+            // `ping` is not proof of a login. Bandcamp answers it "ok" whatever
+            // is sent, so a mistyped password saved cleanly and only surfaced
+            // later as a library that wouldn't load — and its credentials are
+            // generated, forty characters of them, which is exactly the kind
+            // there is a typo in. So the address is settled by the ping and the
+            // account by a read that needs one.
+            val refused = if (ok.isSuccess) {
+                runCatching { client.getMusicFolders() }.exceptionOrNull()
+            } else {
+                null
+            }
             client.close()
             if (ok.isFailure) {
                 lastError = ok.exceptionOrNull()
                 continue
+            }
+            // A server too small to have that call can't be checked this way,
+            // and isn't asked to prove anything it hasn't got.
+            if (refused != null && (refused as? SubsonicException)?.endpointMissing != true) {
+                return SaveOutcome.Said(refusedLogin(refused))
             }
             // A different address or account may mean a different library, so the
             // cached rows can't be trusted; the same server with a new password can.
@@ -296,6 +312,28 @@ private sealed interface SaveOutcome {
 
     /** A source was added and made active — the form has nothing left to say. */
     data object Added : SaveOutcome
+}
+
+/**
+ * The address answered and the account did not.
+ *
+ * Where the server says which it is — Subsonic's own "Wrong username or
+ * password", an HTTP 401 — that is what the user reads. Where it doesn't, and
+ * Bandcamp doesn't (a bare HTTP 500 with nothing in it), the sentence says only
+ * what is actually known: the address is fine and the login is what was
+ * refused. Naming the password outright would be a guess.
+ */
+private fun refusedLogin(error: Throwable): String {
+    val said = explain(error)
+    val names = said.contains("username", ignoreCase = true) ||
+        said.contains("password", ignoreCase = true) ||
+        said.contains("401") ||
+        said.contains("403")
+    return if (names) {
+        said
+    } else {
+        "That address answered, but not for this account. Check the username and password."
+    }
 }
 
 /**
