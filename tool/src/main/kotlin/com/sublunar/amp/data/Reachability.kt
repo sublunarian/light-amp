@@ -41,15 +41,31 @@ class Reachability(
     private val pinging = Mutex()
     private var retry: Job? = null
 
+    /**
+     * Pings in a row that a server last known to be there failed to answer.
+     *
+     * One is not enough to call it gone. On cellular the first request after a
+     * switch or a wake pays for the radio coming up, the name and the TLS
+     * handshake, and regularly runs past [PING_TIMEOUT_MS] for a server that
+     * answers the next ping in three seconds. Read as "gone", that one slow
+     * ping narrowed the library to downloads and parked streams for as long as
+     * the retry took — the flicker that made Low Data feel unpredictable.
+     */
+    private var misses = 0
+
     /** Something just proved it either way: a sync that finished, a request that was answered. */
     fun report(reachable: Boolean) {
-        if (reachable) retry?.cancel()
+        if (reachable) {
+            retry?.cancel()
+            misses = 0
+        }
         _reachable.value = reachable
     }
 
     /** A new source: nothing is known about it, so assume it is there and find out. */
     fun reset() {
         retry?.cancel()
+        misses = 0
         _reachable.value = true
         check(delayMs = 0L)
     }
@@ -89,6 +105,7 @@ class Reachability(
             // and the rules already keep anything from being sent. Without this
             // a "gone" learnt on a dying Wi-Fi survived the switch to a mode
             // that may use cellular, with nothing left to question it.
+            misses = 0
             _reachable.value = true
             return null
         }
@@ -120,7 +137,22 @@ class Reachability(
             answeredBy(e)
         }
         log("ping → ${answered ?: "no verdict"} in ${System.nanoTime() / 1_000_000 - askedAtMs}ms ($why)")
-        if (answered != null) _reachable.value = answered
+        when (answered) {
+            true -> {
+                misses = 0
+                _reachable.value = true
+            }
+            // The verdict is still returned as it was — a caller deciding
+            // what to do with one stalled track should hear "no" — but the
+            // state every screen reads waits for a second miss. The retry in
+            // [check] is what asks again.
+            false -> if (_reachable.value && ++misses < MISSES_TO_GONE) {
+                log("first miss, holding \"reachable\" until the retry")
+            } else {
+                _reachable.value = false
+            }
+            null -> {}
+        }
         answered
     }
 
@@ -129,6 +161,8 @@ class Reachability(
     private companion object {
         const val SETTLE_MS = 400L
         const val PING_TIMEOUT_MS = 6_000L
+        /** See [misses]. */
+        const val MISSES_TO_GONE = 2
         /** Then silence, until something changes. About two minutes in all. */
         val RETRY_MS = listOf(2_000L, 5_000L, 15_000L, 30_000L, 60_000L)
     }
