@@ -17,6 +17,8 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 /** "★★★☆☆" for a rating, so the choice reads at a glance. */
@@ -36,6 +38,13 @@ class RatingScreen(
     private val current: Int,
     private val isAlbum: Boolean,
 ) : SimpleLightScreen<Unit>(sealed) {
+
+    /** Set once this page has been popped, so a save finishing late can't pop another. */
+    private var gone = false
+
+    override fun onScreenDestroy() {
+        gone = true
+    }
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
@@ -60,7 +69,16 @@ class RatingScreen(
                             status = "Saving…"
                             App.scope.launch {
                                 val ok = App.library.setRating(id, stars, isAlbum)
-                                if (ok) goBack() else { status = "Couldn't reach the server"; saving = false }
+                                // Back on Main, and only while this page is still
+                                // the one showing. App.scope is Default, and
+                                // goBack pops whatever is on top: after a slow
+                                // save that the user walked away from, it would
+                                // pop the root and run the app's teardown off the
+                                // main thread, where releasing the player throws.
+                                withContext(Dispatchers.Main.immediate) {
+                                    if (gone) return@withContext
+                                    if (ok) goBack() else { status = "Couldn't reach the server"; saving = false }
+                                }
                             }
                         },
                         trailing = {
