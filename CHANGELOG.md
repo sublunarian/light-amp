@@ -1,21 +1,23 @@
 # Changelog
 
-## 0.7.1
-
-### Changed
-
-- While typing, hold the text to clear it, as in Notes.
-- Passwords show while you type them and stay hidden after.
-- Amp offers only what your server actually supports: ratings, song radio and
-  original-quality downloads are hidden where a server hasn't got them.
-- Groundwork toward getting Amp into Light's Tool Library.
+## 0.7.2
 
 ### Fixed
 
-- Leaving Amp just as a song started could kill it.
+- A Bandcamp library never loaded ("Unexpected response from server").
+- Leaving Amp just after starting a song could crash it.
 - Reopening Amp after a long pause could leave the play button doing nothing.
 - Saving a server with the wrong password could look like it had worked.
-- A Bandcamp library never loaded ("Unexpected response from server").
+
+### Changed
+
+- Features your server doesn't support, like ratings and song radio on Bandcamp,
+  are now hidden.
+- Sync Now has moved to the top of More → Source, and always syncs the source
+  you're using.
+- While typing, hold the text to clear it, as in Notes.
+- Passwords show while you type them and stay hidden after.
+- Groundwork toward getting Amp into Light's Tool Library.
 
 ## 0.7.0
 
