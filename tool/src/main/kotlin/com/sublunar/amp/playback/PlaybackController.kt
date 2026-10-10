@@ -1115,35 +1115,14 @@ class PlaybackController(
         // The handle's own collectors go with it. The rest stay: see bindJob.
         handleJob?.cancel()
         handleJob = null
-        releaseWhenConnected(player)
+        // Straight away, on Main, whatever state the handle is in: the SDK
+        // cancels a connection still in flight itself, and media3 1.10.1 has
+        // exactly one unbind, guarded and nulled in place, so it cannot unbind
+        // twice. (A deferred release was tried on 2026-09-22 against exactly
+        // that imagined double unbind; the bytecode rules it out, and the
+        // deferral only ran the release off the main thread.)
+        player?.release()
         player = null
-    }
-
-    /**
-     * Lets go of the player handle, but never mid-connect.
-     *
-     * Releasing a detached handle whose media3 controller is still connecting
-     * is a race the app cannot survive: the SDK cancels the pending connection
-     * and then, if it completed anyway in that instant, releases the controller
-     * media3 has already released — and media3 unbinds its session service a
-     * second time from a posted runnable, so the throw lands on the main looper
-     * with no caller to catch it. Amp died that way on 2026-09-22 10:18
-     * (`IllegalArgumentException: Service not registered`, decoded from the R8
-     * mapping to `MediaControllerImplBase$SessionServiceConnection`).
-     *
-     * So a handle still connecting is released once it has connected instead.
-     * `awaitReady` returns false where the connection failed, and the SDK has
-     * released the handle itself by then — nothing left to do. Detached
-     * playback is unaffected either way: the service plays on, which is the
-     * whole point of it, and the next bind takes a fresh handle.
-     */
-    private fun releaseWhenConnected(handle: LightAudioPlayer?) {
-        val p = handle ?: return
-        if (p.availability.value != LightAudioPlayerAvailability.Initializing) {
-            p.release()
-            return
-        }
-        scope.launch { if (p.awaitReady()) p.release() }
     }
 
     /**

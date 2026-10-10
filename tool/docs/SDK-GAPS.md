@@ -104,24 +104,32 @@ minutes, where the spike held on indefinitely.
 - **Revert:** delete `MaterialGlyphs.kt`, and restore the `implementation` line
   in `tool/build.gradle.kts` and the icon imports in `Primitives.kt`.
 
-### Releasing a player handle mid-connect kills the app
+### The detached player is bound to the activity, not the app
 
-- **Need:** letting go of the detached player when the user leaves, at any
-  moment, without taking the process down.
-- **Now:** `LightAudioPlayer.release()` cancels a pending media3 connection and
-  then, if that connection completed in the same instant, releases the
-  controller media3 has already released. media3 unbinds its session service
-  twice and the `IllegalArgumentException` lands on the main looper from a
-  posted runnable, where no caller can catch it. Amp saw it once
-  (2026-09-22 10:18; `d3.h0` decoded from the R8 mapping to
-  `MediaControllerImplBase$SessionServiceConnection`). Amp releases a handle
-  that is still connecting only once it has connected —
-  `PlaybackController.releaseWhenConnected`.
-- **Would replace it:** the SDK guarding its own late release (a `runCatching`
-  around `connectedPlayer.release()` in `connectPlayer`, or not releasing a
-  controller whose future it just cancelled).
-- **Revert:** call `player?.release()` straight from `unbind()` again and delete
-  `releaseWhenConnected`.
+- **Need:** a detached player that outlives its screens — the feature's whole
+  point — without the process dying when the activity behind it goes.
+- **Now:** `DefaultLightAudio.newPlayer` hands `sealedActivity.activity` to
+  `LightAudioPlayer`, which builds the media3 `MediaController` against it
+  (`connectDetachedPlayer`). media3 keeps that Context raw and unbinds through
+  it. The best-supported explanation for the crash below — not yet caught in
+  the act — is that Android destroys the activity on its own (on the LP3 you
+  leave a tool with Home, so Amp's back-out cleanup never runs), and the
+  framework drops the activity's service bindings while Amp still holds the
+  handle. The next
+  release of that controller, Amp's or media3's own when the session goes,
+  posts an unbind against the dead activity and the process dies with
+  `IllegalArgumentException: Service not registered` on the main looper,
+  where no caller can catch it. Seen three times in four days on the author's
+  phone (6–8 Oct 2026), always surfacing on a reopen after a gap, because the
+  process is frozen in the background and the posted unbind waits for it.
+  (A 2026-09-22 diagnosis blamed a double unbind and deferred the release;
+  media3 1.10.1 has one guarded unbind and cannot do that, so the deferral was
+  removed.) No Amp-side mitigation yet.
+- **Would replace it:** one line in the SDK — build the detached controller
+  against `context.applicationContext`, as `LightServiceConnection` already
+  does for its own binding — or a destroy hook a tool can release on.
+- **Revert:** nothing to revert yet; an Amp-side mitigation, if one lands,
+  goes here.
 
 ### Copy and paste in text entry — light-sdk#45, in progress at Light
 
