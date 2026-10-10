@@ -19,7 +19,9 @@ import kotlinx.serialization.Serializable
  *
  * Nothing here names a server. A missing endpoint is a fact about one address,
  * found by asking, and it holds for Bandcamp, gonic, Navidrome and whatever
- * comes next.
+ * comes next. And no answer is final: whatever is recorded as missing is asked
+ * again on every sync (see SubsonicClient.probeFeatures), so a wrong "no"
+ * costs a feature until the next sync rather than for good.
  */
 @Serializable
 data class ServerFeatures(
@@ -47,8 +49,10 @@ data class ServerFeatures(
          * Bumped whenever a probe is added or changed, so the answers on file
          * are asked again rather than being trusted for a question that wasn't
          * put. 1: ratings, radio, original download. 2: the scan call too.
+         * 3: an answer that isn't JSON (a proxy's page) no longer counts as
+         * missing — so anything recorded under 2 is asked again cleanly.
          */
-        const val GENERATION = 2
+        const val GENERATION = 3
 
         /** Ratings: `setRating`. */
         const val SET_RATING = "setRating"
@@ -66,5 +70,8 @@ data class ServerFeatures(
          * would be telling the user their library is stale when it isn't.
          */
         const val SCAN_STATUS = "getScanStatus"
+
+        /** Everything a first asking covers. */
+        val ALL = listOf(SCAN_STATUS, SET_RATING, SIMILAR_SONGS, DOWNLOAD)
     }
 }
