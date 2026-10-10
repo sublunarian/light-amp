@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.7.3
+
+### Added
+
+- Bandcamp is its own choice when adding a source, with the address filled in
+  and directions to your Bandcamp Subsonic login.
+- Scan a QR code to fill in a username and password.
+
+### Fixed
+
+- A newly added source could show an empty library until it was synced again.
+- Some descriptions in Settings were cut off.
+
+## 0.7.2
+
+### Fixed
+
+- A Bandcamp library never loaded ("Unexpected response from server").
+- Leaving Amp just after starting a song could crash it.
+- Reopening Amp after a long pause could leave the play button doing nothing.
+- Saving a server with the wrong password could look like it had worked.
+
+### Changed
+
+- Features your server doesn't support, like ratings and song radio on Bandcamp,
+  are now hidden.
+- Sync Now has moved to the top of More → Source, and always syncs the source
+  you're using.
+- While typing, hold the text to clear it, as in Notes.
+- Passwords show while you type them and stay hidden after.
+- Groundwork toward getting Amp into Light's Tool Library.
+
 ## 0.7.0
 
 ### Added

@@ -82,6 +82,13 @@ class TrackActionsScreen(
     private var status by mutableStateOf<String?>(null)
     private var tuning by mutableStateOf(false)
 
+    /** Set once this page has been popped, so an answer arriving late can't act on another. */
+    private var gone = false
+
+    override fun onScreenDestroy() {
+        gone = true
+    }
+
     @Composable
     override fun Content() {
         val source by App.source.collectAsState()
@@ -160,6 +167,11 @@ class TrackActionsScreen(
                             val radio = App.library.radioFrom(track)
                             // The player's looper is Main — see PlaybackController.
                             withContext(Dispatchers.Main) {
+                                // Left while it was asking: the radio is
+                                // dropped. Going back or opening the player now
+                                // would act on whatever page is showing instead
+                                // — the library's root, which would close Amp.
+                                if (gone) return@withContext
                                 tuning = false
                                 if (radio.isEmpty()) {
                                     status = "No radio for this song"

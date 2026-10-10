@@ -255,15 +255,16 @@ class PlexClient(
      * Silently does nothing on a server this token doesn't administer, which is
      * the ordinary case for a library someone shared with you.
      */
-    override suspend fun startServerScan(musicFolderId: String?): Boolean {
+    override suspend fun startServerScan(musicFolderId: String?): ScanRequest {
         val sections = musicFolderId?.let { listOf(it) }
             ?: runCatching { getMusicFolders().map { it.id } }.getOrDefault(emptyList())
-        if (sections.isEmpty()) return false
+        if (sections.isEmpty()) return ScanRequest.REFUSED
         // The answer matters. Scanning is an owner's privilege, so a library
         // shared with you refuses it — and a refusal that goes unreported looks
         // exactly like a server that scanned and found nothing, which is the
         // most confusing way for this to fail.
-        return sections.map { sendChecked("/library/sections/$it/refresh") }.any { it }
+        val started = sections.map { sendChecked("/library/sections/$it/refresh") }.any { it }
+        return if (started) ScanRequest.STARTED else ScanRequest.REFUSED
     }
 
     override suspend fun serverScanning(musicFolderId: String?): Boolean = runCatching {

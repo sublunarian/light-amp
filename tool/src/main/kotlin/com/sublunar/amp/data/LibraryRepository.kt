@@ -137,11 +137,27 @@ class LibraryRepository(
      * The cost is a blink of empty lists on a source switch, which is the
      * truth: the old source's music is not this source's music, and everything
      * else about the switch already says so.
+     *
+     * Each list is also read afresh whenever [reread] moves — see there. That
+     * re-read is not blanked first: it is the same source, and an empty list
+     * in between would be a flicker, not the truth.
      */
     private fun <T> observing(empty: T, select: (LibraryDao) -> Flow<T>): Flow<T> =
         daos.flatMapLatest { current ->
-            current?.let { dao -> select(dao).onStart { emit(empty) } } ?: emptyFlow()
+            current?.let { dao -> reread.flatMapLatest { select(dao) }.onStart { emit(empty) } } ?: emptyFlow()
         }
+
+    /**
+     * Moved once a sync has finished writing, so every list reads its table
+     * again rather than trusting Room to have told it about the writes.
+     *
+     * Room 2.7.0 — the version Light's store builder pins — can leave an
+     * observed query showing what it read before a write landed; 2.8.0 and
+     * 2.8.1 each fixed such a race. A new source showed it: the first sync
+     * stored its albums and the Albums page stayed empty until something
+     * else wrote to the same table.
+     */
+    private val reread = MutableStateFlow(0)
 
     /**
      * The downloads table, read once for everything that needs it.
@@ -243,7 +259,9 @@ class LibraryRepository(
      */
     /** The album table as stored, library tags and all. */
     private val albumRows: StateFlow<List<AlbumEntity>> =
-        observing(emptyList()) { it.observeAlbums() }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+        observing(emptyList()) { it.observeAlbums() }
+            .onEach { android.util.Log.i("AmpLists", "albums table → ${it.size} rows (re-read ${reread.value})") }
+            .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val allAlbums: StateFlow<List<Album>> =
         combine(albumRows, selectedLibrary) { rows, library ->
@@ -1452,6 +1470,7 @@ class LibraryRepository(
             // seen to have been let go of just below.
             runCatching { dao.collapseTrackCovers() }
             reportDroppedCovers(dao, source?.id, coversBefore)
+            rereadLists()
 
             val finishedAt = System.currentTimeMillis()
             _syncState.value = SyncState(
@@ -1459,6 +1478,7 @@ class LibraryRepository(
                 lastSyncedMs = finishedAt,
             )
             runCatching { settings.activeSource.first()?.id?.let { settings.setLastSyncedMs(it, finishedAt) } }
+            learnServerFeatures(dao, client, source)
             onSyncSucceeded?.invoke()
         } catch (e: CancellationException) {
             // A library switch cancelled this sync; don't record it as an error.
@@ -1474,7 +1494,14 @@ class LibraryRepository(
             }
             _syncState.value = _syncState.value.copy(
                 syncing = false,
-                error = syncErrorMessage(e),
+                // A source saved as plain http://, which this build can't speak
+                // — see Cleartext. "Couldn't reach the server" would send the
+                // user looking for a fault in a server that is fine.
+                error = if (source != null && Cleartext.refuses(source.baseUrl)) {
+                    Cleartext.REFUSED_BRIEF
+                } else {
+                    syncErrorMessage(e)
+                },
             )
             onSyncFailed?.invoke(isAuthFailure(e))
         }
@@ -1488,6 +1515,32 @@ class LibraryRepository(
      * cache of something already local. Likes, ratings and play counts have
      * nowhere to live on a local source, so there is nothing to reconcile.
      */
+    /**
+     * Ask the server what it implements, once a sync has just proved it answers.
+     *
+     * Here rather than at Save for two reasons: the probes that need a real song
+     * need a library first, and a server that has just served a whole sync is
+     * known to be reachable and logged in — so an endpoint it calls missing is
+     * missing, not a proxy or a dead link talking. Anything thrown leaves what
+     * was known alone. See [ServerFeatures].
+     */
+    private suspend fun learnServerFeatures(
+        dao: LibraryDao,
+        client: MusicServer?,
+        source: MusicSource?,
+    ) {
+        if (client == null || source == null) return
+        runCatching {
+            val learned = client.probeFeatures(source.features, dao.anyTrackId())
+            if (learned == null || learned == source.features) return@runCatching
+            // Re-read the source: a sync is long, and what it was started with
+            // may have been edited since — only the features are ours to write.
+            val current = settings.sources.first().firstOrNull { it.id == source.id }
+                ?: return@runCatching
+            settings.saveSource(current.copy(features = learned))
+        }
+    }
+
     private suspend fun runLocalScan(dao: LibraryDao, sourceId: String) {
         _syncState.value = _syncState.value.copy(
             syncing = true,
@@ -1519,6 +1572,7 @@ class LibraryRepository(
             dao.upsertAlbums(scan.albums.map { it.toEntity() })
             dao.upsertTracks(scan.tracks.map { it.toEntity() })
             reportDroppedCovers(dao, sourceId, coversBefore)
+            rereadLists()
             val finishedAt = System.currentTimeMillis()
             _syncState.value = SyncState(
                 syncing = false,
@@ -1571,6 +1625,12 @@ class LibraryRepository(
      * orphans. What that misses, the cache ages out on its own (see
      * ArtworkLoader.expireUnclaimed).
      */
+    /** See [reread]. */
+    private fun rereadLists() {
+        android.util.Log.i("AmpLists", "sync done; reading the lists again")
+        reread.update { it + 1 }
+    }
+
     private suspend fun reportDroppedCovers(dao: LibraryDao, sourceId: String?, before: Set<String>?) {
         if (sourceId == null || before.isNullOrEmpty()) return
         val after = coverIdsOrNull(dao) ?: return
@@ -1735,18 +1795,29 @@ class LibraryRepository(
             previous?.cancelAndJoin()
             val client = serverClient.value
             val folder = libraryId.first()
-            val asked = client != null &&
-                runCatching { client.startServerScan(folder) }.getOrDefault(false)
+            // A server already known to have no scan call isn't asked at all —
+            // see MusicSource.supportsServerScan. Refreshing still fetches the
+            // library, which for such a server is the whole of what a refresh
+            // ever was.
+            val canScan = settings.activeSource.first()?.supportsServerScan ?: true
+            val outcome = if (client != null && canScan) {
+                runCatching { client.startServerScan(folder) }
+                    .getOrDefault(ScanRequest.REFUSED)
+            } else {
+                ScanRequest.ABSENT
+            }
+            val asked = outcome == ScanRequest.STARTED
             // Said plainly rather than left to look like an empty scan. On Plex
             // this is what a library someone shared with you does — scanning
-            // belongs to whoever owns the server.
-            scanRefused = client != null && !asked
+            // belongs to whoever owns the server. A server with no such call
+            // has refused nothing, so it says nothing.
+            scanRefused = outcome == ScanRequest.REFUSED
             if (asked) {
                 var waited = 0L
                 while (waited < SCAN_WAIT_MS) {
                     delay(SCAN_POLL_MS)
                     waited += SCAN_POLL_MS
-                    val busy = runCatching { client.serverScanning(folder) }.getOrDefault(false)
+                    val busy = runCatching { client?.serverScanning(folder) }.getOrDefault(false) == true
                     if (!busy) break
                 }
             }

@@ -161,6 +161,29 @@ checks (`metadataAllowed`, `heavyDataAllowed`) only save work, they stop nothing
 `&&` or inside an `if` silently stops triggering recomposition. Read
 unconditionally, branch on the result.
 
+**The player handle doesn't live as long as playback.** Backing out releases it
+while the detached service plays on, and a reopen binds a new one. `bind()`'s
+collectors on the handle live in `handleJob` and go with it; the rest live in
+`bindJob`, outlive the handle on purpose, and are replaced by the next bind. A
+released handle throws on any command — on Main that takes the process and the
+playing service with it — so a deferred block holding on to `p` checks
+`player !== p` before touching it.
+
+**Room schemas live in `src/main/assets/schemas`.** Light's store builder copies
+only `src/main/{kotlin,java,res,assets}`, `build.gradle.kts` and
+`lighttool.toml` out of the repository, so schemas anywhere else leave its build
+without the files the auto-migrations are generated from. The asset packager is
+told to leave them out of the APK.
+
+**`Icons` in `ui/components` is Amp's own.** The Material glyphs are vendored in
+`MaterialGlyphs.kt`, because `material-icons-extended` isn't in the store
+builder's offline cache. To add one, list it in `MaterialGlyphsTest` with `null`;
+the failure prints the source to paste.
+
+**The store build is one command away.** `scripts/store-build-check.sh` builds
+Amp the way Light will — pristine SDK, their extractor, their flags — and lists
+what stops it. New code shouldn't add to that list.
+
 ## Units
 
 Every dimension is in the LP3's own physical pixels: a 1080-wide canvas, which

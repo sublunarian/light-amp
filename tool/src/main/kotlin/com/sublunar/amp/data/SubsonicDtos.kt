@@ -18,10 +18,15 @@ data class SubsonicEnvelope(
 data class SubsonicBody(
     val status: String = "failed",
     val version: String? = null,
+    /** OpenSubsonic servers name themselves and their own version in every reply. */
+    val type: String? = null,
+    val serverVersion: String? = null,
     val error: SubsonicError? = null,
     val albumList2: AlbumListDto? = null,
     val album: AlbumDto? = null,
     val starred2: Starred2Dto? = null,
+    /** getStarred, for servers without getStarred2 — see SubsonicClient.getStarred. */
+    val starred: Starred2Dto? = null,
     val playlists: PlaylistsDto? = null,
     val playlist: PlaylistDto? = null,
     val lyricsList: LyricsListDto? = null,
@@ -95,6 +100,7 @@ data class SubsonicError(val code: Int = 0, val message: String? = null)
 @Serializable
 data class AlbumListDto(val album: List<AlbumDto> = emptyList())
 
+/** getStarred2's `starred2`, and getStarred's `starred`: same lists, ids alike. */
 @Serializable
 data class Starred2Dto(
     val song: List<SongDto> = emptyList(),

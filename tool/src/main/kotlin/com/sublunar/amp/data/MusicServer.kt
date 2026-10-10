@@ -29,10 +29,30 @@ data class SavedQueue(
  * marked, and default to doing nothing — a server that can't star a track
  * shouldn't need to write a stub saying so.
  */
+/**
+ * What came of asking a server to scan.
+ *
+ * [REFUSED] and [ABSENT] are different things and the Sources page says so:
+ * a server that has the call but won't run it for this account leaves the
+ * library stale until someone with the rights runs it, which is worth saying;
+ * a server without the call keeps its own library and has nothing to refuse.
+ */
+enum class ScanRequest { STARTED, REFUSED, ABSENT }
+
 interface MusicServer {
 
     /** Throws if the server isn't reachable or the credentials are wrong. */
     suspend fun ping()
+
+    /**
+     * What this particular server implements, asked of it — see [ServerFeatures].
+     *
+     * Only Subsonic needs it: its servers range from a full Navidrome to
+     * Bandcamp, which answers a third of the API, and the protocol has no way
+     * to ask which. Plex and Jellyfin are one implementation each, so what they
+     * do is known from the kind alone and [known] comes back untouched.
+     */
+    suspend fun probeFeatures(known: ServerFeatures?, sampleTrackId: String?): ServerFeatures? = known
 
     /** Releases the HTTP client. */
     fun close()
@@ -61,10 +81,9 @@ interface MusicServer {
      * Syncing pulls what the server already knows; it cannot make the server
      * notice a folder it hasn't looked in. Both Subsonic and Plex expose a way
      * to ask for that scan, and it is the only thing that turns a file dropped
-     * into the music folder into something this app can see. Returns false where
-     * a server has no such call, or where this token isn't allowed to make it.
+     * into the music folder into something this app can see.
      */
-    suspend fun startServerScan(musicFolderId: String? = null): Boolean = false
+    suspend fun startServerScan(musicFolderId: String? = null): ScanRequest = ScanRequest.ABSENT
 
     /** True while a [startServerScan] is still running. */
     suspend fun serverScanning(musicFolderId: String? = null): Boolean = false

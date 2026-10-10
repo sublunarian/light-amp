@@ -1,8 +1,8 @@
 [tool]
 id = "com.sublunar.amp"
 label = "Amp"
-versionCode = 16
-versionName = "0.7.0"
+versionCode = 19
+versionName = "0.7.3"
 orientation = "portrait"
 permissions = [
     "android.permission.INTERNET",
@@ -11,6 +11,10 @@ permissions = [
     # Reading the phone's own music folder, for the Local Music source. On the
     # SDK's allowed list, and requested through LightOS the first time it is used.
     "android.permission.READ_MEDIA_AUDIO",
+    # Scanning a username and password from a QR code on the server form, with
+    # the SDK's own scanner. On the SDK's allowed list, and asked of the user
+    # through LightOS the first time a code is scanned.
+    "android.permission.CAMERA",
 ]
 # Official background audio (SDK 0.1.1+): the plugin wires LightAudioService
 # and its foreground permissions into this tool's manifest.

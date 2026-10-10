@@ -31,6 +31,17 @@ import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.launch
 
+/**
+ * A source's download quality as its settings row shows it: the choice, and
+ * plainly when this server can't meet it — the row is where that gets fixed.
+ */
+private fun downloadQualityLabel(source: MusicSource): String =
+    if (source.downloadFormatAvailable) {
+        formatLabel(source.downloadFormat)
+    } else {
+        "${formatLabel(source.downloadFormat)} — unavailable"
+    }
+
 fun formatLabel(format: StreamFormat): String = when (format) {
     StreamFormat.MP3 -> "MP3 (320 kbps)"
     StreamFormat.OPUS -> "Opus (192 kbps)"
@@ -411,7 +422,7 @@ class OfflineScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
                     item(key = "${server.id}/quality") {
                         TextRow(
                             title = "Download Quality",
-                            value = formatLabel(server.downloadFormat),
+                            value = downloadQualityLabel(server),
                             onClick = { go { SourceDownloadFormatScreen(it, server.id) } },
                         )
                     }
@@ -426,7 +437,8 @@ class OfflineScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
                             TextRow(
                                 title = server.name,
                                 subtitle = "${offlineModeLabel(server.offlineMode)} · " +
-                                    shortFormatLabel(server.downloadFormat),
+                                    shortFormatLabel(server.downloadFormat) +
+                                    if (server.downloadFormatAvailable) "" else " — unavailable",
                                 onClick = { go { SourceOfflineScreen(it, server.id) } },
                             )
                         }
@@ -543,7 +555,9 @@ class SourceDownloadFormatScreen(
         val current = source?.downloadFormat ?: StreamFormat.DEFAULT
         ListScreen(onBack = { goBack() }, title = "Download quality") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                items(source?.streamFormats ?: StreamFormat.entries.toList()) { format ->
+                // Not streamFormats: a server with no `download` call can still
+                // download, but never the original file — see downloadFormats.
+                items(source?.downloadFormats ?: StreamFormat.entries.toList()) { format ->
                     TextRow(
                         title = formatLabel(format),
                         onClick = {
@@ -638,7 +652,7 @@ class SourceOfflineScreen(
                 item {
                     TextRow(
                         title = "Download Quality",
-                        value = formatLabel(source.downloadFormat),
+                        value = downloadQualityLabel(source),
                         onClick = { go { SourceDownloadFormatScreen(it, source.id) } },
                     )
                 }

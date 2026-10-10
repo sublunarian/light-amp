@@ -1,0 +1,16 @@
+# R8 still shrinks and optimises the release build; it just stops renaming.
+#
+# A renamed build's crash reads `d3.h0` and `d3.W.run` until it is decoded with
+# that exact build's mapping file. Store builds are made by Light, whose mapping
+# never reaches us, so a crash from one could never be read at all. Keeping the
+# names makes every trace readable as it stands, for about 0.7 MB. Exact line
+# numbers still go through the mapping, which is still written: R8 renumbers
+# lines as it optimises, and stamps its build id where the file name was.
+#
+# Under assets, not beside build.gradle.kts, because Light's builder copies
+# only src/main/{kotlin,java,res,assets}; the APK leaves it out — see
+# androidResources in build.gradle.kts.
+#
+# And .txt rather than R8's usual .pro: Light's extractor refuses any file
+# under assets whose extension isn't on its list, and .pro is not.
+-dontobfuscate

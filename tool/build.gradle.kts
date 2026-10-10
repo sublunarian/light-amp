@@ -71,7 +71,11 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            // Shrunk and optimised, but not renamed — see the rules file for why.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "src/main/assets/r8/keep-names.txt",
+            )
             // The dev key only as a fallback, so a contributor without a
             // keystore can still produce a build — theirs simply won't be one
             // that can update an installed copy.
@@ -79,6 +83,15 @@ android {
                 if (canSignRelease) "release" else "lightsdkDev",
             )
         }
+    }
+
+    // The Room schemas and the R8 rules sit under assets so Light's builder has
+    // them (see the ksp block below, and the release build type); they are
+    // build inputs, and no APK needs to carry them. The rest is AGP's default
+    // list, which setting this replaces.
+    androidResources {
+        ignoreAssetsPattern =
+            "!.svn:!.git:!.ds_store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:<dir>schemas:<dir>r8"
     }
 
     lint {
@@ -101,10 +114,9 @@ kotlin {
 dependencies {
     implementation(project(":sdk:client"))
 
-    // Exact Material icons matching the original app (album, music-note,
-    // record-voice-over, graphic-eq, …) with per-use tint control.
-    implementation(platform(libs.compose.bom))
-    implementation("androidx.compose.material:material-icons-extended")
+    // The Material icons Amp draws are vendored in ui/components/MaterialGlyphs.kt
+    // rather than taken from material-icons-extended: that artifact is on Light's
+    // allow-list but not in their store builder's offline cache.
 
     // Networking (Subsonic API over ktor + okhttp engine)
     implementation(libs.ktor.client.core)
@@ -127,6 +139,13 @@ dependencies {
 
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.kotlin.test)
+
+    // Only so MaterialGlyphsTest can hold the vendored glyphs against the real
+    // ones. It is on no release classpath, and although Light's plugin resolves
+    // test configurations too, it passes over one it can't resolve offline — so
+    // a store build without the artifact in its cache is unaffected.
+    testImplementation(platform(libs.compose.bom))
+    testImplementation("androidx.compose.material:material-icons-extended")
 }
 
 /**
@@ -137,5 +156,8 @@ dependencies {
  * and Room uses one whenever the two versions' schemas are here to diff.
  */
 ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
+    // Under src/main/assets because that is one of the four trees Light's store
+    // builder copies out of a tool's repository — anywhere else and the build
+    // there has no schemas to diff, and stops at the first AutoMigration.
+    arg("room.schemaLocation", "$projectDir/src/main/assets/schemas")
 }

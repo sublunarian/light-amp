@@ -236,6 +236,10 @@ interface LibraryDao {
     @Query("SELECT * FROM tracks WHERE id IN (:ids)")
     suspend fun tracksByIds(ids: List<String>): List<TrackEntity>
 
+    /** Any one song, for the probes that need a real id — see ServerFeatures. */
+    @Query("SELECT id FROM tracks LIMIT 1")
+    suspend fun anyTrackId(): String?
+
     @Query("SELECT COUNT(*) FROM tracks")
     suspend fun trackCount(): Int
 
@@ -520,8 +524,10 @@ interface LibraryDao {
     ],
     version = 13,
     exportSchema = true,
-    // Generated from the committed schemas (tool/schemas), so existing installs
-    // keep their libraries and downloads across the bump. Every schema change
+    // Generated from the committed schemas (tool/src/main/assets/schemas), so
+    // existing installs keep their libraries and downloads across the bump —
+    // they sit in assets because that is what Light's store builder copies.
+    // Every schema change
     // from here on should add a step here rather than lean on the SDK's
     // drop-everything fallback.
     autoMigrations = [

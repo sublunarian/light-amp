@@ -59,11 +59,11 @@ fun dataModeLabel(mode: DataMode): String = when (mode) {
 }
 
 /**
- * Room for the longest of the six explanations below to wrap rather than be cut
- * off mid-sentence. Two lines covers them all at the widest of these screens'
- * layouts; the cap stays so a row can't grow without bound if one is reworded.
+ * The explanations under each mode wrap in full. A cap of two lines was meant to
+ * fit them all, and on the LP3's narrow panel it cut Low Data's off mid-sentence;
+ * a sentence explaining a choice is only any use whole.
  */
-private const val MODE_DETAIL_LINES = 2
+private const val MODE_DETAIL_LINES = Int.MAX_VALUE
 
 private fun dataModeDetail(mode: DataMode): String = when (mode) {
     DataMode.MAKE_IT_HURT -> "No limits — streaming, downloads and artwork all use cellular data when there's no Wi-Fi"
@@ -127,6 +127,11 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
         // the name would repeat the obvious.
         val sources by App.settings.sources.collectAsState(initial = emptyList())
         val severalServers = sources.count { it.supportsDownloads } > 1
+        // Servers whose chosen download quality they can't serve. Their
+        // downloads wait rather than coming down as something else, and this
+        // is the page anyone checks when nothing is arriving — so it says why,
+        // read from the settings themselves rather than the worker's state.
+        val unmet = sources.filter { it.supportsDownloads && !it.downloadFormatAvailable }
 
         // No tab bar and no menu: this is reached from Settings, and it is a
         // page about storage rather than a way of browsing the library. Back
@@ -140,7 +145,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 title = "Downloads",
                 fitTitle = true,
             )
-            if (total == 0 && !progress.active && bytes == 0L) {
+            if (total == 0 && !progress.active && bytes == 0L && unmet.isEmpty()) {
                 // Says how, not just that: the one user who came looking here
                 // had no way to learn that holding a row is the way in.
                 EmptyState("Nothing downloaded yet.\nHold a song, album or artist and choose Download.")
@@ -150,6 +155,16 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 anchor = "downloaded-songs",
                 modifier = Modifier.fillMaxSize(),
             ) {
+                unmet.forEach { source ->
+                    item(key = "unmet/${source.id}") {
+                        TextRow(
+                            title = "${source.name} can't keep original files",
+                            subtitle = "Choose another download quality",
+                            subtitleLines = 2,
+                            onClick = { go { SourceDownloadFormatScreen(it, source.id) } },
+                        )
+                    }
+                }
                 if (progress.active || paused) {
                     item {
                         // Separate from pause: one stops for now, the other throws

@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.data.Cleartext
 import com.sublunar.amp.data.JellyfinSignIn
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
@@ -20,6 +21,8 @@ import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 /**
@@ -46,6 +49,13 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
     private var pending by mutableStateOf<PendingServer?>(null)
     /** Each check mints a fresh source id, so a second tap would add it twice. */
     private var checking by mutableStateOf(false)
+
+    /** Set once this page has been popped, so an answer arriving late can't act on another. */
+    private var gone = false
+
+    override fun onScreenDestroy() {
+        gone = true
+    }
 
     @Composable
     override fun Content() {
@@ -77,16 +87,24 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                 item {
                     // Jellyfin allows an empty password, and a server set up that
                     // way is a normal thing to point at — so this is not required.
+                    // Seen while typed and never again, so the keyboard opens
+                    // empty; what is submitted replaces it, and nothing is none.
                     TextRow(
                         title = "Password",
                         value = if (password.isBlank()) "Leave blank if none" else "••••••••",
-                    ) { edit("Password", password) { password = it } }
+                    ) { edit("Password", "") { password = it } }
                 }
                 item {
                     TextRow(title = if (checking) "Checking…" else "Sign In") {
                         if (checking) return@TextRow
                         if (address.isBlank() || username.isBlank()) {
                             status = "An address and a username, at least."
+                            return@TextRow
+                        }
+                        // Said before trying: the sign-in below can only report
+                        // that it failed, not that this build refused to send it.
+                        if (Cleartext.refuses(address)) {
+                            status = Cleartext.REFUSED
                             return@TextRow
                         }
                         signIn()
@@ -107,17 +125,28 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                 username = username.trim(),
                 password = password,
             )
-            checking = false
-            when {
-                next == null -> status = "Couldn't sign in with that address and account."
-                next.sections.isEmpty() -> status = "Signed in, but that account has no music library."
-                next.sections.size < 2 -> save(next.source)
-                else -> pending = next
+            // Back on Main, and only if this page is still up: App.scope is
+            // Default, and save() goes back — which, after the user has left,
+            // would pop whatever is on top, the root included, off the main
+            // thread. Leaving the sign-in is also abandoning it.
+            withContext(Dispatchers.Main.immediate) {
+                if (gone) return@withContext
+                checking = false
+                when {
+                    next == null -> status = "Couldn't sign in with that address and account."
+                    next.sections.isEmpty() -> status = "Signed in, but that account has no music library."
+                    next.sections.size < 2 -> save(next.source)
+                    else -> pending = next
+                }
             }
         }
     }
 
     private fun edit(title: String, initial: String, onResult: (String) -> Unit) {
+        // Not while a check is in flight: its answer goes back from this page,
+        // and with the keyboard over it, it would close the keyboard instead —
+        // and leave this page up to be signed in from a second time.
+        if (checking) return
         navigateTo<String?>(
             { TextEntryScreen(it, title = title, initial = initial) },
             resultCallback = { text -> if (text != null) onResult(text) },

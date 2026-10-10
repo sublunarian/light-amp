@@ -285,6 +285,13 @@ class Downloader(
             } else {
                 _progress.value.copy(pending = queue.size + (if (current != null) 1 else 0))
             }
+            // With no worker running, whatever is left is only entries held for
+            // a quality their server can't meet (a worker ends on exactly that),
+            // so nothing is moving and the count above would show a
+            // "Downloading" row for it. Idle is the truth.
+            if (worker?.isActive != true) {
+                _progress.value = DownloadProgress(completed = _progress.value.completed)
+            }
         }
     }
 
@@ -427,6 +434,27 @@ class Downloader(
 
     // --- Worker --------------------------------------------------------------
 
+    /**
+     * Picks the queue up again after something that held it changed — a
+     * download quality the server couldn't meet, chosen again. A queue with
+     * nothing it can move ends the worker straight away, without ever
+     * starting the foreground service.
+     */
+    fun retry() {
+        scope.launch {
+            // Only when something queued can actually move now — otherwise a
+            // worker would start just to wait, polling, behind a pause or a
+            // Wi-Fi rule, for a queue it could never touch.
+            val blocked = settings.sources.first()
+                .filterNot { it.downloadFormatAvailable }
+                .map { it.id }
+                .toSet()
+            lock.withLock {
+                if (queue.sourceIds().any { it !in blocked }) startWorkerLocked()
+            }
+        }
+    }
+
     /** Must be called with [lock] held. */
     private fun startWorkerLocked() {
         if (worker?.isActive == true) return
@@ -514,16 +542,30 @@ class Downloader(
             // Manual lane first, always, of whichever source can be asked right
             // now — see [DownloadQueue.next]. Which lane it came from travels
             // with it, so a re-queue goes back where it belongs.
+            // A source whose download quality its server can't meet — an
+            // Original where it has no `download` call — is never picked: its
+            // entries wait in the queue rather than being fetched as something
+            // else. Read every pass, so changing the quality frees them.
+            val blocked = settings.sources.first()
+                .filterNot { it.downloadFormatAvailable }
+                .map { it.id }
+                .toSet()
             val (picked, held) = lock.withLock {
-                val next = queue.next(::eligible)
+                val next = queue.next { eligible(it) && it !in blocked }
                 next to (if (next == null) queue.sourceIds() else emptySet())
             }
             if (picked == null) {
                 if (held.isEmpty()) break
+                // Only sources waiting on a quality change are left. Nothing
+                // here can end that wait, so the worker ends instead — which is
+                // what lets the foreground service go — and the entries stay
+                // queued. Changing the quality starts it again; see [retry]. The
+                // Downloads page says why, from the settings themselves.
+                if (held.all { it in blocked }) break
                 // Something is queued, and every source it belongs to is held:
                 // on its server to answer again, or for its sync to finish.
                 _progress.value = _progress.value.copy(
-                    currentTitle = heldReason(held),
+                    currentTitle = heldReason(held - blocked),
                     currentSource = null,
                 )
                 delay(PAUSE_POLL_MS)
@@ -582,6 +624,12 @@ class Downloader(
             // belong to that library, and a server that can only serve one
             // format shouldn't dictate what the others are fetched as.
             val format = source.downloadFormat
+            // Changed to a quality the server can't meet since this pass began:
+            // back in the queue untouched, and the next pass leaves it there.
+            if (!source.downloadFormatAvailable) {
+                lock.withLock { queue.requeueFront(picked) }
+                continue
+            }
             val dao = daoFor(source)
 
             if (!holdingService) {

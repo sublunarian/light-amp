@@ -10,11 +10,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.data.Cleartext
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.newSourceId
 import com.sublunar.amp.data.SubsonicClient
 import com.sublunar.amp.data.SubsonicConfig
+import com.sublunar.amp.data.SUBSONIC_REQUEST_FAILED
+import com.sublunar.amp.data.ScannedLogin
 import com.sublunar.amp.data.SubsonicException
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
@@ -48,6 +51,13 @@ class ServerScreen(
     private val sourceId: String? = null,
     /** Start blank and create a new source on save, rather than editing one. */
     private val adding: Boolean = false,
+    /**
+     * Adding Bandcamp: its address is always the same, so it is filled in, and
+     * the line at the top says where its credentials come from — they are made
+     * for Subsonic apps on Bandcamp's site, not the account's own login.
+     * Nothing else about the source is special; it is a Subsonic server.
+     */
+    private val bandcamp: Boolean = false,
 ) : SimpleLightScreen<Unit>(sealed) {
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
@@ -67,8 +77,8 @@ class ServerScreen(
      * The screen object itself stays on the back stack, so these survive. Same
      * pattern as PlaylistsScreen.
      */
-    private var nickname by mutableStateOf("")
-    private var url by mutableStateOf<String?>(null)
+    private var nickname by mutableStateOf(if (bandcamp) "Bandcamp" else "")
+    private var url by mutableStateOf<String?>(if (bandcamp) BANDCAMP_ADDRESS else null)
     private var user by mutableStateOf<String?>(null)
     // null means "unchanged". The stored password is never seeded into this, so
     // it can never be rendered — the editor shows text in the clear.
@@ -109,9 +119,12 @@ class ServerScreen(
         val passwordSet = newPass?.isNotEmpty() ?: (storedLength > 0)
         val dots = "•".repeat((newPass?.length ?: storedLength).coerceIn(0, 24))
 
-        ListScreen(onBack = { goBack() }, title = source?.name ?: "Add Source") {
+        ListScreen(
+            onBack = { goBack() },
+            title = source?.name ?: if (bandcamp) "Add Bandcamp" else "Add Source",
+        ) {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                item { SectionLabel(status ?: "Tap a field to change it") }
+                item { SectionLabel(status ?: if (bandcamp) BANDCAMP_HINT else "Tap a field to change it") }
                 if (source == null) {
                     // Required, and first: with several sources the list is read
                     // by name, and "navidrome.example.com" twice tells you
@@ -161,12 +174,30 @@ class ServerScreen(
                             newPass != null -> "$dots · changed"
                             else -> dots
                         },
-                        // Always opens empty and masks as you type. Submitting
-                        // nothing leaves the stored password alone.
+                        // Light's model: a password is seen while it is typed and
+                        // never again, so the keyboard always opens empty.
+                        // Submitting nothing leaves the stored password alone.
+                        onClick = {
+                            // "New" only where there is an old one to replace;
+                            // adding a server, it is simply the password.
+                            val title = if (storedLength > 0) "New password" else "Password"
+                            edit(title, "") { if (it.isNotEmpty()) newPass = it }
+                        },
+                    )
+                }
+                // Long generated credentials — Bandcamp's are — are typed on a
+                // computer instead: any QR generator, the username on the first
+                // line and the password on the second, and one scan fills both.
+                item {
+                    TextRow(
+                        title = "Scan Username & Password",
+                        subtitle = "On a computer, paste the username and password into any QR code " +
+                            "generator, each on its own line, then scan the code",
+                        subtitleLines = Int.MAX_VALUE,
                         onClick = {
                             navigateTo<String?>(
-                                { PasswordEntryScreen(it, title = "New password") },
-                                resultCallback = { text -> if (text != null) newPass = text },
+                                { QrScanScreen(it, title = "Scan Login") },
+                                resultCallback = { text -> if (text != null) fillFromScan(text) },
                             )
                         },
                     )
@@ -220,6 +251,18 @@ class ServerScreen(
         }
     }
 
+    /** Fills the username and password from a scanned code — see [ScannedLogin]. */
+    private fun fillFromScan(text: String) {
+        val login = ScannedLogin.parse(text)
+        if (login == null) {
+            status = "That code didn't hold a username and a password on two lines."
+            return
+        }
+        user = login.username
+        newPass = login.password
+        status = "Username and password filled in. Tap Save."
+    }
+
     private fun edit(title: String, initial: String, onResult: (String) -> Unit) {
         navigateTo<String?>(
             { TextEntryScreen(it, title = title, initial = initial) },
@@ -243,15 +286,56 @@ class ServerScreen(
         if (address.isBlank() || username.isBlank()) {
             return SaveOutcome.Said("Enter an address and username.")
         }
+        // A plain http:// spelling this build may not send is not tried: the
+        // platform would refuse it in words meant for a developer. Without a
+        // scheme the https:// try is still made, and its failure explained.
+        val candidates = SubsonicConfig.candidates(address).filterNot { Cleartext.refuses(it) }
+        if (candidates.isEmpty()) return SaveOutcome.Said(Cleartext.REFUSED)
         var lastError: Throwable? = null
-        for (candidate in SubsonicConfig.candidates(address)) {
+        for (candidate in candidates) {
             val config = SubsonicConfig(candidate, username, password)
             val client = SubsonicClient(config)
             val ok = runCatching { client.ping() }
+            // `ping` is not proof of a login. Bandcamp answers it "ok" whatever
+            // is sent, so a mistyped password saved cleanly and only surfaced
+            // later as a library that wouldn't load — and its credentials are
+            // generated, forty characters of them, which is exactly the kind
+            // there is a typo in. So the address is settled by the ping and the
+            // account by a read that needs one.
+            val refused = if (ok.isSuccess) {
+                runCatching { client.getMusicFolders() }.exceptionOrNull()
+            } else {
+                null
+            }
             client.close()
             if (ok.isFailure) {
-                lastError = ok.exceptionOrNull()
+                val error = ok.exceptionOrNull()
+                // A ping refused in Subsonic's own words — Navidrome's "Wrong
+                // username or password" — has found the server: this spelling
+                // is the one, and that is the answer. Trying http:// next could
+                // only bury it under a connection error from an address that
+                // was never right.
+                val subsonic = generateSequence(error) { it.cause }.take(8)
+                    .filterIsInstance<SubsonicException>().firstOrNull()
+                if (subsonic != null && (subsonic.code != null || subsonic.envelope)) {
+                    return SaveOutcome.Said(explain(error))
+                }
+                lastError = error
                 continue
+            }
+            // The ping settled the address: this spelling answered, so it is
+            // the one, and nothing below tries another — a hiccup here moving
+            // on to http:// could save a source that a redirect only happened
+            // to carry through. What the folders call came back with decides
+            // the rest. Only an answer about the account refuses the save; a
+            // hiccup is reported as one, so a right password is never blamed.
+            when (loginVerdict(refused)) {
+                LoginVerdict.ACCEPTED, LoginVerdict.UNCHECKABLE -> Unit
+                LoginVerdict.REFUSED -> return SaveOutcome.Said(refusedLogin(refused!!))
+                LoginVerdict.UNREACHED -> return SaveOutcome.Said(
+                    "That address answered, then stopped answering before the account " +
+                        "could be checked. Try Save again.",
+                )
             }
             // A different address or account may mean a different library, so the
             // cached rows can't be trusted; the same server with a new password can.
@@ -285,6 +369,14 @@ class ServerScreen(
     }
 }
 
+/** Bandcamp's Subsonic server — the same for every account. */
+private const val BANDCAMP_ADDRESS = "https://bandcamp.com/api/subsonic"
+
+/** Where Bandcamp's Subsonic credentials come from, in the form's own top line. */
+private const val BANDCAMP_HINT =
+    "Not your Bandcamp login: on bandcamp.com, open Fan Settings, scroll down to Subsonic " +
+        "and generate a username and password."
+
 /** What came of pressing Save. */
 private sealed interface SaveOutcome {
     /** Shown on the form; the user stays where they are. */
@@ -292,6 +384,52 @@ private sealed interface SaveOutcome {
 
     /** A source was added and made active — the form has nothing left to say. */
     data object Added : SaveOutcome
+}
+
+/** What the folders call said about the account, once the ping has settled the address. */
+private enum class LoginVerdict { ACCEPTED, REFUSED, UNCHECKABLE, UNREACHED }
+
+/**
+ * Whether a failed folders call is the account being refused or something
+ * else getting in the way.
+ *
+ * Refused: a Subsonic error from the server itself (it carries a code), or
+ * HTTP 401, 403 or 500 — a bare 500 being how Bandcamp says "not this login".
+ * Uncheckable: the server has no such call, or answered in a shape this client
+ * can't read (it answered, so the account got in). Everything else — a
+ * timeout, a 502, a 500 that is a gateway's page rather than the server's own,
+ * a web page where JSON should be — is the network or something in front of
+ * the server, and says nothing about the password.
+ */
+private fun loginVerdict(error: Throwable?): LoginVerdict {
+    if (error == null) return LoginVerdict.ACCEPTED
+    val server = generateSequence(error) { it.cause }.take(8)
+        .filterIsInstance<SubsonicException>().firstOrNull()
+        ?: return LoginVerdict.UNREACHED
+    return when {
+        server.endpointMissing -> LoginVerdict.UNCHECKABLE
+        server.code != null -> LoginVerdict.REFUSED
+        server.envelope -> LoginVerdict.UNCHECKABLE
+        server.status == 401 || server.status == 403 -> LoginVerdict.REFUSED
+        server.status == 500 && !server.notJson -> LoginVerdict.REFUSED
+        else -> LoginVerdict.UNREACHED
+    }
+}
+
+/**
+ * The address answered and the account did not.
+ *
+ * A server that says why — Subsonic's own "Wrong username or password" — is
+ * quoted. One that doesn't, and Bandcamp doesn't (a bare HTTP 500), gets a
+ * sentence that claims only what is known: the address is fine and the login
+ * is what was refused. Naming the password outright would be a guess.
+ */
+private fun refusedLogin(error: Throwable): String {
+    val server = generateSequence(error) { it.cause }.take(8)
+        .filterIsInstance<SubsonicException>().firstOrNull()
+    val said = server?.takeIf { it.code != null }?.message
+        ?.takeIf { it.isNotBlank() && it != SUBSONIC_REQUEST_FAILED }
+    return said ?: "That address answered, but not for this account. Check the username and password."
 }
 
 /**
@@ -310,15 +448,29 @@ private sealed interface SaveOutcome {
 private fun explain(error: Throwable?): String {
     if (error == null) return "Couldn't connect."
     val chain = generateSequence(error) { it.cause }.take(8).toList()
+    // Checked before the pass-through below: the client wraps an answer that
+    // isn't JSON in a SubsonicException ("Unexpected response from server."),
+    // and that sentence hides the real problem — a web page where the server
+    // should be — which is the one with a fix the user can make. Only an
+    // answer that wasn't JSON at all: JSON in an unexpected shape is the
+    // server talking, and calling it a web page would send the user to fix an
+    // address that is fine.
+    // A page with an error status is different: a gateway saying the server
+    // behind it is down (502, 503, 504). "Check the address" would send the
+    // user to fix something that is fine, so that one keeps its HTTP message.
+    val page = chain.filterIsInstance<SubsonicException>()
+        .any { it.notJson && (it.status == null || it.status == 404) } ||
+        (chain.none { it is SubsonicException } && chain.any { it is SerializationException })
+    if (page) {
+        return "That address answered with a web page, not a music server. Check the " +
+            "address. If the server uses plain HTTP, type http:// in front of it."
+    }
     // Already a sentence meant for a person — "Wrong username or password",
     // "Server returned HTTP 404." — so it is passed through as it stands.
     chain.filterIsInstance<SubsonicException>().firstOrNull()?.let {
         return it.message ?: "Couldn't connect."
     }
     return when {
-        chain.any { it is SerializationException } ->
-            "That address answered with a web page, not a music server. Check the " +
-                "address, and if the server is on plain HTTP enter it as http://…"
         chain.any { it is UnknownHostException } ->
             "Couldn't find that address. Check the spelling, and that this phone is " +
                 "on the same network."

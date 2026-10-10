@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
+import com.sublunar.amp.data.Cleartext
 import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.PlexClient
@@ -35,6 +36,8 @@ import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 /**
@@ -49,6 +52,17 @@ import kotlinx.coroutines.launch
  * [PlexManualScreen], reached from the row at the bottom.
  */
 class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
+
+    /** A server is being looked at; its answer will go back from this page. */
+    private var looking by mutableStateOf(false)
+
+    /** Set once this page has been popped, so an answer arriving late can't act on another. */
+    private var gone = false
+
+    override fun onScreenDestroy() {
+        gone = true
+    }
+
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
@@ -122,16 +136,27 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                             title = server.name,
                             subtitle = if (server.owned) "Yours" else "Shared with you",
                             onClick = {
+                                // One server at a time, and nothing opened over
+                                // this page meanwhile: the answer goes back from
+                                // here — see `gone`.
+                                if (looking) return@TextRow
                                 val accountToken = token ?: return@TextRow
+                                looking = true
                                 status = "Looking at ${server.name}…"
                                 App.scope.launch {
                                     val next = prepare(server, accountToken)
-                                    if (next == null) {
-                                        status = "Couldn't reach ${server.name}."
-                                    } else if (next.sections.size < 2) {
-                                        save(next.source)
-                                    } else {
-                                        pending = next
+                                    // Main, and only while this page is up —
+                                    // see JellyfinLinkScreen.signIn.
+                                    withContext(Dispatchers.Main.immediate) {
+                                        if (gone) return@withContext
+                                        looking = false
+                                        if (next == null) {
+                                            status = "Couldn't reach ${server.name}."
+                                        } else if (next.sections.size < 2) {
+                                            save(next.source)
+                                        } else {
+                                            pending = next
+                                        }
                                     }
                                 }
                             },
@@ -141,6 +166,7 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                 item { SectionLabel("Server not on an account?") }
                 item {
                     TextRow(title = "Enter address and token") {
+                        if (looking) return@TextRow
                         navigateTo<Unit>({ PlexManualScreen(it) }, resultCallback = { goBack() })
                     }
                 }
@@ -247,6 +273,13 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
     // in flight would add the same server twice — see the note in ServerScreen.
     private var checking by mutableStateOf(false)
 
+    /** Set once this page has been popped, so an answer arriving late can't act on another. */
+    private var gone = false
+
+    override fun onScreenDestroy() {
+        gone = true
+    }
+
     @Composable
     override fun Content() {
         ListScreen(onBack = { goBack() }, title = "Plex Server") {
@@ -286,6 +319,12 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                             status = "Fill in all three."
                             return@TextRow
                         }
+                        // Said before trying, as on the Jellyfin form: the check
+                        // below can only report that it didn't get in.
+                        if (Cleartext.refuses(address)) {
+                            status = Cleartext.REFUSED
+                            return@TextRow
+                        }
                         checking = true
                         status = "Checking…"
                         App.scope.launch {
@@ -297,11 +336,16 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                                 uri = address.trim().trimEnd('/'),
                                 token = token.trim(),
                             )
-                            checking = false
-                            when {
-                                next == null -> status = "Couldn't get in with that address and token."
-                                next.sections.size < 2 -> save(next.source)
-                                else -> pending = next
+                            // Main, and only while this page is up — see
+                            // JellyfinLinkScreen.signIn.
+                            withContext(Dispatchers.Main.immediate) {
+                                if (gone) return@withContext
+                                checking = false
+                                when {
+                                    next == null -> status = "Couldn't get in with that address and token."
+                                    next.sections.size < 2 -> save(next.source)
+                                    else -> pending = next
+                                }
                             }
                         }
                     }
@@ -311,6 +355,10 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
     }
 
     private fun edit(title: String, initial: String, onResult: (String) -> Unit) {
+        // Not while a check is in flight: its answer goes back from this page,
+        // and with the keyboard over it, it would close the keyboard instead —
+        // and leave this page up to be signed in from a second time.
+        if (checking) return
         navigateTo<String?>(
             { TextEntryScreen(it, title = title, initial = initial) },
             resultCallback = { text -> if (text != null) onResult(text) },

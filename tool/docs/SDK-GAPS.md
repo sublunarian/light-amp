@@ -2,8 +2,9 @@
 
 Amp ships today, but parts of it are built around the SDK because there is no
 supported route. Each item below is a workaround we would delete the day an API
-exists. Checked against `upstream/main` at `3df3c24` (SDK 0.1.1, 30 Aug 2026) —
-which is also the commit the `light-sdk` submodule is pinned to.
+exists. Checked against `upstream/main` at `3df3c24` (SDK 0.1.1, 30 Aug 2026).
+The `light-sdk` submodule is pinned to `15b1ca1` (18 Sep 2026); the commits
+between touch none of these gaps.
 
 ## Workarounds we would drop
 
@@ -90,6 +91,60 @@ minutes, where the spike held on indefinitely.
 - **Revert:** delete `cast/DlnaCast.kt` and the DLNA section of
   `PlaybackController.kt`.
 
+### Allow-listed libraries in the store build
+
+- **Need:** a dependency on the plugin's allow-list builds in Light's store
+  builder too.
+- **Now:** the builder runs offline, and its cache holds only what the SDK's
+  sample tool resolves. `material-icons-extended` is allow-listed but not in it,
+  so the 46 glyphs Amp uses are vendored in `ui/components/MaterialGlyphs.kt`
+  and held against the library by `MaterialGlyphsTest`.
+- **Would replace it:** a cache warmed with every allow-listed artifact, or an
+  allow-list that names only what the cache holds.
+- **Revert:** delete `MaterialGlyphs.kt`, and restore the `implementation` line
+  in `tool/build.gradle.kts` and the icon imports in `Primitives.kt`.
+
+### The detached player is bound to the activity, not the app
+
+- **Need:** a detached player that outlives its screens — the feature's whole
+  point — without the process dying when the activity behind it goes.
+- **Now:** `DefaultLightAudio.newPlayer` hands `sealedActivity.activity` to
+  `LightAudioPlayer`, which builds the media3 `MediaController` against it
+  (`connectDetachedPlayer`). media3 keeps that Context raw and unbinds through
+  it. The best-supported explanation for the crash below — not yet caught in
+  the act — is that Android destroys the activity on its own (on the LP3 you
+  leave a tool with Home, so Amp's back-out cleanup never runs), and the
+  framework drops the activity's service bindings while Amp still holds the
+  handle. The next
+  release of that controller, Amp's or media3's own when the session goes,
+  posts an unbind against the dead activity and the process dies with
+  `IllegalArgumentException: Service not registered` on the main looper,
+  where no caller can catch it. Seen three times in four days on the author's
+  phone (6–8 Oct 2026), always surfacing on a reopen after a gap, because the
+  process is frozen in the background and the posted unbind waits for it.
+  (A 2026-09-22 diagnosis blamed a double unbind and deferred the release;
+  media3 1.10.1 has one guarded unbind and cannot do that, so the deferral was
+  removed.) No Amp-side mitigation yet.
+- **Would replace it:** one line in the SDK — build the detached controller
+  against `context.applicationContext`, as `LightServiceConnection` already
+  does for its own binding — or a destroy hook a tool can release on.
+- **Revert:** nothing to revert yet; an Amp-side mitigation, if one lands,
+  goes here.
+
+### Copy and paste in text entry — light-sdk#45, in progress at Light
+
+- **Need:** paste what was copied in LightOS (Notes, Messages) into a field —
+  Bandcamp's generated logins are too long to type — through LightOS's own
+  hold-the-text menu of Copy, Paste and Clear.
+- **Now:** LightOS keeps its own clipboard and no service method reaches it, so
+  Amp offers Clear alone. To draw even that, `TextEntryScreen` carries its own
+  copy of `LightTextInputEditor`'s layout, whose text area takes every touch and
+  offers no hold; the menu sits in `LightEmbeddedLp3Keyboard`'s `overlay`.
+- **Would replace it:** #45 — copy/paste in the SDK's text inputs and to and
+  from LightOS. Light is doing it internally and asks for no duplicates or PRs.
+- **Revert:** once the stock editor has it, go back to `LightTextInputEditor` in
+  `TextEntryScreen` and drop `TextEditor`, `EditMenu` and the helpers after them.
+
 ## Answered upstream, not yet adopted
 
 ### Detached audio — PR #148: ADOPTED, 31 Aug 2026
@@ -124,7 +179,7 @@ what the workaround costs. **These are requests, not blockers.**
 | **Sockets bound to a network** — e.g. `LightConnectivity.unmeteredNetwork(): Network?`, or a `SocketFactory` bound to it. | The rule can only be asked about the phone's *default* network. If the default moves from Wi-Fi to cellular between the check and `connect()`, one TLS handshake (a few KB) leaves on cellular before the request is refused. `Network.bindSocket` closes that race; it needs `ConnectivityManager`, which a tool is not given. | Check before DNS, before the socket, and again on the wire; close every socket when the rule closes. No request or response byte leaks; one handshake can. |
 | **The default-network callback in `observeNetworkStatus()`** | `registerNetworkCallback(request)` hears networks appear, change and vanish, but is not guaranteed to fire when the default moves from a weak Wi-Fi to cellular while both stay up — the one change that flips `isMetered`. | Re-read `currentStatus` every 3 s while playing or waiting, once a second while a download queue is held, and when the window regains focus. |
 | **A resume hook for screens** — the counterpart of `onAppPause()`. | A process frozen in the background hears of a network change late or not at all; returning to the tool is the moment to look again. | Compose's `LocalWindowInfo.isWindowFocused`. |
-| **Cleartext to LAN servers and to loopback** — a `networkSecurityConfig` a tool can opt into from `lighttool.toml`. | Self-hosted music servers on a LAN are normally plain `http://`. Store builds get only the generated manifest, so they cannot reach one. | `tool/src/release/AndroidManifest.xml`, which never reaches a store build. |
+| **Cleartext to LAN servers and to loopback** — a `networkSecurityConfig` a tool can opt into from `lighttool.toml`. | Self-hosted music servers on a LAN are normally plain `http://`. Store builds get only the generated manifest, so they cannot reach one. | `tool/src/release/AndroidManifest.xml`, which never reaches a store build. A store build says in words that it reaches only `https://` servers (`data/Cleartext.kt`). |
 
 ## Smaller additions
 
