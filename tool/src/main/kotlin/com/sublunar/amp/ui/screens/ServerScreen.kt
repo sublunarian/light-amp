@@ -17,6 +17,7 @@ import com.sublunar.amp.data.newSourceId
 import com.sublunar.amp.data.SubsonicClient
 import com.sublunar.amp.data.SubsonicConfig
 import com.sublunar.amp.data.SUBSONIC_REQUEST_FAILED
+import com.sublunar.amp.data.ScannedLogin
 import com.sublunar.amp.data.SubsonicException
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
@@ -50,6 +51,13 @@ class ServerScreen(
     private val sourceId: String? = null,
     /** Start blank and create a new source on save, rather than editing one. */
     private val adding: Boolean = false,
+    /**
+     * Adding Bandcamp: its address is always the same, so it is filled in, and
+     * the line at the top says where its credentials come from — they are made
+     * for Subsonic apps on Bandcamp's site, not the account's own login.
+     * Nothing else about the source is special; it is a Subsonic server.
+     */
+    private val bandcamp: Boolean = false,
 ) : SimpleLightScreen<Unit>(sealed) {
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
@@ -69,8 +77,8 @@ class ServerScreen(
      * The screen object itself stays on the back stack, so these survive. Same
      * pattern as PlaylistsScreen.
      */
-    private var nickname by mutableStateOf("")
-    private var url by mutableStateOf<String?>(null)
+    private var nickname by mutableStateOf(if (bandcamp) "Bandcamp" else "")
+    private var url by mutableStateOf<String?>(if (bandcamp) BANDCAMP_ADDRESS else null)
     private var user by mutableStateOf<String?>(null)
     // null means "unchanged". The stored password is never seeded into this, so
     // it can never be rendered — the editor shows text in the clear.
@@ -111,9 +119,12 @@ class ServerScreen(
         val passwordSet = newPass?.isNotEmpty() ?: (storedLength > 0)
         val dots = "•".repeat((newPass?.length ?: storedLength).coerceIn(0, 24))
 
-        ListScreen(onBack = { goBack() }, title = source?.name ?: "Add Source") {
+        ListScreen(
+            onBack = { goBack() },
+            title = source?.name ?: if (bandcamp) "Add Bandcamp" else "Add Source",
+        ) {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                item { SectionLabel(status ?: "Tap a field to change it") }
+                item { SectionLabel(status ?: if (bandcamp) BANDCAMP_HINT else "Tap a field to change it") }
                 if (source == null) {
                     // Required, and first: with several sources the list is read
                     // by name, and "navidrome.example.com" twice tells you
@@ -174,6 +185,23 @@ class ServerScreen(
                         },
                     )
                 }
+                // Long generated credentials — Bandcamp's are — are typed on a
+                // computer instead: any QR generator, the username on the first
+                // line and the password on the second, and one scan fills both.
+                item {
+                    TextRow(
+                        title = "Scan Username & Password",
+                        subtitle = "On a computer, paste the username and password into any QR code " +
+                            "generator, each on its own line, then scan the code",
+                        subtitleLines = Int.MAX_VALUE,
+                        onClick = {
+                            navigateTo<String?>(
+                                { QrScanScreen(it, title = "Scan Login") },
+                                resultCallback = { text -> if (text != null) fillFromScan(text) },
+                            )
+                        },
+                    )
+                }
                 // Only how the server is reached, nothing about what it plays:
                 // quality lives on Data and Offline, and choosing a library is
                 // the Sources page under More — this form's job ends at the
@@ -221,6 +249,18 @@ class ServerScreen(
                 }
             }
         }
+    }
+
+    /** Fills the username and password from a scanned code — see [ScannedLogin]. */
+    private fun fillFromScan(text: String) {
+        val login = ScannedLogin.parse(text)
+        if (login == null) {
+            status = "That code didn't hold a username and a password on two lines."
+            return
+        }
+        user = login.username
+        newPass = login.password
+        status = "Username and password filled in. Tap Save."
     }
 
     private fun edit(title: String, initial: String, onResult: (String) -> Unit) {
@@ -328,6 +368,14 @@ class ServerScreen(
         return SaveOutcome.Said(explain(lastError))
     }
 }
+
+/** Bandcamp's Subsonic server — the same for every account. */
+private const val BANDCAMP_ADDRESS = "https://bandcamp.com/api/subsonic"
+
+/** Where Bandcamp's Subsonic credentials come from, in the form's own top line. */
+private const val BANDCAMP_HINT =
+    "Not your Bandcamp login: on bandcamp.com, open Fan Settings, scroll down to Subsonic " +
+        "and generate a username and password."
 
 /** What came of pressing Save. */
 private sealed interface SaveOutcome {

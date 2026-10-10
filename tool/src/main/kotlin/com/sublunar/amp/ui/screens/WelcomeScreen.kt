@@ -32,6 +32,7 @@ import com.sublunar.amp.ui.PlayerTheme
  */
 @Composable
 fun WelcomeContent(
+    onBandcamp: () -> Unit,
     onSubsonic: () -> Unit,
     onPlex: () -> Unit,
     onJellyfin: () -> Unit,
@@ -56,6 +57,12 @@ fun WelcomeContent(
                     .padding(bottom = px(80)),
             )
 
+            // Bandcamp leads: it is the only one here that needs nothing
+            // self-hosted, so it is the choice most likely to tell a reader this
+            // app is for them after all. It is a Subsonic server underneath —
+            // the choice only fills in its address and says where its
+            // credentials come from.
+            ChoiceButton("BANDCAMP", onBandcamp)
             ChoiceButton("SUBSONIC SERVER", onSubsonic)
             ChoiceButton("PLEX SERVER", onPlex)
             ChoiceButton("JELLYFIN SERVER", onJellyfin)
@@ -65,13 +72,9 @@ fun WelcomeContent(
 
             // Named because "Subsonic" is the protocol, not the thing most
             // people run — someone with a Navidrome server needs telling that
-            // the first option is theirs.
-            //
-            // Bandcamp leads the list: it is the only one of them that needs
-            // nothing self-hosted, so it is the name most likely to tell a
-            // reader that this app is for them after all.
+            // the Subsonic option is theirs. Bandcamp has its own choice above.
             AppText(
-                "Subsonic covers Bandcamp, Navidrome, Airsonic and Ampache.",
+                "Subsonic covers Navidrome, Airsonic and Ampache.",
                 pxSp(LightType.DETAIL_PX),
                 dim = true,
                 align = TextAlign.Center,

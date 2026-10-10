@@ -136,11 +136,27 @@ class LibraryRepository(
      * The cost is a blink of empty lists on a source switch, which is the
      * truth: the old source's music is not this source's music, and everything
      * else about the switch already says so.
+     *
+     * Each list is also read afresh whenever [reread] moves — see there. That
+     * re-read is not blanked first: it is the same source, and an empty list
+     * in between would be a flicker, not the truth.
      */
     private fun <T> observing(empty: T, select: (LibraryDao) -> Flow<T>): Flow<T> =
         daos.flatMapLatest { current ->
-            current?.let { dao -> select(dao).onStart { emit(empty) } } ?: emptyFlow()
+            current?.let { dao -> reread.flatMapLatest { select(dao) }.onStart { emit(empty) } } ?: emptyFlow()
         }
+
+    /**
+     * Moved once a sync has finished writing, so every list reads its table
+     * again rather than trusting Room to have told it about the writes.
+     *
+     * Room 2.7.0 — the version Light's store builder pins — can leave an
+     * observed query showing what it read before a write landed; 2.8.0 and
+     * 2.8.1 each fixed such a race. A new source showed it: the first sync
+     * stored its albums and the Albums page stayed empty until something
+     * else wrote to the same table.
+     */
+    private val reread = MutableStateFlow(0)
 
     /**
      * The downloads table, read once for everything that needs it.
@@ -237,7 +253,9 @@ class LibraryRepository(
      */
     /** The album table as stored, library tags and all. */
     private val albumRows: StateFlow<List<AlbumEntity>> =
-        observing(emptyList()) { it.observeAlbums() }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+        observing(emptyList()) { it.observeAlbums() }
+            .onEach { android.util.Log.i("AmpLists", "albums table → ${it.size} rows (re-read ${reread.value})") }
+            .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val allAlbums: StateFlow<List<Album>> =
         combine(albumRows, selectedLibrary) { rows, library ->
@@ -1256,6 +1274,7 @@ class LibraryRepository(
             // seen to have been let go of just below.
             runCatching { dao.collapseTrackCovers() }
             reportDroppedCovers(dao, source?.id, coversBefore)
+            rereadLists()
 
             val finishedAt = System.currentTimeMillis()
             _syncState.value = SyncState(
@@ -1357,6 +1376,7 @@ class LibraryRepository(
             dao.upsertAlbums(scan.albums.map { it.toEntity() })
             dao.upsertTracks(scan.tracks.map { it.toEntity() })
             reportDroppedCovers(dao, sourceId, coversBefore)
+            rereadLists()
             val finishedAt = System.currentTimeMillis()
             _syncState.value = SyncState(
                 syncing = false,
@@ -1409,6 +1429,12 @@ class LibraryRepository(
      * orphans. What that misses, the cache ages out on its own (see
      * ArtworkLoader.expireUnclaimed).
      */
+    /** See [reread]. */
+    private fun rereadLists() {
+        android.util.Log.i("AmpLists", "sync done; reading the lists again")
+        reread.update { it + 1 }
+    }
+
     private suspend fun reportDroppedCovers(dao: LibraryDao, sourceId: String?, before: Set<String>?) {
         if (sourceId == null || before.isNullOrEmpty()) return
         val after = coverIdsOrNull(dao) ?: return

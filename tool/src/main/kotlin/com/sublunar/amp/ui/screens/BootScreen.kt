@@ -122,6 +122,7 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
         when (state) {
             BootState.Loading -> Splash()
             BootState.NeedsLogin -> WelcomeContent(
+                onBandcamp = { go { ServerScreen(it, sourceId = null, adding = true, bandcamp = true) } },
                 onSubsonic = { go { ServerScreen(it, sourceId = null, adding = true) } },
                 onPlex = { go { PlexLinkScreen(it) } },
                 onJellyfin = { go { JellyfinLinkScreen(it) } },

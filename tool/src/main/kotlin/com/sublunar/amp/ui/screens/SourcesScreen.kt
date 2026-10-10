@@ -309,7 +309,12 @@ class AddSourceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
 
         ListScreen(onBack = { goBack() }, title = "Add Source") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                item { SectionLabel("Subsonic covers Navidrome, Airsonic and Bandcamp") }
+                item { SectionLabel("Subsonic covers Navidrome, Airsonic and Ampache") }
+                item {
+                    PlayAllRow(AppIcons.Add, "Bandcamp") {
+                        go { ServerScreen(it, sourceId = null, adding = true, bandcamp = true) }
+                    }
+                }
                 item {
                     PlayAllRow(AppIcons.Add, "Subsonic Server") {
                         go { ServerScreen(it, sourceId = null, adding = true) }

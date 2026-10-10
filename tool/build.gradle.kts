@@ -74,7 +74,7 @@ android {
             // Shrunk and optimised, but not renamed — see the rules file for why.
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "src/main/assets/r8/keep-names.pro",
+                "src/main/assets/r8/keep-names.txt",
             )
             // The dev key only as a fallback, so a contributor without a
             // keystore can still produce a build — theirs simply won't be one

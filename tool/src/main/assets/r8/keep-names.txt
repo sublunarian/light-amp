@@ -10,4 +10,7 @@
 # Under assets, not beside build.gradle.kts, because Light's builder copies
 # only src/main/{kotlin,java,res,assets}; the APK leaves it out — see
 # androidResources in build.gradle.kts.
+#
+# And .txt rather than R8's usual .pro: Light's extractor refuses any file
+# under assets whose extension isn't on its list, and .pro is not.
 -dontobfuscate
