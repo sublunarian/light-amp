@@ -692,6 +692,18 @@ object App {
                         wasClosed = closed
                     }
             }
+            // Downloads held for a quality their server couldn't meet go the
+            // moment that changes — whether the user picked another quality or
+            // a sync re-checked the server and found the call there after all.
+            // Either way the worker had ended (see Downloader.drain), and
+            // nothing else would start it for a source on Manual.
+            scope.launch {
+                settings.sources
+                    .map { list -> list.filterNot { it.downloadFormatAvailable }.map { it.id }.toSet() }
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collect { downloader.retry() }
+            }
             // Bulk work put off on a metered link — every playlist's contents,
             // and with them the playlist downloads and badges — is picked up
             // the moment the link stops costing money, not at the next launch.

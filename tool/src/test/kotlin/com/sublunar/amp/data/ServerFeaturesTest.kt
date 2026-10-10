@@ -27,6 +27,30 @@ class ServerFeaturesTest {
     }
 
     @Test
+    fun `a page where JSON should be is something in front of the server, not the server`() {
+        // A reverse proxy's login page, an expired session's portal: if these
+        // counted as "no such endpoint", one bad moment would hide features.
+        assertFalse(SubsonicException("Unexpected response from server.", notJson = true).endpointMissing)
+        assertFalse(
+            SubsonicException("Unexpected response from server.", notSubsonic = true, notJson = true).endpointMissing,
+        )
+    }
+
+    @Test
+    fun `any Subsonic envelope, an error included, means the endpoint is there`() {
+        // A server that has the call but refuses this request — a song missing
+        // from its disk, a wrong id — still answered in Subsonic's own words.
+        assertFalse(SubsonicException("Data not found", code = 70, envelope = true).endpointMissing)
+        assertFalse(SubsonicException("Unexpected response from server.", envelope = true).endpointMissing)
+    }
+
+    @Test
+    fun `a full server's original quality is always available`() {
+        val navidrome = subsonic(ServerFeatures(checkedVersion = "1.16.1/navidrome/0.58"))
+        assertTrue(navidrome.copy(downloadFormatId = StreamFormat.RAW.id).downloadFormatAvailable)
+    }
+
+    @Test
     fun `a server having trouble is never read as a server missing something`() {
         assertFalse(SubsonicException("Server returned HTTP 500.", status = 500).endpointMissing)
         assertFalse(SubsonicException("Server returned HTTP 502.", status = 502).endpointMissing)
@@ -68,12 +92,13 @@ class ServerFeaturesTest {
         // Downloading itself still works — only the original file is gone.
         assertTrue(source.supportsDownloads)
         assertTrue(source.downloadFormats.isNotEmpty())
-        // And a stored choice of the original reads as the default rather than
-        // as a download that can never be fetched.
-        assertEquals(
-            StreamFormat.DEFAULT,
-            source.copy(downloadFormatId = StreamFormat.RAW.id).downloadFormat,
-        )
+        // And a stored choice of the original stays the original — never
+        // quietly swapped for something smaller. It is reported as unmeetable
+        // instead, which is what stops the downloader and labels the row.
+        val wantsOriginal = source.copy(downloadFormatId = StreamFormat.RAW.id)
+        assertEquals(StreamFormat.RAW, wantsOriginal.downloadFormat)
+        assertFalse(wantsOriginal.downloadFormatAvailable)
+        assertTrue(source.copy(downloadFormatId = StreamFormat.OPUS.id).downloadFormatAvailable)
     }
 
     @Test

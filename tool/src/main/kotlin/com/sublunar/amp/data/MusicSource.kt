@@ -190,16 +190,18 @@ data class MusicSource(
     val wifiFormat: StreamFormat get() = supported(streamFormatId)
     val cellularFormat: StreamFormat get() = supported(cellularFormatId ?: streamFormatId)
     /**
-     * Downloading quality. Where the server has no `download` call, a stored
-     * choice of the original file can't be honoured and can't be left to fail
-     * either, so it reads as the default — the one place the fallback goes to
-     * something smaller rather than to the original, because the original is
-     * the thing that isn't there.
+     * Downloading quality — exactly what was chosen, even where this server
+     * turns out not to be able to serve it. Quietly reading a stored Original
+     * as something smaller would be a silent substitution: files would come
+     * down transcoded while every screen still claimed otherwise. So the
+     * choice stands, [downloadFormatAvailable] says whether it can be met, and
+     * the downloader stops and says why rather than fetching something else.
      */
-    val downloadFormat: StreamFormat get() {
-        val wanted = supported(downloadFormatId)
-        return if (wanted in downloadFormats || downloadFormats.isEmpty()) wanted else StreamFormat.DEFAULT
-    }
+    val downloadFormat: StreamFormat get() = supported(downloadFormatId)
+
+    /** Whether this server can serve [downloadFormat] — false only for an Original it has no call for. */
+    val downloadFormatAvailable: Boolean get() =
+        downloadFormats.isEmpty() || downloadFormat in downloadFormats
 
     val offlineMode: OfflineMode
         get() = offlineModeName?.let { name ->
