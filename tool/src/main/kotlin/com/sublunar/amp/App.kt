@@ -129,15 +129,25 @@ object App {
     /** The active source's DAO. Never read before [boot] has built the first. */
     private fun dao(): LibraryDao = _dao.value ?: error("Library database not ready")
 
-    private fun databaseFor(source: MusicSource): LibraryDatabase = databases.getOrPut(source.id) {
-        // The first server keeps the original file name, so an install from
-        // before sources existed finds its cache rather than syncing afresh.
-        val name = if (source.id == AppSettings.LEGACY_SOURCE_ID) {
-            DB_NAME
-        } else {
-            "$DB_NAME-${source.id}"
+    /**
+     * Held while looking up and building, as [clientFor] holds its own: the
+     * switch, the top-up, the cover loops and the Offline page all ask at once,
+     * from different threads. Two of them missing together would each build a
+     * Room instance on the same file, and Room tells only the instance that
+     * wrote — a download badge or a list on the other would never move. Cheap
+     * to hold: building opens nothing until the first query.
+     */
+    private fun databaseFor(source: MusicSource): LibraryDatabase = synchronized(databases) {
+        databases.getOrPut(source.id) {
+            // The first server keeps the original file name, so an install from
+            // before sources existed finds its cache rather than syncing afresh.
+            val name = if (source.id == AppSettings.LEGACY_SOURCE_ID) {
+                DB_NAME
+            } else {
+                "$DB_NAME-${source.id}"
+            }
+            lightContext.buildDatabase(LibraryDatabase::class.java, name)
         }
-        lightContext.buildDatabase(LibraryDatabase::class.java, name)
     }
 
     /**
