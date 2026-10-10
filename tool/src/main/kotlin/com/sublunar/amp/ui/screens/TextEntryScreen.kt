@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +51,7 @@ import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIconConfiguration
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightThemeTokens
+import com.thelightphone.sdk.ui.LocalHapticsEnabled
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.designVerticalPxToDp
@@ -126,14 +128,22 @@ private fun TextEditor(
     val inputStyle = inputTextStyle()
     var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
     var menu by remember { mutableStateOf(false) }
-    // The same thud every hold in Amp gives when it lands.
-    val (_, thud) = rememberTapHaptics()
+    // The same thud every hold in Amp gives when it lands, and a tick per key
+    // when the phone's own haptics setting is on — the SDK's editor read the
+    // same setting for its key buzz.
+    val (tick, thud) = rememberTapHaptics()
+    val hapticsOn by rememberUpdatedState(LocalHapticsEnabled.current)
     val options = rememberPhoneKeyboardOptions()
     // Held in remember rather than through viewModel(), as on the search page:
     // the tool doesn't carry lifecycle-viewmodel-compose.
     val keyboard = remember(state) {
         EnQwertyLp3KeyboardViewModel<Unit>(
-            EditingKeyboardCallback(state, singleLine, onReturn = onSubmit),
+            EditingKeyboardCallback(
+                state,
+                singleLine,
+                onReturn = onSubmit,
+                onHaptic = { if (hapticsOn) tick() },
+            ),
             keyboardOptionsFlow = options,
             optionsForLayout = { LayoutOptions(!it.isRootLayout) },
         )

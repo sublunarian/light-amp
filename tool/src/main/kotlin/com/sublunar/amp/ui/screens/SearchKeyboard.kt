@@ -57,11 +57,18 @@ internal class EditingKeyboardCallback(
     private val state: TextFieldState,
     private val singleLine: Boolean = true,
     private val onReturn: () -> Unit,
+    /**
+     * A tick as each key goes down, as the SDK's own callback gives — every
+     * field had one through the SDK's editor until Amp drew its own. The
+     * search page passes nothing: it never buzzed, and still doesn't.
+     */
+    private val onHaptic: () -> Unit = {},
 ) : Lp3RepeatableKeyboardCallback {
 
-    override fun onKeyPressed(code: Int) = Unit
+    override fun onKeyPressed(code: Int) = onHaptic()
 
     override fun onSpecialKeyPressed(key: SpecialKey) {
+        onHaptic()
         if (key == SpecialKey.Space) insert(" ")
     }
 
