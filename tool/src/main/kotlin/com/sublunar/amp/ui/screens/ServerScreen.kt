@@ -167,7 +167,10 @@ class ServerScreen(
                         // never again, so the keyboard always opens empty.
                         // Submitting nothing leaves the stored password alone.
                         onClick = {
-                            edit("New password", "") { if (it.isNotEmpty()) newPass = it }
+                            // "New" only where there is an old one to replace;
+                            // adding a server, it is simply the password.
+                            val title = if (storedLength > 0) "New password" else "Password"
+                            edit(title, "") { if (it.isNotEmpty()) newPass = it }
                         },
                     )
                 }
@@ -412,7 +415,7 @@ private fun explain(error: Throwable?): String {
         (chain.none { it is SubsonicException } && chain.any { it is SerializationException })
     if (page) {
         return "That address answered with a web page, not a music server. Check the " +
-            "address, and if the server is on plain HTTP enter it as http://…"
+            "address. If the server uses plain HTTP, type http:// in front of it."
     }
     // Already a sentence meant for a person — "Wrong username or password",
     // "Server returned HTTP 404." — so it is passed through as it stands.

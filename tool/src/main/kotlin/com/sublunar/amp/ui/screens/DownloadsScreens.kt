@@ -59,11 +59,11 @@ fun dataModeLabel(mode: DataMode): String = when (mode) {
 }
 
 /**
- * Room for the longest of the six explanations below to wrap rather than be cut
- * off mid-sentence. Two lines covers them all at the widest of these screens'
- * layouts; the cap stays so a row can't grow without bound if one is reworded.
+ * The explanations under each mode wrap in full. A cap of two lines was meant to
+ * fit them all, and on the LP3's narrow panel it cut Low Data's off mid-sentence;
+ * a sentence explaining a choice is only any use whole.
  */
-private const val MODE_DETAIL_LINES = 2
+private const val MODE_DETAIL_LINES = Int.MAX_VALUE
 
 private fun dataModeDetail(mode: DataMode): String = when (mode) {
     DataMode.MAKE_IT_HURT -> "No limits — streaming, downloads and artwork all use cellular data when there's no Wi-Fi"
