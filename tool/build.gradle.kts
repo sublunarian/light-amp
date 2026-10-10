@@ -71,7 +71,11 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            // Shrunk and optimised, but not renamed — see the rules file for why.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "src/main/assets/r8/keep-names.pro",
+            )
             // The dev key only as a fallback, so a contributor without a
             // keystore can still produce a build — theirs simply won't be one
             // that can update an installed copy.
@@ -81,12 +85,13 @@ android {
         }
     }
 
-    // The Room schemas sit under assets so Light's builder has them (see the
-    // ksp block below); they are build inputs, and no APK needs to carry them.
-    // The rest is AGP's default list, which setting this replaces.
+    // The Room schemas and the R8 rules sit under assets so Light's builder has
+    // them (see the ksp block below, and the release build type); they are
+    // build inputs, and no APK needs to carry them. The rest is AGP's default
+    // list, which setting this replaces.
     androidResources {
         ignoreAssetsPattern =
-            "!.svn:!.git:!.ds_store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:<dir>schemas"
+            "!.svn:!.git:!.ds_store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:<dir>schemas:<dir>r8"
     }
 
     lint {
