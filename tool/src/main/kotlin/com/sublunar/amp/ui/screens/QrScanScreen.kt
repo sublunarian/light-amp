@@ -18,8 +18,9 @@ import com.thelightphone.sdk.SimpleLightScreen
  * dismissed with back.
  *
  * The SDK's own scanner, including its camera-permission request through
- * LightOS — the same one Light's Authenticator uses. It is already part of the
- * SDK Amp ships, so it costs no size.
+ * LightOS — the same one Light's Authenticator uses. Its barcode model was in
+ * the APK already, through the SDK; the camera and scanning code that R8 used
+ * to strip as unused is what using it adds, about 1 MB.
  */
 class QrScanScreen(
     sealed: SealedLightActivity,
