@@ -1,18 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.7.3
 
 ### Added
 
-- Bandcamp has its own choice when adding a source: the address is filled in,
-  and it says where to find your Bandcamp Subsonic login.
-- Fill in a username and password by scanning a QR code made with any QR
-  generator: username on the first line, password on the second.
+- Bandcamp is its own choice when adding a source, with the address filled in
+  and directions to your Bandcamp Subsonic login.
+- Scan a QR code to fill in a username and password.
 
 ### Fixed
 
 - A newly added source could show an empty library until it was synced again.
-- Mode descriptions in Settings are no longer cut off.
+- Some descriptions in Settings were cut off.
 
 ## 0.7.2
 
