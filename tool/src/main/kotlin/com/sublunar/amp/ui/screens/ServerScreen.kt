@@ -16,6 +16,7 @@ import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.newSourceId
 import com.sublunar.amp.data.SubsonicClient
 import com.sublunar.amp.data.SubsonicConfig
+import com.sublunar.amp.data.SUBSONIC_REQUEST_FAILED
 import com.sublunar.amp.data.SubsonicException
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
@@ -265,13 +266,33 @@ class ServerScreen(
             }
             client.close()
             if (ok.isFailure) {
-                lastError = ok.exceptionOrNull()
+                val error = ok.exceptionOrNull()
+                // A ping refused in Subsonic's own words — Navidrome's "Wrong
+                // username or password" — has found the server: this spelling
+                // is the one, and that is the answer. Trying http:// next could
+                // only bury it under a connection error from an address that
+                // was never right.
+                val subsonic = generateSequence(error) { it.cause }.take(8)
+                    .filterIsInstance<SubsonicException>().firstOrNull()
+                if (subsonic != null && (subsonic.code != null || subsonic.envelope)) {
+                    return SaveOutcome.Said(explain(error))
+                }
+                lastError = error
                 continue
             }
-            // A server too small to have that call can't be checked this way,
-            // and isn't asked to prove anything it hasn't got.
-            if (refused != null && (refused as? SubsonicException)?.endpointMissing != true) {
-                return SaveOutcome.Said(refusedLogin(refused))
+            // The ping settled the address: this spelling answered, so it is
+            // the one, and nothing below tries another — a hiccup here moving
+            // on to http:// could save a source that a redirect only happened
+            // to carry through. What the folders call came back with decides
+            // the rest. Only an answer about the account refuses the save; a
+            // hiccup is reported as one, so a right password is never blamed.
+            when (loginVerdict(refused)) {
+                LoginVerdict.ACCEPTED, LoginVerdict.UNCHECKABLE -> Unit
+                LoginVerdict.REFUSED -> return SaveOutcome.Said(refusedLogin(refused!!))
+                LoginVerdict.UNREACHED -> return SaveOutcome.Said(
+                    "That address answered, then stopped answering before the account " +
+                        "could be checked. Try Save again.",
+                )
             }
             // A different address or account may mean a different library, so the
             // cached rows can't be trusted; the same server with a new password can.
@@ -314,26 +335,50 @@ private sealed interface SaveOutcome {
     data object Added : SaveOutcome
 }
 
+/** What the folders call said about the account, once the ping has settled the address. */
+private enum class LoginVerdict { ACCEPTED, REFUSED, UNCHECKABLE, UNREACHED }
+
+/**
+ * Whether a failed folders call is the account being refused or something
+ * else getting in the way.
+ *
+ * Refused: a Subsonic error from the server itself (it carries a code), or
+ * HTTP 401, 403 or 500 — a bare 500 being how Bandcamp says "not this login".
+ * Uncheckable: the server has no such call, or answered in a shape this client
+ * can't read (it answered, so the account got in). Everything else — a
+ * timeout, a 502, a 500 that is a gateway's page rather than the server's own,
+ * a web page where JSON should be — is the network or something in front of
+ * the server, and says nothing about the password.
+ */
+private fun loginVerdict(error: Throwable?): LoginVerdict {
+    if (error == null) return LoginVerdict.ACCEPTED
+    val server = generateSequence(error) { it.cause }.take(8)
+        .filterIsInstance<SubsonicException>().firstOrNull()
+        ?: return LoginVerdict.UNREACHED
+    return when {
+        server.endpointMissing -> LoginVerdict.UNCHECKABLE
+        server.code != null -> LoginVerdict.REFUSED
+        server.envelope -> LoginVerdict.UNCHECKABLE
+        server.status == 401 || server.status == 403 -> LoginVerdict.REFUSED
+        server.status == 500 && !server.notJson -> LoginVerdict.REFUSED
+        else -> LoginVerdict.UNREACHED
+    }
+}
+
 /**
  * The address answered and the account did not.
  *
- * Where the server says which it is — Subsonic's own "Wrong username or
- * password", an HTTP 401 — that is what the user reads. Where it doesn't, and
- * Bandcamp doesn't (a bare HTTP 500 with nothing in it), the sentence says only
- * what is actually known: the address is fine and the login is what was
- * refused. Naming the password outright would be a guess.
+ * A server that says why — Subsonic's own "Wrong username or password" — is
+ * quoted. One that doesn't, and Bandcamp doesn't (a bare HTTP 500), gets a
+ * sentence that claims only what is known: the address is fine and the login
+ * is what was refused. Naming the password outright would be a guess.
  */
 private fun refusedLogin(error: Throwable): String {
-    val said = explain(error)
-    val names = said.contains("username", ignoreCase = true) ||
-        said.contains("password", ignoreCase = true) ||
-        said.contains("401") ||
-        said.contains("403")
-    return if (names) {
-        said
-    } else {
-        "That address answered, but not for this account. Check the username and password."
-    }
+    val server = generateSequence(error) { it.cause }.take(8)
+        .filterIsInstance<SubsonicException>().firstOrNull()
+    val said = server?.takeIf { it.code != null }?.message
+        ?.takeIf { it.isNotBlank() && it != SUBSONIC_REQUEST_FAILED }
+    return said ?: "That address answered, but not for this account. Check the username and password."
 }
 
 /**
@@ -352,15 +397,29 @@ private fun refusedLogin(error: Throwable): String {
 private fun explain(error: Throwable?): String {
     if (error == null) return "Couldn't connect."
     val chain = generateSequence(error) { it.cause }.take(8).toList()
+    // Checked before the pass-through below: the client wraps an answer that
+    // isn't JSON in a SubsonicException ("Unexpected response from server."),
+    // and that sentence hides the real problem — a web page where the server
+    // should be — which is the one with a fix the user can make. Only an
+    // answer that wasn't JSON at all: JSON in an unexpected shape is the
+    // server talking, and calling it a web page would send the user to fix an
+    // address that is fine.
+    // A page with an error status is different: a gateway saying the server
+    // behind it is down (502, 503, 504). "Check the address" would send the
+    // user to fix something that is fine, so that one keeps its HTTP message.
+    val page = chain.filterIsInstance<SubsonicException>()
+        .any { it.notJson && (it.status == null || it.status == 404) } ||
+        (chain.none { it is SubsonicException } && chain.any { it is SerializationException })
+    if (page) {
+        return "That address answered with a web page, not a music server. Check the " +
+            "address, and if the server is on plain HTTP enter it as http://…"
+    }
     // Already a sentence meant for a person — "Wrong username or password",
     // "Server returned HTTP 404." — so it is passed through as it stands.
     chain.filterIsInstance<SubsonicException>().firstOrNull()?.let {
         return it.message ?: "Couldn't connect."
     }
     return when {
-        chain.any { it is SerializationException } ->
-            "That address answered with a web page, not a music server. Check the " +
-                "address, and if the server is on plain HTTP enter it as http://…"
         chain.any { it is UnknownHostException } ->
             "Couldn't find that address. Check the spelling, and that this phone is " +
                 "on the same network."
