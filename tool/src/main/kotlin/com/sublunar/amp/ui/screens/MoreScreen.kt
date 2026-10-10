@@ -107,10 +107,9 @@ class MoreScreen(
                 // the page's own — every library page is a view of one source,
                 // so it heads the list the rest of it describes.
                 //
-                // Absent where there is nothing to choose: one source holding one
-                // library is a row that names what you are already looking at and
-                // leads to a page with a single entry on it.
-                if (sources.size > 1 || (active?.libraries?.size ?: 0) > 1) {
+                // Always there, even with one source and one library: the page
+                // it opens is also where Sync Now lives, so it is never a page
+                // with nothing on it.
                 item {
                     TextRow(
                         title = "Source",
@@ -120,7 +119,6 @@ class MoreScreen(
                         },
                         onClick = { go { SourcesScreen(it) } },
                     )
-                }
                 }
                 // Directly under the source, above the rows that describe how
                 // the page is drawn: this one says *what is in it*, which is the

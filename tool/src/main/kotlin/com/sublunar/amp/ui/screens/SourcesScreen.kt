@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
+import com.sublunar.amp.data.SyncState
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.PlayAllRow
@@ -38,8 +39,8 @@ private val READ_MEDIA_AUDIO = LocalLibrary.PERMISSION
 /**
  * Which library the app is showing — and nothing else.
  *
- * This is the page reached while listening, so it does one thing: every source's
- * libraries, one tap each. Adding a source, or changing anything about one,
+ * This is the page reached while listening, so it does two things: every
+ * source's libraries, one tap each, and Sync Now for the one in use. Adding a source, or changing anything about one,
  * lives in Settings under Sources — see [SourceListScreen]. Splitting them keeps
  * the switch you make often away from the settings you set once, where a
  * mistaken tap costs a re-sync.
@@ -59,9 +60,24 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
         val sources by App.settings.sources.collectAsState(initial = emptyList())
         val active by App.settings.activeSource.collectAsState(initial = null)
         val activeLibrary by App.settings.libraryId.collectAsState(initial = null)
+        val sync by App.library.syncState.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Sources") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
+                // First, and always in the same place: a control shouldn't move
+                // when the source changes. It refreshes the source in use — the
+                // only one a sync can work on, and the only one that needs it,
+                // since switching to another syncs that one as it opens. The
+                // line under it names the source, so which one is never a guess.
+                active?.let { current ->
+                    item(key = "sync") {
+                        TextRow(
+                            title = if (sync.syncing) "Syncing…" else "Sync Now",
+                            subtitle = "${current.name} · ${syncStatus(current, sync)}",
+                            onClick = { if (!sync.syncing) App.library.scanAndSyncInBackground() },
+                        )
+                    }
+                }
                 sources.forEach { source ->
                     val chosen = source.id == active?.id
                     // The source is the heading its libraries sit under, not a
@@ -81,6 +97,21 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
                 }
             }
         }
+    }
+
+    /** How the source in use stands, for the line under Sync Now. */
+    private fun syncStatus(source: MusicSource, sync: SyncState): String = when {
+        sync.syncing -> sync.phase.ifBlank { "Working" }
+        sync.error != null -> sync.error
+        // Worth saying every time it is true: it means new files on the server
+        // will never appear until the server itself is set to look for them.
+        App.library.scanRefused -> "won't scan on request — last synced ${relativeTime(sync.lastSyncedMs)}"
+        sync.lastSyncedMs > 0L -> "last synced ${relativeTime(sync.lastSyncedMs)}"
+        source.kind == SourceKind.LOCAL -> "rescan this phone's music"
+        // A server with no scan call of its own is only ever read from — see
+        // MusicSource.supportsServerScan.
+        !source.supportsServerScan -> "fetch the library again"
+        else -> "scan the server, then refresh"
     }
 
     /** A row belonging to the source above it: one of its folders, or its page. */
@@ -339,8 +370,8 @@ class SourceDetailScreen(
     override fun Content() {
         val sources by App.settings.sources.collectAsState(initial = emptyList())
         val source = sources.firstOrNull { it.id == sourceId }
-
         val sync by App.library.syncState.collectAsState()
+
         // Re-checked on every sync, because granting access is what the user
         // goes off to do and coming back is when it should have changed.
         var access by remember { mutableStateOf(LocalLibrary.Access.GRANTED) }
@@ -431,30 +462,6 @@ class SourceDetailScreen(
                             onClick = { go { LibraryVisibilityScreen(it, source.id) } },
                         )
                     }
-                }
-                // Refreshing is a thing you do to *this* source, so it belongs
-                // here rather than in the app's own settings.
-                item {
-                    TextRow(
-                        title = if (sync.syncing) "Syncing…" else "Sync Now",
-                        subtitle = when {
-                            sync.syncing -> sync.phase.ifBlank { "Working" }
-                            sync.error != null -> sync.error
-                            // Worth saying every time it is true: it means new
-                            // files on the server will never appear until the
-                            // server itself is set to look for them.
-                            App.library.scanRefused ->
-                                "Server won't scan on request — last synced " +
-                                    relativeTime(sync.lastSyncedMs)
-                            sync.lastSyncedMs > 0L -> "Last synced ${relativeTime(sync.lastSyncedMs)}"
-                            source.kind == SourceKind.LOCAL -> "Rescan this phone's music"
-                            // A server with no scan call of its own is only ever
-                            // read from — see MusicSource.supportsServerScan.
-                            !source.supportsServerScan -> "Fetch the library again"
-                            else -> "Scan the server, then refresh"
-                        },
-                        onClick = { if (!sync.syncing) App.library.scanAndSyncInBackground() },
-                    )
                 }
                 // Logging out of a server *is* forgetting it now that there can
                 // be several: one row, named for what it does to this kind of
