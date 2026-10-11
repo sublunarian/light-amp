@@ -162,12 +162,29 @@ checks (`metadataAllowed`, `heavyDataAllowed`) only save work, they stop nothing
 unconditionally, branch on the result.
 
 **The player handle doesn't live as long as playback.** Backing out releases it
-while the detached service plays on, and a reopen binds a new one. `bind()`'s
-collectors on the handle live in `handleJob` and go with it; the rest live in
-`bindJob`, outlive the handle on purpose, and are replaced by the next bind. A
-released handle throws on any command — on Main that takes the process and the
-playing service with it — so a deferred block holding on to `p` checks
-`player !== p` before touching it.
+while the detached service plays on, and a reopen binds a new one. A new
+activity — Android having destroyed the last one while the process lived —
+takes the player over with `handOver`, which only swaps the handle: none of the
+back-out's teardown, no new bind, and `player` goes from the old handle straight
+to the new one, never through null. Everything on one handle starts in
+`attachHandle` and lives in `handleJob`. Its flows hold placeholders until it
+connects, so the collectors that read the service's state go in
+`collectHandle`, which starts only after `awaitReady`; one started any earlier
+copies 0:00 and "paused" over what the screen carried. (The device volume is
+the system's own level and is read at once.) A service that moved to another
+track meanwhile is landed on before they start, at its own position
+(`connectLanding`, `landedOn`). The rest of `bind()`'s collectors live in
+`bindJob`, outlive the handle on purpose, and are replaced by the next bind; a
+handover leaves them be. A released handle throws on any command — on Main
+that takes the process and the playing service with it — so a deferred block
+reads `player` again on Main rather than using the `p` it captured. If its work
+is for the service and the state has already been changed to match, it goes to
+whatever handle is there (`player ?: return`). It drops with `player !== p`
+only when the work belongs to the handle it checked: its connection, its gain,
+a missed seek's reload (`verifyNativeSeek`, `serverSeek`), the stream-died
+retry in `fallBackOffline`. `reresolveQueue` drops its edits the same way, but
+puts its memo back to what the service holds and asks again, so the next
+connected handle still gets them.
 
 **Room schemas live in `src/main/assets/schemas`.** Light's store builder copies
 only `src/main/{kotlin,java,res,assets}`, `build.gradle.kts` and

@@ -40,6 +40,7 @@ import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.toTrack
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.db.LibraryDatabase
+import com.sublunar.amp.playback.LateUnbindGuard
 import com.sublunar.amp.playback.PlaybackController
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
@@ -540,6 +541,10 @@ object App {
     const val SYNC_JOB_KEY = "library-sync"
 
     fun boot(sealedActivity: SealedLightActivity, context: SealedLightContext) {
+        // First, before anything below can make or release a player handle,
+        // and outside the once-only block because it keeps its own flag — see
+        // LateUnbindGuard for why it has to be a raw post from right here.
+        LateUnbindGuard.install()
         if (!coreReady) {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             settings = AppSettings(context.dataStore)
@@ -920,16 +925,23 @@ object App {
                     .distinctUntilChangedBy { it.size }
                     .collect { topUpDownloads() }
             }
+            // Once per process like the rest. Started on every boot, as it
+            // was, each new activity left one more of these running for good.
+            scope.launch { settings.replayGain.collect { playback.replayGain.value = it } }
             coreReady = true
             // Periodic background library refresh (min 15 min on WorkManager).
             LightWork.enqueuePeriodic(context, SYNC_JOB_KEY, 30.minutes)
         }
-        playback.bind(DefaultLightAudio(sealedActivity))
-        scope.launch { settings.replayGain.collect { playback.replayGain.value = it } }
+        playback.attach(DefaultLightAudio(sealedActivity))
     }
 
-    fun shutdown() {
-        playback.release()
+    /**
+     * The screen that booted [sealedActivity] is backing out. Named, so that an
+     * old activity's back-out can't release the handle a newer one has taken
+     * over — see PlaybackController.attach.
+     */
+    fun shutdown(sealedActivity: SealedLightActivity) {
+        playback.release(owner = DefaultLightAudio(sealedActivity))
     }
 
     /**

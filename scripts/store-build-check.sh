@@ -23,7 +23,14 @@
 # with the network off. A dependency on the plugin's allow-list can still be
 # missing from that cache; this is the only way to find out before Light does.
 #
-# Exit status: 0 when the store build succeeds, 1 when it doesn't, 2 on misuse.
+# A store build that succeeds then goes through the check every local release
+# build gets, scripts/release-mapping-check.sh: media3's SessionServiceConnection,
+# and the class that runs media3's posted release, have to keep the names the
+# late-unbind guard matches on. Renamed, the build still works and the crash the
+# guard absorbs is back. Only reached once the store build compiles.
+#
+# Exit status: 0 when the store build succeeds, 1 when it doesn't or either name
+# is gone from its mapping, 2 on misuse.
 # Everything lands in build/store-check/ (ignored by git); nothing else is touched.
 
 set -Eeuo pipefail
@@ -41,7 +48,7 @@ while [[ $# -gt 0 ]]; do
         --offline) OFFLINE=1; shift ;;
         --head) FROM_HEAD=1; shift ;;
         --sdk-ref) SDK_REF="${2:?--sdk-ref needs a commit}"; shift 2 ;;
-        -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown flag: $1" >&2; exit 2 ;;
     esac
 done
@@ -122,6 +129,9 @@ set -e
 
 if [[ $STATUS -eq 0 ]] && grep -q "^BUILD SUCCESSFUL" "$LOG"; then
     APK="$(find "$WORKSPACE/tool/build/outputs/apk/release" -name '*.apk' | head -1)"
+    # Whether Light's builder applies keep-names.txt only the store build can
+    # say, so its mapping is checked just as a local release build's is.
+    "$ROOT/scripts/release-mapping-check.sh" "$WORKSPACE/tool/build/outputs/mapping/release/mapping.txt" || exit 1
     echo "== store build: OK — ${APK#"$ROOT"/}"
     exit 0
 fi

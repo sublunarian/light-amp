@@ -57,6 +57,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
@@ -90,7 +91,25 @@ class PlaybackController(
      */
     private val metadataAllowed: () -> Boolean = { true },
 ) {
+    /**
+     * The handle on the detached service. Replaced on Main — by [attach], when
+     * a new activity takes over — and read from Default as well: by the
+     * restore, the rules and downloads collectors, and a source switch's stop.
+     */
+    @Volatile
     private var player: LightAudioPlayer? = null
+
+    /** The activity [player] was made from — see [attach] and [release]. */
+    private var handleOwner: LightAudio? = null
+
+    /**
+     * The ReplayGain factor last given to the playing service, carried onto
+     * each new handle before it connects. A handle starts at unity, and the SDK
+     * hands its gain to the service the moment it connects: without the seed,
+     * every reopen on an attenuated track jumped to full level until the
+     * track's own gain came back round.
+     */
+    private var appliedGain = 1f
 
     /**
      * Whether anything has actually played since the queue last reached its end.
@@ -118,7 +137,7 @@ class PlaybackController(
     /**
      * Loudness normalisation on/off — fed from settings by App. While on, the
      * playing track's server-measured gain ([Track.gainDb]) becomes the
-     * player's own volume; see the collector in [bind].
+     * player's own volume; see the collector in [collectHandle].
      */
     val replayGain = MutableStateFlow(true)
 
@@ -442,10 +461,11 @@ class PlaybackController(
     val bound: StateFlow<Boolean> = _bound
 
     /**
-     * The collectors [bind] started on the player handle's own flows. A
-     * released handle's flows simply stop, so without this they would sit on
+     * The collectors [attachHandle] started on the player handle's own flows,
+     * and its wait for the handle to connect, which starts most of them.
+     * A released handle's flows simply stop, so without this they would sit on
      * it for the life of the process, one more set with every reopen. They
-     * are cancelled with the handle in [release].
+     * are cancelled with the handle, in [release], [handOver] and [handleLost].
      */
     private var handleJob: Job? = null
 
@@ -455,7 +475,7 @@ class PlaybackController(
      * — the detached service goes on playing with the screens gone, and the
      * heartbeat, the snapshot, the link poll and the buffering limit go on
      * with it. The next bind replaces them rather than adding a second set
-     * beside them.
+     * beside them. A handover leaves them be: none of them holds the handle.
      */
     private var bindJob: Job? = null
 
@@ -514,37 +534,127 @@ class PlaybackController(
         // than inside, so a second emission arriving before that block runs
         // can't queue a second rewind behind it.
         scope.launch(Dispatchers.Main.immediate) {
-            // Released while this was on its way: a gone handle throws.
-            if (player !== p) return@launch
-            p.pause()
-            p.seekToIndex(0)
+            // Released while this was on its way: a gone handle throws. One
+            // that replaced it steers the same service, which still has to be
+            // told what the state below already says.
+            val cur = player ?: return@launch
+            cur.pause()
+            cur.seekToIndex(0)
         }
         _index.value = 0
         _positionMs.value = 0L
         hasPlayed = false
     }
 
-    /** Attach the audio stack from the current activity. Idempotent until [release]. */
-    fun bind(audio: LightAudio) {
-        if (player != null) return
-        // A reopen. The last bind's collectors are still running, and left
-        // there they would run beside this one's — two heartbeats, two
-        // snapshots, two chances at every scrobble. The fresh set below picks
-        // up everything they watched from where it stands now.
-        bindJob?.cancel()
-        val bound = SupervisorJob(scope.coroutineContext[Job])
-        val handle = SupervisorJob(scope.coroutineContext[Job])
-        bindJob = bound
-        handleJob = handle
-        // What this controller carried across a reopen, read before the new
-        // handle's first readings overwrite it — see the re-cue further down.
+    /**
+     * Attach the audio stack from the activity that is starting: [bind] the
+     * first time, and again after a back-out released the handle.
+     *
+     * A handle still held means the activity that made it is finishing or
+     * already gone. The activity is single-task and the launcher brings a live
+     * one forward, so a second boot is Android having destroyed the first
+     * while the process lived on, or relaunching it for a configuration change.
+     * Either way that handle is stranded: Android drops the dead activity's
+     * binding, nothing tells the SDK, and the controller inside still names
+     * that activity, so its eventual release is the crash LateUnbindGuard
+     * absorbs. It is swapped for one made from the new activity — see
+     * [handOver]. The same activity booting twice is left alone.
+     */
+    fun attach(audio: LightAudio) {
+        val old = player
+        when {
+            old == null -> bind(audio)
+            audio == handleOwner -> Unit
+            else -> handOver(old, audio)
+        }
+    }
+
+    /**
+     * Swap the stranded handle for one made from the new activity, and change
+     * nothing else. Main only: it runs inside the new activity's onCreate.
+     *
+     * Not a release followed by a bind. [release] is leaving: it ends a Plex
+     * cast's steering, stops a DLNA renderer, closes the server's session and
+     * drops a start still waiting on the server, and a new activity means none
+     * of that. The bound loops keep running, and no play, pause or seek is
+     * sent, so a playing service goes on playing and a paused one stays where
+     * it was. [decisionGeneration] is left alone too: a press still waiting on
+     * the server starts whatever [player] is by the time the answer comes, so
+     * it lands on the new handle and waits there for it to connect.
+     *
+     * The old handle goes first, because the SDK allows one at a time and
+     * won't make the next until the last is closed, which its release does
+     * before returning. Then the new one, in the same turn on Main: its
+     * controller binds the service at once, where the old one's unbind is only
+     * posted, so the service is never left with nothing bound to it. That
+     * unbind is the one that throws when the old activity is gone — straight
+     * after this, or up to half a minute later if media3 still had commands in
+     * flight.
+     *
+     * [player] goes from the old handle straight to the new one, never through
+     * null: the restore and the queue's re-resolution read it from Default,
+     * and a restore that saw none would give up for good.
+     */
+    private fun handOver(old: LightAudioPlayer, audio: LightAudio) {
+        android.util.Log.i(
+            "AmpLife",
+            "new activity: handle moved over " +
+                "(playing=${_isPlaying.value} idx=${_index.value} casting=$isCasting)",
+        )
+        // What the screen shows as the handle changes, as bind reads it: the
+        // re-cue in attachHandle puts it back if the service turns out to have
+        // stopped, and only if nothing touched the queue while the new handle
+        // connected.
         val carried = _queue.value
         val carriedIndex = _index.value
         val carriedPositionMs = _positionMs.value
-        // Detached: playback lives in the SDK's own service, so it survives the
-        // screen going off — and the activity going away — officially.
-        val p = audio.newPlayer(LightAudioUsage.Music, LightAudioPlayback.Detached)
+        handleJob?.cancel()
+        handleJob = null
+        old.onPlaybackError = null
+        old.onItemRepeated = null
+        old.release()
+        val p = try {
+            audio.newPlayer(LightAudioUsage.Music, LightAudioPlayback.Detached)
+        } catch (e: Throwable) {
+            // Thrown on, as a first bind's failure is: the activity doesn't
+            // start without its player. What is left behind is no handle,
+            // rather than a released one that throws at the next press.
+            player = null
+            handleOwner = null
+            throw e
+        }
+        p.playbackGain = appliedGain
         player = p
+        handleOwner = audio
+        attachHandle(p, carried, carriedIndex, carriedPositionMs)
+    }
+
+    /**
+     * Everything that lives on one handle: its callbacks, the collectors of its
+     * own flows, and the re-cue or the landing once it connects. Run for each
+     * new handle — by [bind], and by [handOver] when a new activity takes the
+     * player over — and cancelled with it through [handleJob].
+     *
+     * The handle's flows are not read until it has connected. Until then they
+     * hold placeholders — nothing playing, at 0:00, on no track — and the
+     * collectors used to start at once and copy those over what the screen
+     * carried: every reopen flashed 0:00, the button read paused, so a press
+     * in that moment resumed instead of pausing, and on the last second of the
+     * last track the "paused" reading queued a rewind that ran on the live
+     * service when it connected. The SDK fills the flows from the service's
+     * own state before it calls the handle ready, so collectors started after
+     * that read the truth from their first value, and until then the screen
+     * goes on showing what it had. [carried], [carriedIndex] and
+     * [carriedPositionMs] are what it had when the handle was made.
+     */
+    private fun attachHandle(
+        p: LightAudioPlayer,
+        carried: List<Track>,
+        carriedIndex: Int,
+        carriedPositionMs: Long,
+    ) {
+        val handle = SupervisorJob(scope.coroutineContext[Job])
+        handleJob = handle
         p.onItemRepeated = {
             // Repeat-one wrapped the current item. A full track wraps to its
             // own beginning and needs nothing; a server-seeked remainder would
@@ -587,6 +697,154 @@ class PlaybackController(
                 )
             }
         }
+        // Mirror the system media volume so the fader reflects it (and the
+        // hardware volume keys, which drive the same stream).
+        // The hardware rocker moves Android's own media volume, which while
+        // casting controls a player that isn't making the sound. Forwarding it to
+        // the renderer makes the buttons act on whatever is actually playing —
+        // without intercepting the keys, which the tool sandbox can't do.
+        //
+        // The first reading is only the phone's level as it stands, not a
+        // press. Under a cast the fader shows the speaker's or the Plex
+        // player's own level, so a handle arriving mid-cast — a new activity
+        // taking over — must not put the phone's over it, or send it to the
+        // speaker. Only changes after that are forwarded.
+        //
+        // Started at once, unlike the collectors that wait for the connection:
+        // this level is the system's, read when the handle is made, not a
+        // placeholder for the service's. Held back, a cold start's fader would
+        // sit at full until the service answered.
+        scope.launch(handle) {
+            var first = true
+            p.deviceVolume.collect { level ->
+                if (first) {
+                    first = false
+                    if (isCasting) return@collect
+                }
+                _volume.value = level
+                val renderer = _castRenderer.value ?: return@collect
+                DlnaCast.setVolume(renderer, level)
+            }
+        }
+        scope.launch(handle + Dispatchers.Main.immediate) {
+            if (!p.awaitReady()) {
+                // Released before it ever connected. Amp's own releases — a
+                // back-out, a handover — cancel this first, so this is the SDK
+                // giving up on a connection that failed.
+                if (player === p) handleLost()
+                return@launch
+            }
+            if (player !== p) return@launch
+            // An error the service's player was already sitting in — raised
+            // while no handle was listening, after a back-out or in a
+            // handover's gap — reaches only the error flow: onPlaybackError
+            // hears of errors from here on. Noted and left as it was. It can be
+            // any age, and a player that failed while playing still wants to
+            // play, so handled as a live failure it would skip ahead and start
+            // the next track the moment the app was opened, which a reopen must
+            // never do. The player shows as paused, as it always has here.
+            p.error.value?.let {
+                android.util.Log.i(
+                    "AmpNet",
+                    "connected onto a player error ${it.diagnostic} at idx=${it.itemIndex} — left as it is",
+                )
+            }
+            // A reopen onto a service that stopped itself while the screens were
+            // gone — paused, with no handle, for its idle limit — finds a player
+            // holding nothing under a queue that still shows, and play then does
+            // nothing at all. restoreState can't help: it runs once per process,
+            // and this process never ended. So the queue goes back in where it was
+            // left, cued and paused, the way a cold start restores it. Only in that
+            // case: a service that kept its queue is where the truth is, and a
+            // queue touched since, a cast or a park each prepare the player their
+            // own way. On Main, where the player lives. A handover lands here as
+            // well, when Android stopped the service while the old handle sat
+            // stranded.
+            //
+            // Decided before the collectors start, so they find the queue back in
+            // place and read its track and position rather than the empty
+            // player's — the re-cue no longer passes through 0:00 either.
+            val recue = carriedIndex in carried.indices && needsRecue(
+                carriedOver = _queue.value === carried && _index.value == carriedIndex,
+                playerIndex = p.currentMediaItemIndex.value,
+                playerPlaying = p.isPlaying.value,
+                casting = isCasting,
+                parked = parked,
+            )
+            if (recue) {
+                android.util.Log.i("AmpNet", "reopened onto an empty player — cueing idx=$carriedIndex again")
+                pickedIndex = carriedIndex
+                rebuildQueueAt(p, carried, carriedIndex, carriedPositionMs)
+                // The service's player is a new one, so repeat is off in it
+                // whatever the screen shows. Not casting, so this is the player only.
+                setRepeat(_repeatMode.value)
+                p.pause()
+            }
+            // A service that moved on while no handle was listening — played on
+            // through the album, then paused — is on another track than the
+            // screen carried, and part-way through it. Landed on here, before
+            // the collectors start, so the index collector finds nothing to do
+            // and can't zero the position behind the position collector's back,
+            // and the duration collector's first reading is measured against
+            // the right track with no offset left over from the last one.
+            //
+            // Not while parked. The service then sits on the track that failed,
+            // at the point it failed, and the screen is where the user moved the
+            // marker since — a step or a seek while waiting moves only that, and
+            // resuming cues what it shows. Read once: a resume during the
+            // collectors' start would otherwise change the answer half-way.
+            val heldByPark = parked
+            val connectedOn = p.currentMediaItemIndex.value
+            connectLanding(
+                playerIndex = connectedOn,
+                playerPositionMs = p.positionMs.value,
+                shownIndex = _index.value,
+                pickedIndex = pickedIndex,
+                recued = recue,
+                casting = isCasting,
+                parked = heldByPark,
+            )?.let { startMs -> landedOn(p, connectedOn, startMs) }
+            collectHandle(p, handle, heldByPark)
+            // A download finishing, the rules or the proxy moving while the
+            // handle connected each asked for the sources to be looked at again,
+            // and were turned away one of two ways: by reresolveQueue's own wait
+            // for the connection, or, when the ask read the old handle just
+            // before a handover replaced it, on reaching Main, where its edits
+            // were dropped, the memo put back to what the service holds, and
+            // the ask repeated into that same wait. Either way this pass is what
+            // sends them. A re-cue has just built the queue from fresh answers
+            // and needs nothing more.
+            if (!recue) reresolveQueue()
+        }
+    }
+
+    /**
+     * The handle was released before it ever connected: the SDK gives up on a
+     * connection that fails and releases the handle itself. Kept in [player],
+     * it threw at the next press ("has been released"), on Main, taking the
+     * process down. Dropped instead, the controls do nothing until a new
+     * activity, or a back-out and reopen, makes a new one.
+     */
+    private fun handleLost() {
+        android.util.Log.w("AmpLife", "player handle released before it connected — dropped")
+        handleJob?.cancel()
+        handleJob = null
+        player = null
+        handleOwner = null
+    }
+
+    /**
+     * The collectors of a connected handle's own flows, on [handle] — see
+     * [attachHandle] for why not before.
+     *
+     * [heldByPark]: the handle connected while playback was parked, so the
+     * first track and position it reports are the failed track's, which the
+     * screen's marker deliberately left — see the landing in [attachHandle].
+     * That first reading of each is passed over and everything after it is
+     * followed, so a skip that reaches the session directly, or the resume's
+     * own rebuild, still moves the screen.
+     */
+    private fun collectHandle(p: LightAudioPlayer, handle: Job, heldByPark: Boolean) {
         // While casting, the renderer is the source of truth for these — the local
         // player sits paused and would otherwise report position 0 / not-playing
         // straight over the cast state.
@@ -609,7 +867,16 @@ class PlaybackController(
         }
         // A server-seeked stream starts at 0:00 of a shorter file, so both
         // readouts are shifted back into the track's own timeline.
-        scope.launch(handle) { p.positionMs.collect { if (!isCasting) _positionMs.value = it + streamOffsetMs } }
+        scope.launch(handle) {
+            var snapshot = heldByPark
+            p.positionMs.collect {
+                if (snapshot) {
+                    snapshot = false
+                    return@collect
+                }
+                if (!isCasting) _positionMs.value = it + streamOffsetMs
+            }
+        }
         scope.launch(handle) {
             p.durationMs.collect { reported ->
                 if (isCasting) return@collect
@@ -637,7 +904,9 @@ class PlaybackController(
                 ) {
                     val target = streamOffsetMs
                     streamOffsetMs = 0L
-                    scope.launch(Dispatchers.Main.immediate) { if (player === p) p.seekTo(target) }
+                    // Whichever handle holds the service by then: the offset
+                    // has already gone from the readouts, so the seek can't be.
+                    scope.launch(Dispatchers.Main.immediate) { player?.seekTo(target) }
                     _durationMs.value = reported
                     return@collect
                 }
@@ -676,93 +945,160 @@ class PlaybackController(
         // down toward the reference and quiet ones play untouched, so no
         // boost can ever clip. Sources that measure nothing leave it at 1.
         // Not applied while casting: the renderer plays its own copy.
+        //
+        // No index is no answer. A handle reads -1 until it connects, and when
+        // this ran from the start, turning that into unity overwrote the gain
+        // the handle was seeded with — the SDK hands it to the playing service
+        // at connect, so the track jumped to full level for a moment. It waits
+        // for the connection now, but an empty player reads -1 too, and has no
+        // track whose gain could be the right one. Nothing is said until there
+        // is a track.
         scope.launch(handle) {
             combine(p.currentMediaItemIndex, _queue, replayGain) { idx, q, on ->
+                if (idx < 0) return@combine null
                 val db = if (on) q.getOrNull(idx)?.gainDb else null
                 db?.let { 10.0.pow(it / 20.0).toFloat().coerceAtMost(1f) } ?: 1f
-            }.distinctUntilChanged().collect { factor ->
-                withContext(Dispatchers.Main.immediate) { p.playbackGain = factor }
+            }.filterNotNull().distinctUntilChanged().collect { factor ->
+                withContext(Dispatchers.Main.immediate) {
+                    // A handle that has since been replaced is not the one the
+                    // service listens to, and its number must not be the one
+                    // carried onto the next.
+                    if (player !== p) return@withContext
+                    p.playbackGain = factor
+                    appliedGain = factor
+                }
             }
         }
         scope.launch(handle) {
+            var snapshot = heldByPark
             p.currentMediaItemIndex.collect { idx ->
                 if (isCasting) return@collect
-                if (idx >= 0 && idx != _index.value) {
-                    // AmpDur: temporary — see above. What the player landed on,
-                    // against what the library says it should be.
-                    val landed = _queue.value.getOrNull(idx)
-                    android.util.Log.i(
-                        "AmpDur",
-                        "track pIdx=$idx uiIdx=${_index.value} id=${landed?.id} " +
-                            "\"${landed?.title}\" libDur=${landed?.durationMs} " +
-                            "pDur=${p.durationMs.value} off=$streamOffsetMs " +
-                            "local=${landed?.id?.let { localFiles[it] }?.let { (f, fmt) ->
-                                "${f.name} ${f.length()}B ${fmt.id}"
-                            } ?: "stream"}",
-                    )
-                    // Gapless into the next track: sound never stopped, so there is
-                    // no new "playing" for the collector above to clear this on.
-                    if (p.isPlaying.value) _buffering.value = false
-                    // Landed somewhere other than where the user pointed: that
-                    // request is history, and must not decide a later refusal.
-                    if (idx != pickedIndex) pickedIndex = -1
-                    _index.value = idx
-                    // A new track is a fresh stream from its own beginning —
-                    // the position as much as the offset. Left standing, the
-                    // position stayed the *outgoing* track's until the player
-                    // emitted its first reading for this one, and everything
-                    // that read it in between got that: the readout showed
-                    // 5:23 against a 3:52 track, and reportTimeline below sent
-                    // the same number under the new track's id and duration.
-                    // Plex answered 400 "Time value greater than duration"
-                    // where the new track was shorter, and where it was longer
-                    // took the number and wrote it in as a resume point.
-                    //
-                    // Safe to clear here: the paths that legitimately start a
-                    // track part-way — a restored queue, a server seek — set
-                    // _index before the player moves, which is what keeps them
-                    // out of this block at all. See rebuildQueueAt.
-                    streamOffsetMs = 0
-                    _positionMs.value = 0L
-                    // Leaving a server-seeked remainder is the moment to put
-                    // the whole song back in its slot, so any later visit —
-                    // a repeat-all wrap, a tap on the queue row — plays the
-                    // track and not the tail the last seek left behind.
-                    offsetItemTrackId?.let { staleId ->
-                        offsetItemTrackId = null
-                        val q = _queue.value
-                        if (q.getOrNull(idx)?.id == staleId) {
-                            // Arrived *onto* a stale remainder (a wrap over a
-                            // slot that never got restored): rebuild it live.
-                            scope.launch(Dispatchers.Main.immediate) { seekTo(0) }
-                        } else {
-                            val stubIdx = q.indexOfFirst { it.id == staleId }
-                            val original = q.getOrNull(stubIdx)
-                            if (stubIdx >= 0 && original != null) {
-                                scope.launch(Dispatchers.Main.immediate) {
-                                    if (player !== p) return@launch
-                                    p.replaceRange(stubIdx, stubIdx + 1, listOf(original.toAudioItem()))
-                                }
-                            }
-                        }
-                    }
-                    // A new track is a new session too, or Plex sees the same
-                    // one just keep changing what it's playing rather than one
-                    // track ending and the next beginning. The one it replaces
-                    // is told it's stopped first, so it doesn't just sit in
-                    // `/status/sessions` until its lease times out.
-                    _queue.value.getOrNull(idx)?.let { openSessionFor(it.id) }
-                    // Seeded from the library rather than waited for: a chunked
-                    // stream may never report a duration at all, and the player
-                    // won't emit again to give the collector above a second go.
-                    _queue.value.getOrNull(idx)?.durationMs
-                        ?.takeIf { it > 0L }
-                        ?.let { _durationMs.value = it }
-                    reportTimeline(TimelineState.PLAYING)
+                // Every change seen here is a track starting from its own
+                // beginning. The one a handle finds at connect, which may be
+                // part-way through, attachHandle has already landed on — or,
+                // parked, deliberately not.
+                if (snapshot) {
+                    snapshot = false
+                } else if (idx >= 0 && idx != _index.value) {
+                    landedOn(p, idx, startMs = 0L)
                 }
                 announceNowPlaying()
             }
         }
+    }
+
+    /**
+     * The player is on [idx], which is not the track the screen shows: a
+     * track change, or, from [attachHandle], a service that moved on while no
+     * handle was listening. [startMs] is where in the track that leaves
+     * playback: 0 for a change as it happens, the service's own reading for
+     * the one found at connect.
+     */
+    private fun landedOn(p: LightAudioPlayer, idx: Int, startMs: Long) {
+        // AmpDur: temporary — see the duration collector. What the player
+        // landed on, against what the library says it should be.
+        val landed = _queue.value.getOrNull(idx)
+        android.util.Log.i(
+            "AmpDur",
+            "track pIdx=$idx uiIdx=${_index.value} id=${landed?.id} " +
+                "\"${landed?.title}\" libDur=${landed?.durationMs} " +
+                "pDur=${p.durationMs.value} off=$streamOffsetMs at=$startMs " +
+                "local=${landed?.id?.let { localFiles[it] }?.let { (f, fmt) ->
+                    "${f.name} ${f.length()}B ${fmt.id}"
+                } ?: "stream"}",
+        )
+        // Gapless into the next track: sound never stopped, so there is no new
+        // "playing" for the isPlaying collector to clear this on.
+        if (p.isPlaying.value) _buffering.value = false
+        // Landed somewhere other than where the user pointed: that request is
+        // history, and must not decide a later refusal.
+        if (idx != pickedIndex) pickedIndex = -1
+        _index.value = idx
+        // A new track is a fresh stream from its own beginning — the position
+        // as much as the offset. Left standing, the position stayed the
+        // *outgoing* track's until the player emitted its first reading for
+        // this one, and everything that read it in between got that: the
+        // readout showed 5:23 against a 3:52 track, and reportTimeline below
+        // sent the same number under the new track's id and duration. Plex
+        // answered 400 "Time value greater than duration" where the new track
+        // was shorter, and where it was longer took the number and wrote it in
+        // as a resume point.
+        //
+        // Safe to clear here: the paths that legitimately start a track
+        // part-way — a restored queue, a server seek — set _index before the
+        // player moves, which is what keeps them out of this block at all. See
+        // rebuildQueueAt.
+        //
+        // The track found at connect is the one exception, and it comes with
+        // its own position: the SDK fills the index and the position from the
+        // same snapshot of the service before it calls the handle ready, so
+        // the two describe the same track. Zeroed instead, a reopen onto a
+        // service that had moved on and then paused showed 0:00 for good — a
+        // paused position never changes, so it is never said again — and that
+        // 0 was saved, restored after a process death, and read by previous()
+        // as the start of the track.
+        streamOffsetMs = 0
+        _positionMs.value = startMs
+        // Leaving a server-seeked remainder is the moment to put the whole song
+        // back in its slot, so any later visit — a repeat-all wrap, a tap on
+        // the queue row — plays the track and not the tail the last seek left
+        // behind.
+        offsetItemTrackId?.let { staleId ->
+            offsetItemTrackId = null
+            val q = _queue.value
+            if (q.getOrNull(idx)?.id == staleId) {
+                // Arrived *onto* a stale remainder (a wrap over a slot that
+                // never got restored): rebuild it live.
+                scope.launch(Dispatchers.Main.immediate) { seekTo(0) }
+            } else {
+                val stubIdx = q.indexOfFirst { it.id == staleId }
+                val original = q.getOrNull(stubIdx)
+                if (stubIdx >= 0 && original != null) {
+                    scope.launch(Dispatchers.Main.immediate) {
+                        // A handle that replaced this one steers the same
+                        // queue, where the stub still is.
+                        val cur = player ?: return@launch
+                        cur.replaceRange(stubIdx, stubIdx + 1, listOf(original.toAudioItem()))
+                    }
+                }
+            }
+        }
+        // A new track is a new session too, or Plex sees the same one just keep
+        // changing what it's playing rather than one track ending and the next
+        // beginning. The one it replaces is told it's stopped first, so it
+        // doesn't just sit in `/status/sessions` until its lease times out.
+        _queue.value.getOrNull(idx)?.let { openSessionFor(it.id) }
+        // Seeded from the library rather than waited for: a chunked stream may
+        // never report a duration at all, and the player won't emit again to
+        // give the duration collector a second go.
+        _queue.value.getOrNull(idx)?.durationMs
+            ?.takeIf { it > 0L }
+            ?.let { _durationMs.value = it }
+        reportTimeline(TimelineState.PLAYING)
+    }
+
+    /** Attach the audio stack from the current activity, with no handle held — [attach] decides. */
+    private fun bind(audio: LightAudio) {
+        // A reopen. The last bind's collectors are still running, and left
+        // there they would run beside this one's — two heartbeats, two
+        // snapshots, two chances at every scrobble. The fresh set below picks
+        // up everything they watched from where it stands now.
+        bindJob?.cancel()
+        val bound = SupervisorJob(scope.coroutineContext[Job])
+        bindJob = bound
+        // What this controller carried across a reopen: the re-cue in
+        // attachHandle puts it back if the service came back empty, and only
+        // if nothing touched the queue while the handle connected.
+        val carried = _queue.value
+        val carriedIndex = _index.value
+        val carriedPositionMs = _positionMs.value
+        // Detached: playback lives in the SDK's own service, so it survives the
+        // screen going off — and the activity going away — officially.
+        val p = audio.newPlayer(LightAudioUsage.Music, LightAudioPlayback.Detached)
+        p.playbackGain = appliedGain
+        player = p
+        handleOwner = audio
+        attachHandle(p, carried, carriedIndex, carriedPositionMs)
         // Anything that changes what plays next — an edit, a jump, a repeat mode —
         // has to be pushed to the renderer, which is holding a URI we chose
         // earlier. Debounced because a single edit moves several of these at once.
@@ -886,19 +1222,6 @@ class PlaybackController(
                 reresolveQueue()
             }
         }
-        // Mirror the system media volume so the fader reflects it (and the
-        // hardware volume keys, which drive the same stream).
-        // The hardware rocker moves Android's own media volume, which while
-        // casting controls a player that isn't making the sound. Forwarding it to
-        // the renderer makes the buttons act on whatever is actually playing —
-        // without intercepting the keys, which the tool sandbox can't do.
-        scope.launch(handle) {
-            p.deviceVolume.collect { level ->
-                _volume.value = level
-                val renderer = _castRenderer.value ?: return@collect
-                DlnaCast.setVolume(renderer, level)
-            }
-        }
 
         // A play is submitted part-way through rather than at the start, so the
         // position is what decides when — see maybeSubmitPlay.
@@ -922,38 +1245,6 @@ class PlaybackController(
                 delay(TIMELINE_INTERVAL_MS)
                 if (_isPlaying.value) reportTimeline(TimelineState.PLAYING)
             }
-        }
-        // A reopen onto a service that stopped itself while the screens were
-        // gone — paused, with no handle, for its idle limit — finds a player
-        // holding nothing under a queue that still shows, and play then does
-        // nothing at all. restoreState can't help: it runs once per process,
-        // and this process never ended. So the queue goes back in where it was
-        // left, cued and paused, the way a cold start restores it. Only in that
-        // case: a service that kept its queue is where the truth is, and a
-        // queue touched since, a cast or a park each prepare the player their
-        // own way. On Main, where the player lives.
-        scope.launch(handle + Dispatchers.Main.immediate) {
-            if (!p.awaitReady()) return@launch
-            val recue = carriedIndex in carried.indices && needsRecue(
-                carriedOver = _queue.value === carried && _index.value == carriedIndex,
-                playerIndex = p.currentMediaItemIndex.value,
-                playerPlaying = p.isPlaying.value,
-                casting = isCasting,
-                parked = parked,
-            )
-            if (!recue) {
-                // The collectors above may have wanted a source changed while
-                // the handle was connecting; reresolveQueue waits for this.
-                reresolveQueue()
-                return@launch
-            }
-            android.util.Log.i("AmpNet", "reopened onto an empty player — cueing idx=$carriedIndex again")
-            pickedIndex = carriedIndex
-            rebuildQueueAt(p, carried, carriedIndex, carriedPositionMs)
-            // The service's player is a new one, so repeat is off in it
-            // whatever the screen shows. Not casting, so this is the player only.
-            setRepeat(_repeatMode.value)
-            p.pause()
         }
         _bound.value = true
     }
@@ -1045,13 +1336,15 @@ class PlaybackController(
         if (tracks.isEmpty()) return
         val index = tracks.indexOfFirst { it.id == saved.currentId }.takeIf { it >= 0 } ?: 0
 
-        val p = player ?: return
         val position = saved.positionMs
         // ExoPlayer's application looper is Main and it enforces that: touching the
         // player from this coroutine's Default dispatcher throws "Player is accessed
         // on the wrong thread" and takes the app down on launch. Every other caller
         // reaches setQueue from a composable, i.e. already on Main.
         withContext(Dispatchers.Main.immediate) {
+            // Read here rather than before the hop: a new activity can take the
+            // player over in between, and the handle it replaced is released.
+            val p = player ?: return@withContext
             _queue.value = tracks
             lastScrobbledId = null
             nowPlayingId = null
@@ -1067,7 +1360,18 @@ class PlaybackController(
         }
     }
 
-    fun release() {
+    /**
+     * The boot screen of [owner] is backing out: the app is being left. One
+     * boot screen per activity, each with its own SealedLightActivity, so
+     * [owner] names the activity.
+     */
+    fun release(owner: LightAudio) {
+        // An older activity's last screen going, after a newer one took the
+        // player over: the handle is the newer one's, and so is the leaving.
+        if (handleOwner != null && owner != handleOwner) {
+            android.util.Log.i("AmpLife", "an old screen closed; the current player is left alone")
+            return
+        }
         // A Companion player is deliberately left playing: it walks its own
         // queue and answers to the server, so closing the app that steered it
         // is no reason to silence the room — that's how every Plex remote
@@ -1104,12 +1408,13 @@ class PlaybackController(
             }
         }
         sessionTrackId = null
-        // A start still waiting on the server's decision would land on this
-        // handle after it is gone, and a released handle throws — on Main,
-        // taking the process and the playing service down with it. It is
-        // dropped: the track stays cued in the service for the next press.
-        // Buffering goes off only if that start was the reason for it; a
-        // stream already starting in the service still holds the rest back.
+        // A start still waiting on the server's decision is dropped: leaving
+        // outranks it, and it would otherwise start whatever handle a reopen
+        // has made by the time the answer comes. The track stays cued in the
+        // service for the next press. (A handover, which is not leaving, lets
+        // it through — see handOver.) Buffering goes off only if that start
+        // was the reason for it; a stream already starting in the service
+        // still holds the rest back.
         if (awaitedDecision != 0 && awaitedDecision == decisionGeneration) _buffering.value = false
         decisionGeneration++
         // The handle's own collectors go with it. The rest stay: see bindJob.
@@ -1123,6 +1428,7 @@ class PlaybackController(
         // deferral only ran the release off the main thread.)
         player?.release()
         player = null
+        handleOwner = null
     }
 
     /**
@@ -1230,13 +1536,16 @@ class PlaybackController(
         // try again — which is what it used to do.
         val wasPlaying = _isPlaying.value || _buffering.value
         // Resuming needs the server's decision first, exactly as [play] does —
-        // this is the button that actually starts a restored queue.
+        // this is the button that actually starts a restored queue. The start
+        // goes to whichever handle holds the service when the answer comes: a
+        // new activity may have taken it over meanwhile, and the old handle
+        // is released and throws.
         if (wasPlaying) {
             supersedeStart()
             p.pause()
         } else {
             starting(_index.value)
-            withStreamDecision { p.play() }
+            withStreamDecision { player?.play() }
         }
         reportTimeline(if (wasPlaying) TimelineState.PAUSED else TimelineState.PLAYING)
     }
@@ -1717,15 +2026,20 @@ class PlaybackController(
         offsetItemTrackId = null
         _positionMs.value = 0
         _durationMs.value = 0
-        val p = player ?: return
         // Same rule as restoreState: ExoPlayer's looper is Main and it throws
         // rather than tolerating anything else. Unlike the rest of this class,
         // stop() is not only reached from a composable — a source switch calls it
         // from a collector on Default — so it has to place itself. `immediate`
         // means a caller already on Main is unaffected and still synchronous.
+        //
+        // The handle is read on Main, not before the hop: a new activity may
+        // take the player over in between, and the old handle is released and
+        // throws. Not dropped either — the service would go on playing the old
+        // source's queue under an empty one on the screen.
         scope.launch(Dispatchers.Main.immediate) {
-            p.stop()
-            p.setMediaQueue(emptyList())
+            val cur = player ?: return@launch
+            cur.stop()
+            cur.setMediaQueue(emptyList())
         }
     }
     fun skipForward() = player?.skipForward()
@@ -2274,14 +2588,16 @@ class PlaybackController(
         if (resumeLocally) {
             // Same rebuild-not-seek hand-back as the DLNA route, and for the
             // same reason — see stopCasting. The player's last reported state
-            // decides whether sound starts here or waits.
+            // decides whether sound starts here or waits. The handle is read
+            // on Main, as in stop().
             scope.launch(Dispatchers.Main.immediate) {
+                val cur = player ?: return@launch
                 val tracks = _queue.value
                 if (tracks.isEmpty()) return@launch
                 val index = _index.value.coerceIn(0, tracks.lastIndex)
                 android.util.Log.i("AmpPlex", "hand-back idx=$index at=$at playing=$wasPlaying")
-                rebuildQueueAt(p, tracks, index, at)
-                if (wasPlaying) p.play() else p.pause()
+                rebuildQueueAt(cur, tracks, index, at)
+                if (wasPlaying) cur.play() else cur.pause()
             }
         }
     }
@@ -2572,11 +2888,15 @@ class PlaybackController(
         _isPlaying.value = false
         val p = player ?: return
         _volume.value = p.deviceVolume.value
+        // Reached from the Plex poll on Default, so the handle is read again
+        // once on Main: a new activity may have taken the player over in
+        // between, and the one it replaced is released and throws.
         scope.launch(Dispatchers.Main.immediate) {
+            val cur = player ?: return@launch
             val tracks = _queue.value
             if (tracks.isEmpty()) return@launch
-            rebuildQueueAt(p, tracks, _index.value.coerceIn(0, tracks.lastIndex), _positionMs.value)
-            p.pause()
+            rebuildQueueAt(cur, tracks, _index.value.coerceIn(0, tracks.lastIndex), _positionMs.value)
+            cur.pause()
         }
     }
 
@@ -2647,14 +2967,15 @@ class PlaybackController(
             // the stream fallback rebuild instead of seeking — and a stream the
             // player can't seek at all goes through the server; see
             // rebuildQueueAt, which is where the second restart-from-the-top
-            // came from.
+            // came from. The handle is read on Main, as in stop().
             scope.launch(Dispatchers.Main.immediate) {
+                val cur = player ?: return@launch
                 val tracks = _queue.value
                 if (tracks.isEmpty()) return@launch
                 val index = _index.value.coerceIn(0, tracks.lastIndex)
                 android.util.Log.i("AmpCast", "hand-back idx=$index at=$at")
-                rebuildQueueAt(p, tracks, index, at)
-                p.play()
+                rebuildQueueAt(cur, tracks, index, at)
+                cur.play()
             }
         }
     }
@@ -2759,9 +3080,9 @@ class PlaybackController(
     ): Boolean {
         val track = _queue.value.getOrNull(_index.value) ?: return false
         // A new track on the renderer is a new session, same as the local
-        // player's — see the index collector in bind(). Also covers a seek,
-        // which restarts the renderer's stream from scratch the same way a
-        // track change does, so the session it's replacing needs closing too.
+        // player's — see the index collector in collectHandle. Also covers a
+        // seek, which restarts the renderer's stream from scratch the same way
+        // a track change does, so the session it's replacing needs closing too.
         openSessionFor(track.id)
         val (format, mime) = castFormatFor(renderer, track)
         // Anything under a second is where the track starts anyway, and a
@@ -3220,7 +3541,8 @@ class PlaybackController(
         // Not until the handle has connected. Before then there is no knowing
         // whether the service kept this queue or came back empty after its
         // idle limit, and edits sent ahead land on whichever it is — on an
-        // empty one they become the queue. bind asks again once connected.
+        // empty one they become the queue. attachHandle asks again once
+        // connected.
         if (p.availability.value != LightAudioPlayerAvailability.Ready) return
         val tracks = _queue.value
         if (tracks.isEmpty()) return
@@ -3228,11 +3550,30 @@ class PlaybackController(
         // Nothing to say unless something actually moves — this runs on every
         // download that completes, and most of them change no answers at all.
         val rebuilt = tracks.map { it.source() }
-        if (rebuilt == queuedSources) return
+        val held = queuedSources
+        if (rebuilt == held) return
         queuedSources = rebuilt
         // ExoPlayer's looper is Main and it enforces that — see restoreState.
         scope.launch(Dispatchers.Main.immediate) {
-            if (player !== p) return@launch
+            if (player !== p) {
+                // The handle changed on the way here — a new activity took the
+                // player over, a back-out let it go, or the SDK dropped one that
+                // never connected — so none of this reached the service. Left
+                // as it was, the memo said it had, and the pass attachHandle
+                // makes once the next handle connects found a match and sent
+                // nothing: a track downloaded meanwhile stayed queued as a
+                // stream, and under Wi-Fi Only on cellular the gate refused it
+                // with the file on disk. So the memo goes back to what the
+                // service still holds, which is also what a playback error
+                // reads it as, unless a new queue or another rebuild has
+                // written it since. Then the ask is repeated: a handle already
+                // connected gets the edits now, and with none, or one still
+                // connecting, they wait for that pass, which now finds the
+                // difference.
+                if (queuedSources === rebuilt) queuedSources = held
+                reresolveQueue()
+                return@launch
+            }
             if (current > 0) {
                 p.replaceRange(0, current, tracks.subList(0, current).map { it.toAudioItem() })
             }
@@ -3329,7 +3670,8 @@ class PlaybackController(
             return
         }
         starting(startIndex)
-        withStreamDecision { p.play() }
+        // The handle current when the answer comes, as in togglePlayPause.
+        withStreamDecision { player?.play() }
     }
 
     /** The row at [index] is a stream and the rules, read now, forbid streaming. */
@@ -3914,7 +4256,7 @@ class PlaybackController(
 
 /**
  * Whether a reopen has to put the queue back into the player — see the
- * re-cue at the end of [PlaybackController.bind].
+ * re-cue in [PlaybackController.attachHandle], once the handle has connected.
  *
  * Only for a handle that connected holding nothing and making no sound, under
  * the very queue and track the controller carried across. Silence is asked
@@ -3928,3 +4270,33 @@ internal fun needsRecue(
     casting: Boolean,
     parked: Boolean,
 ): Boolean = carriedOver && playerIndex == NO_MEDIA_ITEM && !playerPlaying && !casting && !parked
+
+/**
+ * Where in its track a handle that has just connected leaves playback, when
+ * the service is on another track than the screen shows — see the landing in
+ * [PlaybackController.attachHandle]. Null when there is nothing to land on:
+ * the same track, an empty player, a queue just cued back in, a cast, whose
+ * renderer is the one that says where playback is, or a park, where the
+ * service sits on the track that failed and the screen's marker is the one
+ * the user moved.
+ *
+ * The service's own position, which the SDK read from the same snapshot as
+ * its index. Except on the track a next or previous pressed while the handle
+ * connected went to ([pickedIndex]): that press reached the service after the
+ * snapshot, so the track starts from the top and the position is still the
+ * last one's.
+ */
+internal fun connectLanding(
+    playerIndex: Int,
+    playerPositionMs: Long,
+    shownIndex: Int,
+    pickedIndex: Int,
+    recued: Boolean,
+    casting: Boolean,
+    parked: Boolean,
+): Long? = when {
+    recued || casting || parked -> null
+    playerIndex < 0 || playerIndex == shownIndex -> null
+    playerIndex == pickedIndex -> 0L
+    else -> playerPositionMs
+}

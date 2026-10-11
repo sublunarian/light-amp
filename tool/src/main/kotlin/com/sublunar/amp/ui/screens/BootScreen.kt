@@ -71,7 +71,7 @@ class BootViewModel : LightViewModel<Unit>() {
  * on top of this one, so the home menu is always the base of the back stack.
  */
 @InitialScreen
-class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>(sealed) {
+class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>(sealed) {
 
     init {
         App.boot(sealed, lightContext)
@@ -86,8 +86,10 @@ class BootScreen(sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
+    // Named on the way out: a newer activity may have taken the player over
+    // by then, and this back-out must not release it — see App.shutdown.
     override fun onScreenDestroy() {
-        App.shutdown()
+        App.shutdown(sealed)
     }
 
     private fun createPlaylistFlow() {
