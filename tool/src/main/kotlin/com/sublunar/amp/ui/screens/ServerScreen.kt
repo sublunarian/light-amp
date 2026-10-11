@@ -124,7 +124,7 @@ class ServerScreen(
             title = source?.name ?: if (bandcamp) "Add Bandcamp" else "Add Source",
         ) {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                item { SectionLabel(status ?: if (bandcamp) BANDCAMP_HINT else "Tap a field to change it") }
+                item { SectionLabel(status ?: "Tap a field to change it") }
                 if (source == null) {
                     // Required, and first: with several sources the list is read
                     // by name, and "navidrome.example.com" twice tells you
@@ -159,6 +159,11 @@ class ServerScreen(
                         onClick = { edit("Address", address) { url = it } },
                     )
                 }
+                // Right above the fields it is about: the Bandcamp login is the
+                // wrong answer here, and the place to say so is where someone is
+                // about to type it — not at the top, where a status line replaces
+                // it the moment Save is tapped.
+                if (bandcamp) item { SectionLabel(BANDCAMP_HINT) }
                 item {
                     TextRow(
                         title = "Username",
@@ -372,10 +377,10 @@ class ServerScreen(
 /** Bandcamp's Subsonic server — the same for every account. */
 private const val BANDCAMP_ADDRESS = "https://bandcamp.com/api/subsonic"
 
-/** Where Bandcamp's Subsonic credentials come from, in the form's own top line. */
+/** Where Bandcamp's Subsonic credentials come from, shown just above the username and password. */
 private const val BANDCAMP_HINT =
-    "Not your Bandcamp login: on bandcamp.com, open Fan Settings, scroll down to Subsonic " +
-        "and generate a username and password."
+    "The login below is different from your usual Bandcamp username and password. To get " +
+        "it, go to bandcamp.com, open Fan Settings, scroll down to Subsonic and generate one."
 
 /** What came of pressing Save. */
 private sealed interface SaveOutcome {
