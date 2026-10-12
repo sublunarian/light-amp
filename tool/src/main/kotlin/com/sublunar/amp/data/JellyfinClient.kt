@@ -11,6 +11,8 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import java.net.URLEncoder
+import java.time.Duration
+import java.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -209,6 +211,59 @@ class JellyfinClient(
             if (page.items.isEmpty() || start >= page.totalRecordCount) break
         }
         return items
+    }
+
+    /**
+     * The albums whose songs Jellyfin saved since [mark].
+     *
+     * Jellyfin stamps an item's DateLastSaved on every save — the probe that
+     * replaces a placeholder (named after its file, no artist, no length) with
+     * the file's tags, a re-tag a scan picked up, an edit made in Jellyfin —
+     * and not on a scan that changed nothing. It can be filtered on but not
+     * read, so the mark is the server's own clock, and each ask reaches back
+     * [MARK_OVERLAP] before it: a row is stamped a moment before it is written.
+     *
+     * Every library, whatever [libraries] says: a song changed in one that
+     * this sync didn't fetch is left out by the sync, which only re-reads
+     * albums it has.
+     */
+    override suspend fun songChangesSince(mark: String?, libraries: List<String?>): SongChanges {
+        val since = mark?.let { runCatching { Instant.parse(it) }.getOrNull() }
+        if (since == null) {
+            val now = serverClock(http.get(url("/System/Info/Public")) { jellyfinHeaders() })
+            return SongChanges.Everything(now.toString())
+        }
+        val albumIds = mutableSetOf<String>()
+        var now: Instant? = null
+        var start = 0
+        while (true) {
+            val response = http.get(
+                url(
+                    "/Items",
+                    listOf(
+                        "userId" to userId,
+                        "IncludeItemTypes" to TRACK_TYPE,
+                        "Recursive" to "true",
+                        "MinDateLastSaved" to since.minus(MARK_OVERLAP).toString(),
+                        "SortBy" to "SortName",
+                        "SortOrder" to "Ascending",
+                        "EnableImages" to "false",
+                        "EnableUserData" to "false",
+                        "StartIndex" to start.toString(),
+                        "Limit" to PAGE_SIZE.toString(),
+                    ),
+                ),
+            ) { jellyfinHeaders() }
+            if (!response.status.isSuccess()) {
+                throw JellyfinException("Jellyfin says ${response.status.value} for /Items", response.status.value)
+            }
+            if (now == null) now = serverClock(response)
+            val page = json.decodeFromString<JellyfinItems>(response.bodyAsText())
+            page.items.mapNotNullTo(albumIds) { it.albumId }
+            start += page.items.size
+            if (page.items.isEmpty() || start >= page.totalRecordCount) break
+        }
+        return SongChanges.Albums(albumIds, (now ?: Instant.now()).toString())
     }
 
     override suspend fun getAlbumTracks(albumId: String): List<Track> =
@@ -636,6 +691,9 @@ class JellyfinClient(
 
         /** A rename, and nothing that could touch the playlist's contents — see [renamePlaylist]. */
         internal fun renameBody(name: String): JsonObject = buildJsonObject { put("Name", name) }
+
+        /** How far before the last mark each ask for changes reaches — see [songChangesSince]. */
+        private val MARK_OVERLAP: Duration = Duration.ofMinutes(15)
 
         /** Items per request. Big enough to be one round trip on most libraries. */
         private const val PAGE_SIZE = 500

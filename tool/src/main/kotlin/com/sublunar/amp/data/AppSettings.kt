@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
@@ -546,6 +547,18 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     private fun lastSyncedKey(sourceId: String) =
         stringPreferencesKey("state.lastSynced.$sourceId")
 
+    /** How far this source's songs are known to match the server — see [SongCheck]. */
+    suspend fun songCheck(sourceId: String): SongCheck =
+        dataStore.data.first()[songCheckKey(sourceId)]
+            ?.let { runCatching { sourcesJson.decodeFromString<SongCheck>(it) }.getOrNull() }
+            ?: SongCheck()
+
+    suspend fun setSongCheck(sourceId: String, check: SongCheck) =
+        putString(songCheckKey(sourceId), sourcesJson.encodeToString(check))
+
+    private fun songCheckKey(sourceId: String) =
+        stringPreferencesKey("state.songCheck.$sourceId")
+
     /** Read once per operation rather than observed: see [PendingActions]. */
     suspend fun pendingActions(): String = dataStore.data.first()[PENDING_ACTIONS] ?: ""
 
@@ -760,3 +773,20 @@ private fun MusicSource.isSameServerAs(other: MusicSource): Boolean = when (kind
     SourceKind.JELLYFIN -> userId.isNotBlank() && userId == other.userId
     else -> false
 }
+
+/**
+ * How far a source's songs are known to match its server, kept between syncs.
+ *
+ * [mark] is the server's own answer from [MusicServer.songChangesSince] that
+ * everything is read up to. Where the server can't say which songs changed,
+ * a walk re-reads the library a few albums per sync: [walkCursor] is the last
+ * album it reached, [walkMark] the mark it will settle once it gets round, and
+ * [walkedMs] when the last one did.
+ */
+@Serializable
+data class SongCheck(
+    val mark: String? = null,
+    val walkMark: String? = null,
+    val walkCursor: String? = null,
+    val walkedMs: Long = 0L,
+)

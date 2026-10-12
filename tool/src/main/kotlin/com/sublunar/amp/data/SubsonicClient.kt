@@ -529,6 +529,22 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
             ScanRequest.REFUSED
         }
 
+    /**
+     * Whether a scan has run since [mark] — which is all Subsonic can say.
+     *
+     * Navidrome changes nothing between scans, so the same last scan as the
+     * mark means nothing changed. A different one means something may have,
+     * with no way to ask which songs: the sync walks the library instead. No
+     * answer (a server without getScanStatus, or one mid-scan, whose last scan
+     * is still moving) is the same as not knowing.
+     */
+    override suspend fun songChangesSince(mark: String?, libraries: List<String?>): SongChanges {
+        val status = runCatching { request("getScanStatus").scanStatus }.getOrNull()
+        val lastScan = status?.lastScan?.takeIf { it.isNotBlank() && !status.scanning }
+            ?: return SongChanges.Unknown(mark = null)
+        return if (lastScan == mark) SongChanges.Nothing(lastScan) else SongChanges.Unknown(lastScan)
+    }
+
     override suspend fun serverScanning(musicFolderId: String?): Boolean =
         runCatching { request("getScanStatus").scanStatus?.scanning }.getOrNull() ?: false
 

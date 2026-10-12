@@ -283,6 +283,44 @@ class PlexClient(
         return if (started) ScanRequest.STARTED else ScanRequest.REFUSED
     }
 
+    /**
+     * The albums whose songs Plex updated since [mark], from each of
+     * [libraries] — a song's `updatedAt` moves when Plex re-reads or edits it,
+     * and a section can be filtered on it.
+     *
+     * The first time there is nothing to compare with, and the album check
+     * this sync already makes has been standing in until now — so it starts
+     * watching from here rather than reading every song in the library, which
+     * on a large one is the very thing the phone can't hold.
+     */
+    override suspend fun songChangesSince(mark: String?, libraries: List<String?>): SongChanges {
+        val now = serverClock(http.get(baseUrl.trimEnd('/') + "/identity") { plexHeaders() }).epochSecond
+        val since = mark?.toLongOrNull() ?: return SongChanges.Nothing(now.toString())
+        val sections = libraries.filterNotNull().ifEmpty { getMusicFolders().map { it.id } }
+        val albumIds = mutableSetOf<String>()
+        for (section in sections) {
+            // Ids only, a page at a time: a library re-tagged wholesale answers
+            // with every song in it, each with its full media description.
+            var start = 0
+            while (true) {
+                val container = fetch(
+                    "/library/sections/$section/all",
+                    listOf(
+                        "type" to TRACK_TYPE,
+                        "updatedAt>>" to (since - MARK_OVERLAP_SECONDS).toString(),
+                        "sort" to "titleSort:asc",
+                        "X-Plex-Container-Start" to start.toString(),
+                        "X-Plex-Container-Size" to PAGE_SIZE.toString(),
+                    ),
+                ).container
+                container.metadata.mapNotNullTo(albumIds) { it.parentRatingKey }
+                start += container.metadata.size
+                if (container.metadata.isEmpty() || start >= (container.totalSize ?: container.size)) break
+            }
+        }
+        return SongChanges.Albums(albumIds, now.toString())
+    }
+
     override suspend fun serverScanning(musicFolderId: String?): Boolean = runCatching {
         fetch("/library/sections").container.directories
             .filter { musicFolderId == null || it.key == musicFolderId }
@@ -1451,6 +1489,9 @@ class PlexClient(
 
         /** Items per request. Big enough to be one round trip on most libraries. */
         private const val PAGE_SIZE = 500
+
+        /** How far before the last mark each ask for changes reaches: a row is stamped before it is written. */
+        private const val MARK_OVERLAP_SECONDS = 15 * 60L
 
         private const val ARTIST_TYPE = "8"
         private const val ALBUM_TYPE = "9"

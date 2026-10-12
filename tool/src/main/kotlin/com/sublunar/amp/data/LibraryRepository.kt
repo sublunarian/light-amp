@@ -1286,13 +1286,38 @@ class LibraryRepository(
                 if (why != null) reasons[why] = (reasons[why] ?: 0) + 1
                 why != null
             }
+            // And the albums whose songs changed without their count moving —
+            // a re-tag, or tags a server finished reading after this album was
+            // first synced — as far as the server can say. See songChangesSince.
+            val songCheck = source?.let { settings.songCheck(it.id) }
+            // Asked on a refill too, which reads every album anyway: it is
+            // what hands over the first mark, so the next sync needn't.
+            val changes = if (songCheck == null) {
+                null
+            } else {
+                runCatching { client.songChangesSince(songCheck.mark, folderIds) }
+                    .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: $it") }
+                    .getOrNull()
+            }
+            val reread = songCheck?.let {
+                rereadFor(
+                    changes, it, serverAlbums,
+                    whole = musicFolderId == null, bulk = bulkAllowed(), nowMs = System.currentTimeMillis(),
+                )
+            }
+            val already = toFetch.mapTo(HashSet()) { it.id }
+            val more = reread?.albums.orEmpty().filter { already.add(it.id) }
+            if (more.isNotEmpty()) reasons[reread!!.why] = more.size
+            val albumsToFetch = toFetch + more
+
             android.util.Log.i(
                 "AmpSync",
                 if (refillForParser) {
                     "parser refill: fetching songs for all ${serverAlbums.size} albums"
                 } else {
-                    "fetching songs for ${toFetch.size} of ${serverAlbums.size} albums $reasons" +
-                        if (unchanged > 0) "; $unchanged uncounted and untouched, cache kept" else ""
+                    "fetching songs for ${albumsToFetch.size} of ${serverAlbums.size} albums $reasons" +
+                        (if (unchanged > 0) "; $unchanged uncounted and untouched, cache kept" else "") +
+                        "; song changes: ${changes?.let { it::class.simpleName } ?: "not asked"}"
                 },
             )
 
@@ -1300,8 +1325,13 @@ class LibraryRepository(
             // request per album for its songs. Labelled "Songs" it read as a
             // song count, and a library with more songs than albums then looks
             // like it is being cut short.
-            _syncState.value = _syncState.value.copy(phase = "Albums 0/${toFetch.size}")
-            fetchAndStoreSongs(dao, client, toFetch, starred.songIds, libraryOf)
+            _syncState.value = _syncState.value.copy(phase = "Albums 0/${albumsToFetch.size}")
+            val unread = fetchAndStoreSongs(dao, client, albumsToFetch, starred.songIds, libraryOf)
+            // Settled only once every album it covers is read: one that failed
+            // keeps the old mark, so it is asked about again next time.
+            if (source != null && reread != null && unread == 0 && reread.next != songCheck) {
+                settings.setSongCheck(source.id, reread.next)
+            }
 
             // Reconcile track likes across the whole library (cheap two-query pass).
             dao.replaceTrackLikes(starred.songIds.toList())
@@ -1500,9 +1530,10 @@ class LibraryRepository(
         starredSongIds: Set<String>,
         /** Which library each album came from — see the count write-back below. */
         libraryOf: Map<String, String?>,
-    ) = coroutineScope {
+    ): Int = coroutineScope {
         val gate = Semaphore(SYNC_CONCURRENCY)
         val done = AtomicInteger(0)
+        var unread = 0
         // Fetch concurrently, but write in batches: one transaction per album meant
         // ~1300 invalidations of the tracks table across a full sync, each one
         // re-running every observer's whole-table query while rows moved underneath
@@ -1512,11 +1543,16 @@ class LibraryRepository(
                 async {
                     gate.withPermit {
                         yieldToPlayback()
+                        // Null when the server didn't answer — which is not an
+                        // album with no songs. Read as one, a passing failure
+                        // deleted the album's songs until a later sync noticed.
                         val songs = try {
                             client.getAlbumTracks(album.id)
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (_: Exception) {
-                            emptyList()
-                        }.map { it.copy(liked = it.id in starredSongIds) }
+                            null
+                        }?.map { it.copy(liked = it.id in starredSongIds) }
                         val n = done.incrementAndGet()
                         if (n % 10 == 0 || n == albums.size) {
                             _syncState.value =
@@ -1529,9 +1565,11 @@ class LibraryRepository(
             // A switch away cancels this sync; a batch already fetched must
             // not be written on the way out.
             ensureActive()
+            val read = batch.indices.filter { fetched[it] != null }
+            unread += batch.size - read.size
             dao.replaceAlbumTracks(
-                batch.map { it.id },
-                fetched.flatten().map { it.toEntity() },
+                read.map { batch[it].id },
+                read.flatMap { fetched[it].orEmpty() }.map { it.toEntity() },
             )
             // Write back the count we actually got for any album whose server
             // didn't provide one, so the next sync has something to compare
@@ -1545,6 +1583,7 @@ class LibraryRepository(
             // in every library — see allAlbums.
             if (counted.isNotEmpty()) dao.upsertAlbums(counted.map { it.toEntity(libraryOf[it.id]) })
         }
+        unread
     }
 
     fun syncInBackground(force: Boolean = false) {
@@ -1684,6 +1723,30 @@ class LibraryRepository(
         val fresh = client.getAlbumTracks(albumId)
         dao.upsertTracks(fresh.map { it.toEntity() })
         return narrowedToDownloads(fresh).sortedWith(TRACK_ORDER)
+    }
+
+    /**
+     * An album's songs read again from its server, and stored — what opening
+     * its page does, so a record someone is looking at is never older than the
+     * server, whatever a sync has or hasn't noticed. Null where the server
+     * can't be asked or didn't answer, and the page keeps what it had.
+     *
+     * Likes stay as this phone has them: one made offline may not have reached
+     * the server yet, and a sync reconciles the rest.
+     */
+    suspend fun refreshAlbumTracks(albumId: String): List<Track>? {
+        if (!metadataAllowed() || offline.value) return null
+        // Both ends pinned, and the write dropped if the source changed while
+        // the server was answering — see runSync.
+        val dao = daos.value ?: return null
+        val client = serverClient.value ?: return null
+        val fresh = runCatching { client.getAlbumTracks(albumId) }.getOrNull()
+            ?.takeIf { it.isNotEmpty() } ?: return null
+        val liked = dao.tracksForAlbum(albumId).associate { it.id to it.liked }
+        val merged = fresh.map { it.copy(liked = liked[it.id] ?: it.liked) }
+        if (daos.value !== dao) return null
+        dao.replaceAlbumTracks(listOf(albumId), merged.map { it.toEntity() })
+        return narrowedToDownloads(merged).sortedWith(TRACK_ORDER)
     }
 
     /**
@@ -2112,3 +2175,75 @@ private const val RADIO_LENGTH = 50
 
 /** How long a stored popular-songs list is served before being refreshed. */
 private const val TOP_SONGS_TTL_MS = 7L * 24 * 60 * 60 * 1000
+
+/**
+ * The next [size] of [ordered] after [after], and where the walk got to — null
+ * once it has reached the end, so the next one starts from the beginning.
+ */
+internal fun nextWalk(ordered: List<String>, after: String?, size: Int): Pair<List<String>, String?> {
+    val rest = if (after == null) ordered else ordered.filter { it > after }
+    val batch = rest.take(size)
+    return batch to if (rest.size > size) batch.last() else null
+}
+
+/** What a sync re-reads beyond new and re-counted albums, why, and the [SongCheck] to keep after. */
+internal class Reread(val albums: List<Album>, val why: String, val next: SongCheck)
+
+/**
+ * Turns a server's [SongChanges] into albums to re-read.
+ *
+ * Only a sync of every library ([whole]) may settle a mark: one scoped to a
+ * single library would mark as read the changes in the others. Re-reading
+ * every album, or walking, is bulk — left for a link that allows it ([bulk]),
+ * with the check kept where it was so a later sync does it instead.
+ *
+ * A walk that has gone round rests for [WALK_REST_MS] before the next begins.
+ * A server that can't say anything at all — or one that scans on a schedule,
+ * which reads as "something may have changed" every time — would otherwise
+ * keep one going for ever.
+ */
+internal fun rereadFor(
+    changes: SongChanges?,
+    check: SongCheck,
+    albums: List<Album>,
+    whole: Boolean,
+    bulk: Boolean,
+    nowMs: Long,
+): Reread? {
+    val settled = { mark: String -> if (whole) SongCheck(mark = mark) else check }
+    return when (changes) {
+        null -> null
+        is SongChanges.Nothing -> Reread(emptyList(), "", settled(changes.mark))
+        is SongChanges.Albums ->
+            Reread(albums.filter { it.id in changes.ids }, "server says changed", settled(changes.mark))
+        is SongChanges.Everything ->
+            if (bulk) Reread(albums, "read once, to compare from", settled(changes.mark)) else null
+        is SongChanges.Unknown -> {
+            if (!whole || !bulk) return null
+            if (check.walkCursor == null && nowMs - check.walkedMs in 0 until WALK_REST_MS) {
+                return Reread(emptyList(), "", check)
+            }
+            // A walk covers changes up to the mark it began under; a scan
+            // during the walk is caught by the next one.
+            val walkMark = check.walkMark ?: changes.mark
+            val (ids, cursor) = nextWalk(albums.map { it.id }.sorted(), check.walkCursor, WALK_BATCH)
+            val picked = ids.toHashSet()
+            val next = if (cursor == null) {
+                SongCheck(mark = walkMark, walkedMs = nowMs)
+            } else {
+                check.copy(walkMark = walkMark, walkCursor = cursor)
+            }
+            Reread(albums.filter { it.id in picked }, "walk", next)
+        }
+    }
+}
+
+/**
+ * Albums a walk re-reads per sync, where the server can't say which changed —
+ * see [rereadFor]. A 1,400-album library goes round in about fifty syncs on
+ * Wi-Fi: a day or so, for thirty small requests each.
+ */
+internal const val WALK_BATCH = 30
+
+/** How long a finished walk rests before another may start — see [rereadFor]. */
+internal const val WALK_REST_MS = 12 * 60 * 60 * 1000L

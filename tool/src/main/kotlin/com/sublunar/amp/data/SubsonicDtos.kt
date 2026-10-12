@@ -57,7 +57,12 @@ data class PlayQueueDto(
 
 /** getScanStatus: whether the server is walking its music folders. */
 @Serializable
-data class ScanStatusDto(val scanning: Boolean = false, val count: Long? = null)
+data class ScanStatusDto(
+    val scanning: Boolean = false,
+    val count: Long? = null,
+    /** When the last scan ran (OpenSubsonic); see SubsonicClient.songChangesSince. */
+    val lastScan: String? = null,
+)
 
 /** getArtists: artists grouped into alphabetical index buckets. */
 @Serializable

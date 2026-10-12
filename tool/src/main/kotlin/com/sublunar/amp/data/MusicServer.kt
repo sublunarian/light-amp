@@ -1,5 +1,10 @@
 package com.sublunar.amp.data
 
+import java.time.format.DateTimeFormatter
+import java.time.ZonedDateTime
+import java.time.Instant
+import io.ktor.client.statement.HttpResponse
+
 /**
  * A queue the server is holding, from this client or another one.
  *
@@ -87,6 +92,20 @@ interface MusicServer {
 
     /** True while a [startServerScan] is still running. */
     suspend fun serverScanning(musicFolderId: String? = null): Boolean = false
+
+    /**
+     * Which albums' songs changed on the server since [mark] — a mark this
+     * returned before, null the first time — among [libraries] (null: all).
+     *
+     * A sync re-reads an album's songs when the album is new or its count of
+     * songs moved. A song re-tagged in place moves neither, and nor does one
+     * whose tags a server only finished reading after the album was first
+     * synced — so without this, both stayed as first seen for ever. The
+     * default is [SongChanges.Unknown]: the server can't say, and the sync
+     * walks the library a little at a time instead.
+     */
+    suspend fun songChangesSince(mark: String?, libraries: List<String?>): SongChanges =
+        SongChanges.Unknown(mark = null)
 
     /** Server-side artist ids, for the star calls that need one. */
     suspend fun getArtistIndex(musicFolderId: String? = null): List<ArtistRef> = emptyList()
@@ -301,6 +320,34 @@ interface MusicServer {
 
     /** Whether the edit landed — see [removeFromPlaylistAt]. */
     suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = false
+}
+
+/**
+ * When the server says it is, from a response's `Date` header — a change mark
+ * has to be on the server's clock, which the phone's may disagree with by
+ * minutes. The phone's own where the header is missing or unreadable.
+ */
+internal fun serverClock(response: HttpResponse): Instant = serverClock(response.headers["Date"])
+
+internal fun serverClock(date: String?): Instant =
+    date?.let { runCatching { ZonedDateTime.parse(it, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant() }.getOrNull() }
+        ?: Instant.now()
+
+/** A server's answer to [MusicServer.songChangesSince]; [mark] is what to ask from next time. */
+sealed interface SongChanges {
+    val mark: String?
+
+    /** These albums' songs changed, and no others'. */
+    data class Albums(val ids: Set<String>, override val mark: String) : SongChanges
+
+    /** Nothing to compare with yet: every album's songs are read once, and from then on it can say. */
+    data class Everything(override val mark: String) : SongChanges
+
+    /** Something may have changed and the server can't say what. */
+    data class Unknown(override val mark: String?) : SongChanges
+
+    /** Nothing changed since the mark. */
+    data class Nothing(override val mark: String) : SongChanges
 }
 
 /** What [MusicServer.reportTimeline] tells the server a session is doing. */

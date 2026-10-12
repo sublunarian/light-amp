@@ -59,6 +59,9 @@ class AlbumDetailScreen(
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
+    /** On the screen, which outlives its composition — see JellyfinLinkScreen. */
+    private var refreshed = false
+
     @Composable
     override fun Content() {
         val albums by App.library.albums.collectAsState()
@@ -66,7 +69,14 @@ class AlbumDetailScreen(
         val current by App.playback.currentTrack.collectAsState()
 
         var tracks by remember(albumId) { mutableStateOf<List<Track>?>(null) }
-        LaunchedEffect(albumId) { tracks = App.library.getAlbumTracks(albumId) }
+        LaunchedEffect(albumId) {
+            tracks = App.library.getAlbumTracks(albumId)
+            // Once per visit, not on every return from a page opened over it.
+            if (!refreshed) {
+                refreshed = true
+                App.library.refreshAlbumTracks(albumId)?.let { tracks = it }
+            }
+        }
 
         val selection = rememberSelection("album:$albumId")
 
