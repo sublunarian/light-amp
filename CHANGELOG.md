@@ -7,6 +7,13 @@
 - Amp could crash when reopened after sitting paused in the background.
 - Reopening could flash 0:00 and a paused button, or land on the library
   instead of Now Playing.
+- Adding a Jellyfin or Plex server failed unless the address started with
+  http:// or https://.
+- On the keyboard's number page, the arrow in place of DONE did nothing.
+
+### Changed
+
+- Signing in to a server now says whether the address or the login was wrong.
 
 ## 0.7.3
 
