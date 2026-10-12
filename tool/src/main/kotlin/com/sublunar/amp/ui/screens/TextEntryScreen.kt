@@ -255,7 +255,14 @@ private fun TextEditor(
                     ),
                 )
             },
-            onOverlayDismissed = { menu = false },
+            // Only while the menu is up: the keyboard sends its chevron here
+            // whenever this is set, and the number page's chevron — back to
+            // letters — would otherwise close a menu that isn't open.
+            onOverlayDismissed = if (menu) {
+                { menu = false }
+            } else {
+                null
+            },
             overlay = if (menu) {
                 { EditMenu(state, onDone = { menu = false }) }
             } else {
