@@ -18,6 +18,7 @@ import com.sublunar.amp.data.sortPlaylists
 import com.sublunar.amp.data.sortSongs
 import com.sublunar.amp.data.sortName
 import com.sublunar.amp.data.titleKey
+import com.sublunar.amp.ui.components.NOTICE_MS
 import com.sublunar.amp.ui.components.indexLetterOf
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -115,6 +116,26 @@ object App {
      */
     private val _source = MutableStateFlow(MusicSource.local())
     val source: StateFlow<MusicSource> = _source
+
+    /**
+     * A line on top of whatever screen is showing, for a few seconds: a write
+     * that didn't land, said after the sheet that made it has closed. Drawn
+     * once, by PlayerTheme, which every screen passes through.
+     */
+    private val _writeNotice = MutableStateFlow<String?>(null)
+    val writeNotice: StateFlow<String?> = _writeNotice
+    private var noticeJob: Job? = null
+
+    /** Show [text] in place of whatever notice is up, and take it down after [NOTICE_MS]. */
+    @Synchronized
+    fun tell(text: String) {
+        noticeJob?.cancel()
+        _writeNotice.value = text
+        noticeJob = scope.launch {
+            delay(NOTICE_MS)
+            _writeNotice.value = null
+        }
+    }
 
     /**
      * One Room database per source, cached by id.
@@ -601,6 +622,7 @@ object App {
                 bulkAllowed = ::heavyDataAllowed,
                 yieldToPlayback = ::yieldToPlayback,
                 pending = pending,
+                tell = ::tell,
                 settings = settings,
                 scope = scope,
             )

@@ -10,6 +10,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.ui.components.NoticePill
 import com.thelightphone.sdk.ui.LightTheme
 import com.thelightphone.sdk.ui.LightThemeColors
 import com.thelightphone.sdk.ui.LightThemeTokens
@@ -35,6 +36,9 @@ fun PlayerTheme(content: @Composable () -> Unit) {
                     .background(LightThemeTokens.colors.background),
             ) {
                 content()
+                // Over every screen, so a write refused after its sheet has
+                // closed is still said wherever the user has gone since.
+                App.writeNotice.collectAsState().value?.let { NoticePill(it) }
             }
         }
     }

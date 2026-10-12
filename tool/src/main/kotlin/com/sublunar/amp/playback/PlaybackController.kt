@@ -15,6 +15,9 @@ import android.view.KeyEvent
 import androidx.media3.common.PlaybackException
 import com.sublunar.amp.App
 import com.sublunar.amp.data.PendingAction
+import com.sublunar.amp.data.UNREACHABLE
+import com.sublunar.amp.data.WriteResult
+import com.sublunar.amp.data.attemptWrite
 import com.sublunar.amp.data.SavedQueue
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.MusicServer
@@ -168,6 +171,8 @@ class PlaybackController(
     private var unmetered = false
     private var lastScrobbledId: String? = null
     private var nowPlayingId: String? = null
+    /** The sources a refused play has been said for, this run — see [maybeSubmitPlay]. */
+    private val playRefusalSaid: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     /** Identity of the queue last handed to the server — see pushQueueToServer. */
     private var lastSavedQueueKey: Int? = null
 
@@ -3964,6 +3969,8 @@ class PlaybackController(
         // at the time it happened once the server hears about it.
         val at = System.currentTimeMillis()
         val client = serverClient.value
+        // The source the play was heard on, so it is only ever sent there.
+        val source = App.source.value.id
         scope.launch {
             // Local first, so the library's ordering moves with the listening
             // whether or not the server ever hears about this play.
@@ -3975,13 +3982,26 @@ class PlaybackController(
             // if the gate can't be read: waiting costs nothing, and a play that
             // was never sent and never queued is gone.
             val allowed = runCatching { metadataAllowed() }.getOrDefault(false)
-            val sent = allowed && client != null &&
-                runCatching { client.scrobble(track.id, at) }.isSuccess
-            // Guarded: a play can land before App has finished wiring itself up,
-            // and a missed scrobble is not worth a crash.
-            if (!sent) {
-                runCatching {
-                    App.pending.add(PendingAction(PendingAction.Kind.SCROBBLE, track.id, atMs = at))
+            val result = if (allowed && client != null) {
+                attemptWrite { client.scrobble(track.id, at) }
+            } else {
+                WriteResult.Unreachable(UNREACHABLE)
+            }
+            when (result) {
+                WriteResult.Saved -> Unit
+                // Guarded: a play can land before App has finished wiring itself up,
+                // and a missed scrobble is not worth a crash.
+                is WriteResult.Unreachable -> runCatching {
+                    App.pending.add(
+                        PendingAction(PendingAction.Kind.SCROBBLE, track.id, atMs = at, sourceId = source),
+                    )
+                }
+                // Not kept: the server would say no again every time. Said once
+                // per source and run — a server that refuses one play tends to
+                // refuse them all, and a notice at every track would be noise.
+                is WriteResult.Refused -> {
+                    android.util.Log.w("AmpSync", "play of ${track.id} refused: ${result.reason}")
+                    if (playRefusalSaid.add(source)) runCatching { App.tell("Couldn't save\n${result.reason}") }
                 }
             }
         }

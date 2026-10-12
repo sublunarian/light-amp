@@ -9,6 +9,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.data.WriteResult
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.PlayAllRow
@@ -80,9 +81,11 @@ class AddToPlaylistScreen(
 
     /**
      * Sequential rather than concurrent: updatePlaylist appends, so parallel
-     * calls would race the order.
+     * calls would race the order. And stopped at the first that fails: the
+     * ones after it would land out of order behind the gap, and why it failed
+     * has already been said.
      */
     private suspend fun addSequentially(playlistId: String) {
-        trackIds.forEach { App.library.addToPlaylist(playlistId, it) }
+        for (id in trackIds) if (App.library.addToPlaylist(playlistId, id) != WriteResult.Saved) break
     }
 }

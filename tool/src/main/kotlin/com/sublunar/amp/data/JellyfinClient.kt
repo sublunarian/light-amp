@@ -110,13 +110,17 @@ class JellyfinClient(
         params: List<Pair<String, String>> = emptyList(),
     ): T = json.decodeFromString(body(path, params))
 
-    /** A call whose answer doesn't matter, and whose failure mustn't propagate. */
-    private suspend fun send(
+    /**
+     * A change the user is waiting to see land: returns when the server took
+     * it and throws when it didn't, so a refusal and a dead link can be told
+     * apart — see [writeResultOf].
+     */
+    private suspend fun write(
         method: String,
         path: String,
         params: List<Pair<String, String>> = emptyList(),
         payload: JsonObject? = null,
-    ): Boolean = runCatching {
+    ) {
         val target = url(path, params)
         val response = when (method) {
             "POST" -> http.post(target) {
@@ -129,8 +133,18 @@ class JellyfinClient(
             "DELETE" -> http.delete(target) { jellyfinHeaders() }
             else -> http.get(target) { jellyfinHeaders() }
         }
-        response.status.isSuccess()
-    }.getOrDefault(false)
+        if (!response.status.isSuccess()) {
+            throw JellyfinException("Jellyfin says ${response.status.value} for $path", response.status.value)
+        }
+    }
+
+    /** A call whose answer doesn't matter, and whose failure mustn't propagate. */
+    private suspend fun send(
+        method: String,
+        path: String,
+        params: List<Pair<String, String>> = emptyList(),
+        payload: JsonObject? = null,
+    ): Boolean = runCatching { write(method, path, params, payload) }.isSuccess
 
     private fun io.ktor.client.request.HttpRequestBuilder.jellyfinHeaders() {
         header("Authorization", authorization(product, token, deviceId))
@@ -374,8 +388,11 @@ class JellyfinClient(
     /**
      * The server's own artist records, which is where their pictures are — the
      * library's artists come from track tags and carry none.
+     *
+     * Throws rather than answering empty: an artist like looks its name up in
+     * here, and an index that couldn't be read is not one without that artist.
      */
-    override suspend fun getArtistIndex(musicFolderId: String?): List<ArtistRef> = runCatching {
+    override suspend fun getArtistIndex(musicFolderId: String?): List<ArtistRef> {
         val items = mutableListOf<JellyfinItem>()
         var start = 0
         while (true) {
@@ -394,9 +411,9 @@ class JellyfinClient(
             start += page.items.size
             if (!page.continuesAfter(start)) break
         }
-        items.map { ArtistRef(id = it.id, name = it.name, imageId = it.imageId()) }
+        return items.map { ArtistRef(id = it.id, name = it.name, imageId = it.imageId()) }
             .distinctBy { it.id }
-    }.getOrDefault(emptyList())
+    }
 
     // --- Media ---------------------------------------------------------------
 
@@ -526,6 +543,10 @@ class JellyfinClient(
      * notice opens a session on the server, and a play is recorded against the
      * item. Sending only the second would announce nothing while a track played;
      * sending only the first would count everything skipped past as a play.
+     *
+     * The play throws when it didn't land, so one made while the server was
+     * away is kept and sent again; the start notice is only true now, and is
+     * let go.
      */
     override suspend fun scrobble(songId: String, atMs: Long?, submission: Boolean) {
         if (!submission) {
@@ -539,7 +560,7 @@ class JellyfinClient(
             )
             return
         }
-        send("POST", "/Users/$userId/PlayedItems/$songId")
+        write("POST", "/Users/$userId/PlayedItems/$songId")
     }
 
     /**
@@ -580,7 +601,7 @@ class JellyfinClient(
     override suspend fun unstarArtist(artistId: String) = favourite(artistId, false)
 
     private suspend fun favourite(id: String, on: Boolean) {
-        send(if (on) "POST" else "DELETE", "/Users/$userId/FavoriteItems/$id")
+        write(if (on) "POST" else "DELETE", "/Users/$userId/FavoriteItems/$id")
     }
 
     // --- Playlists -----------------------------------------------------------
@@ -648,7 +669,7 @@ class JellyfinClient(
         return items
     }
 
-    override suspend fun createPlaylist(name: String, songIds: List<String>): String? = runCatching {
+    override suspend fun createPlaylist(name: String, songIds: List<String>): String? {
         val payload = buildJsonObject {
             put("Name", name)
             put("UserId", userId)
@@ -663,9 +684,14 @@ class JellyfinClient(
             contentType(ContentType.Application.Json)
             setBody(json.encodeToString(JsonObject.serializer(), payload))
         }
-        if (!response.status.isSuccess()) return@runCatching null
-        json.decodeFromString<JellyfinNamed>(response.bodyAsText()).id.takeIf { it.isNotBlank() }
-    }.getOrNull()
+        if (!response.status.isSuccess()) {
+            throw JellyfinException("Jellyfin says ${response.status.value} for /Playlists", response.status.value)
+        }
+        // Made, whatever the body says: an answer this can't read is still a playlist on the server.
+        return runCatching {
+            json.decodeFromString<JellyfinNamed>(response.bodyAsText()).id.takeIf { it.isNotBlank() }
+        }.getOrNull()
+    }
 
     /**
      * Only the name goes: Jellyfin's update leaves whatever a request leaves
@@ -675,15 +701,15 @@ class JellyfinClient(
      * update at all and refuse, which leaves the name as it was.
      */
     override suspend fun renamePlaylist(id: String, name: String) {
-        send("POST", "/Playlists/$id", payload = renameBody(name))
+        write("POST", "/Playlists/$id", payload = renameBody(name))
     }
 
     override suspend fun deletePlaylist(id: String) {
-        send("DELETE", "/Items/$id")
+        write("DELETE", "/Items/$id")
     }
 
     override suspend fun addToPlaylist(id: String, songId: String) {
-        send("POST", "/Playlists/$id/Items", listOf("ids" to songId, "userId" to userId))
+        write("POST", "/Playlists/$id/Items", listOf("ids" to songId, "userId" to userId))
     }
 
     /**

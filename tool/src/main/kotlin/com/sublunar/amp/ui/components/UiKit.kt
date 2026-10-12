@@ -2,7 +2,12 @@
 
 package com.sublunar.amp.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import com.thelightphone.sdk.ui.LightThemeTokens
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -372,3 +377,30 @@ fun SectionLabel(text: String) {
 
 private const val SECTION_TOP_PX = 40
 private const val SECTION_BOTTOM_PX = 12
+
+// --- Notices ----------------------------------------------------------------
+
+/** How long a notice stays: long enough to read, not just to register as a flicker. */
+const val NOTICE_MS = 2500L
+
+/**
+ * A word or two dead centre and above everything else — "Couldn't save", and
+ * on a second line why. Inset from the screen's edges so a long reason wraps
+ * rather than running off them.
+ */
+@Composable
+fun BoxScope.NoticePill(text: String) {
+    AppText(
+        text,
+        pxSp(ROW_TITLE_PX),
+        align = TextAlign.Center,
+        modifier = Modifier
+            .align(Alignment.Center)
+            .padding(horizontal = px(LIST_EDGE_PX))
+            .clip(RoundedCornerShape(px(24)))
+            // The page's own background/content pair, so it follows the phone's
+            // theme and its invertColors setting.
+            .background(LightThemeTokens.colors.background)
+            .padding(horizontal = px(44), vertical = px(28)),
+    )
+}

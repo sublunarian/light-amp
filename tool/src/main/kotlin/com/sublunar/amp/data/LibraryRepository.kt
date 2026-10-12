@@ -108,6 +108,11 @@ class LibraryRepository(
     private val yieldToPlayback: suspend () -> Unit = {},
     /** Where likes and ratings go when the server can't be told about them. */
     private val pending: PendingActions,
+    /**
+     * Puts a line in front of the user for a moment — a write the server
+     * refused, after the screen that made it has already gone. See App.tell.
+     */
+    private val tell: (String) -> Unit = {},
     /** For the handful of things cached in preferences rather than in a table. */
     private val settings: AppSettings,
     private val scope: CoroutineScope,
@@ -826,37 +831,43 @@ class LibraryRepository(
             }
         }.stateIn(scope, SharingStarted.Eagerly, emptySet())
 
-    suspend fun createPlaylist(name: String) = createPlaylist(name, emptyList())
+    suspend fun createPlaylist(name: String): WriteResult = createPlaylist(name, emptyList())
 
     /**
      * [trackIds] are the playlist's opening contents, not a hint — see
      * [MusicServer.createPlaylist]. Callers must not add them again.
+     *
+     * This and the edits after it say when they didn't land — see [said] —
+     * and answer how it went, for a caller with more to do after.
      */
-    suspend fun createPlaylist(name: String, trackIds: List<String>) = playlistMutex.withLock {
-        if (playlistsAreLocal()) {
-            LocalPlaylists.create(name.trim(), trackIds)
+    suspend fun createPlaylist(name: String, trackIds: List<String>): WriteResult = playlistMutex.withLock {
+        val result = if (playlistsAreLocal()) {
+            fileWrite(LocalPlaylists.create(name.trim(), trackIds) != null)
         } else {
-            runCatching { serverClient.value?.createPlaylist(name.trim(), trackIds) }
+            serverWrite { it.createPlaylist(name.trim(), trackIds) }
         }
         refreshPlaylists()
+        said("createPlaylist", result)
     }
 
-    suspend fun renamePlaylist(id: String, name: String) = playlistWrite {
-        if (playlistsAreLocal()) {
-            LocalPlaylists.rename(id, name.trim())
+    suspend fun renamePlaylist(id: String, name: String): WriteResult = playlistWrite {
+        val result = if (playlistsAreLocal()) {
+            fileWrite(LocalPlaylists.rename(id, name.trim()))
         } else {
-            runCatching { serverClient.value?.renamePlaylist(id, name.trim()) }
+            serverWrite { it.renamePlaylist(id, name.trim()) }
         }
         refreshPlaylists()
+        said("renamePlaylist($id)", result)
     }
 
-    suspend fun deletePlaylist(id: String) = playlistWrite {
-        if (playlistsAreLocal()) {
-            LocalPlaylists.delete(id)
+    suspend fun deletePlaylist(id: String): WriteResult = playlistWrite {
+        val result = if (playlistsAreLocal()) {
+            fileWrite(LocalPlaylists.delete(id))
         } else {
-            runCatching { serverClient.value?.deletePlaylist(id) }
+            serverWrite { it.deletePlaylist(id) }
         }
         refreshPlaylists()
+        said("deletePlaylist($id)", result)
     }
 
     /**
@@ -864,12 +875,37 @@ class LibraryRepository(
      * concurrent calls would race the order. [playlistMutex] is what makes that
      * contract hold across calls, not just within a single caller's loop.
      */
-    suspend fun addToPlaylist(id: String, trackId: String) = playlistWrite {
-        if (playlistsAreLocal()) {
-            LocalPlaylists.add(id, trackId)
+    suspend fun addToPlaylist(id: String, trackId: String): WriteResult = playlistWrite {
+        val result = if (playlistsAreLocal()) {
+            fileWrite(LocalPlaylists.add(id, trackId))
         } else {
-            runCatching { serverClient.value?.addToPlaylist(id, trackId) }
+            serverWrite { it.addToPlaylist(id, trackId) }
         }
+        said("addToPlaylist($id)", result)
+    }
+
+    /** No client at all is a server that can't be reached, not one that said no. */
+    private suspend fun serverWrite(block: suspend (MusicServer) -> Unit): WriteResult =
+        serverClient.value?.let { client -> attemptWrite { block(client) } } ?: WriteResult.Unreachable(UNREACHABLE)
+
+    /** The phone's own playlists are files, and a file that wouldn't change is the only way one fails. */
+    private fun fileWrite(done: Boolean): WriteResult =
+        if (done) WriteResult.Saved else WriteResult.Refused("Couldn't change the playlist file")
+
+    /**
+     * A playlist write that didn't land is said, and that is all: none of
+     * these show their change before the server has it, so there is nothing on
+     * screen to take back.
+     */
+    private fun said(what: String, result: WriteResult): WriteResult {
+        val reason = when (result) {
+            WriteResult.Saved -> return result
+            is WriteResult.Unreachable -> result.reason
+            is WriteResult.Refused -> result.reason
+        }
+        android.util.Log.w("AmpSync", "$what → $result")
+        tell("Couldn't save\n$reason")
+        return result
     }
 
     /**
@@ -1909,70 +1945,126 @@ class LibraryRepository(
     private fun reachableClient(): MusicServer? =
         if (metadataAllowed()) serverClient.value else null
 
+    // One like or rating at a time, in the order they were tapped: launched
+    // side by side, two taps on the same heart could reach the server the
+    // wrong way round and leave it holding the first.
+    private val likeWrites = Mutex()
+
+    /** How many times each thing has been liked or rated — see [mirror]. */
+    private val taps = ConcurrentHashMap<String, Int>()
+
+    /**
+     * The server's half of a like or a rating the phone already shows.
+     *
+     * Saved: anything older still queued for the same thing is dropped, since
+     * sent later it would undo this. Unreachable: queued, to be sent when the
+     * server is back. Refused: the server will never hold it, so the phone's
+     * half is taken back with [undo] — the next sync would do the same, minutes
+     * later and without a word — and said, when [say]. Only while no later tap
+     * on the same thing has replaced this one: taking back a refusal must not
+     * take back the tap after it.
+     *
+     * [client] is the one that was there at the tap, like the dao [undo] writes
+     * to: a source switched away from meanwhile still gets its own answer.
+     */
+    private suspend fun mirror(
+        action: PendingAction,
+        client: MusicServer?,
+        say: Boolean,
+        send: suspend (MusicServer) -> Unit,
+        undo: suspend () -> Unit,
+    ): WriteResult {
+        val key = "${action.sourceId}:${action.kind.group()}:${action.id}"
+        val tap = taps.merge(key, 1, Int::plus)!!
+        return likeWrites.withLock {
+            if (client == null) return@withLock WriteResult.Unreachable(UNREACHABLE).also { pending.add(action) }
+            val result = attemptWrite { send(client) }
+            if (result != WriteResult.Saved) android.util.Log.w("AmpSync", "${action.kind} ${action.id} → $result")
+            when (result) {
+                WriteResult.Saved -> pending.forget(action)
+                is WriteResult.Unreachable -> pending.add(action)
+                is WriteResult.Refused -> if (taps[key] == tap) {
+                    undo()
+                    if (say) tell("Couldn't save\n${result.reason}")
+                }
+            }
+            result
+        }
+    }
+
     /**
      * Like or unlike a song.
      *
      * The local row is the truth the moment it's tapped, and stays that way even
      * if the server can't be told: undoing the user's action because the train
-     * went into a tunnel is worse than telling Navidrome about it later.
+     * went into a tunnel is worse than telling Navidrome about it later. A
+     * server that answers no is a different thing from one that can't be
+     * reached, and that like is taken back and said — see [mirror].
      */
     suspend fun setTrackLiked(track: Track, liked: Boolean) {
-        dao.setTrackLiked(track.id, liked)
+        val pinned = dao
         val client = reachableClient()
+        pinned.setTrackLiked(track.id, liked)
+        val source = settings.activeSource.first()?.id
         val kind = if (liked) PendingAction.Kind.STAR_SONG else PendingAction.Kind.UNSTAR_SONG
-        if (client == null) {
-            pending.add(PendingAction(kind, track.id))
-            return
-        }
-        try {
-            if (liked) client.starSong(track.id) else client.unstarSong(track.id)
-        } catch (_: Exception) {
-            pending.add(PendingAction(kind, track.id))
-        }
+        mirror(
+            PendingAction(kind, track.id, sourceId = source), client, say = true,
+            send = { if (liked) it.starSong(track.id) else it.unstarSong(track.id) },
+            undo = { pinned.setTrackLiked(track.id, !liked) },
+        )
     }
 
     /**
      * Like an artist. Stored locally by name (our Artist rows are derived from
      * track tags), and mirrored to the server when that name resolves to a real
-     * server-side artist so other clients see the same favourites.
+     * server-side artist so other clients see the same favourites. A name the
+     * server has no artist for — a featured guest, a tag-only spelling — is
+     * refused: it could never be told, and the next sync would drop it unseen.
      */
     suspend fun setArtistLiked(name: String, liked: Boolean) {
-        if (liked) dao.likeArtists(listOf(LikedArtistEntity(name))) else dao.unlikeArtist(name)
-        val kind = if (liked) PendingAction.Kind.STAR_ARTIST else PendingAction.Kind.UNSTAR_ARTIST
+        val pinned = dao
         val client = reachableClient()
-        if (client == null) {
-            pending.add(PendingAction(kind, name))
-            return
-        }
-        try {
-            val id = artistIdFor(name, client) ?: return
-            if (liked) client.starArtist(id) else client.unstarArtist(id)
-        } catch (_: Exception) {
-            pending.add(PendingAction(kind, name))
-        }
+        if (liked) pinned.likeArtists(listOf(LikedArtistEntity(name))) else pinned.unlikeArtist(name)
+        val source = settings.activeSource.first()?.id
+        val kind = if (liked) PendingAction.Kind.STAR_ARTIST else PendingAction.Kind.UNSTAR_ARTIST
+        mirror(
+            PendingAction(kind, name, sourceId = source), client, say = true,
+            send = {
+                val id = artistIdFor(name, it) ?: throw RefusedWrite(NO_SUCH_ARTIST)
+                if (liked) it.starArtist(id) else it.unstarArtist(id)
+            },
+            undo = { if (liked) pinned.unlikeArtist(name) else pinned.likeArtists(listOf(LikedArtistEntity(name))) },
+        )
     }
 
-    /** Server-side id for a display name, from a lazily built index. */
+    /**
+     * Server-side id for a display name, from a lazily built index.
+     *
+     * A name the stored index lacks has it read again, once: the artist may be
+     * newer than the index. A failed read throws, so it counts as a server that
+     * couldn't be reached rather than as one without the artist. The index is
+     * the active source's — a write still finishing for a source switched away
+     * from asks its own server and leaves it alone.
+     */
     private suspend fun artistIdFor(name: String, client: MusicServer): String? {
-        val ids = artistIds ?: client.getArtistIndex()
-            .associate { it.name to it.id }
-            .also { artistIds = it }
-        return ids[name]
+        val current = client === serverClient.value
+        if (current) artistIds?.get(name)?.let { return it }
+        val fresh = client.getArtistIndex().associate { it.name to it.id }
+        if (current && fresh.isNotEmpty()) artistIds = fresh
+        return fresh[name]
     }
 
     suspend fun setAlbumLiked(album: Album, liked: Boolean) {
-        dao.setAlbumLiked(album.id, liked)
-        val kind = if (liked) PendingAction.Kind.STAR_ALBUM else PendingAction.Kind.UNSTAR_ALBUM
+        val pinned = dao
         val client = reachableClient()
-        if (client == null) {
-            pending.add(PendingAction(kind, album.id))
-            return
-        }
-        try {
-            if (liked) client.starAlbum(album.id) else client.unstarAlbum(album.id)
-        } catch (_: Exception) {
-            pending.add(PendingAction(kind, album.id))
-        }
+        pinned.setAlbumLiked(album.id, liked)
+        val source = settings.activeSource.first()?.id
+        val kind = if (liked) PendingAction.Kind.STAR_ALBUM else PendingAction.Kind.UNSTAR_ALBUM
+        mirror(
+            PendingAction(kind, album.id, sourceId = source), client, say = true,
+            send = { if (liked) it.starAlbum(album.id) else it.unstarAlbum(album.id) },
+            undo = { pinned.setAlbumLiked(album.id, !liked) },
+        )
     }
 
     // --- Search --------------------------------------------------------------
@@ -2018,17 +2110,23 @@ class LibraryRepository(
     /**
      * Rate a song or album, 0 to clear.
      *
-     * Applied locally either way and queued when the server can't be reached, so
-     * rating a record on a plane behaves like liking one does.
+     * Applied locally at once and queued when the server can't be reached, so
+     * rating a record on a plane behaves like liking one does. One the server
+     * refuses goes back to [previous], and the answer is the caller's to say —
+     * see [mirror].
      */
-    suspend fun setRating(id: String, stars: Int, isAlbum: Boolean): Boolean {
-        if (isAlbum) dao.setAlbumRating(id, stars) else dao.setTrackRating(id, stars)
-        val kind = if (isAlbum) PendingAction.Kind.RATE_ALBUM else PendingAction.Kind.RATE_SONG
+    suspend fun setRating(id: String, stars: Int, isAlbum: Boolean, previous: Int): WriteResult {
+        val pinned = dao
         val client = reachableClient()
-        if (client == null || !client.setRating(id, stars)) {
-            pending.add(PendingAction(kind, id, value = stars))
-        }
-        return true
+        val store: suspend (Int) -> Unit = { if (isAlbum) pinned.setAlbumRating(id, it) else pinned.setTrackRating(id, it) }
+        store(stars)
+        val source = settings.activeSource.first()?.id
+        val kind = if (isAlbum) PendingAction.Kind.RATE_ALBUM else PendingAction.Kind.RATE_SONG
+        return mirror(
+            PendingAction(kind, id, value = stars, sourceId = source), client, say = false,
+            send = { it.setRating(id, stars) },
+            undo = { store(previous) },
+        )
     }
 
     /**
@@ -2049,10 +2147,21 @@ class LibraryRepository(
      * Through [reachableClient], so a queue built up in Wi-Fi Only is not
      * emptied over cellular the moment something calls this — which would send
      * exactly the requests the queue exists to have held back.
+     *
+     * Only this source's: the queue holds every source's, and a like sent to a
+     * server that never had the song would be refused and lost. What the server
+     * refuses is said once, however many it was — one line is enough to know
+     * something didn't take, and the log has the rest.
      */
-    suspend fun flushPending(): Int {
-        val client = reachableClient() ?: return 0
-        return pending.flush(client) { name -> runCatching { artistIdFor(name, client) }.getOrNull() }
+    suspend fun flushPending() {
+        val client = reachableClient() ?: return
+        val source = settings.activeSource.first()?.id ?: return
+        // Behind any like still on its way, so neither overtakes the other.
+        val refused = likeWrites.withLock {
+            pending.flush(client, source) { name -> artistIdFor(name, client) }
+        }
+        refused.forEach { android.util.Log.w("AmpSync", "offline write refused: $it") }
+        refused.firstOrNull()?.let { tell("Couldn't save something done offline\n$it") }
     }
 
     suspend fun clearCache() {

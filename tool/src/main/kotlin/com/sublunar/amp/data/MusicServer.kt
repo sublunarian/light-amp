@@ -30,9 +30,11 @@ data class SavedQueue(
  * **Not every server can do everything.** Rather than have each call fail
  * quietly on a backend that doesn't support it, the *source* declares what it
  * can do (see [MusicSource.supportsLikes] and its neighbours) and the UI leaves
- * out what it can't. The methods here that only some servers implement are
- * marked, and default to doing nothing — a server that can't star a track
- * shouldn't need to write a stub saying so.
+ * out what it can't. The reads only some servers implement default to an empty
+ * answer, so a server that has no popular songs needn't write a stub saying so.
+ * The writes default to [RefusedWrite] instead: a default that did nothing
+ * would read as success, and a like the server never heard of would stand on
+ * the phone as if it had.
  */
 /**
  * What came of asking a server to scan.
@@ -43,6 +45,92 @@ data class SavedQueue(
  * a server without the call keeps its own library and has nothing to refuse.
  */
 enum class ScanRequest { STARTED, REFUSED, ABSENT }
+
+/**
+ * What came of a write: a like, a rating, a playlist edit, a play.
+ *
+ * Two kinds of failure, because they want opposite things done. A server that
+ * never answered may well take the same write later, so it is kept and sent
+ * again; a server that answered no will say no again, and a write kept for it
+ * only stands in the way of everything queued behind it.
+ */
+sealed interface WriteResult {
+    data object Saved : WriteResult
+
+    /** Never answered: worth sending again later. */
+    data class Unreachable(val reason: String) : WriteResult
+
+    /** The server answered no: sending it again gets the same answer. */
+    data class Refused(val reason: String) : WriteResult
+}
+
+/** Refused before anything was sent — no call for it on this server, or nothing to aim it at. */
+class RefusedWrite(reason: String = CANT_DO_THAT) : Exception(reason)
+
+internal const val UNREACHABLE = "Couldn't reach the server"
+internal const val CANT_DO_THAT = "This server can't do that"
+internal const val NO_SUCH_ARTIST = "This artist isn't on the server"
+
+/** A server's own words are shown when they fit on a line; past that they are a log entry. */
+private const val SHOWN_MESSAGE_MAX = 60
+
+/**
+ * Which of the two a failed write was — see [WriteResult].
+ *
+ * The same split [Reachability] draws between a server that answered and one
+ * that didn't, with one difference: a write that can never land must not count
+ * as one that might, so anything not recognised is a refusal. Read as "try
+ * again later", a bug that always throws would hold the offline queue shut for
+ * good, which is what a refused Subsonic star once did.
+ *
+ * A 401 is deliberately not called a login problem: Jellyfin answers 401 to a
+ * delete the account isn't allowed to make, from a login that works.
+ */
+internal fun writeResultOf(e: Exception): WriteResult {
+    if (e is RefusedWrite) return WriteResult.Refused(e.message ?: CANT_DO_THAT)
+    if (e is SubsonicException) {
+        // A portal's or a proxy's page: the server itself was never asked.
+        if (e.notJson) return WriteResult.Unreachable(UNREACHABLE)
+        if (e.endpointMissing) return WriteResult.Refused(CANT_DO_THAT)
+        when (e.code) {
+            40, 41, 44 -> return WriteResult.Refused("The server refused the login")
+            50 -> return WriteResult.Refused("The server doesn't allow that")
+            70 -> return WriteResult.Refused("The server doesn't have that")
+        }
+    }
+    if (e is java.io.IOException || e is kotlinx.serialization.SerializationException) {
+        return WriteResult.Unreachable(UNREACHABLE)
+    }
+    val status = when (e) {
+        is SubsonicException -> e.status
+        is PlexException -> e.status
+        is JellyfinException -> e.status
+        else -> null
+    }
+    return when (status) {
+        // Cloudflare's own codes for an origin that isn't answering behind it.
+        in 520..529 -> WriteResult.Unreachable("Your server isn't responding ($status)")
+        in 500..599 -> WriteResult.Unreachable("The server had an error ($status)")
+        401, 403 -> WriteResult.Refused("The server doesn't allow that")
+        404 -> WriteResult.Refused("The server doesn't have that")
+        in 400..499 -> WriteResult.Refused("The server said $status")
+        else -> WriteResult.Refused(
+            e.message?.takeIf { it.isNotBlank() && it.length < SHOWN_MESSAGE_MAX }
+                ?: if (e is SubsonicException) "The server said no" else "Couldn't save",
+        )
+    }
+}
+
+/** Runs one write and says how it went. Cancellation is not a failure, and goes straight through. */
+internal suspend fun attemptWrite(block: suspend () -> Unit): WriteResult =
+    try {
+        block()
+        WriteResult.Saved
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        writeResultOf(e)
+    }
 
 interface MusicServer {
 
@@ -239,6 +327,10 @@ interface MusicServer {
      * starts, the second is the play itself and is what reaches a scrobbling
      * service. A client that only ever sends the second announces nothing while
      * it plays, and logs a play for every track it was skipped past.
+     *
+     * The play throws when the server didn't take it, so the caller can keep it
+     * for later — see [writeResultOf]. The now-playing notice is only true now,
+     * is never kept, and may fail quietly.
      */
     suspend fun scrobble(songId: String, atMs: Long? = null, submission: Boolean = true) = Unit
 
@@ -269,15 +361,19 @@ interface MusicServer {
     /** The queue this account last left somewhere, or null if the server keeps none. */
     suspend fun getPlayQueue(): SavedQueue? = null
 
-    /** 1–5, or 0 to clear. False when the server wouldn't take it. */
-    suspend fun setRating(id: String, stars: Int): Boolean = false
+    /**
+     * 1–5, or 0 to clear. Throws when the server didn't take it — see
+     * [writeResultOf] — and so do the likes below: returning is the server's
+     * yes, and nothing else may read as one.
+     */
+    suspend fun setRating(id: String, stars: Int): Unit = throw RefusedWrite()
 
-    suspend fun starSong(songId: String) = Unit
-    suspend fun unstarSong(songId: String) = Unit
-    suspend fun starAlbum(albumId: String) = Unit
-    suspend fun unstarAlbum(albumId: String) = Unit
-    suspend fun starArtist(artistId: String) = Unit
-    suspend fun unstarArtist(artistId: String) = Unit
+    suspend fun starSong(songId: String): Unit = throw RefusedWrite()
+    suspend fun unstarSong(songId: String): Unit = throw RefusedWrite()
+    suspend fun starAlbum(albumId: String): Unit = throw RefusedWrite()
+    suspend fun unstarAlbum(albumId: String): Unit = throw RefusedWrite()
+    suspend fun starArtist(artistId: String): Unit = throw RefusedWrite()
+    suspend fun unstarArtist(artistId: String): Unit = throw RefusedWrite()
 
     // --- Playlists -----------------------------------------------------------
 
@@ -293,11 +389,14 @@ interface MusicServer {
      * at all — it has no call for it — so the songs have to go in as part of
      * the same request, and [MusicSource.supportsEmptyPlaylists] says whether
      * leaving them out is even an option.
+     *
+     * Throws on failure, as the three after it do; a null id is not one. Some
+     * servers make the playlist and answer a bare "ok" without saying which.
      */
-    suspend fun createPlaylist(name: String, songIds: List<String> = emptyList()): String? = null
-    suspend fun renamePlaylist(id: String, name: String) = Unit
-    suspend fun deletePlaylist(id: String) = Unit
-    suspend fun addToPlaylist(id: String, songId: String) = Unit
+    suspend fun createPlaylist(name: String, songIds: List<String> = emptyList()): String? = throw RefusedWrite()
+    suspend fun renamePlaylist(id: String, name: String): Unit = throw RefusedWrite()
+    suspend fun deletePlaylist(id: String): Unit = throw RefusedWrite()
+    suspend fun addToPlaylist(id: String, songId: String): Unit = throw RefusedWrite()
     /**
      * Remove the entries [at] these positions — in the playlist as the server
      * holds it, all of them read against the list as it stands before any is

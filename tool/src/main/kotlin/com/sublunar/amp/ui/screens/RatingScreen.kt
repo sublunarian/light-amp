@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.data.WriteResult
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.ScrollableList
@@ -28,8 +29,10 @@ fun ratingStars(stars: Int): String =
 /**
  * Pick a 1–5 star rating, or clear it.
  *
- * The rating is written to Navidrome first and only cached locally once the
- * server accepts it, so what the app shows always matches what the server holds.
+ * The rating shows at once and goes to the server after, queued if the server
+ * can't be reached, as a like is. The page waits for the answer only to say a
+ * refusal: the rating has gone back to what it was, and the page stays open
+ * with the reason so another can be picked.
  */
 class RatingScreen(
     sealed: SealedLightActivity,
@@ -68,16 +71,22 @@ class RatingScreen(
                             saving = true
                             status = "Saving…"
                             App.scope.launch {
-                                val ok = App.library.setRating(id, stars, isAlbum)
+                                val result = App.library.setRating(id, stars, isAlbum, previous = current)
                                 // Back on Main, and only while this page is still
                                 // the one showing. App.scope is Default, and
                                 // goBack pops whatever is on top: after a slow
                                 // save that the user walked away from, it would
                                 // pop the root and run the app's teardown off the
                                 // main thread, where releasing the player throws.
+                                // A refusal they walked away from is still said,
+                                // wherever they are now.
                                 withContext(Dispatchers.Main.immediate) {
-                                    if (gone) return@withContext
-                                    if (ok) goBack() else { status = "Couldn't reach the server"; saving = false }
+                                    val refused = result as? WriteResult.Refused
+                                    if (gone) {
+                                        refused?.let { App.tell("Couldn't save\n${it.reason}") }
+                                        return@withContext
+                                    }
+                                    if (refused == null) goBack() else { status = refused.reason; saving = false }
                                 }
                             }
                         },

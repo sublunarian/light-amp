@@ -1,7 +1,6 @@
 package com.sublunar.amp.ui.screens
 
 import android.view.KeyEvent
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -26,11 +24,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
+import com.sublunar.amp.ui.components.NOTICE_MS
+import com.sublunar.amp.ui.components.NoticePill
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.components.rememberDragReorderState
@@ -66,13 +65,9 @@ import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
-import com.thelightphone.sdk.ui.LightThemeTokens
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-// Long enough to read, not just to register as a flicker.
-private const val ERROR_FLASH_MS = 2500L
 
 class PlaylistDetailScreen(
     sealed: SealedLightActivity,
@@ -193,25 +188,11 @@ class PlaylistDetailScreen(
                         else -> if (list.isEmpty()) Centered("Empty playlist") else TrackList(list, selection)
                     }
                 }
-                if (saveFailed.value) SaveFailedNotice()
+                // Dead centre and above the list: the rows themselves have just
+                // gone back to how they were.
+                if (saveFailed.value) NoticePill("Couldn't save")
             }
         }
-    }
-
-    /** Dead center and above the list: the rows themselves have just gone back to how they were. */
-    @Composable
-    private fun BoxScope.SaveFailedNotice() {
-        AppText(
-            "Couldn't save",
-            pxSp(ROW_TITLE_PX),
-            modifier = Modifier
-                .align(Alignment.Center)
-                .clip(RoundedCornerShape(px(24)))
-                // The page's own background/content pair, so it follows the phone's
-                // theme and its invertColors setting.
-                .background(LightThemeTokens.colors.background)
-                .padding(horizontal = px(44), vertical = px(28)),
-        )
     }
 
     /** One playlist row: [key] is a synthetic per-row id (see [entries]); [track] is what it shows. */
@@ -433,7 +414,7 @@ class PlaylistDetailScreen(
                 entries.value = before
             }
             saveFailed.value = true
-            delay(ERROR_FLASH_MS)
+            delay(NOTICE_MS)
             saveFailed.value = false
         }
     }

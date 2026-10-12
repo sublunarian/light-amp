@@ -21,6 +21,13 @@ data class PendingAction(
     /** Stars for [Kind.RATE]; unused otherwise. */
     val value: Int = 0,
     val atMs: Long = System.currentTimeMillis(),
+    /**
+     * The source it was done on. The queue is one for every source, and a like
+     * replayed to a server that never had the song is refused and dropped.
+     * Null for anything queued by a version that didn't record it, which goes
+     * to whichever source is sent to first.
+     */
+    val sourceId: String? = null,
 ) {
     @Serializable
     enum class Kind {
@@ -46,9 +53,11 @@ data class PendingAction(
  * schema change, which on this app's destructive-migration setup would cost the
  * user their whole library cache.
  *
- * Order is preserved and replay stops at the first failure, so a queue that ends
- * "star, unstar, star" can never be applied out of order and leave the server
- * disagreeing with the phone.
+ * Order is preserved and a run stops at the first write that went unanswered, so
+ * a queue that ends "star, unstar, star" can never be applied out of order and
+ * leave the server disagreeing with the phone. A write the server answered no to
+ * is dropped and said instead: it would get the same answer every time, and kept,
+ * it held everything behind it — plays included — for good.
  */
 class PendingActions(private val settings: AppSettings) {
 
@@ -68,61 +77,76 @@ class PendingActions(private val settings: AppSettings) {
     }
 
     suspend fun add(action: PendingAction) = lock.withLock {
-        val queue = decode(settings.pendingActions()).toMutableList()
         // A rating or a like replaces the last one for the same thing: only the
         // final state matters, and a long offline session shouldn't send a
         // hundred requests to arrive at it. Plays are never collapsed.
-        if (action.kind != PendingAction.Kind.SCROBBLE) {
-            queue.removeAll { it.supersededBy(action) }
-        }
-        queue += action
+        val queue = decode(settings.pendingActions()).without(action) + action
         val trimmed = if (queue.size > MAX_QUEUED) queue.takeLast(MAX_QUEUED) else queue
         settings.setPendingActions(json.encodeToString(trimmed))
         _count.value = trimmed.size
     }
 
     /**
-     * Send everything waiting, oldest first.
-     *
-     * Stops at the first failure and keeps the rest — the server is presumably
-     * still unreachable, and draining into a void would lose the lot.
+     * A like or a rating just reached the server: anything still queued for the
+     * same thing is older, and sent later it would undo this one.
      */
-    suspend fun flush(client: MusicServer, artistId: suspend (String) -> String?): Int =
+    suspend fun forget(landed: PendingAction) {
+        if (landed.kind == PendingAction.Kind.SCROBBLE) return
         lock.withLock {
             val queue = decode(settings.pendingActions())
-            if (queue.isEmpty()) return@withLock 0
-            var sent = 0
-            for (action in queue) {
-                val ok = runCatching { apply(action, client, artistId) }.getOrDefault(false)
-                if (!ok) break
-                sent++
-            }
-            val left = queue.drop(sent)
+            val left = queue.without(landed)
+            if (left.size == queue.size) return@withLock
             settings.setPendingActions(if (left.isEmpty()) "" else json.encodeToString(left))
             _count.value = left.size
-            sent
+        }
+    }
+
+    /**
+     * Send everything waiting for [sourceId], oldest first, and return what the
+     * server refused — each reason once per refusal, for the caller to say.
+     *
+     * A refusal is dropped and said; the first with no answer stops the run and
+     * keeps it and the rest — the server is presumably still unreachable, and
+     * draining into a void would lose the lot. Another source's entries are left
+     * where they are, untouched.
+     */
+    suspend fun flush(
+        client: MusicServer,
+        sourceId: String,
+        artistId: suspend (String) -> String?,
+    ): List<String> =
+        lock.withLock {
+            val queue = decode(settings.pendingActions())
+            if (queue.isEmpty()) return@withLock emptyList()
+            val run = replay(queue, mine = { it.sourceId == null || it.sourceId == sourceId }) {
+                send(it, client, artistId)
+            }
+            settings.setPendingActions(if (run.left.isEmpty()) "" else json.encodeToString(run.left))
+            _count.value = run.left.size
+            run.refused
         }
 
-    /** True when this action was sent, or when it can never be sent at all. */
-    private suspend fun apply(
+    private suspend fun send(
         action: PendingAction,
         client: MusicServer,
         artistId: suspend (String) -> String?,
-    ): Boolean {
+    ): WriteResult = attemptWrite {
         when (action.kind) {
             PendingAction.Kind.SCROBBLE -> client.scrobble(action.id, action.atMs)
             PendingAction.Kind.STAR_SONG -> client.starSong(action.id)
             PendingAction.Kind.UNSTAR_SONG -> client.unstarSong(action.id)
             PendingAction.Kind.STAR_ALBUM -> client.starAlbum(action.id)
             PendingAction.Kind.UNSTAR_ALBUM -> client.unstarAlbum(action.id)
-            // An artist the server doesn't know by that name is dropped rather
-            // than retried forever; the like still stands locally.
-            PendingAction.Kind.STAR_ARTIST -> artistId(action.id)?.let { client.starArtist(it) }
-            PendingAction.Kind.UNSTAR_ARTIST -> artistId(action.id)?.let { client.unstarArtist(it) }
+            // An artist the server doesn't know by that name is refused rather
+            // than retried forever; the like still stands locally until the
+            // next sync brings back the server's own.
+            PendingAction.Kind.STAR_ARTIST ->
+                client.starArtist(artistId(action.id) ?: throw RefusedWrite(NO_SUCH_ARTIST))
+            PendingAction.Kind.UNSTAR_ARTIST ->
+                client.unstarArtist(artistId(action.id) ?: throw RefusedWrite(NO_SUCH_ARTIST))
             PendingAction.Kind.RATE_SONG, PendingAction.Kind.RATE_ALBUM ->
-                if (!client.setRating(action.id, action.value)) return false
+                client.setRating(action.id, action.value)
         }
-        return true
     }
 
     private fun decode(raw: String): List<PendingAction> {
@@ -130,21 +154,64 @@ class PendingActions(private val settings: AppSettings) {
         return runCatching { json.decodeFromString<List<PendingAction>>(raw) }.getOrDefault(emptyList())
     }
 
-    private fun PendingAction.supersededBy(next: PendingAction): Boolean =
-        id == next.id && kind.group() == next.kind.group()
-
-    /** Which actions describe the same piece of state, whichever way they set it. */
-    private fun PendingAction.Kind.group(): String = when (this) {
-        PendingAction.Kind.STAR_SONG, PendingAction.Kind.UNSTAR_SONG -> "like-song"
-        PendingAction.Kind.STAR_ALBUM, PendingAction.Kind.UNSTAR_ALBUM -> "like-album"
-        PendingAction.Kind.STAR_ARTIST, PendingAction.Kind.UNSTAR_ARTIST -> "like-artist"
-        PendingAction.Kind.RATE_SONG -> "rate-song"
-        PendingAction.Kind.RATE_ALBUM -> "rate-album"
-        PendingAction.Kind.SCROBBLE -> "scrobble"
-    }
-
     private companion object {
         /** Weeks of offline listening, and still nothing near a preferences limit. */
         const val MAX_QUEUED = 2_000
     }
+}
+
+/** What a run through the queue left behind, and the reasons for what it dropped. */
+internal data class Replay(val left: List<PendingAction>, val refused: List<String>)
+
+/**
+ * Send [queue] in order through [send], skipping what isn't [mine].
+ *
+ * Saved goes, refused goes and is noted, and the first unanswered one ends the
+ * run: it and everything after it stay, in order, unsent. What isn't [mine]
+ * stays where it was.
+ */
+internal suspend fun replay(
+    queue: List<PendingAction>,
+    mine: (PendingAction) -> Boolean,
+    send: suspend (PendingAction) -> WriteResult,
+): Replay {
+    val left = mutableListOf<PendingAction>()
+    val refused = mutableListOf<String>()
+    queue.forEachIndexed { i, action ->
+        if (!mine(action)) {
+            left += action
+            return@forEachIndexed
+        }
+        when (val result = send(action)) {
+            WriteResult.Saved -> Unit
+            is WriteResult.Refused -> refused += result.reason
+            is WriteResult.Unreachable -> return Replay(left + queue.drop(i), refused)
+        }
+    }
+    return Replay(left, refused)
+}
+
+/**
+ * The queue without whatever [landed] replaces. Plays are never collapsed: each
+ * one is its own play.
+ */
+internal fun List<PendingAction>.without(landed: PendingAction): List<PendingAction> =
+    if (landed.kind == PendingAction.Kind.SCROBBLE) this else filterNot { it.supersededBy(landed) }
+
+/**
+ * Whether [next] sets the same piece of state on the same source. An entry with
+ * no source is any source's — it is sent to whichever comes first, so the same
+ * thing done again anywhere replaces it.
+ */
+internal fun PendingAction.supersededBy(next: PendingAction): Boolean =
+    id == next.id && kind.group() == next.kind.group() && (sourceId == null || sourceId == next.sourceId)
+
+/** Which actions describe the same piece of state, whichever way they set it. */
+internal fun PendingAction.Kind.group(): String = when (this) {
+    PendingAction.Kind.STAR_SONG, PendingAction.Kind.UNSTAR_SONG -> "like-song"
+    PendingAction.Kind.STAR_ALBUM, PendingAction.Kind.UNSTAR_ALBUM -> "like-album"
+    PendingAction.Kind.STAR_ARTIST, PendingAction.Kind.UNSTAR_ARTIST -> "like-artist"
+    PendingAction.Kind.RATE_SONG -> "rate-song"
+    PendingAction.Kind.RATE_ALBUM -> "rate-album"
+    PendingAction.Kind.SCROBBLE -> "scrobble"
 }

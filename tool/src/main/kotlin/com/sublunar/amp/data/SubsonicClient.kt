@@ -641,13 +641,13 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
      * Set a song's or album's star rating on the server, 0–5.
      *
      * Navidrome treats 0 as "remove the rating"; Subsonic's `setRating` takes it
-     * directly, so no separate unrate call is needed. Returns false when the
-     * server refused, so the caller can avoid caching a rating that didn't stick.
+     * directly, so no separate unrate call is needed. Throws when it didn't
+     * land, as the stars do, so the caller can tell a server that refused from
+     * one it couldn't reach.
      */
-    override suspend fun setRating(id: String, stars: Int): Boolean = runCatching {
+    override suspend fun setRating(id: String, stars: Int) {
         request("setRating", listOf("id" to id, "rating" to stars.coerceIn(0, 5).toString()))
-        true
-    }.getOrDefault(false)
+    }
 
     override suspend fun getLyrics(songId: String): Lyrics? {
         return try {

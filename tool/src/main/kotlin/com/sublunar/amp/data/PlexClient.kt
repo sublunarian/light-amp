@@ -110,6 +110,26 @@ class PlexClient(
         return response.bodyAsText()
     }
 
+    /**
+     * A change the user is waiting to see land: returns when the server took
+     * it and throws when it didn't, so a refusal and a dead link can be told
+     * apart — see [writeResultOf].
+     */
+    private suspend fun write(method: String, path: String, params: List<Pair<String, String>> = emptyList()) {
+        val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
+        val url = baseUrl.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
+        val response = when (method) {
+            "GET" -> http.get(url) { plexHeaders() }
+            "POST" -> http.post(url) { plexHeaders() }
+            "PUT" -> http.put(url) { plexHeaders() }
+            "DELETE" -> http.delete(url) { plexHeaders() }
+            else -> error("unsupported method $method")
+        }
+        if (!response.status.isSuccess()) {
+            throw PlexException("Plex says ${response.status.value} for $path", response.status.value)
+        }
+    }
+
     private fun decode(text: String): PlexResponse =
         if (text.isBlank()) PlexResponse() else json.decodeFromString(text)
 
@@ -735,7 +755,9 @@ class PlexClient(
         // [reportTimeline], which it does understand. Marking the track played
         // on a start notice would count everything that was skipped past.
         if (!submission) return
-        send(
+        // Throws when it didn't land, so a play made while the server was away
+        // is kept and sent again rather than counted as sent.
+        write(
             "GET",
             "/:/scrobble",
             listOf("key" to songId, "identifier" to LIBRARY_IDENTIFIER),
@@ -780,8 +802,8 @@ class PlexClient(
         }
 
     /** Plex rates 0–10, so a star is worth two. */
-    override suspend fun setRating(id: String, stars: Int): Boolean {
-        send(
+    override suspend fun setRating(id: String, stars: Int) {
+        write(
             "PUT",
             "/:/rate",
             listOf(
@@ -790,7 +812,6 @@ class PlexClient(
                 "rating" to (stars.coerceIn(0, 5) * 2).toString(),
             ),
         )
-        return true
     }
 
     // --- Playlists -----------------------------------------------------------
@@ -824,31 +845,33 @@ class PlexClient(
      * go in here rather than in a second pass — see [MusicServer.createPlaylist].
      */
     override suspend fun createPlaylist(name: String, songIds: List<String>): String? {
-        if (songIds.isEmpty()) return null
+        // Never offered — see MusicSource.supportsEmptyPlaylists — but if it
+        // were, it is a request Plex has no answer for.
+        if (songIds.isEmpty()) throw RefusedWrite()
         val uri = itemUri(songIds.joinToString(","))
-        val response = runCatching {
-            http.post(
-                baseUrl.trimEnd('/') +
-                    "/playlists?type=audio&smart=0&title=${enc(name)}&uri=${enc(uri)}",
-            ) { plexHeaders() }
-        }.getOrNull() ?: return null
-        val text = runCatching { response.bodyAsText() }.getOrNull().orEmpty()
-        if (text.isBlank()) return null
+        val response = http.post(
+            baseUrl.trimEnd('/') +
+                "/playlists?type=audio&smart=0&title=${enc(name)}&uri=${enc(uri)}",
+        ) { plexHeaders() }
+        if (!response.status.isSuccess()) {
+            throw PlexException("Plex says ${response.status.value} for /playlists", response.status.value)
+        }
+        // Made, whatever the body says: an answer this can't read is still a playlist on the server.
         return runCatching {
-            json.decodeFromString<PlexResponse>(text).container.metadata.firstOrNull()?.ratingKey
+            decode(response.bodyAsText()).container.metadata.firstOrNull()?.ratingKey
         }.getOrNull()
     }
 
     override suspend fun renamePlaylist(id: String, name: String) {
-        send("PUT", "/playlists/$id", listOf("title" to name))
+        write("PUT", "/playlists/$id", listOf("title" to name))
     }
 
     override suspend fun deletePlaylist(id: String) {
-        send("DELETE", "/playlists/$id")
+        write("DELETE", "/playlists/$id")
     }
 
     override suspend fun addToPlaylist(id: String, songId: String) {
-        send("PUT", "/playlists/$id/items", listOf("uri" to itemUri(songId)))
+        write("PUT", "/playlists/$id/items", listOf("uri" to itemUri(songId)))
     }
 
     /**
