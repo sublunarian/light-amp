@@ -188,6 +188,47 @@ class StreamProxyTest {
     }
 
     @Test
+    fun whatTheServerWantsSettledIsAskedBeforeTheServerIs() {
+        // Plex's decision for a song, under a session it is tracking: asked by
+        // the door at the moment the player really fetches, and before the
+        // stream is — never after, or the stream is refused.
+        var hitsWhenAsked = -1
+        var asked = 0
+        val url = proxy.wrap(originUrl("/file"), group = "track-p", prepare = {
+            asked++
+            hitsWhenAsked = originHits
+        })
+        val before = originHits
+        val (code, body) = fetch(url)
+        assertEquals(200, code)
+        assertContentEquals(payload, body)
+        assertEquals(1, asked)
+        assertEquals(before, hitsWhenAsked, "the server was asked for the stream before it was settled")
+        // And again for the next fetch of it: a retry is a new request too.
+        fetch(url)
+        assertEquals(2, asked)
+    }
+
+    @Test
+    fun aSettlingThatNeverAnswersDoesNotHoldTheStream() {
+        val url = proxy.wrap(originUrl("/file"), group = "track-q", prepare = { kotlinx.coroutines.delay(30_000) })
+        val started = System.currentTimeMillis()
+        val (code, body) = fetch(url)
+        assertEquals(200, code)
+        assertContentEquals(payload, body)
+        assertTrue(System.currentTimeMillis() - started < 10_000, "the stream waited out the settling")
+    }
+
+    @Test
+    fun aClosedRuleSettlesNothing() {
+        gateOpen = false
+        var asked = false
+        val url = proxy.wrap(originUrl("/file"), prepare = { asked = true })
+        assertEquals(StreamProxy.GATE_STATUS, fetch(url).first)
+        assertTrue(!asked, "nothing may be asked of the server while the rule is closed")
+    }
+
+    @Test
     fun addressesAreStableAndUnguessable() {
         val a = proxy.wrap(originUrl("/file"))
         assertEquals(a, proxy.wrap(originUrl("/file")))

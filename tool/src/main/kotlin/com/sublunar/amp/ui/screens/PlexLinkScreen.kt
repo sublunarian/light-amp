@@ -64,6 +64,14 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
     /** Set once this page has been popped, so an answer arriving late can't act on another. */
     private var gone = false
 
+    /**
+     * Who this link is, to plex.tv and to the server: the code is asked for
+     * under it, the token is issued to it, and the source keeps it — see
+     * MusicSource.deviceId. One per page, so a code asked for again after the
+     * page was rebuilt is still the same device asking.
+     */
+    private val clientId = PlexClient.newClientIdentifier()
+
     override fun onScreenDestroy() {
         gone = true
     }
@@ -85,14 +93,14 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
         var offerManual by remember { mutableStateOf(true) }
 
         LaunchedEffect(Unit) {
-            val pin = PlexAccount.requestPin()
+            val pin = PlexAccount.requestPin(clientId)
             if (pin == null) {
                 status = "Couldn't reach plex.tv."
                 return@LaunchedEffect
             }
             code = pin.code
             status = "Waiting for you to enter it…"
-            val linked = PlexAccount.awaitToken(pin)
+            val linked = PlexAccount.awaitToken(pin, clientId)
             if (linked == null) {
                 status = "The code expired. Go back and try again."
                 code = null
@@ -103,7 +111,7 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
             // The code has done its job; from here the page only says what is happening.
             code = null
             status = "Finding your servers…"
-            val found = PlexAccount.resources(linked)
+            val found = PlexAccount.resources(linked, clientId)
             val only = found.singleOrNull()
             if (only != null) {
                 // One server is no choice. The login just made says which, so
@@ -202,11 +210,12 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
      * advertises several addresses and only some of them work from here.
      */
     private suspend fun prepare(server: PlexResource, accountToken: String): PendingServer? {
-        val uri = PlexAccount.reachable(server, accountToken) ?: return null
+        val uri = PlexAccount.reachable(server, accountToken, clientId) ?: return null
         val found = inspectPlexServer(
             name = server.name,
             uri = uri,
             token = server.accessToken ?: accountToken,
+            clientIdentifier = clientId,
             // An account already knows the server's id; only the typed-in path
             // has to go and ask for it.
             machineIdentifier = server.clientIdentifier,
@@ -238,9 +247,11 @@ suspend fun inspectPlexServer(
     name: String,
     uri: String,
     token: String,
+    /** The new link's own identifier, kept on the source — see MusicSource.deviceId. */
+    clientIdentifier: String,
     machineIdentifier: String? = null,
 ): SignInOutcome {
-    val client = PlexClient(uri, token, machineIdentifier.orEmpty())
+    val client = PlexClient(uri, token, machineIdentifier.orEmpty(), clientIdentifier = clientIdentifier)
     try {
         // Without the machine id nothing can be added to a playlist, so a server
         // that won't tell us who it is isn't usable as a source.
@@ -281,6 +292,7 @@ suspend fun inspectPlexServer(
             baseUrl = uri,
             token = token,
             machineIdentifier = identity,
+            deviceId = clientIdentifier,
             // Remembered on the source, so the Sources page can offer the same
             // switch a Navidrome's music folders get — without waiting for a
             // sync to discover what we already know here.
@@ -318,6 +330,9 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
     // Each check mints a fresh source id, so two taps while the first is still
     // in flight would add the same server twice — see the note in ServerScreen.
     private var checking by mutableStateOf(false)
+
+    /** Who this link is to the server, kept on the source — see MusicSource.deviceId. */
+    private val clientId = PlexClient.newClientIdentifier()
 
     /** Set once this page has been popped, so an answer arriving late can't act on another. */
     private var gone = false
@@ -361,7 +376,12 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                             // reached would otherwise sit there failing to sync
                             // with nothing to say why.
                             val outcome = firstAnsweringSpelling(address) { uri ->
-                                inspectPlexServer(name = name.trim(), uri = uri, token = token.trim())
+                                inspectPlexServer(
+                                    name = name.trim(),
+                                    uri = uri,
+                                    token = token.trim(),
+                                    clientIdentifier = clientId,
+                                )
                             }
                             // Main, and only while this page is up — see
                             // JellyfinLinkScreen.signIn.

@@ -227,11 +227,11 @@ interface MusicServer {
         timeOffsetSeconds: Int = 0,
         estimateContentLength: Boolean = true,
         /**
-         * A caller-generated id for *this* playback, distinct from any other
-         * stream or download in flight. Optional, and ignored by servers with
-         * no idea of a session (Subsonic); Plex uses it to tell one playing
-         * track from another so a download alongside it can't tear it down —
-         * see the comment on [PlexClient.streamUrl].
+         * A caller-generated id for the playback this stream belongs to,
+         * never shared with a download. Optional, and ignored by servers with
+         * no idea of a session (Subsonic); Plex uses it to tie the stream to
+         * the session its timeline reports, and to keep a download alongside
+         * it from tearing it down — see the comment on [PlexClient.streamUrl].
          */
         sessionId: String? = null,
     ): String
@@ -296,6 +296,28 @@ interface MusicServer {
         sessionId: String?,
     ): Boolean = true
 
+    /**
+     * Whether this track's stream in [format] has to have [prepareStream]
+     * asked for it, under the session it carries, before it is fetched. False
+     * by default, and for any stream that is the file itself.
+     */
+    fun streamNeedsDecision(track: Track, format: StreamFormat): Boolean = false
+
+    /**
+     * Whether the server wants one session for a player's whole listening,
+     * changing song as it goes, rather than one per song. Read by the
+     * playback controller, which hands out the ids — see
+     * PlaybackController.sessionIdFor.
+     *
+     * Plex does: its dashboard lists a session per id, and each counts
+     * against a shared user's "remote streams allowed", so an id per song
+     * showed a new entry every song and, at one stream per user, had the
+     * next song refused while the last one's session was still listed.
+     * Jellyfin keeps its PlaySessionId per song, and Subsonic has no
+     * sessions at all.
+     */
+    val oneSessionPerPlayer: Boolean get() = false
+
     fun coverArtUrl(coverArtId: String?): String?
 
     /**
@@ -350,9 +372,10 @@ interface MusicServer {
      * sessions — Plex's dashboard, chiefly — has a "Now Playing" to show.
      *
      * [sessionId] ties a run of calls to one playback the way [streamUrl]'s
-     * parameter of the same name does; it should be the same string handed to
-     * that call for the stream this is reporting on. A server with no notion of
-     * a live session (Subsonic) does nothing with any of this.
+     * parameter of the same name does: one per song, or one for the whole
+     * listening where the server asks for that ([oneSessionPerPlayer]). A
+     * server with no notion of a live session (Subsonic) does nothing with
+     * any of this.
      */
     suspend fun reportTimeline(
         sessionId: String,

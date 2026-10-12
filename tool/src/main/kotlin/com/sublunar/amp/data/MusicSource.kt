@@ -110,12 +110,15 @@ data class MusicSource(
     /** Plex's server id, needed to build the URIs that fill a playlist. */
     val machineIdentifier: String = "",
     /**
-     * The device a Jellyfin sign-in was made as, and its [token] belongs to.
+     * The device a sign-in was made as, and its [token] belongs to: Jellyfin's
+     * DeviceId, Plex's `X-Plex-Client-Identifier`.
      *
      * One per sign-in, because Jellyfin keeps one sign-in per device and user
-     * and ends the old one when the same device signs in again. Blank on
-     * sources signed in before this existed, which go on as
-     * [JellyfinClient.LEGACY_DEVICE_ID] — the id their tokens were issued to.
+     * and ends the old one when the same device signs in again, and because
+     * Plex ties a token to the device it was issued to and shows each device
+     * as one player. Blank on sources signed in before this existed, which go
+     * on as [JellyfinClient.LEGACY_DEVICE_ID] or [PlexClient.LEGACY_CLIENT_ID]
+     * — the id their tokens were issued to.
      */
     val deviceId: String = "",
     /**
@@ -279,7 +282,7 @@ data class MusicSource(
             if (baseUrl.isBlank() || token.isBlank()) {
                 null
             } else {
-                PlexClient(baseUrl, token, machineIdentifier, playerName.ifBlank { null })
+                PlexClient(baseUrl, token, machineIdentifier, playerName.ifBlank { null }, plexClientIdentifier)
             }
         SourceKind.JELLYFIN ->
             if (baseUrl.isBlank() || token.isBlank() || userId.isBlank()) {
@@ -294,6 +297,9 @@ data class MusicSource(
                 )
             }
     }
+
+    /** Who a Plex link says it is — see [deviceId]. */
+    val plexClientIdentifier: String get() = deviceId.ifBlank { PlexClient.LEGACY_CLIENT_ID }
 
     /** Null unless this is a Subsonic server with somewhere to point. */
     fun toConfig(): SubsonicConfig? =

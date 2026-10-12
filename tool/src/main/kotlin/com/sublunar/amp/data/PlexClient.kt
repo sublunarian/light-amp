@@ -46,9 +46,11 @@ class PlexClient(
     private val machineIdentifier: String = "",
     /** Overrides `X-Plex-Product`/`X-Plex-Device`; null keeps the app's defaults. */
     private val product: String? = null,
+    /** Who this link says it is — see [plexIdentity] and [MusicSource.deviceId]. */
+    private val clientIdentifier: String = LEGACY_CLIENT_ID,
 ) : MusicServer {
 
-    private val identityHeaders: List<Pair<String, String>> = plexIdentity(product)
+    private val identityHeaders: List<Pair<String, String>> = plexIdentity(product, clientIdentifier)
 
     private val http = NetworkGate.httpClient { expectSuccess = false }
 
@@ -133,26 +135,18 @@ class PlexClient(
     private fun decode(text: String): PlexResponse =
         if (text.isBlank()) PlexResponse() else json.decodeFromString(text)
 
-    private suspend fun send(method: String, path: String, params: List<Pair<String, String>> = emptyList()) {
-        val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
-        val url = baseUrl.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
-        runCatching {
-            when (method) {
-                "GET" -> http.get(url) { plexHeaders() }
-                "POST" -> http.post(url) { plexHeaders() }
-                "PUT" -> http.put(url) { plexHeaders() }
-                "DELETE" -> http.delete(url) { plexHeaders() }
-                else -> error("unsupported method $method")
-            }
-        }
-    }
-
-    /** Like [send], but says whether the server took it — and logs when it didn't. */
+    /**
+     * A request whose answer is only yes or no: says whether the server took
+     * it, and logs when it didn't, with the status it answered. [detail] says
+     * what the request was about, for a path that is the same for many —
+     * never the parameters, which can carry the token.
+     */
     private suspend fun sendChecked(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
         method: String = "GET",
         via: HttpClient = http,
+        detail: String? = null,
     ): Boolean {
         val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
         val url = baseUrl.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
@@ -162,12 +156,13 @@ class PlexClient(
                 "PUT" -> via.put(url) { plexHeaders() }
                 "DELETE" -> via.delete(url) { plexHeaders() }
                 else -> error("unsupported method $method")
-            }.status.isSuccess()
+            }.status
         }
-        val ok = result.getOrDefault(false)
+        val status = result.getOrNull()
+        val ok = status?.isSuccess() == true
         if (!ok) {
-            val why = result.exceptionOrNull()?.message ?: "server refused"
-            android.util.Log.w(TAG, "$method $path failed: $why")
+            val why = status?.let { "server answered ${it.value}" } ?: result.exceptionOrNull()?.message ?: "no answer"
+            android.util.Log.w(TAG, "$method $path${detail?.let { " ($it)" }.orEmpty()} failed: $why")
         }
         return ok
     }
@@ -579,8 +574,27 @@ class PlexClient(
             "/music/:/transcode/universal/decision",
             transcodeParams(songId, format, 0, sessionId),
             via = quick,
+            detail = "song $songId",
         )
     }
+
+    /**
+     * Only a stream from the transcoder: the file itself has no decision to
+     * settle. Asked for every one of them because Plex keeps the decision per
+     * song — a session it is tracking, asked for a song it has no decision
+     * for, is refused ("session lacking decision for transcode of key …"),
+     * and with one session for the whole listening every song after the
+     * first would be.
+     */
+    override fun streamNeedsDecision(track: Track, format: StreamFormat): Boolean =
+        fromTranscoder(track, format)
+
+    /** See [MusicServer.oneSessionPerPlayer]: what Plexamp does, and what the dashboard expects. */
+    override val oneSessionPerPlayer: Boolean get() = true
+
+    /** Whether [streamUrl] sends this track's stream through the transcoder rather than the file. */
+    private fun fromTranscoder(track: Track, format: StreamFormat): Boolean =
+        format != StreamFormat.RAW || track.streamPath.isBlank()
 
     override fun streamUrl(
         songId: String,
@@ -619,13 +633,15 @@ class PlexClient(
             add("hasMDE" to "1")
             if (timeOffsetSeconds > 0) add("offset" to timeOffsetSeconds.toString())
             format.maxBitRate?.let { add("musicBitrate" to it.toString()) }
-            // Not shared across calls: Plex keeps one transcode per identifier
-            // and tears down the previous holder of it, so the same id on a
-            // download in flight and the stream that is playing would have the
-            // second one kill the first — the server answers 400 and playback
-            // stops dead. The caller is expected to mint a fresh one per
-            // playback (see PlaybackController) and never reuse it for a
-            // download, which is why this is left out unless given one.
+            // Never shared with a download: Plex keeps one transcode per
+            // identifier and tears down the previous holder of it, so the same
+            // id on a download in flight and the stream that is playing would
+            // have the second one kill the first — the server answers 400 and
+            // playback stops dead. The player's streams share the listening
+            // session's id one after another, which is safe because it fetches
+            // them one at a time; see PlaybackController.sessionIdFor. A
+            // download is given none, which is why this is left out unless
+            // given one.
             if (!sessionId.isNullOrBlank()) add("X-Plex-Session-Identifier" to sessionId)
             add("X-Plex-Token" to token)
             identityHeaders.forEach { (k, v) -> add(k to v) }
@@ -647,7 +663,7 @@ class PlexClient(
         estimateContentLength: Boolean,
         sessionId: String?,
     ): String {
-        if (format != StreamFormat.RAW || track.streamPath.isBlank()) {
+        if (fromTranscoder(track, format)) {
             return streamUrl(track.id, format, timeOffsetSeconds, estimateContentLength, sessionId)
         }
         // The original file is served whole and direct, with no transcode
@@ -814,7 +830,10 @@ class PlexClient(
             add("hasMDE" to "1")
             add("X-Plex-Session-Identifier" to sessionId)
         }
-        send("GET", "/:/timeline", params)
+        // Checked, so a refusal says so in the log. A "stopped" Plex turned
+        // down used to vanish in silence, and the session it was meant to end
+        // stayed on the dashboard, holding a stream, for minutes.
+        sendChecked("/:/timeline", params, detail = "${state.plexValue} $songId under $sessionId")
     }
 
     private val TimelineState.plexValue: String
@@ -1552,18 +1571,6 @@ class PlexClient(
         /** Plex's stream types: 1 video, 2 audio, 3 subtitle, 4 lyrics. */
         private const val LYRIC_STREAM = 4
 
-        /**
-         * Who we say we are. Plex wants these on every request, and uses the
-         * client identifier to tie a token to a device — it must be stable, so
-         * it is the app's own id rather than something generated per launch.
-         *
-         * [product] overrides `X-Plex-Product`, the player's own name, which is
-         * what Plex shows a session as; null keeps the app's. `X-Plex-Device`
-         * deliberately stays the hardware: a source name is set per source, and
-         * two sources configured here are still the same phone — so naming the
-         * device after one of them would make Plex read "Kitchen on Kitchen"
-         * and lose which machine it was talking to.
-         */
         private const val PLEX_TV_RESOURCES = "https://plex.tv/api/v2/resources?includeHttps=1"
 
         /** Where a Plex player listens for Companion commands. */
@@ -1586,8 +1593,40 @@ class PlexClient(
             }
         }.trim().ifEmpty { "Amp" }
 
-        fun plexIdentity(product: String? = null): List<Pair<String, String>> = listOf(
-            "X-Plex-Client-Identifier" to "com.sublunar.amp",
+        /**
+         * The client identifier every install of Amp used to send, and which
+         * Plex links made before [MusicSource.deviceId] was kept for Plex still
+         * send: their tokens were issued to it, and whether Plex would go on
+         * honouring them under another identifier is not known.
+         *
+         * One identifier for every phone made every Amp the same device to
+         * Plex — the same player on its dashboard and to Companion, and every
+         * token issued to the one device record. Each new link gets its own:
+         * [newClientIdentifier].
+         */
+        const val LEGACY_CLIENT_ID = "com.sublunar.amp"
+
+        /** An identifier for one link, kept with its source for as long as the token is. */
+        fun newClientIdentifier(): String = "amp-" + java.util.UUID.randomUUID().toString()
+
+        /**
+         * Who we say we are. Plex wants these on every request, and uses the
+         * client identifier to tie a token to a device — so it must be stable:
+         * minted when a server is linked, asked for the code and the servers
+         * under, and kept on the source with the token it was issued.
+         *
+         * [product] overrides `X-Plex-Product`, the player's own name, which is
+         * what Plex shows a session as; null keeps the app's. `X-Plex-Device`
+         * deliberately stays the hardware: a source name is set per source, and
+         * two sources configured here are still the same phone — so naming the
+         * device after one of them would make Plex read "Kitchen on Kitchen"
+         * and lose which machine it was talking to.
+         */
+        fun plexIdentity(
+            product: String? = null,
+            clientIdentifier: String = LEGACY_CLIENT_ID,
+        ): List<Pair<String, String>> = listOf(
+            "X-Plex-Client-Identifier" to clientIdentifier,
             "X-Plex-Product" to (product?.headerSafe() ?: "Amp"),
             "X-Plex-Version" to "1.0.0",
             "X-Plex-Device" to "Light Phone III",

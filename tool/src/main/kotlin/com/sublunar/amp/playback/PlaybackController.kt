@@ -42,6 +42,7 @@ import com.thelightphone.sdk.audio.LightAudioUsage
 import com.thelightphone.sdk.audio.LightMediaMetadata
 import com.thelightphone.sdk.audio.NO_MEDIA_ITEM
 import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -65,6 +66,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.channels.Channel
 import com.sublunar.amp.data.LinkRules
 import com.sublunar.amp.data.StreamProxy
 
@@ -177,31 +179,104 @@ class PlaybackController(
     private var lastSavedQueueKey: Int? = null
 
     /**
-     * Identifies playback to the server, distinct from any other stream (or
-     * download) in flight — see the comment on [MusicServer.streamUrl]. Carried
-     * on both the stream URL and the [reportTimeline] calls that go with it, so
-     * Plex's dashboard has one session to show rather than none.
+     * Identifies playback to the server — on the [reportTimeline] calls, and
+     * on the streams they report on — distinct from any download in flight;
+     * see the comment on [MusicServer.streamUrl].
      *
-     * One id **per track**, derived rather than minted, because of when stream
-     * URLs are built: the whole queue is turned into audio items at once, each
-     * carrying the id that existed at that moment. A single field reassigned on
-     * every track change therefore ended up reporting a session that no stream
-     * was carrying — and gave every queued track the same identifier, which is
-     * the one thing Plex must not see twice. It keeps one transcode per
-     * identifier and tears down the previous holder, so the next track being
-     * prepared while the current one plays could kill the stream that is
-     * playing. Deriving it from the track keeps the URL and the timeline in
-     * agreement however far ahead the queue was built.
+     * Two policies, and the server says which ([MusicServer.oneSessionPerPlayer]).
+     * Plex wants one session for the whole listening, changing song as it
+     * goes, which is what Plexamp does and what its dashboard shows as one
+     * entry: [listeningSession], minted once per process and again after
+     * [stop], never per queue or per song. An id per song put a new entry on
+     * the dashboard for every song, and with "remote streams allowed per user"
+     * at one, the next song was refused (503) while the last one's session was
+     * still listed (issue #20).
      *
-     * [playbackSession] changes with each new queue, so playing the same track
-     * again is a new session rather than a continuation of the old one.
+     * Jellyfin keeps one per song, so its id is derived from the queue and the
+     * song: [playbackSession] changes with each new queue, so playing the same
+     * song again is a new session rather than a continuation of the old one.
+     * Derived rather than stored per song because the whole queue is turned
+     * into audio items at once, each carrying the id that existed at that
+     * moment, and the URL and the timeline have to agree however far ahead the
+     * queue was built.
+     *
+     * Whichever it is, a "stopped" is never worked out from these again: it
+     * goes out under the id that was announced — see [sessions].
      */
-    private var playbackSession: String = UUID.randomUUID().toString()
+    @Volatile
+    private var listeningSession: String = newSessionId()
 
-    private fun sessionIdFor(trackId: String): String = "$playbackSession:$trackId"
+    /** The queue's part of a per-song id — a flow, so a new queue of the same songs is still seen; see [bind]. */
+    private val playbackSession = MutableStateFlow(newSessionId())
 
-    /** The track whose session is currently open, so it can be closed out by id. */
-    private var sessionTrackId: String? = null
+    /** The id the server knows this song's playback by, which every timeline report about it carries. */
+    private fun sessionIdFor(trackId: String): String =
+        if (serverClient.value?.oneSessionPerPlayer == true) listeningSession else "${playbackSession.value}:$trackId"
+
+    /**
+     * The id a stream of this song carries.
+     *
+     * On a server with one session per player, the listening session's own
+     * id — but only on a stream the loopback door decides first
+     * ([decidedFirst]; see [playerUrl]). Plex refuses a transcode under a
+     * session it is tracking unless a decision for that very song came first,
+     * and the session is tracked from its first timeline report. Anything else
+     * that fetches on its own — a speaker, or the player while the door is
+     * down — gets an id of its own, which no timeline names, so Plex holds it
+     * to nothing: the way every stream worked before. It also keeps two
+     * transcodes apart where both are in flight at once, as a speaker's next
+     * song is while the current one is still being read: Plex keeps one per
+     * id and tears the other down.
+     */
+    private fun streamSessionIdFor(trackId: String, decidedFirst: Boolean): String =
+        if (serverClient.value?.oneSessionPerPlayer == true && !decidedFirst) {
+            "$listeningSession:$trackId"
+        } else {
+            sessionIdFor(trackId)
+        }
+
+    /**
+     * Whether the door will ask the server's decision for this stream right
+     * before fetching it — see [playerUrl].
+     */
+    private fun decidesAtDoor(client: MusicServer, track: Track, format: StreamFormat): Boolean =
+        client.oneSessionPerPlayer && App.streamProxy.isOn && client.streamNeedsDecision(track, format)
+
+    /**
+     * The timeline reports on their way to the server, sent one at a time in
+     * the order they were decided. They used to be a launch apiece, so a song's
+     * "stopped" and the next one's "playing" could arrive either way round.
+     */
+    private val timelineOut = Channel<TimelineSend>(Channel.UNLIMITED)
+
+    private sealed interface TimelineSend {
+        /** [report], to the server that was current when it was decided. */
+        class Report(val client: MusicServer, val report: TimelineReport) : TimelineSend
+
+        /** Everything queued before this has been sent — see [timelineSent]. */
+        class Flush(val done: CompletableDeferred<Unit>) : TimelineSend
+    }
+
+    init {
+        scope.launch {
+            for (send in timelineOut) {
+                when (send) {
+                    is TimelineSend.Report -> runCatching {
+                        val r = send.report
+                        send.client.reportTimeline(r.sessionId, r.trackId, r.state, r.positionMs, r.durationMs)
+                    }
+                    is TimelineSend.Flush -> send.done.complete(Unit)
+                }
+            }
+        }
+    }
+
+    /**
+     * The session the server was last told is open, kept as it was announced —
+     * see [SessionHandOver]. Every report goes through it, so a change of song
+     * or an end to playback stops exactly the session that was said before it.
+     */
+    private val sessions = SessionHandOver(::queueTimeline)
 
     // Local files for downloaded tracks, refreshed as downloads land so queue
     // items can be built synchronously.
@@ -528,9 +603,11 @@ class PlaybackController(
      * Everything else [bind] started: the collectors of this controller's own
      * state and the app's, and the loops. These outlive the handle on purpose
      * — the detached service goes on playing with the screens gone, and the
-     * heartbeat, the snapshot, the link poll and the buffering limit go on
-     * with it. The next bind replaces them rather than adding a second set
-     * beside them. A handover leaves them be: none of them holds the handle.
+     * snapshot, the link poll and the buffering limit go on with it. The
+     * heartbeat stays too, but says nothing until a handle is connected
+     * again: without one there is nothing true to say. The next bind replaces
+     * them rather than adding a second set beside them. A handover leaves
+     * them be: none of them holds the handle.
      */
     private var bindJob: Job? = null
 
@@ -588,6 +665,12 @@ class PlaybackController(
         // end of the last track killed the app. The rest is set here rather
         // than inside, so a second emission arriving before that block runs
         // can't queue a second rewind behind it.
+        //
+        // The listening is over, so its session is too. Nothing used to say
+        // so, and the last song sat on Plex's dashboard as playing until it
+        // timed out. Said before the player moves: the first song, cued in its
+        // place, is a stream the server may be asked for before it hears this.
+        sessions.close()
         scope.launch(Dispatchers.Main.immediate) {
             // Released while this was on its way: a gone handle throws. One
             // that replaced it steers the same service, which still has to be
@@ -864,6 +947,12 @@ class PlaybackController(
                 parked = heldByPark,
             )?.let { startMs -> landedOn(p, connectedOn, startMs) }
             collectHandle(p, handle, heldByPark)
+            // Now the service can be seen again, the server hears where it is.
+            // A back-out closed the session while the service went on playing
+            // (see release); a reopen onto that music opens it again, on the
+            // song actually playing and where it has got to in it, so that it
+            // is there to be stopped later.
+            followCurrentSong(atMs = p.positionMs.value + streamOffsetMs)
             // A download finishing, the rules or the proxy moving while the
             // handle connected each asked for the sources to be looked at again,
             // and were turned away one of two ways: by reresolveQueue's own wait
@@ -1074,8 +1163,8 @@ class PlaybackController(
         // as much as the offset. Left standing, the position stayed the
         // *outgoing* track's until the player emitted its first reading for
         // this one, and everything that read it in between got that: the
-        // readout showed 5:23 against a 3:52 track, and reportTimeline below
-        // sent the same number under the new track's id and duration. Plex
+        // readout showed 5:23 against a 3:52 track, and the timeline sent the
+        // same number under the new track's id and duration. Plex
         // answered 400 "Time value greater than duration" where the new track
         // was shorter, and where it was longer took the number and wrote it in
         // as a resume point.
@@ -1119,18 +1208,14 @@ class PlaybackController(
                 }
             }
         }
-        // A new track is a new session too, or Plex sees the same one just keep
-        // changing what it's playing rather than one track ending and the next
-        // beginning. The one it replaces is told it's stopped first, so it
-        // doesn't just sit in `/status/sessions` until its lease times out.
-        _queue.value.getOrNull(idx)?.let { openSessionFor(it.id) }
         // Seeded from the library rather than waited for: a chunked stream may
         // never report a duration at all, and the player won't emit again to
         // give the duration collector a second go.
         _queue.value.getOrNull(idx)?.durationMs
             ?.takeIf { it > 0L }
             ?.let { _durationMs.value = it }
-        reportTimeline(TimelineState.PLAYING)
+        // The server hears of the new song from the index having moved — see
+        // followCurrentSong, which every change of song reaches the same way.
     }
 
     /** Attach the audio stack from the current activity, with no handle held — [attach] decides. */
@@ -1296,11 +1381,45 @@ class PlaybackController(
         // for a while — the same idea as a UPnP lease. Only while something is
         // actually playing: a paused session was already told once and doesn't
         // need repeating, and an idle queue has no session at all.
+        //
+        // And only while a handle is connected to the service. Without one —
+        // a back-out released it, and detached audio goes on in the service —
+        // nothing here can see what is playing: the track and the position are
+        // frozen at the moment of leaving, and "playing" stays true after the
+        // service has moved on or run out. The heartbeat used to go on saying
+        // so every ten seconds for as long as the process lived, keeping a song
+        // on Plex's dashboard, and a shared user's one stream taken, long after
+        // the music had stopped. release closes the session instead, and the
+        // reopen opens it again on what the service is really playing.
+        //
+        // On Main, where every change of queue and song is made, so a report
+        // never reads a new queue's session against the old queue's song.
         scope.launch(bound) {
             while (true) {
                 delay(TIMELINE_INTERVAL_MS)
-                if (_isPlaying.value) reportTimeline(TimelineState.PLAYING)
+                withContext(Dispatchers.Main.immediate) {
+                    if (_isPlaying.value && player?.availability?.value == LightAudioPlayerAvailability.Ready) {
+                        reportTimeline(TimelineState.PLAYING)
+                    }
+                }
             }
+        }
+        // The one place a change of song reaches the server, whichever way it
+        // came about: a tap in another list, next or previous, gapless, a row
+        // of the queue, a skip past a song that failed, a restored queue, the
+        // playing song removed, the speaker moving on. Most of those set the
+        // index themselves and never pass through landedOn, which is the only
+        // place that used to say anything, so the song they left was never
+        // stopped. The new queue's id is part of what is watched, so tapping
+        // the same song in a new list is seen as the new session it is where
+        // the server keeps one per song.
+        //
+        // On Main and not immediate: the collector runs after whatever set the
+        // queue and the index has finished, and reads them as they stand then
+        // — never a new queue under the old index.
+        scope.launch(bound + Dispatchers.Main) {
+            combine(_queue, _index, playbackSession) { _, _, _ -> }
+                .collect { followCurrentSong() }
         }
         _bound.value = true
     }
@@ -1457,13 +1576,23 @@ class PlaybackController(
         // the same breath — stop() does it when the queue is emptied, but simply
         // leaving never went through stop(), so the server was left showing this
         // phone as playing until the session's lease ran out.
+        //
+        // Closed even though detached audio may play on in the service: from
+        // here nothing can see what it plays, and a session left open would be
+        // reported on by nobody — or by a heartbeat frozen on this song; see
+        // bind. The reopen opens it again on whatever is playing by then. The
+        // stop goes out under the session it was announced as, after anything
+        // said before it, and is waited for: the process may not outlive this
+        // by much. Waited for beside the snapshot rather than before it, so a
+        // slow server can't spend the snapshot's time.
+        sessions.close()
         runBlocking {
             withTimeoutOrNull(SAVE_STATE_TIMEOUT_MS) {
-                sessionTrackId?.let { reportTimelineStoppedNow(it) }
+                val stopped = launch { timelineSent() }
                 persistState(final = true)
+                stopped.join()
             }
         }
-        sessionTrackId = null
         // A start still waiting on the server's decision is dropped: leaving
         // outranks it, and it would otherwise start whatever handle a reopen
         // has made by the time the answer comes. The track stays cued in the
@@ -1487,19 +1616,10 @@ class PlaybackController(
         handleOwner = null
     }
 
-    /**
-     * The blocking form of [reportTimelineStopped], for teardown.
-     *
-     * The fire-and-forget version launches into [scope], which is being torn
-     * down around it — the request would be cancelled before it left.
-     */
-    private suspend fun reportTimelineStoppedNow(trackId: String) {
-        if (LocalLibrary.isLocal(trackId)) return
-        if (!metadataAllowed()) return
-        val client = serverClient.value ?: return
-        runCatching {
-            client.reportTimeline(sessionIdFor(trackId), trackId, TimelineState.STOPPED, 0L, 0L)
-        }
+    /** Wait until every timeline report queued so far has been sent, or has failed. */
+    private suspend fun timelineSent() {
+        val done = CompletableDeferred<Unit>()
+        if (timelineOut.trySend(TimelineSend.Flush(done)).isSuccess) done.await()
     }
 
     // --- Playback controls ---------------------------------------------------
@@ -1528,10 +1648,12 @@ class PlaybackController(
             }
         }
         _queueName.value = name
-        // A new queue is a new listening session, so the ids derived from it are
-        // new too — otherwise playing the same track again an hour later would
-        // report itself as the same session still going.
-        playbackSession = UUID.randomUUID().toString()
+        // A new queue is a new session where the server keeps one per song,
+        // so the ids derived from it are new too — otherwise playing the same
+        // track again an hour later would report itself as the same session
+        // still going. Where the server keeps one for the whole listening
+        // (Plex), that one carries on: see listeningSession.
+        playbackSession.value = newSessionId()
         val start = startIndex.coerceIn(0, tracks.lastIndex)
         if (_shuffle.value) {
             val first = tracks[start]
@@ -1706,8 +1828,10 @@ class PlaybackController(
             // The server was told this song started — play() says so before
             // there is any sound — and nothing it can do will start it now,
             // so it is told it stopped. Otherwise its dashboard went on
-            // listing the phone as playing a song that never played.
-            tracks.getOrNull(at)?.id?.let { id -> scope.launch { reportTimelineStoppedNow(id) } }
+            // listing the phone as playing a song that never played. Whatever
+            // session is open, as it was announced: after a tap onto this song
+            // that can still be the last song's.
+            sessions.close()
             return
         }
         _waitingFor.value = null
@@ -1834,9 +1958,14 @@ class PlaybackController(
             return
         }
         awaitedDecision = generation
+        // Under the id the queued stream carries. Where the door decides each
+        // stream itself (see playerUrl) this is asked twice, which is harmless:
+        // the same decision for the same song.
+        val format = effectiveFormat()
+        val sid = streamSessionIdFor(track.id, decidesAtDoor(client, track, format))
         scope.launch {
             withTimeoutOrNull(STREAM_DECISION_TIMEOUT_MS) {
-                client.prepareStream(track.id, effectiveFormat(), sessionIdFor(track.id))
+                client.prepareStream(track.id, format, sid)
             }
             withContext(Dispatchers.Main.immediate) {
                 if (awaitedDecision == generation) awaitedDecision = 0
@@ -1995,28 +2124,22 @@ class PlaybackController(
     }
 
     private fun serverSeek(p: LightAudioPlayer, track: Track, ms: Long) {
-        val client = serverClient.value ?: return
+        if (serverClient.value == null) return
         val target = ms.coerceAtLeast(0L)
-        val url = client.playableUrl(
-            track,
-            effectiveFormat(),
-            timeOffsetSeconds = (target / 1000).toInt(),
-            // Same as toAudioItem, and it matters even more here: an estimated
-            // length makes ExoPlayer believe the transcode is bounded and
-            // range-seekable, and its end-of-file probe then asks for bytes the
-            // stream doesn't have — Navidrome answers 416 and playback errors.
-            // That was the restored queue "acting weird", and every repeat wrap
-            // of an offset item dying.
-            estimateContentLength = false,
-            sessionId = sessionIdFor(track.id),
-        )
+        // With no estimated length, as every stream the player is handed —
+        // see playerUrl. It matters even more here: an estimated length makes
+        // ExoPlayer believe the transcode is bounded and range-seekable, and
+        // its end-of-file probe then asks for bytes the stream doesn't have —
+        // Navidrome answers 416 and playback errors. That was the restored
+        // queue "acting weird", and every repeat wrap of an offset item dying.
+        val url = playerUrl(track, effectiveFormat(), timeOffsetSeconds = (target / 1000).toInt())
         streamOffsetMs = target
         offsetItemTrackId = track.id.takeIf { target > 0L }
         // Only the playing item is replaced; the queue either side of it is
         // untouched, so a seek doesn't disturb what plays next.
         _positionMs.value = target
         val item = LightAudioItem(
-            source = LightAudioSource.UrlSource(App.streamProxy.wrap(url, group = track.id)),
+            source = LightAudioSource.UrlSource(url),
             metadata = LightMediaMetadata(
                 title = track.title,
                 artist = track.artist,
@@ -2051,8 +2174,10 @@ class PlaybackController(
     /** Stop playback and empty the queue. */
     fun stop() {
         supersedeStart()
-        reportTimeline(TimelineState.STOPPED)
-        sessionTrackId = null
+        // The session that is open ends here, at the point playback reached —
+        // under the id it was announced as, whatever has moved since.
+        val stopping = _queue.value.getOrNull(_index.value)
+        sessions.close(stopping?.id, _positionMs.value, _durationMs.value)
         _plexPlayer.value?.let { target ->
             val client = plexClient()
             plexJob?.cancel()
@@ -2097,6 +2222,10 @@ class PlaybackController(
         offsetItemTrackId = null
         _positionMs.value = 0
         _durationMs.value = 0
+        // And whatever plays next is a listening of its own, under a new id
+        // where the server keeps one for the whole listening. Minted once the
+        // queue is gone, so nothing reads the new id against the old songs.
+        listeningSession = newSessionId()
         // Same rule as restoreState: ExoPlayer's looper is Main and it throws
         // rather than tolerating anything else. Unlike the rest of this class,
         // stop() is not only reached from a composable — a source switch calls it
@@ -2612,6 +2741,11 @@ class PlaybackController(
     fun castToPlex(target: PlexPlayer) {
         supersedeStart()
         val client = plexClient() ?: return
+        // The player reports its own playback to the server from here, as a
+        // session of its own; this phone's ends. Left open, nothing would
+        // report on it again and it would sit on the dashboard beside the
+        // player's — two streams for one listener — until it timed out.
+        sessions.close()
         // One route at a time; a DLNA renderer in progress is stopped quietly.
         if (_castRenderer.value != null) stopCasting(resumeLocally = false)
         player?.pause()
@@ -3158,11 +3292,8 @@ class PlaybackController(
         askServer: Boolean = false,
     ): Boolean {
         val track = _queue.value.getOrNull(_index.value) ?: return false
-        // A new track on the renderer is a new session, same as the local
-        // player's — see the index collector in collectHandle. Also covers a
-        // seek, which restarts the renderer's stream from scratch the same way
-        // a track change does, so the session it's replacing needs closing too.
-        openSessionFor(track.id)
+        // The server hears of the song from the index having moved, as it does
+        // for the phone's own player — see followCurrentSong.
         val (format, mime) = castFormatFor(renderer, track)
         // Anything under a second is where the track starts anyway, and a
         // timeOffset of 0 is a re-encode for nothing.
@@ -3180,7 +3311,9 @@ class PlaybackController(
             format,
             estimateContentLength = false,
             timeOffsetSeconds = (offset / 1000).toInt(),
-            sessionId = sessionIdFor(track.id),
+            // The renderer fetches for itself, with no door to decide it
+            // first — see streamSessionIdFor.
+            sessionId = streamSessionIdFor(track.id, decidedFirst = false),
         ) ?: return false
         val started = DlnaCast.play(
             renderer = renderer,
@@ -3301,9 +3434,14 @@ class PlaybackController(
         val (format, mime) = castFormatFor(renderer, track)
         // Its own id, not the current track's: both transcodes are in flight
         // at once during the hand-off, and Plex tears down whichever one
-        // shares an identifier with the other.
+        // shares an identifier with the other — see streamSessionIdFor.
         val url = serverClient.value
-            ?.playableUrl(track, format, estimateContentLength = false, sessionId = sessionIdFor(track.id))
+            ?.playableUrl(
+                track,
+                format,
+                estimateContentLength = false,
+                sessionId = streamSessionIdFor(track.id, decidedFirst = false),
+            )
             ?: return
         if (url == castNextUrl) return
         castNextArmedFor = after
@@ -3678,6 +3816,8 @@ class PlaybackController(
         }
         if (next !in _queue.value.indices) {
             _isPlaying.value = false
+            // The speaker ran out of queue: the listening is over.
+            sessions.close()
             return false
         }
         _index.value = next
@@ -3923,9 +4063,11 @@ class PlaybackController(
     }
 
     /**
-     * Tell the server this session is playing, paused or stopped — see
-     * [MusicServer.reportTimeline]. Fire-and-forget: a dropped heartbeat just
-     * means the dashboard is stale until the next one, not a broken stream.
+     * Tell the server this session is playing or paused — see
+     * [MusicServer.reportTimeline]. Through [sessions], so a session that is
+     * open under another id is stopped first; queued, not awaited: a dropped
+     * heartbeat just means the dashboard is stale until the next one, not a
+     * broken stream.
      */
     private fun reportTimeline(state: TimelineState) {
         // A Companion player reports its own timeline to the server — that is
@@ -3934,53 +4076,72 @@ class PlaybackController(
         val track = _queue.value.getOrNull(_index.value) ?: return
         // Nothing playing on the server's behalf to report on.
         if (LocalLibrary.isLocal(track.id)) return
+        sessions.report(
+            TimelineReport(sessionIdFor(track.id), track.id, state, _positionMs.value, _durationMs.value),
+        )
+    }
+
+    /**
+     * Bring the server's session up to the song playback is on now: the one
+     * place a change of song reaches the server — see the collector in
+     * [bind]. Says nothing unless what the server shows has to change. Main
+     * only: the queue, the index and the player's own intent are read
+     * together. [atMs] is where in the song playback is, when that is known
+     * to be the song's own reading rather than the last one's.
+     */
+    private fun followCurrentSong(atMs: Long = 0L) {
+        if (_plexPlayer.value != null) return
+        val track = _queue.value.getOrNull(_index.value)
+        if (track == null || LocalLibrary.isLocal(track.id)) {
+            // Nothing of the server's is playing any more: an emptied queue,
+            // the last song taken out of it.
+            sessions.close()
+            return
+        }
+        sessions.songIs(
+            sessionIdFor(track.id),
+            track.id,
+            live = playbackWanted(),
+            positionMs = atMs,
+            durationMs = track.durationMs,
+        )
+    }
+
+    /**
+     * Whether the song playback is on is playing, or about to: what a change
+     * of song is announced as. The player's own state rather than
+     * [isPlaying], which lags it, and is stale for a moment on a reopen. Main
+     * only, for [LightAudioPlayer.playWhenReady].
+     */
+    private fun playbackWanted(): Boolean {
+        if (_castRenderer.value != null) return _isPlaying.value
+        val p = player ?: return false
+        if (p.availability.value != LightAudioPlayerAvailability.Ready || parked) return false
+        return p.isPlaying.value || p.playWhenReady || _buffering.value
+    }
+
+    /**
+     * Queue [report] for the server that is current now — the one it is
+     * about, even if a source switch swaps the client before it is sent. For
+     * [sessions], which calls this as it decides; false when it can't go, and
+     * the session is then left as it was.
+     */
+    private fun queueTimeline(report: TimelineReport, news: Boolean): Boolean {
         // Wi-Fi Only on a metered link means don't. A heartbeat is worth no
         // cellular data and nothing is lost by skipping it: it says where
         // playback is *now*, so a stale one replayed later would be worse than
-        // none. The play itself is kept — see maybeSubmitPlay.
-        if (!metadataAllowed()) return
-        val client = serverClient.value ?: return
-        val sid = sessionIdFor(track.id)
-        val position = _positionMs.value
-        val duration = _durationMs.value
-        scope.launch { runCatching { client.reportTimeline(sid, track.id, state, position, duration) } }
-    }
-
-    /**
-     * Close out the session for a track that has stopped being the one playing.
-     *
-     * Without it the old session sits in `/status/sessions` until its lease
-     * times out on its own, and a track change every few minutes makes them pile
-     * up faster than they expire. Takes the track explicitly, because by the
-     * time this runs the queue has usually moved on to the next one.
-     */
-    private fun reportTimelineStopped(oldTrackId: String) {
-        if (LocalLibrary.isLocal(oldTrackId)) return
-        // Gated here as well as in reportTimeline: these two close a session by
-        // calling the client straight out, so the gate on the wrapper never saw
-        // them and "state=stopped&time=0" kept arriving over cellular in a mode
-        // that forbids it. Every route to the server needs its own answer.
-        if (!metadataAllowed()) return
-        val client = serverClient.value ?: return
-        val sid = sessionIdFor(oldTrackId)
-        scope.launch {
-            runCatching {
-                client.reportTimeline(sid, oldTrackId, TimelineState.STOPPED, 0L, 0L)
-            }
+        // none. A stop held back here is not lost either: the session stays
+        // open in [sessions], and the next report that may go stops it. The
+        // play itself is kept — see maybeSubmitPlay.
+        if (!metadataAllowed()) return false
+        val client = serverClient.value ?: return false
+        if (news) {
+            android.util.Log.i(
+                "AmpSession",
+                "${report.state.name.lowercase()} ${report.trackId} under ${report.sessionId}",
+            )
         }
-    }
-
-    /**
-     * Hand the open session over to [newTrackId], stopping the outgoing one.
-     *
-     * The id itself is derived from the track rather than minted here — see
-     * [sessionIdFor] — so this only tracks *which* session is currently open.
-     */
-    private fun openSessionFor(newTrackId: String) {
-        val outgoing = sessionTrackId
-        if (outgoing == newTrackId) return
-        outgoing?.let { reportTimelineStopped(it) }
-        sessionTrackId = newTrackId
+        return timelineOut.trySend(TimelineSend.Report(client, report)).isSuccess
     }
 
     /**
@@ -4137,9 +4298,30 @@ class PlaybackController(
                 streamed.qualityRank > downloadedFormat.qualityRank
             if (!preferStream) return LightAudioSource.FileSource(file)
         }
-        // Through the loopback door when it is up — see StreamProxy — so the
-        // player never holds the server's address, only this phone's.
-        return LightAudioSource.UrlSource(
+        return LightAudioSource.UrlSource(playerUrl(this, effectiveFormat()))
+    }
+
+    /**
+     * The address the player is handed for [track] in [format]: through the
+     * loopback door when it is up — see StreamProxy — so the player never
+     * holds the server's address, only this phone's.
+     *
+     * Where the server keeps one session per player, the door also asks the
+     * server's decision for this very song right before it fetches it, under
+     * that session's id. Plex holds a session it is tracking to a decision per
+     * song, and the player fetches ahead and on its own — the next song while
+     * this one plays, a skip, a retry — so nothing in front of it can know
+     * when to ask. Without the door, the stream has an id of its own instead;
+     * see [streamSessionIdFor].
+     */
+    private fun playerUrl(track: Track, format: StreamFormat, timeOffsetSeconds: Int = 0): String {
+        val client = serverClient.value ?: return ""
+        val decideFirst = decidesAtDoor(client, track, format)
+        val sid = streamSessionIdFor(track.id, decideFirst)
+        val url = client.playableUrl(
+            track,
+            format,
+            timeOffsetSeconds = timeOffsetSeconds,
             // No estimated Content-Length, which is what made a long track take
             // minutes to start.
             //
@@ -4157,16 +4339,15 @@ class PlaybackController(
             // Only Subsonic reads the flag; Jellyfin and Plex ignore it. Passing
             // it here covers every source that ever might, and costs the other
             // two nothing.
-            App.streamProxy.wrap(
-                serverClient.value?.playableUrl(
-                    this,
-                    effectiveFormat(),
-                    estimateContentLength = false,
-                    sessionId = sessionIdFor(id),
-                ).orEmpty(),
-                group = id,
-            ),
+            estimateContentLength = false,
+            sessionId = sid,
         )
+        // Asked of whichever client is current when the fetch happens: one
+        // rebuilt for the same source since — a new address, a renewed token —
+        // is the one that can still be heard.
+        val decision: (suspend () -> Unit)? =
+            if (decideFirst) ({ serverClient.value?.prepareStream(track.id, format, sid) }) else null
+        return App.streamProxy.wrap(url, group = track.id, prepare = decision)
     }
 
     /**
@@ -4198,20 +4379,14 @@ class PlaybackController(
         val client = serverClient.value
         if (at > 1_000L && client != null && needsServerSeek(track, askPlayer = false)) {
             android.util.Log.i("AmpCast", "rebuild idx=$index at=$at via server offset")
-            val url = client.playableUrl(
-                track,
-                effectiveFormat(),
-                timeOffsetSeconds = (at / 1000).toInt(),
-                // See serverSeek: an estimated length invites range probes the
-                // transcode can't answer (416), which errored the restore.
-                estimateContentLength = false,
-                sessionId = sessionIdFor(track.id),
-            )
+            // See serverSeek: an estimated length invites range probes the
+            // transcode can't answer (416), which errored the restore.
+            val url = playerUrl(track, effectiveFormat(), timeOffsetSeconds = (at / 1000).toInt())
             streamOffsetMs = at
             offsetItemTrackId = track.id
             p.setMediaQueue(
                 tracks.mapIndexed { i, it ->
-                    if (i == index) it.toAudioItem(LightAudioSource.UrlSource(App.streamProxy.wrap(url, group = track.id))) else it.toAudioItem()
+                    if (i == index) it.toAudioItem(LightAudioSource.UrlSource(url)) else it.toAudioItem()
                 },
                 index,
             )
@@ -4236,6 +4411,8 @@ class PlaybackController(
 
     companion object {
         private const val PREVIOUS_RESTART_MS = 3_000L
+
+        private fun newSessionId(): String = UUID.randomUUID().toString()
 
         /** Shown when the server itself refused the track — a bad status, not a bad link. */
         private const val CANT_PLAY_THIS = "Server can't play this track"

@@ -1082,7 +1082,7 @@ class LibraryRepository(
         val source = settings.activeSource.first() ?: return false
         if (source.kind != SourceKind.PLEX || source.connections.isEmpty()) return false
         val ordered = (source.connections - source.baseUrl) + source.baseUrl
-        val found = PlexAccount.firstReachable(ordered, source.token) ?: return false
+        val found = PlexAccount.firstReachable(ordered, source.token, source.plexClientIdentifier) ?: return false
         if (found == source.baseUrl) return false
         android.util.Log.i("AmpSync", "plex moved: ${source.baseUrl} -> $found")
         settings.saveSource(source.copy(baseUrl = found))

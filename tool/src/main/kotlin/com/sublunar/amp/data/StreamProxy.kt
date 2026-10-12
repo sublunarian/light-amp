@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -88,12 +90,24 @@ class StreamProxy(
      * for a broken link and picked its stream up again, which killed the new
      * one, whose feeder did the same — two streams of one song trading resets
      * for twenty seconds after every seek.
+     *
+     * [prepare] is asked, and waited for within a limit, each time the player
+     * asks for the stream and before the server is: what the server needs
+     * settled first, at the moment the fetch really happens. The player
+     * fetches ahead and on its own — the next song while this one plays, a
+     * retry — so nothing in front of it can know when that is. Not for the
+     * door's own pickups after a break, which continue a request already
+     * settled. A [url] handed back unwrapped has nobody to ask it, so the
+     * caller should only count on it when [isOn].
      */
-    fun wrap(url: String, group: String? = null): String {
+    fun wrap(url: String, group: String? = null, prepare: (suspend () -> Unit)? = null): String {
         if (url.isEmpty()) return url
         val on = _state.value as? State.On ?: return url
-        return "http://$HOST:${on.port}$STREAM_PATH${tokens.tokenFor(url, group)}"
+        return "http://$HOST:${on.port}$STREAM_PATH${tokens.tokenFor(url, group, prepare)}"
     }
+
+    /** Whether [wrap] is handing out this door's addresses, rather than the server's own. */
+    val isOn: Boolean get() = _state.value is State.On
 
     /** Bring the door up and prove it, off the calling thread. Idempotent. */
     fun start(scope: CoroutineScope) {
@@ -184,7 +198,7 @@ class StreamProxy(
             ?: return respond(output, 404, "Not Found")
         val range = lines.drop(1).firstOrNull { it.startsWith("Range:", ignoreCase = true) }
             ?.substringAfter(':')?.trim()
-        stream(target.url, target.group, range, headOnly = method == "HEAD", output)
+        stream(target, range, headOnly = method == "HEAD", output)
     }
 
     /**
@@ -208,7 +222,9 @@ class StreamProxy(
      * shown a broken connection it would wait for its buffer to run dry and
      * then start the song again from the top.
      */
-    private fun stream(url: String, group: String?, range: String?, headOnly: Boolean, output: OutputStream) {
+    private fun stream(target: Target, range: String?, headOnly: Boolean, output: OutputStream) {
+        val url = target.url
+        val group = target.group
         if (!gateOpen()) return respond(output, GATE_STATUS, "Waiting")
         // Before anything is asked of the server: whatever was still feeding
         // this track is finished. Its upstream is closed *first*, so the
@@ -217,6 +233,14 @@ class StreamProxy(
             live.remove(group)?.let {
                 log("a newer request for the same track — retiring the old stream")
                 it.cancel()
+            }
+        }
+        // Then whatever the server wants settled for this stream — see wrap.
+        // Bounded, and the stream is asked for whatever the answer: a server
+        // that won't settle may still serve, and silence is the worse failure.
+        if (!headOnly) {
+            target.prepare?.let { prepare ->
+                runCatching { runBlocking { withTimeoutOrNull(PREPARE_TIMEOUT_MS) { prepare() } } }
             }
         }
         val firstCall = request(url, range)
@@ -601,8 +625,8 @@ class StreamProxy(
     private fun rangeStart(contentRange: String): Long? =
         contentRange.substringAfter("bytes ", "").substringBefore('-').trim().toLongOrNull()
 
-    /** Where a token leads, and what it is a stream of. */
-    private class Target(val url: String, val group: String?)
+    /** Where a token leads, what it is a stream of, and what to settle before fetching it — see [wrap]. */
+    private class Target(val url: String, val group: String?, val prepare: (suspend () -> Unit)?)
 
     /** Unguessable names for upstream URLs, stable per URL so an unchanged queue stays unchanged. */
     private class TokenTable {
@@ -617,9 +641,9 @@ class StreamProxy(
         private val random = SecureRandom()
 
         @Synchronized
-        fun tokenFor(url: String, group: String?): String = byUrl.getOrPut(url) {
+        fun tokenFor(url: String, group: String?, prepare: (suspend () -> Unit)?): String = byUrl.getOrPut(url) {
             ByteArray(16).also(random::nextBytes).joinToString("") { "%02x".format(it) }
-                .also { byToken[it] = Target(url, group) }
+                .also { byToken[it] = Target(url, group, prepare) }
         }
 
         @Synchronized
@@ -649,6 +673,8 @@ class StreamProxy(
         const val READ_AHEAD_METERED_BYTES = 512 * 1024
         private const val POLL_MS = 200L
         private const val FEEDER_JOIN_MS = 2_000L
+        /** The longest a stream waits on what [wrap]'s prepare settles — the same as a press of play waits. */
+        private const val PREPARE_TIMEOUT_MS = 2_000L
         private val END = ByteArray(0)
         private val PASSED_ON = listOf("Content-Type", "Content-Range", "Accept-Ranges")
         private val CRLF = "\r\n".toByteArray(Charsets.ISO_8859_1)
