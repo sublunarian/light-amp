@@ -10,9 +10,20 @@
 - Adding a Jellyfin or Plex server failed unless the address started with
   http:// or https://.
 - On the keyboard's number page, the arrow in place of DONE did nothing.
+- A newly added server could take minutes to start syncing.
+- Switching to All Libraries didn't work.
+
+### Added
+
+- Choose which libraries to show when adding a server.
+- A first sync shows how far it has got, instead of empty pages.
 
 ### Changed
 
+- Hidden libraries are now hidden everywhere, and aren't synced.
+- Linking Plex goes straight on when your account has one server, and
+  connects faster.
+- Log Out asks first, since it deletes that server's downloads.
 - Signing in to a server now says whether the address or the login was wrong.
 
 ## 0.7.3

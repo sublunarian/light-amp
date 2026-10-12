@@ -133,14 +133,17 @@ data class MusicSource(
      */
     val libraries: List<SourceLibrary> = emptyList(),
     /**
-     * Libraries the user hid, by id — `null` being the "All Libraries" row
-     * rather than any one of them. Hidden everywhere: off the Sources page,
+     * Libraries the user hid, by id. Hidden everywhere: off the Sources page,
      * out of All Libraries and every list and search, and not fetched by a
      * sync; their cached rows stay, so showing one again is instant.
      *
      * Stored as what to *hide* rather than what to show, so a library the server
      * gains later turns up on its own instead of staying invisible until someone
      * thinks to go and tick it.
+     *
+     * Nullable only for what older builds stored: `null` was the All Libraries
+     * row, which could once be hidden too and is now never a choice — see
+     * [showsAllLibraries]. Anything reading this skips it.
      */
     val hiddenLibraryIds: List<String?> = emptyList(),
     /**
@@ -214,8 +217,37 @@ data class MusicSource(
     val visibleLibraries: List<SourceLibrary>
         get() = libraries.filterNot { it.id in hiddenLibraryIds }
 
-    /** Whether the whole-server row is offered alongside the individual ones. */
-    val showsAllLibraries: Boolean get() = null !in hiddenLibraryIds
+    /**
+     * This source with [libraryId] shown or hidden.
+     *
+     * Refuses to hide the last library: the rows under a source are the only
+     * way to switch to it. Hiding the library being browsed moves the browsing
+     * to All Libraries, rather than leaving it on a library that no longer
+     * shows — and so does hiding down to one, where All Libraries *is* that one
+     * and the single row left under the source is the one to tick. Older
+     * builds could hide the All Libraries row too, as a null; that is no
+     * longer a choice, so it goes on the next change.
+     */
+    fun withLibraryShown(libraryId: String, shown: Boolean): MusicSource {
+        val hidden = hiddenLibraryIds.filterNotNull().toMutableList()
+        if (shown) return copy(hiddenLibraryIds = hidden - libraryId)
+        if (libraryId in hidden) return copy(hiddenLibraryIds = hidden)
+        val visible = libraries.count { it.id !in hidden }
+        if (visible <= 1) return this
+        val left = visible - 1
+        return copy(
+            hiddenLibraryIds = hidden + libraryId,
+            libraryId = if (left <= 1 || this.libraryId == libraryId) null else this.libraryId,
+        )
+    }
+
+    /**
+     * Whether the All Libraries row is offered: whenever two or more libraries
+     * are shown, and never as a setting. With one it would be a second row for
+     * the same music, and as a tick box beside the real libraries it read as one
+     * more of them — tick it, untick the rest, and expect it to hold something.
+     */
+    val showsAllLibraries: Boolean get() = visibleLibraries.size >= 2
 
 
     private fun supported(id: String?): StreamFormat {

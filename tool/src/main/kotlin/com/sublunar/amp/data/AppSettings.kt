@@ -239,7 +239,20 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setLibraryId(id: String?) {
         val current = activeSource.first() ?: return
-        saveSource(current.copy(libraryId = id))
+        setSourceLibraryId(current.id, id)
+    }
+
+    /**
+     * Which of a source's libraries is browsed — null for All Libraries —
+     * written exactly as given.
+     *
+     * Not through [saveSource], which keeps the stored library whenever it is
+     * handed none, so that re-linking a server doesn't forget the choice. All
+     * Libraries *is* none: switching to it saved nothing, and the library
+     * stayed where it was while the sync fetched all of them.
+     */
+    suspend fun setSourceLibraryId(sourceId: String, libraryId: String?) {
+        editSources { list -> list.map { if (it.id == sourceId) it.copy(libraryId = libraryId) else it } }
     }
 
     /** Record the folders a server reported, for the Sources page. */
@@ -279,30 +292,13 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
 
     /**
      * Show or hide one of a source's libraries — everywhere, not only on the
-     * Sources page: see MusicSource.hiddenLibraryIds.
-     *
-     * Refuses to hide the last row, since the rows under a source are the only
-     * way to switch to it, and the last library: All Libraries means the
-     * visible ones, and with none it would be a row onto nothing. Hiding the
-     * library being browsed moves the browsing to All Libraries, rather than
-     * leaving it on a library that no longer shows.
+     * Sources page: see MusicSource.hiddenLibraryIds and [withLibraryShown].
+     * Written exactly, like [setSourceLibraryId], because hiding can move the
+     * browsing to All Libraries.
      */
-    suspend fun setLibraryVisible(sourceId: String, libraryId: String?, visible: Boolean) {
-        editSource(sourceId) { source ->
-            val hidden = source.hiddenLibraryIds.toMutableList()
-            if (visible) {
-                hidden.remove(libraryId)
-                return@editSource source.copy(hiddenLibraryIds = hidden)
-            }
-            val visibleLibraries = source.libraries.count { it.id !in hidden }
-            val remaining = visibleLibraries + (if (source.showsAllLibraries) 1 else 0)
-            if (remaining <= 1) return@editSource source
-            if (libraryId != null && libraryId !in hidden && visibleLibraries <= 1) return@editSource source
-            if (libraryId !in hidden) hidden.add(libraryId)
-            source.copy(
-                hiddenLibraryIds = hidden,
-                libraryId = if (libraryId != null && source.libraryId == libraryId) null else source.libraryId,
-            )
+    suspend fun setLibraryVisible(sourceId: String, libraryId: String, visible: Boolean) {
+        editSources { list ->
+            list.map { if (it.id == sourceId) it.withLibraryShown(libraryId, visible) else it }
         }
     }
 

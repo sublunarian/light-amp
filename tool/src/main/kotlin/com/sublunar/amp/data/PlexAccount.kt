@@ -4,7 +4,10 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.statement.bodyAsText
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 
 /**
@@ -100,32 +103,42 @@ object PlexAccount {
         val ordered = resource.connections.sortedWith(
             compareBy({ !it.local }, { it.relay }),
         )
-        for (connection in ordered) {
-            val ok = runCatching {
-                val response = http.get(connection.uri.trimEnd('/') + "/identity") {
-                    plexHeaders()
-                    header("X-Plex-Token", resource.accessToken ?: token)
-                }
-                response.status.value in 200..299
-            }.getOrDefault(false)
-            if (ok) return connection.uri.trimEnd('/')
-        }
-        return null
+        return firstAnswering(ordered.map { it.uri }, resource.accessToken ?: token)
     }
 
     /** The first of [uris] that answers, for re-resolving a stored source. */
-    suspend fun firstReachable(uris: List<String>, token: String): String? {
-        for (uri in uris) {
-            val ok = runCatching {
-                http.get(uri.trimEnd('/') + "/identity") {
-                    plexHeaders()
-                    header("X-Plex-Token", token)
-                }.status.value in 200..299
-            }.getOrDefault(false)
-            if (ok) return uri.trimEnd('/')
+    suspend fun firstReachable(uris: List<String>, token: String): String? = firstAnswering(uris, token)
+
+    /**
+     * The best-ranked of [uris] that answers, in a few seconds rather than
+     * however many addresses a server lists times ten.
+     *
+     * A server lists every address it has — LAN, public, relay — and from any
+     * one place some of them lead nowhere. Tried in turn, each of those had to
+     * time out before the next was asked, which is what kept linking on
+     * "Looking at…" for ten seconds and more. Asked all at once, with a short
+     * limit each, the wait is the best-ranked address's answer, or the limit
+     * if that one is silent; ranking still decides which wins. Nothing
+     * answering that fast — a slow link — gets the patient pass, in turn, as
+     * before, so a slow address is late rather than lost.
+     */
+    private suspend fun firstAnswering(uris: List<String>, token: String): String? {
+        val quick = coroutineScope {
+            val probes = uris.map { uri -> async { withTimeoutOrNull(QUICK_PROBE_MS) { answers(uri, token) } == true } }
+            val winner = uris.indices.firstOrNull { probes[it].await() }
+            probes.forEach { it.cancel() }
+            winner
         }
-        return null
+        if (quick != null) return uris[quick].trimEnd('/')
+        return uris.firstOrNull { answers(it, token) }?.trimEnd('/')
     }
+
+    private suspend fun answers(uri: String, token: String): Boolean = runCatching {
+        http.get(uri.trimEnd('/') + "/identity") {
+            plexHeaders()
+            header("X-Plex-Token", token)
+        }.status.value in 200..299
+    }.getOrDefault(false)
 
     private fun io.ktor.client.request.HttpRequestBuilder.plexHeaders() {
         header("Accept", "application/json")
@@ -133,5 +146,7 @@ object PlexAccount {
     }
 
     private const val POLL_INTERVAL_MS = 2_000L
+    /** Long enough for a relay to answer; short enough that a dead LAN address isn't waited out. */
+    private const val QUICK_PROBE_MS = 3_000L
     private const val POLL_ATTEMPTS = 90
 }

@@ -237,14 +237,7 @@ class ServerScreen(
                                     // that they should press back. Go where they
                                     // were headed.
                                     is SaveOutcome.Added -> withContext(Dispatchers.Main) {
-                                        LibraryNav.selectTab(LibraryTab.ALBUMS)
-                                        popToRoot()
-                                    }
-                                    is SaveOutcome.ChooseLibraries -> withContext(Dispatchers.Main) {
-                                        navigateTo<Unit>(
-                                            { LibraryVisibilityScreen(it, outcome.sourceId, adding = true) },
-                                            resultCallback = { finishAdding(outcome.sourceId) },
-                                        )
+                                        finishAddingSource(outcome.sourceId, outcome.libraryCount)
                                     }
                                     is SaveOutcome.Said -> {
                                         status = outcome.text
@@ -255,17 +248,6 @@ class ServerScreen(
                         },
                     )
                 }
-            }
-        }
-    }
-
-    /** The libraries are chosen: make the source active, which starts its sync, and go to it. */
-    private fun finishAdding(sourceId: String) {
-        App.scope.launch {
-            App.settings.setActiveSource(sourceId)
-            withContext(Dispatchers.Main) {
-                LibraryNav.selectTab(LibraryTab.ALBUMS)
-                popToRoot()
             }
         }
     }
@@ -378,13 +360,10 @@ class ServerScreen(
                     libraries = if (source == null && libraries.isNotEmpty()) libraries else existing.libraries,
                 ),
             )
-            if (source == null && libraries.size >= 2) return SaveOutcome.ChooseLibraries(existing.id)
-            // A source added from here becomes the one being browsed: adding it
-            // is asking for it.
-            if (source == null) {
-                App.settings.setActiveSource(existing.id)
-                return SaveOutcome.Added
-            }
+            // A source added from here becomes the one being browsed — adding it
+            // is asking for it — once its libraries are chosen: see
+            // finishAddingSource.
+            if (source == null) return SaveOutcome.Added(existing.id, libraries.size)
             return SaveOutcome.Said(if (movedServer) "Saved — reloading library" else "Saved")
         }
         return SaveOutcome.Said(explain(lastError))
@@ -404,16 +383,12 @@ private sealed interface SaveOutcome {
     /** Shown on the form; the user stays where they are. */
     data class Said(val text: String) : SaveOutcome
 
-    /** A source was added and made active — the form has nothing left to say. */
-    data object Added : SaveOutcome
-
     /**
-     * A source was added, and its server holds several libraries: they are
-     * offered to pick from first, and only then is it made active. Becoming
-     * active is what starts its first sync, and a library hidden here is one
-     * that sync never fetches.
+     * A source was added and saved, not yet active — the form has nothing
+     * left to say; [finishAddingSource] offers its libraries if it has two or
+     * more, then makes it active.
      */
-    data class ChooseLibraries(val sourceId: String) : SaveOutcome
+    data class Added(val sourceId: String, val libraryCount: Int) : SaveOutcome
 }
 
 /** What the folders call said about the account, once the ping has settled the address. */

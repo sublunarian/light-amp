@@ -45,8 +45,6 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
     private var username by mutableStateOf("")
     private var password by mutableStateOf("")
     private var status by mutableStateOf<String?>(null)
-    /** Set once the server answers and turns out to hold more than one library. */
-    private var pending by mutableStateOf<PendingServer?>(null)
     /** Each check mints a fresh source id, so a second tap would add it twice. */
     private var checking by mutableStateOf(false)
 
@@ -61,17 +59,6 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
     override fun Content() {
         ListScreen(onBack = { goBack() }, title = "Jellyfin") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                val choice = pending
-                if (choice != null) {
-                    item { SectionLabel("Which library?") }
-                    items(choice.sections, key = { it.id }) { section ->
-                        TextRow(title = section.name) {
-                            save(choice.source.copy(libraryId = section.id))
-                        }
-                    }
-                    item { TextRow(title = "All libraries") { save(choice.source) } }
-                    return@ScrollableList
-                }
                 item { SectionLabel(status ?: "Your server and an account on it") }
                 item {
                     TextRow(
@@ -118,9 +105,10 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                 inspectJellyfinServer(uri = uri, username = username.trim(), password = password)
             }
             // Back on Main, and only if this page is still up: App.scope is
-            // Default, and save() goes back — which, after the user has left,
-            // would pop whatever is on top, the root included, off the main
-            // thread. Leaving the sign-in is also abandoning it.
+            // Default, and finishing the sign-in navigates — which, after the
+            // user has left, would act on whatever is on top, the root
+            // included, off the main thread. Leaving the sign-in is also
+            // abandoning it.
             withContext(Dispatchers.Main.immediate) {
                 if (gone) return@withContext
                 checking = false
@@ -132,8 +120,9 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                         address = next.source.baseUrl
                         when {
                             next.sections.isEmpty() -> status = "Signed in, but that account has no music library."
-                            next.sections.size < 2 -> save(next.source)
-                            else -> pending = next
+                            // Its libraries are picked after this, before its
+                            // first sync — see finishAddingSource.
+                            else -> adoptServer(next) { gone }
                         }
                     }
                     is SignInOutcome.Settled -> {
@@ -157,13 +146,6 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
         )
     }
 
-    private fun save(source: MusicSource) {
-        App.scope.launch {
-            val id = App.settings.saveSource(source)
-            App.settings.setActiveSource(id)
-        }
-        goBack(Unit)
-    }
 }
 
 /**
