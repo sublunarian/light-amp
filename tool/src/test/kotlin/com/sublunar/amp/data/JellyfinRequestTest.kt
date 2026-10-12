@@ -2,6 +2,7 @@ package com.sublunar.amp.data
 
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.Test
 
@@ -70,6 +71,21 @@ class JellyfinRequestTest {
         assertFalse(JellyfinClient.takesEveryCopy(held, listOf("a")))
         assertTrue(JellyfinClient.takesEveryCopy(held, listOf("a", "a")))
         assertTrue(JellyfinClient.takesEveryCopy(held, listOf("b")))
+    }
+
+    @Test
+    fun `the per-user routes are told by version, read as numbers`() {
+        assertEquals(false, JellyfinClient.hasUserRoutes("10.8.13"))
+        assertEquals(true, JellyfinClient.hasUserRoutes("10.9.0"))
+        // Before 10.9 as text.
+        assertEquals(true, JellyfinClient.hasUserRoutes("10.10.0"))
+        assertEquals(true, JellyfinClient.hasUserRoutes("10.11.11"))
+        // There is no 11.
+        assertEquals(true, JellyfinClient.hasUserRoutes("12.2.0"))
+        assertEquals(true, JellyfinClient.hasUserRoutes("13.0.0"))
+        assertEquals(true, JellyfinClient.hasUserRoutes("10.9.0-rc1"))
+        assertNull(JellyfinClient.hasUserRoutes(""))
+        assertNull(JellyfinClient.hasUserRoutes("10"))
     }
 
     @Test

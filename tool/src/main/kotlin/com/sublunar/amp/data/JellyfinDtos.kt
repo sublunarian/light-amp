@@ -35,8 +35,9 @@ data class JellyfinItem(
     /**
      * What a view holds — "music" is the one this app cares about.
      *
-     * Only set on the entries returned by `/Users/{id}/Views`; a library of
-     * films answers "movies" and has no business in a music app.
+     * Only set on the user's views (`/UserViews`, or `/Users/{id}/Views`
+     * before 10.9); a library of films answers "movies" and has no business
+     * in a music app.
      */
     @SerialName("CollectionType") val collectionType: String? = null,
     @SerialName("RunTimeTicks") val runTimeTicks: Long? = null,
@@ -62,11 +63,18 @@ data class JellyfinItem(
     @SerialName("ArtistItems") val artistItems: List<JellyfinNamed> = emptyList(),
     @SerialName("Genres") val genres: List<String> = emptyList(),
     /**
-     * Jellyfin's loudness measurement in dB (10.9+), computed by its audio
-     * normalisation task — its stand-in for ReplayGain. Absent until the
-     * server has run that scan.
+     * The track's gain in dB against −18 LUFS (10.9+), ReplayGain's own
+     * reference: −18 less the loudness Jellyfin's normalisation scan measured,
+     * otherwise the file's REPLAYGAIN_TRACK_GAIN tag. Absent where it has
+     * neither.
      */
     @SerialName("NormalizationGain") val normalizationGain: Float? = null,
+    /**
+     * The track's album's gain, on the same scale (12.0+, on tracks): from the
+     * scan, otherwise the file's REPLAYGAIN_ALBUM_GAIN. Sent without being
+     * asked for in `Fields`, like [normalizationGain].
+     */
+    @SerialName("AlbumNormalizationGain") val albumNormalizationGain: Float? = null,
     /**
      * Everyone credited on the track, composers among them.
      *

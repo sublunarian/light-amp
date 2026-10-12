@@ -2316,6 +2316,12 @@ internal class Reread(val albums: List<Album>, val why: String, val next: SongCh
  * A server that can't say anything at all — or one that scans on a schedule,
  * which reads as "something may have changed" every time — would otherwise
  * keep one going for ever.
+ *
+ * A server that names what changed but misses some of it asks for a walk as
+ * well ([SongChanges.Albums.alsoWalk]). Its named albums are read on every
+ * sync, as anyone's are, and its mark moves with them; the walk goes on beside
+ * that, on its own cursor and rest, and settles no mark of its own — the two
+ * share one [SongCheck] without either undoing the other.
  */
 internal fun rereadFor(
     changes: SongChanges?,
@@ -2329,20 +2335,36 @@ internal fun rereadFor(
     return when (changes) {
         null -> null
         is SongChanges.Nothing -> Reread(emptyList(), "", settled(changes.mark))
-        is SongChanges.Albums ->
-            Reread(albums.filter { it.id in changes.ids }, "server says changed", settled(changes.mark))
-        is SongChanges.Everything ->
-            if (bulk) Reread(albums, "read once, to compare from", settled(changes.mark)) else null
+        is SongChanges.Albums -> {
+            val named = albums.filter { it.id in changes.ids }
+            if (!changes.alsoWalk) return Reread(named, "server says changed", settled(changes.mark))
+            val marked = if (whole) check.copy(mark = changes.mark) else check
+            if (!whole || !bulk) return Reread(named, "server says changed", marked)
+            val (picked, cursor) = walkOn(check, albums, nowMs)
+                ?: return Reread(named, "server says changed", marked)
+            val next = if (cursor == null) {
+                marked.copy(walkCursor = null, walkedMs = nowMs)
+            } else {
+                marked.copy(walkCursor = cursor)
+            }
+            Reread(
+                albums.filter { it.id in changes.ids || it.id in picked },
+                if (named.isEmpty()) "walk" else "server says changed, and walk",
+                next,
+            )
+        }
+        is SongChanges.Everything -> when {
+            !bulk -> null
+            // Every album read is a walk gone round, so one that follows rests from here.
+            whole -> Reread(albums, "read once, to compare from", SongCheck(mark = changes.mark, walkedMs = nowMs))
+            else -> Reread(albums, "read once, to compare from", check)
+        }
         is SongChanges.Unknown -> {
             if (!whole || !bulk) return null
-            if (check.walkCursor == null && nowMs - check.walkedMs in 0 until WALK_REST_MS) {
-                return Reread(emptyList(), "", check)
-            }
+            val (picked, cursor) = walkOn(check, albums, nowMs) ?: return Reread(emptyList(), "", check)
             // A walk covers changes up to the mark it began under; a scan
             // during the walk is caught by the next one.
             val walkMark = check.walkMark ?: changes.mark
-            val (ids, cursor) = nextWalk(albums.map { it.id }.sorted(), check.walkCursor, WALK_BATCH)
-            val picked = ids.toHashSet()
             val next = if (cursor == null) {
                 SongCheck(mark = walkMark, walkedMs = nowMs)
             } else {
@@ -2354,9 +2376,19 @@ internal fun rereadFor(
 }
 
 /**
- * Albums a walk re-reads per sync, where the server can't say which changed —
- * see [rereadFor]. A 1,400-album library goes round in about fifty syncs on
- * Wi-Fi: a day or so, for thirty small requests each.
+ * The ids of the walk's next batch from where [check] left it, and the cursor
+ * to keep after — or null while a walk that has gone round rests.
+ */
+private fun walkOn(check: SongCheck, albums: List<Album>, nowMs: Long): Pair<Set<String>, String?>? {
+    if (check.walkCursor == null && nowMs - check.walkedMs in 0 until WALK_REST_MS) return null
+    val (ids, cursor) = nextWalk(albums.map { it.id }.sorted(), check.walkCursor, WALK_BATCH)
+    return ids.toHashSet() to cursor
+}
+
+/**
+ * Albums a walk re-reads per sync, where the server can't say which changed,
+ * or can't say all of it — see [rereadFor]. A 1,400-album library goes round
+ * in about fifty syncs on Wi-Fi: a day or so, for thirty small requests each.
  */
 internal const val WALK_BATCH = 30
 

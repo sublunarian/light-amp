@@ -146,6 +146,29 @@ class JellyfinClient(
         payload: JsonObject? = null,
     ): Boolean = runCatching { write(method, path, params, payload) }.isSuccess
 
+    @Volatile private var userRoutes: Boolean? = null
+
+    /**
+     * Whether this server has the per-user routes that take the user as a
+     * query parameter — `/UserViews`, `/UserFavoriteItems`, `/UserPlayedItems`
+     * — rather than in the path. Jellyfin 10.9 added them and keeps the
+     * `/Users/{userId}/…` ones only "for backwards compatibility", hidden from
+     * its API; 10.8 has only those. Read once per client from the version,
+     * since a 404 can't tell a missing route from a missing song.
+     *
+     * A version read that fails throws, as the request it was for would have;
+     * one that can't be parsed keeps to the old routes, which every server
+     * there is still answers.
+     */
+    private suspend fun usesUserRoutes(): Boolean = userRoutes
+        ?: (hasUserRoutes(fetch<JellyfinPublicInfo>("/System/Info/Public").version) ?: false)
+            .also { userRoutes = it }
+
+    /** A [write] to one of the per-user routes, by whichever spelling this server has — see [usesUserRoutes]. */
+    private suspend fun writeForUser(method: String, current: String, legacy: String) {
+        if (usesUserRoutes()) write(method, current, listOf("userId" to userId)) else write(method, legacy)
+    }
+
     private fun io.ktor.client.request.HttpRequestBuilder.jellyfinHeaders() {
         header("Authorization", authorization(product, token, deviceId))
         header("Accept", "application/json")
@@ -187,15 +210,22 @@ class JellyfinClient(
     /**
      * The user's music libraries.
      *
-     * `/Views` rather than `/Items`: views are what this user is allowed to see
-     * and are already scoped to them, where the item tree includes everything
-     * on the server. Anything that isn't a music collection is dropped — a
-     * shelf of films is not a shelf you can browse here.
+     * The user's views rather than `/Items`: views are what this user is
+     * allowed to see and are already scoped to them, where the item tree
+     * includes everything on the server. Anything that isn't a music
+     * collection is dropped — a shelf of films is not a shelf you can browse
+     * here.
      */
-    override suspend fun getMusicFolders(): List<MusicFolder> =
-        fetch<JellyfinItems>("/Users/$userId/Views").items
+    override suspend fun getMusicFolders(): List<MusicFolder> {
+        val views = if (usesUserRoutes()) {
+            fetch<JellyfinItems>("/UserViews", listOf("userId" to userId))
+        } else {
+            fetch<JellyfinItems>("/Users/$userId/Views")
+        }
+        return views.items
             .filter { it.collectionType.equals("music", ignoreCase = true) }
             .map { MusicFolder(id = it.id, name = it.name) }
+    }
 
     override suspend fun getAllAlbums(musicFolderId: String?): List<Album> =
         paged(musicFolderId, ALBUM_TYPE).map { it.toAlbum() }.distinctBy { it.id }
@@ -262,6 +292,11 @@ class JellyfinClient(
      * Every library, whatever [libraries] says: a song changed in one that
      * this sync didn't fetch is left out by the sync, which only re-reads
      * albums it has.
+     *
+     * Not every save is stamped, though. The loudness scan writes the gains it
+     * measures straight to the database, which leaves DateLastSaved where it
+     * was — so a gain measured after an album was synced is never listed here,
+     * and the sync walks the library as well ([SongChanges.Albums.alsoWalk]).
      */
     override suspend fun songChangesSince(mark: String?, libraries: List<String?>): SongChanges {
         val since = mark?.let { runCatching { Instant.parse(it) }.getOrNull() }
@@ -299,7 +334,7 @@ class JellyfinClient(
             start += page.items.size
             if (!page.continuesAfter(start)) break
         }
-        return SongChanges.Albums(albumIds, (now ?: Instant.now()).toString())
+        return SongChanges.Albums(albumIds, (now ?: Instant.now()).toString(), alsoWalk = true)
     }
 
     override suspend fun getAlbumTracks(albumId: String): List<Track> =
@@ -560,7 +595,7 @@ class JellyfinClient(
             )
             return
         }
-        write("POST", "/Users/$userId/PlayedItems/$songId")
+        writeForUser("POST", "/UserPlayedItems/$songId", "/Users/$userId/PlayedItems/$songId")
     }
 
     /**
@@ -601,7 +636,7 @@ class JellyfinClient(
     override suspend fun unstarArtist(artistId: String) = favourite(artistId, false)
 
     private suspend fun favourite(id: String, on: Boolean) {
-        write(if (on) "POST" else "DELETE", "/Users/$userId/FavoriteItems/$id")
+        writeForUser(if (on) "POST" else "DELETE", "/UserFavoriteItems/$id", "/Users/$userId/FavoriteItems/$id")
     }
 
     // --- Playlists -----------------------------------------------------------
@@ -801,6 +836,19 @@ class JellyfinClient(
             return asked.groupingBy { it }.eachCount().all { (entry, n) -> copies[entry] == n }
         }
 
+        /**
+         * Whether a server of [version] has the per-user routes 10.9 added —
+         * compared as numbers, since "10.10.0" sorts before "10.9.0" as text,
+         * and there is no 11: after 10.11 came 12. Null when [version] doesn't
+         * read as one.
+         */
+        internal fun hasUserRoutes(version: String): Boolean? {
+            val parts = version.trim().split('.').map { it.takeWhile(Char::isDigit).toIntOrNull() }
+            val major = parts.getOrNull(0) ?: return null
+            val minor = parts.getOrNull(1) ?: return null
+            return major > 10 || (major == 10 && minor >= 9)
+        }
+
         /** A rename, and nothing that could touch the playlist's contents — see [renamePlaylist]. */
         internal fun renameBody(name: String): JsonObject = buildJsonObject { put("Name", name) }
 
@@ -972,7 +1020,8 @@ internal fun JellyfinItem.toTrack(): Track = Track(
     composer = people.filter { it.type.equals("Composer", ignoreCase = true) }
         .joinToString("; ") { it.name }
         .trim(),
-    gainDb = normalizationGain,
+    // The track's own gain first; a file tagged only album-wise still evens out.
+    gainDb = normalizationGain ?: albumNormalizationGain,
 )
 
 /** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */

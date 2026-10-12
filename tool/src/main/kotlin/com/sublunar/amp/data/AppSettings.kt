@@ -782,6 +782,11 @@ private fun MusicSource.isSameServerAs(other: MusicSource): Boolean = when (kind
  * a walk re-reads the library a few albums per sync: [walkCursor] is the last
  * album it reached, [walkMark] the mark it will settle once it gets round, and
  * [walkedMs] when the last one did.
+ *
+ * A server that names its changes and walks as well (Jellyfin — see
+ * [SongChanges.Albums.alsoWalk]) moves [mark] itself on every sync and never
+ * sets [walkMark]: its walk catches what the list misses, and has no mark of
+ * its own to settle.
  */
 @Serializable
 data class SongCheck(

@@ -436,8 +436,16 @@ internal fun serverClock(date: String?): Instant =
 sealed interface SongChanges {
     val mark: String?
 
-    /** These albums' songs changed, and no others'. */
-    data class Albums(val ids: Set<String>, override val mark: String) : SongChanges
+    /**
+     * These albums' songs changed, and no others' — unless [alsoWalk]: some
+     * changes never reach the server's list, so the sync walks the library
+     * as well, the way it does for [Unknown].
+     */
+    data class Albums(
+        val ids: Set<String>,
+        override val mark: String,
+        val alsoWalk: Boolean = false,
+    ) : SongChanges
 
     /** Nothing to compare with yet: every album's songs are read once, and from then on it can say. */
     data class Everything(override val mark: String) : SongChanges

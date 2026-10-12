@@ -142,6 +142,13 @@ class JellyfinParseTest {
     }
 
     @Test
+    fun `a song's own gain comes first, and its album's stands in where it has none`() {
+        assertEquals(-7.2f, item("""{"Id":"t","NormalizationGain":-7.2,"AlbumNormalizationGain":-6.1}""").toTrack().gainDb)
+        assertEquals(-6.1f, item("""{"Id":"t","AlbumNormalizationGain":-6.1}""").toTrack().gainDb)
+        assertNull(item("""{"Id":"t"}""").toTrack().gainDb)
+    }
+
+    @Test
     fun `a playlist entry keeps its own id, which is not the song's`() {
         val entry = item("""{"Id":"song1","Name":"X","PlaylistItemId":"entry9"}""")
         assertEquals("song1", entry.id)
