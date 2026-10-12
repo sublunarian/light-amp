@@ -11,7 +11,7 @@ Plays your own library - a Subsonic server, Plex, Jellyfin or files on the phone
   <img src="docs/screenshots/artist.png" width="24%" alt="An artist's albums">
 </p>
 
-> Side-load only for now. The tool store isn't open yet.
+> Side-load only for now. Amp isn't in Light's Tool Library yet.
 
 ## Features
 

@@ -25,6 +25,7 @@
   connects faster.
 - Log Out asks first, since it deletes that server's downloads.
 - Signing in to a server now says whether the address or the login was wrong.
+- Built on Light's SDK 0.2.0.
 
 ## 0.7.3
 

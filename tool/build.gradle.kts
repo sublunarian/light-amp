@@ -60,8 +60,6 @@ android {
     defaultConfig {
         minSdk = rootProject.ext["minSdk"] as Int
         targetSdk = rootProject.ext["targetSdk"] as Int
-
-        manifestPlaceholders["sdkVersion"] = property("sdkVersion") as String
     }
 
     buildTypes {

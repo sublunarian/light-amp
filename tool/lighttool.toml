@@ -20,5 +20,6 @@ permissions = [
 # and its foreground permissions into this tool's manifest.
 capabilities = ["detached-audio"]
 # Real LP3 hardware binds to the LightOS system app.
-# Use "com.thelightphone.sdk.emulator" for the LightOS emulator instead.
+# Use "com.thelightphone.sdk.emulator" for the LightOS emulator instead, and
+# build with -DlightSdk.allowAltServerPackage=true (SDK 0.2.0 refuses it otherwise).
 serverPackage = "com.lightos"

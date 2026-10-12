@@ -2,9 +2,9 @@
 
 Amp ships today, but parts of it are built around the SDK because there is no
 supported route. Each item below is a workaround we would delete the day an API
-exists. Checked against `upstream/main` at `3df3c24` (SDK 0.1.1, 30 Aug 2026).
-The `light-sdk` submodule is pinned to `15b1ca1` (18 Sep 2026); the commits
-between touch none of these gaps.
+exists. Checked against `upstream/main` at `311aa2d` (SDK 0.2.0 and three
+merges after it, 8 Oct 2026), which is where the `light-sdk` submodule is
+pinned.
 
 ## Workarounds we would drop
 
@@ -95,12 +95,15 @@ minutes, where the spike held on indefinitely.
 
 - **Need:** a dependency on the plugin's allow-list builds in Light's store
   builder too.
-- **Now:** the builder runs offline, and its cache holds only what the SDK's
-  sample tool resolves. `material-icons-extended` is allow-listed but not in it,
-  so the 46 glyphs Amp uses are vendored in `ui/components/MaterialGlyphs.kt`
-  and held against the library by `MaterialGlyphsTest`.
-- **Would replace it:** a cache warmed with every allow-listed artifact, or an
-  allow-list that names only what the cache holds.
+- **Was:** the builder ran offline, and its cache held only what the SDK's
+  sample tool resolves. `material-icons-extended` is allow-listed but was not
+  in it, so the 46 glyphs Amp uses are vendored in
+  `ui/components/MaterialGlyphs.kt` and held against the library by
+  `MaterialGlyphsTest`.
+- **Since SDK 0.2.0:** the builder fetches anything else a tool declares
+  through a build-time Maven proxy (`light-sdk/builder/README.md`), so the
+  artifact should now resolve there. Kept vendored until a real dashboard
+  build proves it; then revert.
 - **Revert:** delete `MaterialGlyphs.kt`, and restore the `implementation` line
   in `tool/build.gradle.kts` and the icon imports in `Primitives.kt`.
 

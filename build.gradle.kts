@@ -12,7 +12,9 @@ group = "com.thelightphone"
 
 ext["compileSdk"] = 36
 ext["minSdk"] = 34
-ext["targetSdk"] = 36
+// 34, as in light-sdk's own root build file: Light's store builder builds a tool
+// inside that file, so this keeps side-loaded builds behaving like store ones.
+ext["targetSdk"] = 34
 ext["jvmTarget"] = "17"
 ext["lintVersion"] = "31.12.3"
 

@@ -35,9 +35,10 @@ private var lastKnown: KeyboardOptions? = null
  * the keyboard's own no-emoji state, not a layout of ours.
  *
  * **No voice key either, for now.** Keyboard 0.0.19 draws a dictation key when
- * the phone's setting says so, but the library has no dictation behind it yet —
- * Light's own `fix/hide-voice` masks it the same way in `rememberKeyboardOptions`,
- * which Amp doesn't use (see above). Drop this pin when the key does something.
+ * the phone's setting says so, but the library has no dictation behind it yet.
+ * The SDK masks it the same way inside `rememberKeyboardOptions`, which Amp
+ * doesn't use (see above); `refreshKeyboardOptions` still hands back LightOS's
+ * own answer, key and all. Drop this pin when the key does something.
  */
 @Composable
 fun rememberPhoneKeyboardOptions(): StateFlow<KeyboardOptions> {

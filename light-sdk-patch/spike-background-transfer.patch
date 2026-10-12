@@ -1,12 +1,11 @@
 diff --git a/sdk/client/src/main/AndroidManifest.xml b/sdk/client/src/main/AndroidManifest.xml
-index f680fc8..f429e96 100644
+index eb09947..439f751 100644
 --- a/sdk/client/src/main/AndroidManifest.xml
 +++ b/sdk/client/src/main/AndroidManifest.xml
-@@ -3,6 +3,13 @@
-     <!-- Lets tools talk to USB security keys / hardware tokens. required=false
-          so it never filters out devices without USB host support. -->
-     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
-+
+@@ -6,6 +6,12 @@
+         android:name="android.hardware.usb.host"
+         android:required="false" />
+     <uses-permission android:name="android.permission.VIBRATE" />
 +    <!-- SPIKE (background downloads): keeps a long transfer off the cached bucket.
 +         Revert with LightTransferService. -->
 +    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -14,9 +13,9 @@ index f680fc8..f429e96 100644
 +    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 +
      <application>
-         <provider
-             android:name="com.thelightphone.sdk.LightFileProvider"
-@@ -17,5 +24,10 @@
+         <service
+             android:name="com.thelightphone.sdk.LightPushService"
+@@ -17,5 +23,10 @@
          <!-- LightAudioService is not declared here. The Gradle plugin emits it
               into the manifests of tools that declare the detached-audio
               capability, so no other tool carries a mediaPlayback claim. -->

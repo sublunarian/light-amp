@@ -17,5 +17,5 @@ val librarySyncJob: LightJobHandler = { _, _ ->
     if (App.isReady && App.heavyDataAllowed()) {
         runCatching { App.library.sync() }
     }
-    LightJobResult.Success()
+    LightJobResult.Success(outputFilePath = null, message = null)
 }
