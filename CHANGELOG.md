@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Amp could crash when reopened after sitting paused in the background.
+- Reopening could flash 0:00 and a paused button, or land on the library
+  instead of Now Playing.
+
 ## 0.7.3
 
 ### Added
