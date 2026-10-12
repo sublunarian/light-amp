@@ -110,30 +110,6 @@ object LibraryNav {
         libraryIndex.value = true
     }
 
-    /**
-     * Open on the index, once, when the app starts under Simplified.
-     *
-     * Guarded here rather than by a composition effect's key: the root screen
-     * leaves composition whenever a screen is pushed over it and re-enters when
-     * that screen pops, so a `LaunchedEffect(Unit)` there runs again on every
-     * return. Coming back from the keyboard with a query typed, that landed you
-     * on the index with search closed — the results were one tap away and
-     * looked like the search had been thrown away.
-     */
-    private var landed = false
-
-    /**
-     * True once, for whoever settles the opening destination.
-     *
-     * The caller decides what that destination is — see BootScreen, which
-     * restores whichever of the bar's three the app was last left on.
-     */
-    fun claimFirstLanding(): Boolean {
-        if (landed) return false
-        landed = true
-        return true
-    }
-
     fun setQuery(query: String) {
         searchQuery.value = query
         searchActive.value = true
