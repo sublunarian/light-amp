@@ -4,7 +4,8 @@ Amp ships today, but parts of it are built around the SDK because there is no
 supported route. Each item below is a workaround we would delete the day an API
 exists. Checked against `upstream/main` at `311aa2d` (SDK 0.2.0 and three
 merges after it, 8 Oct 2026), which is where the `light-sdk` submodule is
-pinned.
+pinned. 0.2.0 closed one gap, plain `http://` (see Data modes below); the
+rest stand.
 
 ## Workarounds we would drop
 
@@ -259,7 +260,7 @@ what the workaround costs. **These are requests, not blockers.**
 | **Sockets bound to a network** — e.g. `LightConnectivity.unmeteredNetwork(): Network?`, or a `SocketFactory` bound to it. | The rule can only be asked about the phone's *default* network. If the default moves from Wi-Fi to cellular between the check and `connect()`, one TLS handshake (a few KB) leaves on cellular before the request is refused. `Network.bindSocket` closes that race; it needs `ConnectivityManager`, which a tool is not given. | Check before DNS, before the socket, and again on the wire; close every socket when the rule closes. No request or response byte leaks; one handshake can. |
 | **The default-network callback in `observeNetworkStatus()`** | `registerNetworkCallback(request)` hears networks appear, change and vanish, but is not guaranteed to fire when the default moves from a weak Wi-Fi to cellular while both stay up — the one change that flips `isMetered`. | Re-read `currentStatus` every 3 s while playing or waiting, once a second while a download queue is held, and when the window regains focus. |
 | **A resume hook for screens** — the counterpart of `onAppPause()`. | A process frozen in the background hears of a network change late or not at all; returning to the tool is the moment to look again. | Compose's `LocalWindowInfo.isWindowFocused`. |
-| **Cleartext to LAN servers and to loopback** — a `networkSecurityConfig` a tool can opt into from `lighttool.toml`. | Self-hosted music servers on a LAN are normally plain `http://`. Store builds get only the generated manifest, so they cannot reach one. | `tool/src/release/AndroidManifest.xml`, which never reaches a store build. A store build says in words that it reaches only `https://` servers (`data/Cleartext.kt`). |
+| ~~**Cleartext to LAN servers and to loopback**~~ — **closed in SDK 0.2.0.** | The `cleartext-http` capability (light-sdk PR #223) writes `usesCleartextTraffic` into the generated manifest, so store builds reach `http://` servers too. | Declared in `tool/lighttool.toml`. The manifest-overlay line and `data/Cleartext.kt`, which explained the refusal, are gone. |
 
 ## Smaller additions
 

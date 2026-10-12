@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import com.sublunar.amp.data.Cleartext
 import com.sublunar.amp.data.ServerAddress
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -39,11 +38,7 @@ suspend fun firstAnsweringSpelling(
     typed: String,
     attempt: suspend (uri: String) -> SignInOutcome,
 ): SignInOutcome {
-    // A plain http:// spelling this build may not send is not tried: the
-    // platform would refuse it in words meant for a developer.
-    val all = ServerAddress.candidates(typed)
-    val spellings = all.filterNot { Cleartext.refuses(it) }
-    if (spellings.isEmpty()) return SignInOutcome.Missed(Cleartext.REFUSED, answered = false)
+    val spellings = ServerAddress.candidates(typed)
     var best: SignInOutcome.Missed? = null
     for (uri in spellings) {
         when (val outcome = attempt(uri)) {
@@ -51,10 +46,6 @@ suspend fun firstAnsweringSpelling(
             else -> return outcome
         }
     }
-    // Nothing answered over https://, and the http:// that a home server
-    // usually speaks was the spelling this build couldn't send — say that,
-    // not why https:// failed.
-    if (spellings.size < all.size && !best!!.answered) return SignInOutcome.Missed(Cleartext.REFUSED, answered = false)
     return best!!
 }
 

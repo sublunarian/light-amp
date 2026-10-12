@@ -2,14 +2,10 @@
 <!--
   Release overlay for side-loaded builds.
 
-  Cleartext HTTP, for the same reason the debug overlay has it: a self-hosted
-  Navidrome on a LAN is normally plain HTTP on a port, and without this a
-  published APK simply cannot reach one. HTTPS servers are unaffected.
-
   This is a variant overlay, not src/main — the plugin validates src/main only,
-  so a build submitted to Light never carries either of these. If a store build
-  ever needs to talk to a LAN server, that is a conversation with Light about a
-  network security config rather than something to smuggle in here.
+  so a build submitted to Light never carries it. Plain http:// used to live
+  here too; lighttool.toml now declares the SDK's cleartext-http capability,
+  which reaches store builds as well.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -43,6 +39,4 @@
     <uses-permission
         android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
-
-    <application android:usesCleartextTraffic="true" />
 </manifest>

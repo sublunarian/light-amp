@@ -1347,14 +1347,7 @@ class LibraryRepository(
             }
             _syncState.value = _syncState.value.copy(
                 syncing = false,
-                // A source saved as plain http://, which this build can't speak
-                // — see Cleartext. "Couldn't reach the server" would send the
-                // user looking for a fault in a server that is fine.
-                error = if (source != null && Cleartext.refuses(source.baseUrl)) {
-                    Cleartext.REFUSED_BRIEF
-                } else {
-                    syncErrorMessage(e)
-                },
+                error = syncErrorMessage(e),
             )
             onSyncFailed?.invoke(isAuthFailure(e))
         }

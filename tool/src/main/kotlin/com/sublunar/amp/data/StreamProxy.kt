@@ -49,8 +49,10 @@ import okhttp3.Response
  * network or a data mode changed. It lives in the app's process scope, not the
  * activity's, so it is still standing when the screens are gone.
  *
- * **Why TLS.** A store build gets only the manifest Light's plugin generates,
- * and that permits no cleartext HTTP — not even to this phone. So the door
+ * **Why TLS.** It was built when a store build got only the manifest Light's
+ * plugin generates, and that permitted no cleartext HTTP — not even to this
+ * phone. (SDK 0.2.0's `cleartext-http` capability, which Amp declares, lifts
+ * that, so a plain-HTTP door would now do.) So the door
  * speaks TLS, with an identity made at launch ([LoopbackCert]) and trusted by
  * exactly one addition to the process's default trust for `HttpsURLConnection`
  * (which is what the player uses, and OkHttp does not): every other

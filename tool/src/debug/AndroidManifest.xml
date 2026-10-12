@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Debug/side-load overlay: permit cleartext HTTP so self-hosted Navidrome
-  servers on a LAN (e.g. http://192.168.x.x:4533) can be reached. HTTPS
-  servers are unaffected. The plugin only forbids src/main/AndroidManifest.xml,
+  Debug/side-load overlay. The plugin only forbids src/main/AndroidManifest.xml,
   so this variant overlay is allowed and merges into the generated manifest.
+  Plain http:// is no longer here: lighttool.toml declares the SDK's
+  cleartext-http capability, which reaches every build.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -22,5 +22,4 @@
     <uses-permission
         android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
-    <application android:usesCleartextTraffic="true" />
 </manifest>

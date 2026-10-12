@@ -18,7 +18,9 @@ permissions = [
 ]
 # Official background audio (SDK 0.1.1+): the plugin wires LightAudioService
 # and its foreground permissions into this tool's manifest.
-capabilities = ["detached-audio"]
+# Plain http:// (SDK 0.2.0+): a self-hosted server on a home network usually
+# speaks it, and without this Android refuses every such request.
+capabilities = ["detached-audio", "cleartext-http"]
 # Real LP3 hardware binds to the LightOS system app.
 # Use "com.thelightphone.sdk.emulator" for the LightOS emulator instead, and
 # build with -DlightSdk.allowAltServerPackage=true (SDK 0.2.0 refuses it otherwise).
