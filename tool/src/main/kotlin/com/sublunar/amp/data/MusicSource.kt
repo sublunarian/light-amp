@@ -213,9 +213,13 @@ data class MusicSource(
      */
     val downloadFormat: StreamFormat get() = supported(downloadFormatId)
 
-    /** Whether this server can serve [downloadFormat] — false only for an Original it has no call for. */
+    /**
+     * Whether this server can serve [downloadFormat] — false for an Original
+     * it has no call for, and for anything at all on an account it won't let
+     * keep copies ([downloadsRefused]).
+     */
     val downloadFormatAvailable: Boolean get() =
-        downloadFormats.isEmpty() || downloadFormat in downloadFormats
+        !downloadsRefused && (downloadFormats.isEmpty() || downloadFormat in downloadFormats)
 
     val offlineMode: OfflineMode
         get() = offlineModeName?.let { name ->
@@ -342,8 +346,25 @@ data class MusicSource(
     val supportsEmptyPlaylists: Boolean get() = kind != SourceKind.PLEX
 
 
-    /** Downloading only means something when the audio is somewhere else. */
+    /**
+     * Downloading only means something when the audio is somewhere else.
+     *
+     * Whether this source *has* downloads, which it may still have where new
+     * ones aren't allowed — see [mayDownload].
+     */
     val supportsDownloads: Boolean get() = kind != SourceKind.LOCAL
+
+    /**
+     * Whether the server won't let this account keep copies — see
+     * ServerFeatures.KEEP_COPIES. Respected rather than routed round: Jellyfin
+     * has a call that hands over the file without asking, and using it would
+     * be overruling the person who runs the server. What is already on the
+     * phone stays, and plays.
+     */
+    val downloadsRefused: Boolean get() = !implements(ServerFeatures.KEEP_COPIES)
+
+    /** Whether a new download may be started here — the Download rows show only where it may. */
+    val mayDownload: Boolean get() = supportsDownloads && !downloadsRefused
 
     /**
      * Whether a download can keep the original file.

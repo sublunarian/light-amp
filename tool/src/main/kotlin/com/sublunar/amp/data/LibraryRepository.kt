@@ -1149,7 +1149,13 @@ class LibraryRepository(
                 client.getMusicFolders().map { it.id }.filterNot { it in hidden }.ifEmpty { listOf(null) }
             }
 
-            val starred = folderIds.map { client.getStarred(it) }.mergeStarred()
+            // Null when the server didn't answer: likes then stay as they are,
+            // rather than being reconciled against an empty answer — which
+            // unliked everything — or failing the whole sync over them.
+            val starred = runCatching { folderIds.map { client.getStarred(it) }.mergeStarred() }
+                .onFailure { android.util.Log.w("AmpSync", "favourites unread, likes kept: $it") }
+                .getOrNull()
+            val cached = dao.allAlbumsSnapshot().associateBy { it.id }
 
             _syncState.value = _syncState.value.copy(phase = "Fetching albums")
             // Which folder each album came from is kept, not merged away: it is
@@ -1168,12 +1174,11 @@ class LibraryRepository(
                 }
                 .distinctBy { (album, _) -> album.id }
             val serverAlbums = fetched.map { (album, _) ->
-                album.copy(liked = album.id in starred.albumIds)
+                album.copy(liked = starred?.let { album.id in it.albumIds } ?: cached[album.id]?.liked ?: album.liked)
             }
             val libraryOf = fetched.associate { (album, folder) -> album.id to folder }
             val serverAlbumById = serverAlbums.associateBy { it.id }
 
-            val cached = dao.allAlbumsSnapshot().associateBy { it.id }
             android.util.Log.i(
                 "AmpSync",
                 "scope=$musicFolderId cached rows by library tag: " +
@@ -1326,7 +1331,8 @@ class LibraryRepository(
             // song count, and a library with more songs than albums then looks
             // like it is being cut short.
             _syncState.value = _syncState.value.copy(phase = "Albums 0/${albumsToFetch.size}")
-            val unread = fetchAndStoreSongs(dao, client, albumsToFetch, starred.songIds, libraryOf)
+            val likedSongs = starred?.songIds ?: dao.likedTrackIds().toHashSet()
+            val unread = fetchAndStoreSongs(dao, client, albumsToFetch, likedSongs, libraryOf)
             // Settled only once every album it covers is read: one that failed
             // keeps the old mark, so it is asked about again next time.
             if (source != null && reread != null && unread == 0 && reread.next != songCheck) {
@@ -1334,9 +1340,9 @@ class LibraryRepository(
             }
 
             // Reconcile track likes across the whole library (cheap two-query pass).
-            dao.replaceTrackLikes(starred.songIds.toList())
+            if (starred != null) dao.replaceTrackLikes(starred.songIds.toList())
 
-            dao.replaceLikedArtists(starred.artistNames.map { LikedArtistEntity(it) })
+            if (starred != null) dao.replaceLikedArtists(starred.artistNames.map { LikedArtistEntity(it) })
 
             // Only now: a run that threw part-way leaves the old number in place
             // so the refill is attempted again rather than being marked done.

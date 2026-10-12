@@ -132,6 +132,9 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
         // is the page anyone checks when nothing is arriving — so it says why,
         // read from the settings themselves rather than the worker's state.
         val unmet = sources.filter { it.supportsDownloads && !it.downloadFormatAvailable }
+        // And servers that refused the last download — see Downloader.refusals.
+        val refusedStatus by App.downloader.refused.collectAsState()
+        val refused = sources.filter { it.id in refusedStatus && it !in unmet }
 
         // No tab bar and no menu: this is reached from Settings, and it is a
         // page about storage rather than a way of browsing the library. Back
@@ -145,7 +148,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 title = "Downloads",
                 fitTitle = true,
             )
-            if (total == 0 && !progress.active && bytes == 0L && unmet.isEmpty()) {
+            if (total == 0 && !progress.active && bytes == 0L && unmet.isEmpty() && refused.isEmpty()) {
                 // Says how, not just that: the one user who came looking here
                 // had no way to learn that holding a row is the way in.
                 EmptyState("Nothing downloaded yet.\nHold a song, album or artist and choose Download.")
@@ -157,12 +160,38 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
             ) {
                 unmet.forEach { source ->
                     item(key = "unmet/${source.id}") {
-                        TextRow(
-                            title = "${source.name} can't keep original files",
-                            subtitle = "Choose another download quality",
-                            subtitleLines = 2,
-                            onClick = { go { SourceDownloadFormatScreen(it, source.id) } },
-                        )
+                        if (source.downloadsRefused) {
+                            TextRow(
+                                title = "${source.name} won't let this account download",
+                                subtitle = "Its owner can allow it in the server's user settings",
+                                subtitleLines = 2,
+                            )
+                        } else {
+                            TextRow(
+                                title = "${source.name} can't keep original files",
+                                subtitle = "Choose another download quality",
+                                subtitleLines = 2,
+                                onClick = { go { SourceDownloadFormatScreen(it, source.id) } },
+                            )
+                        }
+                    }
+                }
+                refused.forEach { source ->
+                    item(key = "refused/${source.id}") {
+                        if (refusedStatus[source.id] == 401) {
+                            TextRow(
+                                title = "${source.name} refused the login",
+                                subtitle = "Sign in again in Sources",
+                                subtitleLines = 2,
+                                onClick = { go { SourceDetailScreen(it, source.id) } },
+                            )
+                        } else {
+                            TextRow(
+                                title = "${source.name} won't let this account download",
+                                subtitle = "Its owner can allow it in the server's user settings",
+                                subtitleLines = 2,
+                            )
+                        }
                     }
                 }
                 if (progress.active || paused) {
@@ -190,6 +219,9 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                             // every server's downloads share this one row.
                             subtitle = when {
                                 paused -> "Paused"
+                                // Held, and why the last try failed: "Waiting for
+                                // the server" alone never said what it answered.
+                                progress.currentSource == null && progress.error != null -> progress.error!!
                                 severalServers && progress.currentSource != null ->
                                     "Downloading · ${progress.currentSource}"
                                 else -> "Downloading"

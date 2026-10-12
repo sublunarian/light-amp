@@ -35,12 +35,11 @@ import kotlinx.coroutines.launch
  * A source's download quality as its settings row shows it: the choice, and
  * plainly when this server can't meet it — the row is where that gets fixed.
  */
-private fun downloadQualityLabel(source: MusicSource): String =
-    if (source.downloadFormatAvailable) {
-        formatLabel(source.downloadFormat)
-    } else {
-        "${formatLabel(source.downloadFormat)} — unavailable"
-    }
+private fun downloadQualityLabel(source: MusicSource): String = when {
+    source.downloadsRefused -> "Not allowed by the server"
+    source.downloadFormatAvailable -> formatLabel(source.downloadFormat)
+    else -> "${formatLabel(source.downloadFormat)} — unavailable"
+}
 
 fun formatLabel(format: StreamFormat): String = when (format) {
     StreamFormat.MP3 -> "MP3 (320 kbps)"
@@ -438,7 +437,11 @@ class OfflineScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
                                 title = server.name,
                                 subtitle = "${offlineModeLabel(server.offlineMode)} · " +
                                     shortFormatLabel(server.downloadFormat) +
-                                    if (server.downloadFormatAvailable) "" else " — unavailable",
+                                    when {
+                                        server.downloadsRefused -> " — not allowed"
+                                        server.downloadFormatAvailable -> ""
+                                        else -> " — unavailable"
+                                    },
                                 onClick = { go { SourceOfflineScreen(it, server.id) } },
                             )
                         }

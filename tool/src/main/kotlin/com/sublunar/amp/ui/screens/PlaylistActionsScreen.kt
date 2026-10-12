@@ -68,7 +68,7 @@ class PlaylistActionsScreen(
                         replaceWithPlayer()
                     }
                 }
-                if (list.isNotEmpty() && source.supportsDownloads) {
+                if (list.isNotEmpty() && source.supportsDownloads && (fullyDownloaded || source.mayDownload)) {
                     if (fullyDownloaded) {
                         TextRow(title = "Remove from Downloads") {
                             App.scope.launch { App.downloader.removeAll(list.map { it.id }) }

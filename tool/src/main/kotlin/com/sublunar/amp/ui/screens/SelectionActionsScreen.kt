@@ -60,7 +60,7 @@ class SelectionActionsScreen(
                         goBack(true)
                     }
                 }
-                if (showDownload && source.supportsDownloads) {
+                if (showDownload && source.mayDownload) {
                     TextRow(title = "Add to Downloads") {
                         App.downloader.enqueue(tracks)
                         goBack(true)

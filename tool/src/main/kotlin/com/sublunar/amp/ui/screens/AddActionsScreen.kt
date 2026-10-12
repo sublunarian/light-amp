@@ -104,7 +104,7 @@ class AddActionsScreen(
                         App.scope.launch { App.downloader.remove(track.id) }
                         goBack()
                     }
-                } else {
+                } else if (source.mayDownload) {
                     TextRow(title = "Add to Downloads") {
                         App.downloader.enqueue(listOf(track))
                         goBack()

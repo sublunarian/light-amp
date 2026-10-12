@@ -72,7 +72,7 @@ class AlbumActionsScreen(
                         go { RatingScreen(it, album.id, album.title, album.rating, isAlbum = true) }
                     }
                 }
-                if (list.isNotEmpty() && source.supportsDownloads) {
+                if (list.isNotEmpty() && source.supportsDownloads && (fullyDownloaded || source.mayDownload)) {
                     if (fullyDownloaded) {
                         TextRow(title = "Remove from Downloads") {
                             App.scope.launch { App.downloader.removeAll(list.map { it.id }) }

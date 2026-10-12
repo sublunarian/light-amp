@@ -30,6 +30,8 @@ data class JellyfinItem(
     @SerialName("Name") val name: String = "",
     @SerialName("ServerId") val serverId: String? = null,
     @SerialName("Type") val type: String = "",
+    /** "Audio" for a song or a playlist of songs; "Video" and others are left out — see JellyfinClient.getPlaylists. */
+    @SerialName("MediaType") val mediaType: String? = null,
     /**
      * What a view holds — "music" is the one this app cares about.
      *
@@ -112,6 +114,18 @@ data class JellyfinUserData(
     @SerialName("IsFavorite") val isFavorite: Boolean = false,
     @SerialName("Played") val played: Boolean = false,
     @SerialName("LastPlayedDate") val lastPlayedDate: String? = null,
+)
+
+/** `/Users/Me`: what the account is allowed. */
+@Serializable
+data class JellyfinMe(
+    @SerialName("Policy") val policy: JellyfinPolicy = JellyfinPolicy(),
+)
+
+@Serializable
+data class JellyfinPolicy(
+    /** "Allow media downloading" in the server's user settings; on unless its owner turned it off. */
+    @SerialName("EnableContentDownloading") val enableContentDownloading: Boolean = true,
 )
 
 /** What `/Users/AuthenticateByName` hands back. */

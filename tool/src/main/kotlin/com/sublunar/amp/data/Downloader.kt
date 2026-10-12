@@ -153,6 +153,44 @@ class Downloader(
     /** Consecutive failed transfers per source, for how long to wait before the next try. */
     private val failuresBySource = ConcurrentHashMap<String, Int>()
 
+    /**
+     * Sources whose server refused a download outright — 401, the login; 403,
+     * not for this account — with the record they were refused under.
+     *
+     * Not an outage, so not backed off: retrying a minute later only asks the
+     * same question, and a queue did exactly that for ever, flashing a song's
+     * title every few seconds under "Waiting for the server". The source's
+     * downloads wait instead, the Downloads page says why, and the refusal
+     * lapses when the record changes — signed in again, or a sync learning the
+     * account may download after all — or when a download is asked for by hand.
+     */
+    private val refusals = ConcurrentHashMap<String, Pair<Int, MusicSource>>()
+    private val _refused = MutableStateFlow<Map<String, Int>>(emptyMap())
+
+    /** Which sources' downloads wait on a refusal, by status — for the Downloads page. */
+    val refused: StateFlow<Map<String, Int>> = _refused
+
+    private fun refuse(source: MusicSource, status: Int) {
+        refusals[source.id] = status to source
+        _refused.value = refusals.mapValues { it.value.first }
+    }
+
+    private fun forgive(sourceId: String) {
+        if (refusals.remove(sourceId) != null) _refused.value = refusals.mapValues { it.value.first }
+    }
+
+    /** Whether [source]'s downloads still wait on a refusal made under the record it has now. */
+    private fun stillRefused(source: MusicSource): Boolean {
+        val (_, refusedAs) = refusals[source.id] ?: return false
+        if (refusedAs == source) return true
+        forgive(source.id)
+        return false
+    }
+
+    /** Sources nothing in the queue can be fetched from until something about them changes. */
+    private fun heldUntilChanged(sources: List<MusicSource>): Set<String> =
+        sources.filter { !it.downloadFormatAvailable || stillRefused(it) }.map { it.id }.toSet()
+
     private fun waiting(sourceId: String): Boolean =
         System.currentTimeMillis() < (retryAtBySource[sourceId] ?: 0L)
 
@@ -195,11 +233,14 @@ class Downloader(
         if (tracks.isEmpty()) return
         // Nothing to fetch for the phone's own music: the files are already
         // here, and this app has no business asking anyone for them.
-        if (!source.supportsDownloads) return
+        if (!source.mayDownload) return
         // Asking for something by hand is also asking to try now: whatever the
         // last failure decided about waiting, the person tapping Download has
         // better information about whether the server is up than we do.
-        if (manual) clearBackOff(source.id)
+        if (manual) {
+            clearBackOff(source.id)
+            forgive(source.id)
+        }
         scope.launch {
             // One query for the whole set. Asking per track meant an automatic mode
             // over a ten-thousand-track library fired ten thousand point selects,
@@ -445,10 +486,7 @@ class Downloader(
             // Only when something queued can actually move now — otherwise a
             // worker would start just to wait, polling, behind a pause or a
             // Wi-Fi rule, for a queue it could never touch.
-            val blocked = settings.sources.first()
-                .filterNot { it.downloadFormatAvailable }
-                .map { it.id }
-                .toSet()
+            val blocked = heldUntilChanged(settings.sources.first())
             lock.withLock {
                 if (queue.sourceIds().any { it !in blocked }) startWorkerLocked()
             }
@@ -546,10 +584,8 @@ class Downloader(
             // Original where it has no `download` call — is never picked: its
             // entries wait in the queue rather than being fetched as something
             // else. Read every pass, so changing the quality frees them.
-            val blocked = settings.sources.first()
-                .filterNot { it.downloadFormatAvailable }
-                .map { it.id }
-                .toSet()
+            // And one whose server refused the last download: see [refusals].
+            val blocked = heldUntilChanged(settings.sources.first())
             val (picked, held) = lock.withLock {
                 val next = queue.next { eligible(it) && it !in blocked }
                 next to (if (next == null) queue.sourceIds() else emptySet())
@@ -686,11 +722,18 @@ class Downloader(
                 )
                 completed++
                 clearBackOff(source.id)
+                if (_progress.value.error != null) _progress.value = _progress.value.copy(error = null)
                 lock.withLock { queue.complete(entry) }
             } else {
                 // A cancelled worker must not put the track back: cancelAll has
                 // just emptied the queue it would go into.
                 coroutineContext.ensureActive()
+                val status = store.lastStatus
+                if (status == 401 || status == 403) {
+                    lock.withLock { queue.requeueFront(picked) }
+                    refuse(source, status)
+                    continue
+                }
                 // A failed transfer is the server's problem more often than the
                 // track's: hold *this source's* queue and let the next
                 // reachability check start it again, rather than failing all ten

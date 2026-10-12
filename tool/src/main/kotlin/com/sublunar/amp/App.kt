@@ -720,6 +720,13 @@ object App {
                     .drop(1)
                     .collect { downloader.retry() }
             }
+            // And those a server refused, once their record changes — signed
+            // in again, say. See Downloader.refusals.
+            scope.launch {
+                settings.sources
+                    .drop(1)
+                    .collect { if (downloader.refused.value.isNotEmpty()) downloader.retry() }
+            }
             // Bulk work put off on a metered link — every playlist's contents,
             // and with them the playlist downloads and badges — is picked up
             // the moment the link stops costing money, not at the next launch.
@@ -1345,7 +1352,7 @@ object App {
             // Nothing to download on the phone's own music: the files are
             // already here, put there by Light's own transfer, and this app
             // has no business fetching anything on their behalf.
-            if (!source.supportsDownloads || source.offlineMode == OfflineMode.MANUAL) continue
+            if (!source.mayDownload || source.offlineMode == OfflineMode.MANUAL) continue
             runCatching { topUpDownloads(source) }
                 .onFailure { android.util.Log.w("AmpDl", "top-up failed for ${source.name}", it) }
         }

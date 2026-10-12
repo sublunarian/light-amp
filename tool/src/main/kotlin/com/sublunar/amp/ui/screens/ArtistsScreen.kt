@@ -170,7 +170,7 @@ class ArtistActionsScreen(
                     }
                 }
                 TextRow(title = "All Songs") { go { ArtistSongsScreen(it, name) } }
-                if (artistTracks.isNotEmpty() && source.supportsDownloads) {
+                if (artistTracks.isNotEmpty() && source.supportsDownloads && (fullyDownloaded || source.mayDownload)) {
                     if (fullyDownloaded) {
                         TextRow(title = "Remove from Downloads") {
                             App.scope.launch { App.downloader.removeAll(artistTracks.map { it.id }) }

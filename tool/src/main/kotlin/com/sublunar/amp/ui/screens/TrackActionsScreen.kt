@@ -203,7 +203,7 @@ class TrackActionsScreen(
                         )
                     }
                 }
-                if (showDownload && source.supportsDownloads) {
+                if (showDownload && source.supportsDownloads && (downloaded || source.mayDownload)) {
                     if (downloaded) {
                         TextRow(title = "Remove from Downloads") {
                             App.scope.launch { App.downloader.remove(track.id) }

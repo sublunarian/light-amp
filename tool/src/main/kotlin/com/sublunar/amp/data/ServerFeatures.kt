@@ -71,6 +71,14 @@ data class ServerFeatures(
          */
         const val SCAN_STATUS = "getScanStatus"
 
+        /**
+         * Keeping copies at all — Jellyfin's per-account "Allow media
+         * downloading", which a server's owner turns off for someone who may
+         * listen but not keep files. Not an endpoint, and not one of the
+         * Subsonic probes: Jellyfin's client reads it from the account.
+         */
+        const val KEEP_COPIES = "keepCopies"
+
         /** Everything a first asking covers. */
         val ALL = listOf(SCAN_STATUS, SET_RATING, SIMILAR_SONGS, DOWNLOAD)
     }

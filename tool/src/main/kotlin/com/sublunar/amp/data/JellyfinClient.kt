@@ -1,5 +1,7 @@
 package com.sublunar.amp.data
 
+import java.time.Instant
+import java.time.Duration
 import io.ktor.client.HttpClient
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -11,8 +13,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import java.net.URLEncoder
-import java.time.Duration
-import java.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -148,6 +148,20 @@ class JellyfinClient(
     suspend fun signOut(): Boolean =
         deviceId != LEGACY_DEVICE_ID && send("POST", "/Sessions/Logout")
 
+    /**
+     * The one thing about a Jellyfin server that depends on who is asking
+     * rather than on its version: whether this account may keep copies. Read
+     * from the account's own policy after every sync, since its owner can
+     * change it at any time; a server that doesn't answer leaves what was known.
+     */
+    override suspend fun probeFeatures(known: ServerFeatures?, sampleTrackId: String?): ServerFeatures? {
+        val me = runCatching { fetch<JellyfinMe>("/Users/Me") }.getOrNull() ?: return known
+        return ServerFeatures(
+            missing = if (me.policy.enableContentDownloading) emptyList() else listOf(ServerFeatures.KEEP_COPIES),
+            generation = ServerFeatures.GENERATION,
+        )
+    }
+
     override suspend fun ping() {
         // Proves the address, the token and the user in one call: an expired
         // token answers 401 here rather than an empty library later.
@@ -208,10 +222,18 @@ class JellyfinClient(
             val page = fetch<JellyfinItems>("/Items", params)
             items += page.items
             start += page.items.size
-            if (page.items.isEmpty() || start >= page.totalRecordCount) break
+            if (!page.continuesAfter(start)) break
         }
         return items
     }
+
+    /**
+     * Whether there is a page after this one. A short page is the end; a full
+     * one goes on unless the server's total says otherwise — a total it left
+     * out reads as 0, and stopping on that cut every list off at one page.
+     */
+    private fun JellyfinItems.continuesAfter(start: Int): Boolean =
+        items.size >= PAGE_SIZE && (totalRecordCount == 0 || start < totalRecordCount)
 
     /**
      * The albums whose songs Jellyfin saved since [mark].
@@ -261,7 +283,7 @@ class JellyfinClient(
             val page = json.decodeFromString<JellyfinItems>(response.bodyAsText())
             page.items.mapNotNullTo(albumIds) { it.albumId }
             start += page.items.size
-            if (page.items.isEmpty() || start >= page.totalRecordCount) break
+            if (!page.continuesAfter(start)) break
         }
         return SongChanges.Albums(albumIds, (now ?: Instant.now()).toString())
     }
@@ -305,22 +327,29 @@ class JellyfinClient(
      * same reason [Starred] carries names for them everywhere else.
      */
     override suspend fun getStarred(musicFolderId: String?): Starred {
+        // A failure goes up rather than reading as "nothing is liked": the
+        // sync takes this answer as the whole truth and unlikes everything
+        // missing from it, so one bad request used to wipe every like.
         val favourite = listOf("Filters" to "IsFavorite")
-        val songs = runCatching { paged(musicFolderId, TRACK_TYPE, favourite) }
-            .getOrDefault(emptyList())
-        val albums = runCatching { paged(musicFolderId, ALBUM_TYPE, favourite) }
-            .getOrDefault(emptyList())
-        val artists = runCatching {
-            fetch<JellyfinItems>(
+        val songs = paged(musicFolderId, TRACK_TYPE, favourite)
+        val albums = paged(musicFolderId, ALBUM_TYPE, favourite)
+        val artists = mutableListOf<JellyfinItem>()
+        var start = 0
+        while (true) {
+            val page = fetch<JellyfinItems>(
                 "/Artists",
                 buildList {
                     add("userId" to userId)
                     add("Filters" to "IsFavorite")
+                    add("StartIndex" to start.toString())
                     add("Limit" to PAGE_SIZE.toString())
                     if (!musicFolderId.isNullOrBlank()) add("ParentId" to musicFolderId)
                 },
-            ).items
-        }.getOrDefault(emptyList())
+            )
+            artists += page.items
+            start += page.items.size
+            if (!page.continuesAfter(start)) break
+        }
         return Starred(
             songIds = songs.map { it.id }.toSet(),
             albumIds = albums.map { it.id }.toSet(),
@@ -363,7 +392,7 @@ class JellyfinClient(
             )
             items += page.items
             start += page.items.size
-            if (page.items.isEmpty() || start >= page.totalRecordCount) break
+            if (!page.continuesAfter(start)) break
         }
         items.map { ArtistRef(id = it.id, name = it.name, imageId = it.imageId()) }
             .distinctBy { it.id }
@@ -422,7 +451,10 @@ class JellyfinClient(
             add("UserId" to userId)
             add("DeviceId" to deviceId)
             add(TOKEN_PARAM to token)
-            add("Container" to container)
+            // Container and codec together: "ogg" alone lets any Ogg file
+            // through untouched, so a Vorbis file came as Vorbis at its own
+            // bitrate when Opus was asked for.
+            add("Container" to "$container|${CODECS[format] ?: container}")
             add("AudioCodec" to (CODECS[format] ?: container))
             add("TranscodingContainer" to container)
             add("TranscodingProtocol" to "http")
@@ -554,7 +586,11 @@ class JellyfinClient(
     // --- Playlists -----------------------------------------------------------
 
     override suspend fun getPlaylists(musicFolderId: String?): List<Playlist> =
-        paged(null, PLAYLIST_TYPE).map {
+        paged(null, PLAYLIST_TYPE)
+            // A playlist of films or episodes is not one to play here.
+            .filter { it.mediaType.isNullOrBlank() || it.mediaType.equals(AUDIO_MEDIA, ignoreCase = true) }
+            .distinctBy { it.id }
+            .map {
             Playlist(
                 id = it.id,
                 name = it.name,
@@ -575,12 +611,39 @@ class JellyfinClient(
     override suspend fun getPlaylistTracks(id: String): List<Track> =
         playlistEntries(id).map { it.toTrack() }
 
-    /** The raw entries, which carry the playlist-entry ids a removal needs. */
+    /**
+     * The songs in a playlist, which carry the entry ids a removal needs — the
+     * same list, in the same order, that [getPlaylistTracks] shows, so a
+     * position in one is a position in the other.
+     */
     private suspend fun playlistEntries(id: String): List<JellyfinItem> =
-        fetch<JellyfinItems>(
-            "/Playlists/$id/Items",
-            listOf("userId" to userId, "Fields" to FIELDS),
-        ).items
+        allPlaylistEntries(id).filter { it.type == TRACK_TYPE }
+
+    /**
+     * Everything in a playlist, a page at a time. One request for a whole
+     * playlist answered a large one as a single body the phone couldn't hold
+     * — the same failure Plex's playlists had — and opening Playlists fetched
+     * every playlist's contents at once.
+     */
+    private suspend fun allPlaylistEntries(id: String): List<JellyfinItem> {
+        val items = mutableListOf<JellyfinItem>()
+        var start = 0
+        while (true) {
+            val page = fetch<JellyfinItems>(
+                "/Playlists/$id/Items",
+                listOf(
+                    "userId" to userId,
+                    "Fields" to FIELDS,
+                    "StartIndex" to start.toString(),
+                    "Limit" to PAGE_SIZE.toString(),
+                ),
+            )
+            items += page.items
+            start += page.items.size
+            if (!page.continuesAfter(start)) break
+        }
+        return items
+    }
 
     override suspend fun createPlaylist(name: String, songIds: List<String>): String? = runCatching {
         val payload = buildJsonObject {
@@ -634,6 +697,10 @@ class JellyfinClient(
             // Not the song the caller saw there: the playlist has changed under it.
             entries.getOrNull(index)?.takeIf { it.id == songId }?.playlistItemId ?: return false
         }
+        // Since Jellyfin 12 an entry's id is its song's, so the server removes
+        // every copy of a song a playlist holds twice. Unless every copy is
+        // what was asked, it is refused rather than taking the others with it.
+        if (!takesEveryCopy(entries.map { it.playlistItemId }, entryIds)) return false
         return send("DELETE", "/Playlists/$id/Items", listOf("entryIds" to entryIds.joinToString(",")))
     }
 
@@ -645,8 +712,14 @@ class JellyfinClient(
     override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean {
         // A wanted order that isn't the whole playlist would move its tracks to
         // the front and leave the rest trailing in an order nobody asked for.
-        val known = runCatching { playlistEntries(id) }.getOrNull() ?: return false
+        val all = runCatching { allPlaylistEntries(id) }.getOrNull() ?: return false
+        val known = all.filter { it.type == TRACK_TYPE }
         if (known.size != orderedSongIds.size) return false
+        // Positions on the server count entries this app doesn't show, and a
+        // song held twice can't be told apart from its other copy — a move
+        // names an entry by its song since Jellyfin 12, and moves the first.
+        // Either way the order that landed wouldn't be the one asked for.
+        if (all.size != known.size || known.distinctBy { it.playlistItemId }.size != known.size) return false
         orderedSongIds.forEachIndexed { target, songId ->
             val entries = runCatching { playlistEntries(id) }.getOrNull() ?: return false
             val at = entries.indexOfFirst { it.id == songId }
@@ -689,6 +762,16 @@ class JellyfinClient(
          */
         const val TOKEN_PARAM = "ApiKey"
 
+        /**
+         * Whether removing [asked] by entry id takes exactly what was asked from
+         * a playlist whose entries are [held]: on Jellyfin 12 an entry's id is
+         * its song's, and the server removes every entry with it.
+         */
+        internal fun takesEveryCopy(held: List<String?>, asked: List<String>): Boolean {
+            val copies = held.groupingBy { it }.eachCount()
+            return asked.groupingBy { it }.eachCount().all { (entry, n) -> copies[entry] == n }
+        }
+
         /** A rename, and nothing that could touch the playlist's contents — see [renamePlaylist]. */
         internal fun renameBody(name: String): JsonObject = buildJsonObject { put("Name", name) }
 
@@ -701,6 +784,7 @@ class JellyfinClient(
         private const val ALBUM_TYPE = "MusicAlbum"
         private const val TRACK_TYPE = "Audio"
         private const val PLAYLIST_TYPE = "Playlist"
+        private const val AUDIO_MEDIA = "Audio"
 
         /** Jellyfin's key for the library scan, used to tell whether one is running. */
         private const val SCAN_TASK = "RefreshLibrary"

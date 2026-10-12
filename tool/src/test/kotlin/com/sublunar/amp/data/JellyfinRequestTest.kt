@@ -56,4 +56,31 @@ class JellyfinRequestTest {
         assertTrue("DeviceId=\"amp-1\"" in header, header)
         assertTrue(header.all { it in ' '..'~' }, header)
     }
+
+    @Test
+    fun `asking for Opus can't come back as some other Ogg`() {
+        // "ogg" alone direct-plays any Ogg file, Vorbis included.
+        assertTrue("Container=ogg%7Copus" in client.streamUrl("t1", StreamFormat.OPUS))
+        assertTrue("Container=mp3%7Cmp3" in client.streamUrl("t1", StreamFormat.MP3))
+    }
+
+    @Test
+    fun `removing one copy of a song held twice is refused`() {
+        val held = listOf("a", "b", "a")
+        assertFalse(JellyfinClient.takesEveryCopy(held, listOf("a")))
+        assertTrue(JellyfinClient.takesEveryCopy(held, listOf("a", "a")))
+        assertTrue(JellyfinClient.takesEveryCopy(held, listOf("b")))
+    }
+
+    @Test
+    fun `an account that may not keep copies offers no downloads, and keeps what it has`() {
+        val source = MusicSource(id = "j", kind = SourceKind.JELLYFIN, name = "J")
+        assertTrue(source.mayDownload)
+        val refused = source.copy(features = ServerFeatures(missing = listOf(ServerFeatures.KEEP_COPIES)))
+        assertTrue(refused.downloadsRefused)
+        assertFalse(refused.mayDownload)
+        assertFalse(refused.downloadFormatAvailable)
+        // Still a source that has downloads: the ones already here stay listed and removable.
+        assertTrue(refused.supportsDownloads)
+    }
 }

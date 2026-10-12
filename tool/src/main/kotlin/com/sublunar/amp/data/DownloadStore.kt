@@ -102,6 +102,7 @@ class DownloadStore(private val filesDir: File) {
      */
     suspend fun download(sourceId: String, url: String, trackId: String, format: StreamFormat): File? =
         withContext(Dispatchers.IO) {
+            lastStatus = null
             val target = fileFor(sourceId, trackId, format)
             val partial = File(target.parentFile, "${target.name}$PART_SUFFIX")
             try {
@@ -124,6 +125,7 @@ class DownloadStore(private val filesDir: File) {
                         if (!response.isSuccessful) {
                             // The path only: the query can carry the token.
                             Log.w(TAG, "download $trackId: HTTP ${response.code} for ${response.request.url.encodedPath}")
+                            lastStatus = response.code
                             lastError = "Server said ${response.code}"
                             return@withContext null
                         }
@@ -179,6 +181,11 @@ class DownloadStore(private val filesDir: File) {
     /** Reason the most recent download failed, for surfacing in the UI. */
     @Volatile
     var lastError: String? = null
+        private set
+
+    /** The HTTP status the last download was refused with; null when it wasn't one. */
+    @Volatile
+    var lastStatus: Int? = null
         private set
 
     suspend fun delete(sourceId: String, fileName: String) = withContext(Dispatchers.IO) {
