@@ -670,8 +670,8 @@ class PlaybackController(
                 PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE
             android.util.Log.i(
                 "AmpNet",
-                "player error ${error.errorCodeName} at idx=${_index.value} " +
-                    "(${if (fromFile) "file" else "stream"})",
+                "player error ${error.errorCodeName}${error.httpStatus()?.let { " (HTTP $it)" }.orEmpty()} " +
+                    "at idx=${_index.value} (${if (fromFile) "file" else "stream"})",
             )
             if (fromFile || !network) {
                 // Not a matter for the network at all: a file on the phone, or
@@ -1581,6 +1581,12 @@ class PlaybackController(
         withStreamDecision { player?.play() }
         reportTimeline(TimelineState.PLAYING)
     }
+
+    /** The status a server answered with, where that is what went wrong — for the log. */
+    private fun PlaybackException.httpStatus(): Int? =
+        generateSequence<Throwable>(this) { it.cause }
+            .firstNotNullOfOrNull { Regex("""Response code: (\d{3})""").find(it.message.orEmpty()) }
+            ?.groupValues?.get(1)?.toIntOrNull()
 
     /** Whether the player's own connection was refused by the network rule. */
     private fun PlaybackException.refusedByGate(): Boolean =

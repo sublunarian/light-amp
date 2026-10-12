@@ -328,7 +328,7 @@ class JellyfinClient(
      */
     override fun downloadUrl(track: Track, format: StreamFormat): String =
         if (format == StreamFormat.RAW) {
-            url("/Items/${track.id}/Download", listOf("api_key" to token))
+            url("/Items/${track.id}/Download", listOf(TOKEN_PARAM to token))
         } else {
             streamUrl(track, format, estimateContentLength = false)
         }
@@ -345,7 +345,7 @@ class JellyfinClient(
                 "/Audio/$songId/stream",
                 listOf(
                     "static" to "true",
-                    "api_key" to token,
+                    TOKEN_PARAM to token,
                 ),
             )
         }
@@ -353,7 +353,7 @@ class JellyfinClient(
         val params = buildList {
             add("UserId" to userId)
             add("DeviceId" to DEVICE_ID)
-            add("api_key" to token)
+            add(TOKEN_PARAM to token)
             add("Container" to container)
             add("AudioCodec" to (CODECS[format] ?: container))
             add("TranscodingContainer" to container)
@@ -378,7 +378,7 @@ class JellyfinClient(
      */
     override fun coverArtUrl(coverArtId: String?): String? {
         if (coverArtId.isNullOrBlank()) return null
-        return url("/Items/$coverArtId/Images/Primary", listOf("api_key" to token))
+        return url("/Items/$coverArtId/Images/Primary", listOf(TOKEN_PARAM to token))
     }
 
     /**
@@ -397,7 +397,7 @@ class JellyfinClient(
                 "maxWidth" to maxSizePx.toString(),
                 "maxHeight" to maxSizePx.toString(),
                 "quality" to COVER_QUALITY.toString(),
-                "api_key" to token,
+                TOKEN_PARAM to token,
             ),
         )
     }
@@ -534,20 +534,14 @@ class JellyfinClient(
     }.getOrNull()
 
     /**
-     * Renaming needs the whole item back, not just the new name: Jellyfin's
-     * update takes a full record and drops anything missing from it. Servers
-     * before 10.9 have no playlist update at all and refuse, which leaves the
-     * name as it was rather than clearing it.
+     * Only the name goes: Jellyfin's update leaves whatever a request leaves
+     * out alone, but takes any `Ids` it is sent — an empty list included — as
+     * the playlist's new contents. An earlier version sent `"Ids": []`, and
+     * renaming a playlist emptied it. Servers before 10.9 have no playlist
+     * update at all and refuse, which leaves the name as it was.
      */
     override suspend fun renamePlaylist(id: String, name: String) {
-        send(
-            "POST",
-            "/Playlists/$id",
-            payload = buildJsonObject {
-                put("Name", name)
-                put("Ids", buildJsonArray { })
-            },
-        )
+        send("POST", "/Playlists/$id", payload = renameBody(name))
     }
 
     override suspend fun deletePlaylist(id: String) {
@@ -613,6 +607,22 @@ class JellyfinClient(
          * two Plex is limited to.
          */
         val STREAM_FORMATS: List<StreamFormat> = StreamFormat.entries.toList()
+
+        /**
+         * How a URL that can't carry a header — a stream, a download, a cover —
+         * carries the token.
+         *
+         * Not `api_key`: that spelling is "legacy authorization", which Jellyfin
+         * 12 switches off by default and on every upgraded server, and then
+         * ignores — the request arrives with no token at all. A transcode or a
+         * download answers that with 401; the original file and the covers
+         * need no login and kept working, which is what made it look like
+         * only some things were broken. Every server since 10.8 reads `ApiKey`.
+         */
+        const val TOKEN_PARAM = "ApiKey"
+
+        /** A rename, and nothing that could touch the playlist's contents — see [renamePlaylist]. */
+        internal fun renameBody(name: String): JsonObject = buildJsonObject { put("Name", name) }
 
         /** Items per request. Big enough to be one round trip on most libraries. */
         private const val PAGE_SIZE = 500

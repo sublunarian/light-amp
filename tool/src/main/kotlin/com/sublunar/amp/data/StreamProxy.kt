@@ -220,7 +220,15 @@ class StreamProxy(
             }
         }
         val firstCall = request(url, range)
-        val first: Response = firstCall.execute() // an IOException here drops the connection — see above
+        val first: Response = try {
+            firstCall.execute()
+        } catch (e: IOException) {
+            // Dropping the connection is the answer — see above — but the
+            // player only ever learns "network error", so the cause is said here.
+            log("upstream unreachable for ${firstCall.request().url.encodedPath}: $e")
+            throw e
+        }
+        if (!first.isSuccessful) log("upstream ${first.code} for ${first.request.url.encodedPath}")
         // The player only ever asks for the body; a HEAD, or a server's "no",
         // gets the status and headers and nothing else — and the upstream
         // body, which was opened all the same, is let go at once.

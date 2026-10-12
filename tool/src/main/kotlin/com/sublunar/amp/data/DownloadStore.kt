@@ -122,6 +122,8 @@ class DownloadStore(private val filesDir: File) {
                 try {
                     call.execute().use { response ->
                         if (!response.isSuccessful) {
+                            // The path only: the query can carry the token.
+                            Log.w(TAG, "download $trackId: HTTP ${response.code} for ${response.request.url.encodedPath}")
                             lastError = "Server said ${response.code}"
                             return@withContext null
                         }
@@ -131,6 +133,7 @@ class DownloadStore(private val filesDir: File) {
                         // fetched again.
                         val type = response.body.contentType()
                         if (type != null && (type.type == "text" || type.subtype in NOT_AUDIO_SUBTYPES)) {
+                            Log.w(TAG, "download $trackId: $type, not audio, from ${response.request.url.encodedPath}")
                             lastError = "Server sent $type instead of audio"
                             return@withContext null
                         }
