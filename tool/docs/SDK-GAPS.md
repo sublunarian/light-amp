@@ -104,7 +104,9 @@ minutes, where the spike held on indefinitely.
 - **Since SDK 0.2.0:** the builder fetches anything else a tool declares
   through a build-time Maven proxy (`light-sdk/builder/README.md`), so the
   artifact should now resolve there. Kept vendored until a real dashboard
-  build proves it; then revert.
+  build proves it.
+- **To revisit:** after Amp's first build on Light's dashboard. If it
+  resolved `material-icons-extended`, revert as below.
 - **Revert:** delete `MaterialGlyphs.kt`, and restore the `implementation` line
   in `tool/build.gradle.kts` and the icon imports in `Primitives.kt`.
 
@@ -227,6 +229,21 @@ minutes, where the spike held on indefinitely.
   `TextEntryScreen` and drop `TextEditor`, `EditMenu` and the helpers after them.
 
 ## Answered upstream, not yet adopted
+
+### Tool Manager — music from a computer, through a browser (SDK 0.2.0): to revisit
+
+- **What it is:** a tool that declares `tool-manager-provider` in
+  `lighttool.toml` shows up in LightOS's Tool Manager, a page the user opens in
+  a computer's browser to move files to and from the phone
+  (`light-sdk/docs/tool_manager/README.md`). Light's own example of a use is a
+  music tool taking a user's library.
+- **For Amp:** upload albums straight into Local Music, with no cable and no
+  storage permission. Uploads land in the tool's own `files/shared/<path>`,
+  and LightOS calls `onToolManagerDataUpdate()` on the entry point once they
+  settle, where Amp would rescan.
+- **Why not yet:** the Tool Manager's own README still calls support for SDK
+  tools "soon", so check that LightOS lists Amp before building it. It also
+  means a second root beside `Music/Amp` for `LocalLibrary` to scan.
 
 ### Detached audio — PR #148: ADOPTED, 31 Aug 2026
 
