@@ -5,27 +5,44 @@
 ### Fixed
 
 - Amp could crash when reopened after sitting paused in the background.
+- "Buffering…" and a play button could stay on screen over music that was
+  playing.
 - Reopening could flash 0:00 and a paused button, or land on the library
   instead of Now Playing.
+- Jellyfin 12: streaming in other formats and downloads work again.
+- Renaming a Jellyfin playlist emptied it.
+- Plex no longer sees a new session for every song, which could stop shared
+  users from playing (#20, thanks @itscrowtime).
+- Some Plex songs wouldn't play or download at Original quality.
 - Adding a Jellyfin or Plex server failed unless the address started with
   http:// or https://.
-- On the keyboard's number page, the arrow in place of DONE did nothing.
 - A newly added server could take minutes to start syncing.
 - Switching to All Libraries didn't work.
+- On the keyboard's number page, the arrow in place of DONE did nothing.
+- Plays made while a server was unreachable are no longer lost, plus several
+  playlist and download fixes.
+
+### Changed
+
+- Songs edited on your server now update in Amp, not only new albums.
+- Changes a server refuses, like a like or a playlist rename, now say so
+  instead of failing silently.
+- Downloads say why they're waiting, respect a server's download permission,
+  and no longer run in the background while a server is down or downloads are
+  paused.
+- Hidden libraries are now hidden everywhere, and aren't synced.
+- Signing in to a server now says whether the address or the login was wrong.
+- Log Out asks first, since it deletes that server's downloads.
+- Linking Plex goes straight on when your account has one server, and
+  connects faster.
+- Built on Light's SDK 0.2.0.
 
 ### Added
 
 - Choose which libraries to show when adding a server.
 - A first sync shows how far it has got, instead of empty pages.
-
-### Changed
-
-- Hidden libraries are now hidden everywhere, and aren't synced.
-- Linking Plex goes straight on when your account has one server, and
-  connects faster.
-- Log Out asks first, since it deletes that server's downloads.
-- Signing in to a server now says whether the address or the login was wrong.
-- Built on Light's SDK 0.2.0.
+- Sign in again to a Jellyfin server from Sources, keeping its library and
+  downloads.
 
 ## 0.7.3
 
