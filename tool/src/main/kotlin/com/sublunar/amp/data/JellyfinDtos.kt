@@ -43,6 +43,8 @@ data class JellyfinItem(
     @SerialName("ProductionYear") val productionYear: Int? = null,
     @SerialName("PremiereDate") val premiereDate: String? = null,
     @SerialName("DateCreated") val dateCreated: String? = null,
+    /** On a playlist, when songs were last added to it — the nearest thing it has to "last changed". */
+    @SerialName("DateLastMediaAdded") val dateLastMediaAdded: String? = null,
     @SerialName("IndexNumber") val indexNumber: Int? = null,
     @SerialName("ParentIndexNumber") val parentIndexNumber: Int? = null,
     @SerialName("Album") val album: String? = null,

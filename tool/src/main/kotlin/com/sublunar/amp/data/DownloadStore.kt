@@ -134,7 +134,7 @@ class DownloadStore(private val filesDir: File) {
                         // song" from then on: a file that never plays and is never
                         // fetched again.
                         val type = response.body.contentType()
-                        if (type != null && (type.type == "text" || type.subtype in NOT_AUDIO_SUBTYPES)) {
+                        if (type != null && (type.type == "text" || isDocumentSubtype(type.subtype))) {
                             Log.w(TAG, "download $trackId: $type, not audio, from ${response.request.url.encodedPath}")
                             lastError = "Server sent $type instead of audio"
                             return@withContext null
@@ -320,7 +320,6 @@ class DownloadStore(private val filesDir: File) {
         private const val READ_TIMEOUT_MS = 30_000
         private const val PART_SUFFIX = ".part"
         /** Content types that are an answer *about* a track, never the track. */
-        private val NOT_AUDIO_SUBTYPES = setOf("json", "xml", "html")
         // 64 GB is reachable on the LP3's 128 GB of storage only if we're willing
         // to claim more than half of what's free, so the share goes up with the
         // ceiling; a quarter of free space still stays behind for the OS and the
@@ -368,3 +367,13 @@ fun formatBytes(bytes: Long): String {
     val mb = bytes / 1024.0 / 1024.0
     return "${mb.toInt()} MB"
 }
+
+/**
+ * Whether an answer of this `application/` subtype is a document rather than a
+ * song — and a playlist of segments is one too: an HLS (`vnd.apple.mpegurl`) or
+ * DASH (`dash+xml`) answer saved under the track's name is a few lines of text
+ * that will never play.
+ */
+internal fun isDocumentSubtype(subtype: String): Boolean =
+    subtype in setOf("json", "xml", "html", "javascript") ||
+        subtype.endsWith("+xml") || subtype.endsWith("+json") || "mpegurl" in subtype

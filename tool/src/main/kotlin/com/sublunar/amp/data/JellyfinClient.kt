@@ -596,7 +596,10 @@ class JellyfinClient(
                 name = it.name,
                 coverArtId = it.imageId(),
                 createdAt = jellyfinDateMs(it.dateCreated),
-                updatedAt = jellyfinDateMs(it.dateCreated),
+                // When songs were last added, which is what moves a playlist
+                // up "Recently updated"; Jellyfin keeps no date for a removal,
+                // a reorder or a rename. Its creation where it has neither.
+                updatedAt = jellyfinDateMs(it.dateLastMediaAdded ?: it.dateCreated),
                 trackIds = emptyList(),
             )
         }
@@ -797,7 +800,7 @@ class JellyfinClient(
          */
         private const val FIELDS =
             "Genres,DateCreated,PremiereDate,ChildCount,AlbumArtists,ArtistItems,People," +
-                "NormalizationGain"
+                "NormalizationGain,DateLastMediaAdded"
 
         private const val MP3_CONTAINER = "mp3"
         private const val COVER_QUALITY = 90

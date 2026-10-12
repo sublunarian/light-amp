@@ -1678,6 +1678,11 @@ class PlaybackController(
         if (next == null) {
             _waitingFor.value = reason
             _isPlaying.value = false
+            // The server was told this song started — play() says so before
+            // there is any sound — and nothing it can do will start it now,
+            // so it is told it stopped. Otherwise its dashboard went on
+            // listing the phone as playing a song that never played.
+            tracks.getOrNull(at)?.id?.let { id -> scope.launch { reportTimelineStoppedNow(id) } }
             return
         }
         _waitingFor.value = null
