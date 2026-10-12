@@ -1,9 +1,9 @@
 package com.sublunar.amp.data
 
+import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.URL
-import javax.net.ssl.HttpsURLConnection
 import kotlin.concurrent.thread
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -20,9 +20,8 @@ import kotlinx.coroutines.cancel
 import okhttp3.OkHttpClient
 
 /**
- * The proxy end to end, the way the player uses it: an `HttpsURLConnection`
- * to 127.0.0.1, trusting only what [StreamProxy] itself installed, against a
- * plain HTTP "music server" on another local port.
+ * The proxy end to end, the way the player uses it: an `HttpURLConnection`
+ * to 127.0.0.1, against a plain HTTP "music server" on another local port.
  */
 class StreamProxyTest {
     private val payload = Random(7).nextBytes(300_000)
@@ -53,7 +52,7 @@ class StreamProxyTest {
     private fun originUrl(path: String) = "http://127.0.0.1:${origin.localPort}$path"
 
     private fun fetch(url: String, range: String? = null): Pair<Int, ByteArray> {
-        val connection = URL(url).openConnection() as HttpsURLConnection
+        val connection = URL(url).openConnection() as HttpURLConnection
         connection.setRequestProperty("Accept-Encoding", "identity")
         if (range != null) connection.setRequestProperty("Range", range)
         return try {
@@ -68,14 +67,6 @@ class StreamProxyTest {
     @Test
     fun comesUpAndProvesItself() {
         assertIs<StreamProxy.State.On>(proxy.state.value, "state was ${proxy.state.value}")
-    }
-
-    @Test
-    fun certificateNamesLoopbackOnly() {
-        val cert = LoopbackCert.create().certificate
-        val names = cert.subjectAlternativeNames.map { it[1].toString() }.toSet()
-        assertEquals(setOf("127.0.0.1", "localhost"), names)
-        cert.checkValidity()
     }
 
     @Test
@@ -200,9 +191,9 @@ class StreamProxyTest {
     fun addressesAreStableAndUnguessable() {
         val a = proxy.wrap(originUrl("/file"))
         assertEquals(a, proxy.wrap(originUrl("/file")))
-        assertTrue(a.startsWith("https://127.0.0.1:"))
+        assertTrue(a.startsWith("http://127.0.0.1:"))
         val port = (proxy.state.value as StreamProxy.State.On).port
-        assertEquals(404, fetch("https://127.0.0.1:$port/s/${"0".repeat(32)}").first)
+        assertEquals(404, fetch("http://127.0.0.1:$port/s/${"0".repeat(32)}").first)
     }
 
     // --- A very small music server -------------------------------------------

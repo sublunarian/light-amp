@@ -109,13 +109,13 @@ sync.
 **The player never talks to the music server; `StreamProxy` does.** The
 platform player fetches with its own HTTP stack, outside `NetworkGate`, preloads
 the next track, reconnects on whatever network is current, and keeps playing
-after the tool's screens are gone. So it is handed `https://127.0.0.1:port/s/…`
+after the tool's screens are gone. So it is handed `http://127.0.0.1:port/s/…`
 addresses, and the proxy — in the app's process scope — fetches the real bytes
 through the gated client, deciding per request under the rules in force at that
 moment. That is why a network or data-mode change never needs the player's
-queue edited. TLS, because a store build permits no cleartext even to this
-phone; the certificate is made at launch (`LoopbackCert`) and trusted by one
-additive entry in the process's `HttpsURLConnection` defaults. It proves itself
+queue edited. Plain HTTP, which the SDK's `cleartext-http` capability permits
+in every build (before SDK 0.2.0 it was TLS with a certificate made at
+launch, because a store build allowed no cleartext even to this phone). It proves itself
 at start by fetching from itself; if that fails, `wrap()` returns the server's
 own URL and the About page says why. Anything that hands the player a URL must
 go through `App.streamProxy.wrap()` — there are three such places today.

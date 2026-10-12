@@ -4,23 +4,15 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
-import java.security.KeyStore
 import java.security.SecureRandom
-import java.security.cert.X509Certificate
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.HttpsURLConnection
-import javax.net.ssl.KeyManagerFactory
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLEngine
-import javax.net.ssl.TrustManagerFactory
-import javax.net.ssl.X509ExtendedTrustManager
-import javax.net.ssl.X509TrustManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,7 +33,7 @@ import okhttp3.Response
  * on whatever network the phone is then using, and after the user backs out of
  * the tool it goes on playing its queue with no tool code left to stop it. The
  * SDK gives a tool no say in any of that (see tool/docs/SDK-GAPS.md). So the
- * player is handed addresses on this phone instead — `https://127.0.0.1:port/…`
+ * player is handed addresses on this phone instead — `http://127.0.0.1:port/…`
  * — and what answers there is this class, which fetches the real bytes through
  * the gated client like everything else in the app. The rule is asked when
  * each request arrives and all the while it is served, under the rules in
@@ -49,14 +41,10 @@ import okhttp3.Response
  * network or a data mode changed. It lives in the app's process scope, not the
  * activity's, so it is still standing when the screens are gone.
  *
- * **Why TLS.** It was built when a store build got only the manifest Light's
- * plugin generates, and that permitted no cleartext HTTP — not even to this
- * phone. (SDK 0.2.0's `cleartext-http` capability, which Amp declares, lifts
- * that, so a plain-HTTP door would now do.) So the door
- * speaks TLS, with an identity made at launch ([LoopbackCert]) and trusted by
- * exactly one addition to the process's default trust for `HttpsURLConnection`
- * (which is what the player uses, and OkHttp does not): every other
- * certificate is judged by the platform's own trust manager, untouched.
+ * **Plain HTTP.** The door never leaves this phone, and the SDK's
+ * `cleartext-http` capability, which Amp declares, lets every build speak plain
+ * HTTP to it. (Until SDK 0.2.0 a store build could not, so the door spoke TLS
+ * with a certificate made at launch.)
  *
  * **Fail-safe.** None of this is assumed to work. At start the proxy fetches
  * from itself the way the player will; only if that succeeds does [wrap] hand
@@ -104,7 +92,7 @@ class StreamProxy(
     fun wrap(url: String, group: String? = null): String {
         if (url.isEmpty()) return url
         val on = _state.value as? State.On ?: return url
-        return "https://$HOST:${on.port}$STREAM_PATH${tokens.tokenFor(url, group)}"
+        return "http://$HOST:${on.port}$STREAM_PATH${tokens.tokenFor(url, group)}"
     }
 
     /** Bring the door up and prove it, off the calling thread. Idempotent. */
@@ -112,10 +100,7 @@ class StreamProxy(
         if (server != null) return
         scope.launch(Dispatchers.IO) {
             try {
-                val identity = LoopbackCert.create()
-                trustForThisProcess(identity.certificate)
-                val socket = serverContext(identity).serverSocketFactory
-                    .createServerSocket(0, BACKLOG, InetAddress.getByName(HOST))
+                val socket = ServerSocket(0, BACKLOG, InetAddress.getByName(HOST))
                 server = socket
                 scope.launch(Dispatchers.IO) { acceptLoop(scope, socket) }
                 selfTest(socket.localPort)
@@ -136,82 +121,9 @@ class StreamProxy(
         _state.value = State.Off("stopped")
     }
 
-    // --- TLS -----------------------------------------------------------------
-
-    private fun serverContext(identity: LoopbackCert): SSLContext {
-        val password = CharArray(0)
-        val keys = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
-            load(null, null)
-            setKeyEntry("amp", identity.keyPair.private, password, arrayOf(identity.certificate))
-        }
-        val managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-            .apply { init(keys, password) }
-        return SSLContext.getInstance("TLS").apply { init(managers.keyManagers, null, SecureRandom()) }
-    }
-
-    /**
-     * Add [ours] to what `HttpsURLConnection` trusts in this process — and
-     * nothing else. Every other chain goes to the platform's own trust
-     * manager, the one that enforces the network security config, exactly as
-     * before; this only answers first for the one certificate made a moment
-     * ago in this process. The hostname check is left entirely alone: the
-     * certificate names 127.0.0.1, so the standard verifier passes it there
-     * and nowhere else.
-     */
-    private fun trustForThisProcess(ours: X509Certificate) {
-        val platform = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-            .apply { init(null as KeyStore?) }
-            .trustManagers.filterIsInstance<X509TrustManager>().first()
-        val context = SSLContext.getInstance("TLS")
-        context.init(null, arrayOf(PlusOne(platform, ours)), SecureRandom())
-        HttpsURLConnection.setDefaultSSLSocketFactory(context.socketFactory)
-    }
-
-    private class PlusOne(
-        private val platform: X509TrustManager,
-        private val ours: X509Certificate,
-    ) : X509ExtendedTrustManager() {
-        private val extended = platform as? X509ExtendedTrustManager
-        private val oursEncoded = ours.encoded
-
-        private fun isOurs(chain: Array<out X509Certificate>?): Boolean =
-            chain != null && chain.size == 1 && chain[0].encoded.contentEquals(oursEncoded)
-
-        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-            if (!isOurs(chain)) platform.checkServerTrusted(chain, authType)
-        }
-
-        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?, socket: Socket?) {
-            if (isOurs(chain)) return
-            if (extended != null) extended.checkServerTrusted(chain, authType, socket)
-            else platform.checkServerTrusted(chain, authType)
-        }
-
-        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?, engine: SSLEngine?) {
-            if (isOurs(chain)) return
-            if (extended != null) extended.checkServerTrusted(chain, authType, engine)
-            else platform.checkServerTrusted(chain, authType)
-        }
-
-        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) =
-            platform.checkClientTrusted(chain, authType)
-
-        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?, socket: Socket?) {
-            if (extended != null) extended.checkClientTrusted(chain, authType, socket)
-            else platform.checkClientTrusted(chain, authType)
-        }
-
-        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?, engine: SSLEngine?) {
-            if (extended != null) extended.checkClientTrusted(chain, authType, engine)
-            else platform.checkClientTrusted(chain, authType)
-        }
-
-        override fun getAcceptedIssuers(): Array<X509Certificate> = platform.acceptedIssuers
-    }
-
     /** Fetch from ourselves the way the player will. Throws unless the answer is exactly right. */
     private fun selfTest(port: Int) {
-        val connection = URL("https://$HOST:$port$SELF_TEST_PATH").openConnection() as HttpsURLConnection
+        val connection = URL("http://$HOST:$port$SELF_TEST_PATH").openConnection() as HttpURLConnection
         connection.connectTimeout = SELF_TEST_TIMEOUT_MS
         connection.readTimeout = SELF_TEST_TIMEOUT_MS
         try {
@@ -247,7 +159,7 @@ class StreamProxy(
                     client.soTimeout = CLIENT_READ_TIMEOUT_MS
                     serve(client)
                 } catch (_: Exception) {
-                    // A player that hung up, a handshake that failed: nothing
+                    // A player that hung up, a request cut short: nothing
                     // to tell anyone. The socket is closed below either way.
                 } finally {
                     runCatching { client.close() }
