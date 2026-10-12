@@ -3,7 +3,7 @@
 # Build Amp the way Light's store builder would, and say what stops it.
 #
 #   scripts/store-build-check.sh                 quick: pristine SDK + extracted tool
-#   scripts/store-build-check.sh --offline       faithful: also Light's offline
+#   scripts/store-build-check.sh --offline       strict: only Light's warmed
 #                                                dependency cache (slow the first time)
 #   scripts/store-build-check.sh --sdk-ref REF   build against another SDK commit
 #                                                (default: the submodule's pin)
@@ -13,15 +13,19 @@
 # Light signs a tool by building it themselves (light-sdk/builder): a pristine
 # SDK baked into an image, into which their extractor copies only
 # tool/lighttool.toml, tool/build.gradle.kts and tool/src/main/{kotlin,java,res,
-# assets}, followed by `:tool:assembleRelease --offline -DlightSdk.unsigned=true`.
-# None of light-sdk-patch/ and neither variant manifest overlay gets there. This
+# assets}, followed by `:tool:assembleRelease -DlightSdk.unsigned=true
+# -DlightSdk.toolOnly=true -DlightSdk.abiFilters=arm64-v8a`. Since SDK 0.2.0
+# that build fetches what the warmed cache lacks through a Maven proxy; without
+# the proxy it runs --offline. None of light-sdk-patch/ and neither variant
+# manifest overlay gets there. This
 # script repeats those steps here — with Light's own extractor, so its rules are
 # theirs and not a copy — and sums up the compile errors by file and by symbol.
 #
 # --offline repeats the image's warm-up too: the pristine SDK's sample tool is
 # built into a Gradle home of its own, and Amp is then built against that home
-# with the network off. A dependency on the plugin's allow-list can still be
-# missing from that cache; this is the only way to find out before Light does.
+# with the network off: the builder without its proxy. A dependency on the
+# plugin's allow-list missing from that cache would come through the proxy in
+# Light's real build, so a miss here is a warning, not a verdict.
 #
 # A store build that succeeds then goes through the check every local release
 # build gets, scripts/release-mapping-check.sh: media3's SessionServiceConnection,
@@ -101,7 +105,8 @@ fi
 [[ -f local.properties ]] && cp local.properties "$WORKSPACE/"
 
 GRADLE_ARGS=(":tool:assembleRelease" "--no-daemon" "--no-build-cache"
-             "--continue" "-DlightSdk.unsigned=true")
+             "--continue" "-DlightSdk.unsigned=true"
+             "-DlightSdk.toolOnly=true" "-DlightSdk.abiFilters=arm64-v8a")
 
 if [[ $OFFLINE -eq 1 ]]; then
     # Light's image warms its cache by building the SDK's own sample tool, and
