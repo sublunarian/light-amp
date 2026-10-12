@@ -1484,9 +1484,23 @@ class PlexClient(
         /** Queue items a player is asked to fetch when nobody says otherwise. */
         const val DEFAULT_QUEUE_WINDOW = 150
 
+        /**
+         * A player name as a header can carry it: ASCII only. A curly quote —
+         * what a phone's keyboard types for an apostrophe — made every request
+         * fail before it was sent. Plex reads headers as they are, so they are
+         * folded to plain quotes rather than escaped, and anything else is left out.
+         */
+        internal fun String.headerSafe(): String = buildString {
+            for (c in this@headerSafe) when (c) {
+                in ' '..'~' -> append(c)
+                '\u2018', '\u2019' -> append('\'')
+                '\u201C', '\u201D' -> append('"')
+            }
+        }.trim().ifEmpty { "Amp" }
+
         fun plexIdentity(product: String? = null): List<Pair<String, String>> = listOf(
             "X-Plex-Client-Identifier" to "com.sublunar.amp",
-            "X-Plex-Product" to (product ?: "Amp"),
+            "X-Plex-Product" to (product?.headerSafe() ?: "Amp"),
             "X-Plex-Version" to "1.0.0",
             "X-Plex-Device" to "Light Phone III",
             // A different field from the one above: this is the *friendly* name,

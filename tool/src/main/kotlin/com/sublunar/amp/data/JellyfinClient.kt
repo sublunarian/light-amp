@@ -53,6 +53,8 @@ class JellyfinClient(
     private val userId: String,
     /** Overrides the `Client` this reports itself as; null keeps the app's own. */
     private val product: String? = null,
+    /** What this source calls the phone, which its token was issued to — see [MusicSource.deviceId]. */
+    private val deviceId: String = LEGACY_DEVICE_ID,
 ) : MusicServer {
 
     private val http = NetworkGate.httpClient { expectSuccess = false }
@@ -129,9 +131,20 @@ class JellyfinClient(
     }.getOrDefault(false)
 
     private fun io.ktor.client.request.HttpRequestBuilder.jellyfinHeaders() {
-        header("Authorization", authorization(product, token))
+        header("Authorization", authorization(product, token, deviceId))
         header("Accept", "application/json")
     }
+
+    /**
+     * Ends this sign-in on the server, so the phone stops being listed there
+     * and the token stops working — what Log Out means.
+     *
+     * Only for a source with a device of its own: on the [LEGACY_DEVICE_ID]
+     * every install once shared, Jellyfin also ends every *session* under that
+     * id, whoever's it is — another person's Amp mid-song on the same server.
+     */
+    suspend fun signOut(): Boolean =
+        deviceId != LEGACY_DEVICE_ID && send("POST", "/Sessions/Logout")
 
     override suspend fun ping() {
         // Proves the address, the token and the user in one call: an expired
@@ -352,7 +365,7 @@ class JellyfinClient(
         val container = CONTAINERS[format] ?: MP3_CONTAINER
         val params = buildList {
             add("UserId" to userId)
-            add("DeviceId" to DEVICE_ID)
+            add("DeviceId" to deviceId)
             add(TOKEN_PARAM to token)
             add("Container" to container)
             add("AudioCodec" to (CODECS[format] ?: container))
@@ -665,12 +678,20 @@ class JellyfinClient(
         )
 
         /**
-         * Ties this install to its sessions on the server. Stable rather than
-         * generated per launch: Jellyfin uses it to recognise the same device
-         * coming back, and a fresh one each time litters the dashboard with
-         * devices that played one track and vanished.
+         * The device every install of Amp used to sign in as, and which
+         * sources signed in before [MusicSource.deviceId] existed still are:
+         * their tokens were issued to it.
+         *
+         * One id for every phone was the trouble. Jellyfin keeps one sign-in
+         * per device and user, and signing in again ends the one before — so
+         * adding a server a second time, or the same account on a second
+         * phone, quietly logged the first one out ("the server refused the
+         * login"). Each sign-in now gets an id of its own: [newDeviceId].
          */
-        const val DEVICE_ID = "com.sublunar.amp"
+        const val LEGACY_DEVICE_ID = "com.sublunar.amp"
+
+        /** An id for one sign-in, kept with its source for as long as the token is. */
+        fun newDeviceId(): String = "amp-" + java.util.UUID.randomUUID().toString()
 
         /**
          * Jellyfin's own authorization scheme, which every request carries.
@@ -679,15 +700,28 @@ class JellyfinClient(
          * its own name reports itself by it. `Device` deliberately stays the
          * hardware: two sources configured here are still the same phone, and
          * naming the device after one of them loses which machine was playing.
+         *
+         * Each value is percent-encoded, which the server undoes: a quote or a
+         * comma in a player name would otherwise end its field early, and a
+         * character outside ASCII — a curly apostrophe — can't go in a header
+         * at all, so every request failed before it was sent.
          */
-        fun authorization(product: String? = null, token: String? = null): String = buildString {
+        fun authorization(
+            product: String? = null,
+            token: String? = null,
+            deviceId: String = LEGACY_DEVICE_ID,
+        ): String = buildString {
             append("MediaBrowser ")
-            append("Client=\"${product ?: "Amp"}\", ")
-            append("Device=\"Light Phone III\", ")
-            append("DeviceId=\"$DEVICE_ID\", ")
+            append("Client=\"${field(product ?: "Amp")}\", ")
+            append("Device=\"${field("Light Phone III")}\", ")
+            append("DeviceId=\"${field(deviceId)}\", ")
             append("Version=\"1.0.0\"")
-            if (!token.isNullOrBlank()) append(", Token=\"$token\"")
+            if (!token.isNullOrBlank()) append(", Token=\"${field(token)}\"")
         }
+
+        /** Percent-encoded as the server's URL-decoding expects — spaces kept, since it reads `+` as one. */
+        private fun field(value: String): String =
+            URLEncoder.encode(value, "UTF-8").replace("+", " ")
     }
 }
 

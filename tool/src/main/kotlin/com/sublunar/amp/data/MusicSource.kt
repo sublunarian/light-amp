@@ -110,6 +110,15 @@ data class MusicSource(
     /** Plex's server id, needed to build the URIs that fill a playlist. */
     val machineIdentifier: String = "",
     /**
+     * The device a Jellyfin sign-in was made as, and its [token] belongs to.
+     *
+     * One per sign-in, because Jellyfin keeps one sign-in per device and user
+     * and ends the old one when the same device signs in again. Blank on
+     * sources signed in before this existed, which go on as
+     * [JellyfinClient.LEGACY_DEVICE_ID] — the id their tokens were issued to.
+     */
+    val deviceId: String = "",
+    /**
      * Which build's track parsing this source's cache was filled by.
      *
      * A sync only refetches an album whose song count changed, so a fix to how a
@@ -272,7 +281,13 @@ data class MusicSource(
             if (baseUrl.isBlank() || token.isBlank() || userId.isBlank()) {
                 null
             } else {
-                JellyfinClient(baseUrl, token, userId, playerName.ifBlank { null })
+                JellyfinClient(
+                    baseUrl,
+                    token,
+                    userId,
+                    playerName.ifBlank { null },
+                    deviceId.ifBlank { JellyfinClient.LEGACY_DEVICE_ID },
+                )
             }
     }
 

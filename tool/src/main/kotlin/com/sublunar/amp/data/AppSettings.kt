@@ -155,43 +155,10 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         list.firstOrNull { it.id == id } ?: list.firstOrNull()
     }.distinctUntilChanged()
 
-    /**
-     * Add a source, or replace the one with the same id.
-     *
-     * A Plex source is re-matched against `machineIdentifier` first: that is
-     * Plex's own stable server id, unlike [MusicSource.id] which is minted fresh
-     * every time the link flow runs (account-link, "Enter address and token", a
-     * re-link on a different network reaching a different address...). Without
-     * this, re-linking the same server just appends another row with the same
-     * name and a new id — a duplicate entry in Sources that looks identical to
-     * the user but points at a second, empty local database.
-     */
+    /** Add a source, or update the one it already is — see [mergeSource]. */
     suspend fun saveSource(source: MusicSource): String {
         var effectiveId = source.id
-        editSources { list ->
-            val existing = list.indexOfFirst { it.id == source.id }.takeIf { it >= 0 }
-                ?: source.machineIdentifier.takeIf { it.isNotBlank() }?.let { mid ->
-                    list.indexOfFirst { it.kind == source.kind && it.machineIdentifier == mid }
-                        .takeIf { it >= 0 }
-                }
-            if (existing == null) {
-                list + source
-            } else {
-                val old = list[existing]
-                // Keep the id (and with it, the downloads database and the
-                // user's own preferences for this source) — only what was just
-                // discovered about the server itself should move.
-                effectiveId = old.id
-                val merged = source.copy(
-                    id = old.id,
-                    downloadFormatId = source.downloadFormatId ?: old.downloadFormatId,
-                    offlineModeName = source.offlineModeName ?: old.offlineModeName,
-                    downloadLimitBytes = source.downloadLimitBytes ?: old.downloadLimitBytes,
-                    libraryId = source.libraryId ?: old.libraryId,
-                )
-                list.toMutableList().also { it[existing] = merged }
-            }
-        }
+        editSources { list -> mergeSource(list, source).also { effectiveId = it.second }.first }
         return effectiveId
     }
 
@@ -740,4 +707,56 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         /** 2 GB — a few hundred albums as MP3, and well inside any device. */
         const val DEFAULT_DOWNLOAD_LIMIT = 2L * 1024 * 1024 * 1024
     }
+}
+
+/**
+ * [list] with [source] saved into it, and the id it was saved under.
+ *
+ * The same id is an edit: the record replaces the old one, keeping only the
+ * few choices an edit may leave unset.
+ *
+ * A different id can still be the same server. Signing in mints a new id every
+ * time, so a Plex server re-linked (matched by its `machineIdentifier`) or a
+ * Jellyfin account signed into again (matched by its user id — a GUID, so one
+ * account on one server) would otherwise become a second row with the same
+ * name over an empty library, and on Jellyfin the second sign-in logged the
+ * first out. Instead the source it already is takes the new sign-in — token,
+ * address, libraries — and keeps its id, so its library and downloads, and
+ * every choice the user made for it.
+ */
+internal fun mergeSource(list: List<MusicSource>, source: MusicSource): Pair<List<MusicSource>, String> {
+    val sameId = list.indexOfFirst { it.id == source.id }
+    if (sameId >= 0) {
+        val old = list[sameId]
+        val edited = source.copy(
+            downloadFormatId = source.downloadFormatId ?: old.downloadFormatId,
+            offlineModeName = source.offlineModeName ?: old.offlineModeName,
+            downloadLimitBytes = source.downloadLimitBytes ?: old.downloadLimitBytes,
+            libraryId = source.libraryId ?: old.libraryId,
+        )
+        return list.toMutableList().also { it[sameId] = edited } to old.id
+    }
+    val sameServer = list.indexOfFirst { it.kind == source.kind && it.isSameServerAs(source) }
+    if (sameServer < 0) return list + source to source.id
+    val old = list[sameServer]
+    val relinked = source.copy(
+        id = old.id,
+        streamFormatId = old.streamFormatId,
+        cellularFormatId = old.cellularFormatId,
+        downloadFormatId = old.downloadFormatId,
+        offlineModeName = old.offlineModeName,
+        downloadLimitBytes = old.downloadLimitBytes,
+        playerName = old.playerName,
+        parserGeneration = old.parserGeneration,
+        libraryId = old.libraryId,
+        hiddenLibraryIds = old.hiddenLibraryIds,
+        features = old.features,
+    )
+    return list.toMutableList().also { it[sameServer] = relinked } to old.id
+}
+
+private fun MusicSource.isSameServerAs(other: MusicSource): Boolean = when (kind) {
+    SourceKind.PLEX -> machineIdentifier.isNotBlank() && machineIdentifier == other.machineIdentifier
+    SourceKind.JELLYFIN -> userId.isNotBlank() && userId == other.userId
+    else -> false
 }

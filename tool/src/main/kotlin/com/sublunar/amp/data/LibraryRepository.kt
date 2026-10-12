@@ -1024,7 +1024,7 @@ class LibraryRepository(
             // 52x are Cloudflare's: it answered, the server behind it didn't.
             code in 520..529 -> "Your server isn't responding ($code)"
             code in 500..599 -> "The server had an error ($code)"
-            code == 401 || code == 403 -> "The server refused the login"
+            code == 401 || code == 403 -> "The server refused the login. Sign in again in Sources."
             code == 404 -> "That library isn't on the server any more"
             else -> "The server said $code"
         }
