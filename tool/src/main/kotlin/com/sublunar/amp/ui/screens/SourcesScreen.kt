@@ -187,7 +187,9 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
 }
 
 /**
- * Which of a source's libraries appear under it on the Sources page.
+ * Which of a source's libraries Amp shows at all — see
+ * MusicSource.hiddenLibraryIds. Hidden ones are off the Sources page, out of
+ * All Libraries and every list, and not synced.
  *
  * A server can hold libraries this phone has no interest in — an Audiobooks
  * section beside the music — and every one of them was taking a row on the page
@@ -197,6 +199,12 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
 class LibraryVisibilityScreen(
     sealed: SealedLightActivity,
     private val sourceId: String,
+    /**
+     * Opened while the source is being added, before its first sync: titled
+     * as a choice, with a Done row, and handing back a result on Done and on
+     * back alike — either way the adding carries on.
+     */
+    private val adding: Boolean = false,
 ) : SimpleLightScreen<Unit>(sealed) {
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
@@ -208,10 +216,14 @@ class LibraryVisibilityScreen(
         val sources by App.settings.sources.collectAsState(initial = emptyList())
         val source = sources.firstOrNull { it.id == sourceId }
 
-        ListScreen(onBack = { goBack() }, title = "Shown on Sources") {
+        ListScreen(onBack = { leave() }, title = if (adding) "Choose Libraries" else "Shown in Amp") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
                 if (source == null) return@ScrollableList
-                item { SectionLabel("Tap to show or hide") }
+                item {
+                    SectionLabel(
+                        if (adding) "Tap to show or hide. Hidden libraries aren't synced." else "Tap to show or hide",
+                    )
+                }
                 item {
                     VisibilityRow(
                         name = ALL_LIBRARIES,
@@ -227,9 +239,13 @@ class LibraryVisibilityScreen(
                         onToggle = { toggle(library.id, !shown) },
                     )
                 }
+                if (adding) item { TextRow(title = "Done", onClick = { leave() }) }
             }
         }
     }
+
+    /** A result only while adding: the SDK calls back only when there is one. */
+    private fun leave() = if (adding) goBack(Unit) else goBack()
 
     @Composable
     private fun VisibilityRow(name: String, shown: Boolean, onToggle: () -> Unit) {
@@ -241,7 +257,15 @@ class LibraryVisibilityScreen(
     }
 
     private fun toggle(libraryId: String?, visible: Boolean) {
-        App.scope.launch { App.settings.setLibraryVisible(sourceId, libraryId, visible) }
+        App.scope.launch {
+            App.settings.setLibraryVisible(sourceId, libraryId, visible)
+            // A library shown again may never have been fetched — hidden while
+            // the server was being added — so it is fetched now, not whenever
+            // the next sync comes round.
+            if (visible && libraryId != null && App.source.value.id == sourceId) {
+                withContext(Dispatchers.Main) { App.library.syncInBackground(force = true) }
+            }
+        }
     }
 }
 
@@ -462,7 +486,7 @@ class SourceDetailScreen(
                     item { SectionLabel("Library") }
                     item {
                         TextRow(
-                            title = "Shown on Sources",
+                            title = "Shown in Amp",
                             value = "$shown of ${source.libraries.size + 1}",
                             onClick = { go { LibraryVisibilityScreen(it, source.id) } },
                         )

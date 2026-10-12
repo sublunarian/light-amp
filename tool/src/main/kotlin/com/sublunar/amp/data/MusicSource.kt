@@ -133,8 +133,10 @@ data class MusicSource(
      */
     val libraries: List<SourceLibrary> = emptyList(),
     /**
-     * Libraries kept off the Sources page, by id — `null` being the "All
-     * Libraries" row rather than any one of them.
+     * Libraries the user hid, by id — `null` being the "All Libraries" row
+     * rather than any one of them. Hidden everywhere: off the Sources page,
+     * out of All Libraries and every list and search, and not fetched by a
+     * sync; their cached rows stay, so showing one again is instant.
      *
      * Stored as what to *hide* rather than what to show, so a library the server
      * gains later turns up on its own instead of staying invisible until someone

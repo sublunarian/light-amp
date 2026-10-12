@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -240,6 +241,18 @@ class LibraryRepository(
         libraryId.stateIn(scope, SharingStarted.Eagerly, null)
 
     /**
+     * The libraries the user hid, which are hidden everywhere: not on the
+     * Sources page, not under All Libraries, not in search, the tabs or a
+     * playlist, and not fetched by a sync. Their rows stay cached, so showing
+     * one again is instant — see MusicSource.hiddenLibraryIds.
+     */
+    private val hiddenLibraries: StateFlow<Set<String>> =
+        settings.activeSource
+            .map { it?.hiddenLibraryIds?.filterNotNull()?.toSet().orEmpty() }
+            .distinctUntilChanged()
+            .stateIn(scope, SharingStarted.Eagerly, emptySet())
+
+    /**
      * The chosen library's albums, filtered out of the cache rather than fetched.
      *
      * Every library the source has stays cached at once, and choosing one is a
@@ -258,9 +271,12 @@ class LibraryRepository(
             .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val allAlbums: StateFlow<List<Album>> =
-        combine(albumRows, selectedLibrary) { rows, library ->
+        combine(albumRows, selectedLibrary, hiddenLibraries) { rows, library, hidden ->
             rows.asSequence()
                 .filter { library == null || it.libraryId == null || it.libraryId == library }
+                // Tracks, artists, search and the liked filters all narrow from
+                // here, so this one line hides a library everywhere they look.
+                .filter { it.libraryId == null || it.libraryId !in hidden }
                 .map { it.toAlbum() }
                 .toList()
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -667,12 +683,20 @@ class LibraryRepository(
         if (tracks.isNotEmpty()) {
             _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
         }
-        if (!offline.value) return PlaylistView(tracks, whole)
+        // A hidden library's songs leave the page too. Marked incomplete when
+        // any did, which keeps the playlist from being edited here: an edit
+        // writes back the list as shown, and would delete them from the server.
+        val hiddenAlbums = hiddenLibraries.value.takeIf { it.isNotEmpty() }?.let { hidden ->
+            albumRows.value.asSequence().filter { it.libraryId in hidden }.map { it.id }.toSet()
+        }.orEmpty()
+        val shown = if (hiddenAlbums.isEmpty()) tracks else tracks.filterNot { it.albumId in hiddenAlbums }
+        val wholeShown = whole && shown.size == tracks.size
+        if (!offline.value) return PlaylistView(shown, wholeShown)
         // A song from the phone's own folder needs no server, so it stays whatever
         // the connection is.
         val downloaded = downloadedTrackIds.value
-        val playable = tracks.filter { it.id in downloaded || LocalLibrary.isLocal(it.id) }
-        return PlaylistView(playable, whole && playable.size == tracks.size)
+        val playable = shown.filter { it.id in downloaded || LocalLibrary.isLocal(it.id) }
+        return PlaylistView(playable, wholeShown && playable.size == shown.size)
     }
 
     /** The songs, and whether they're the playlist entire rather than what could be recovered. */
@@ -1115,10 +1139,14 @@ class LibraryRepository(
             // "All libraries" has to be fanned out per folder and merged: an
             // unscoped getAlbumList2 returns only the server's default library,
             // so asking once would silently hide every other library.
+            //
+            // A hidden library is left out: hidden means not wanted on this
+            // phone, which includes the minutes and the data a big one costs.
+            val hidden = source?.hiddenLibraryIds?.filterNotNull()?.toSet().orEmpty()
             val folderIds: List<String?> = if (musicFolderId != null) {
                 listOf(musicFolderId)
             } else {
-                client.getMusicFolders().map { it.id }.ifEmpty { listOf(null) }
+                client.getMusicFolders().map { it.id }.filterNot { it in hidden }.ifEmpty { listOf(null) }
             }
 
             val starred = folderIds.map { client.getStarred(it) }.mergeStarred()
@@ -1174,8 +1202,11 @@ class LibraryRepository(
                 // rest — which is what made switching library a re-download.
                 // Rows with no library recorded are left alone: they predate
                 // this and no fetch can speak for them.
+                //
+                // Nor a hidden library's rows, which were never asked about:
+                // they are kept, so showing it again needs no fetch to appear.
                 val inScope = if (musicFolderId == null) {
-                    cached
+                    cached.filterValues { it.libraryId == null || it.libraryId !in hidden }
                 } else {
                     cached.filterValues { it.libraryId == musicFolderId }
                 }
@@ -1523,7 +1554,7 @@ class LibraryRepository(
         }
     }
 
-    fun syncInBackground() {
+    fun syncInBackground(force: Boolean = false) {
         // Claimed before the launch, for the reason spelled out in
         // scanAndSyncInBackground: runSync only says "syncing" once it holds
         // the mutex and has awaited the active source, so a second call
@@ -1548,7 +1579,10 @@ class LibraryRepository(
         // "in 0 until", not "<": a time in the future — a sync recorded while the
         // clock was wrong — is not a recent sync, and would otherwise switch
         // automatic syncing off until the clock caught up.
-        if (System.currentTimeMillis() - _syncState.value.lastSyncedMs in 0 until SYNC_MIN_INTERVAL_MS) return
+        //
+        // [force] skips the floors, for a library just shown again: until it
+        // is fetched it may have nothing to show at all.
+        if (!force && System.currentTimeMillis() - _syncState.value.lastSyncedMs in 0 until SYNC_MIN_INTERVAL_MS) return
         _syncState.value = _syncState.value.copy(syncing = true, error = null, phase = "Connecting")
         syncJob = scope.launch {
           try {
@@ -1562,7 +1596,7 @@ class LibraryRepository(
                 settings.activeSource.first()?.id?.let { settings.lastSyncedMs(it) }
             }.getOrNull() ?: 0L
             val floor = if (bulkAllowed()) SYNC_MIN_INTERVAL_MS else SYNC_MIN_INTERVAL_METERED_MS
-            if (System.currentTimeMillis() - last in 0 until floor) {
+            if (!force && System.currentTimeMillis() - last in 0 until floor) {
                 android.util.Log.i("AmpSync", "launch sync skipped: last one ${(System.currentTimeMillis() - last) / 60_000} min ago")
                 _syncState.value = _syncState.value.copy(syncing = false, phase = "", lastSyncedMs = last)
                 return@launch

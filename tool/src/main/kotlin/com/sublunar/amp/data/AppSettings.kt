@@ -278,24 +278,31 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     // on which source you were looking at.
 
     /**
-     * Show or hide one of a source's libraries on the Sources page.
+     * Show or hide one of a source's libraries — everywhere, not only on the
+     * Sources page: see MusicSource.hiddenLibraryIds.
      *
-     * Refuses to hide the last one: the rows under a source are the only way to
-     * switch to it, so a source with none would be stranded — configurable but
-     * unusable.
+     * Refuses to hide the last row, since the rows under a source are the only
+     * way to switch to it, and the last library: All Libraries means the
+     * visible ones, and with none it would be a row onto nothing. Hiding the
+     * library being browsed moves the browsing to All Libraries, rather than
+     * leaving it on a library that no longer shows.
      */
     suspend fun setLibraryVisible(sourceId: String, libraryId: String?, visible: Boolean) {
         editSource(sourceId) { source ->
             val hidden = source.hiddenLibraryIds.toMutableList()
             if (visible) {
                 hidden.remove(libraryId)
-            } else {
-                val remaining = source.libraries.count { it.id !in hidden } +
-                    (if (source.showsAllLibraries) 1 else 0)
-                if (remaining <= 1) return@editSource source
-                if (libraryId !in hidden) hidden.add(libraryId)
+                return@editSource source.copy(hiddenLibraryIds = hidden)
             }
-            source.copy(hiddenLibraryIds = hidden)
+            val visibleLibraries = source.libraries.count { it.id !in hidden }
+            val remaining = visibleLibraries + (if (source.showsAllLibraries) 1 else 0)
+            if (remaining <= 1) return@editSource source
+            if (libraryId != null && libraryId !in hidden && visibleLibraries <= 1) return@editSource source
+            if (libraryId !in hidden) hidden.add(libraryId)
+            source.copy(
+                hiddenLibraryIds = hidden,
+                libraryId = if (libraryId != null && source.libraryId == libraryId) null else source.libraryId,
+            )
         }
     }
 

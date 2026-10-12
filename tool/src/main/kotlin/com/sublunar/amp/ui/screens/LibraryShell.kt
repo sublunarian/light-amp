@@ -69,6 +69,7 @@ import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.data.LocalLibrary
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.SourceKind
+import com.sublunar.amp.data.SyncState
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.components.SelectionState
 import com.sublunar.amp.ui.components.rememberGridAnchor
@@ -576,6 +577,28 @@ private fun LazyListScope.syncErrorNotice(error: String?, onOpen: () -> Unit) {
     item { PlayAllRow(AppIcons.CloudOff, error, onClick = onOpen) }
 }
 
+/**
+ * What the sync is doing, where the list it is filling would be.
+ *
+ * A first sync of a large library takes minutes, and until its first rows
+ * land every page is blank, which reads as an empty server or a broken one.
+ * Only while the list is empty: once anything is in it, the list is the news.
+ */
+private fun LazyListScope.syncProgressNotice(empty: Boolean, sync: SyncState) {
+    if (!empty || !sync.syncing) return
+    item { SectionLabel(syncProgressText(sync.phase)) }
+}
+
+/** [SyncState.phase] in words — "Albums 120/1419" reads "Syncing… 120 of 1,419 albums". */
+internal fun syncProgressText(phase: String): String {
+    val counted = Regex("""Albums (\d+)/(\d+)""").matchEntire(phase)
+    if (counted != null) {
+        val (done, total) = counted.destructured
+        return "Syncing… %,d of %,d albums".format(done.toInt(), total.toInt())
+    }
+    return if (phase.isBlank()) "Syncing…" else "Syncing… ${phase.replaceFirstChar { it.lowercase() }}"
+}
+
 @Composable
 private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
     val view by App.sortedAlbums.collectAsState()
@@ -591,7 +614,8 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
     // hidden long after the liked albums had loaded.
     val supportsLikes = App.source.collectAsState().value.supportsLikes
     val needsAccess = !rememberLocalAccess()
-    val syncError = App.library.syncState.collectAsState().value.error
+    val sync = App.library.syncState.collectAsState().value
+    val syncError = sync.error
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     val grid = App.albumGrid.collectAsState().value
     Column(Modifier.fillMaxSize()) {
@@ -611,6 +635,11 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         RandomAlbumRow(sorted, actions)
                     }
+                    if (sorted.isEmpty() && sync.syncing) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            SectionLabel(syncProgressText(sync.phase))
+                        }
+                    }
                 }
             }
         } else {
@@ -628,6 +657,7 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
                 item { RandomAlbumRow(sorted, actions) }
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
                 syncErrorNotice(syncError, actions.settings)
+                syncProgressNotice(sorted.isEmpty(), sync)
                 items(sorted, key = { it.id }) { album ->
                     TrackRow(
                         title = album.title,
@@ -731,7 +761,8 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
     // hidden long after the liked tracks had loaded.
     val supportsLikes = App.source.collectAsState().value.supportsLikes
     val needsAccess = !rememberLocalAccess()
-    val syncError = App.library.syncState.collectAsState().value.error
+    val sync = App.library.syncState.collectAsState().value
+    val syncError = sync.error
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
 
     Column(Modifier.fillMaxSize()) {
@@ -759,6 +790,7 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
                 }
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
                 syncErrorNotice(syncError, actions.settings)
+                syncProgressNotice(sorted.isEmpty(), sync)
             }
             items(sorted, key = { it.id }) { track ->
                 TrackRow(
@@ -804,7 +836,7 @@ private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
     val artistImages = !App.hideArtistImages.collectAsState().value
     LaunchedEffect(artistImages) { if (artistImages) App.library.primeArtistImages() }
     val needsAccess = !rememberLocalAccess()
-    val syncError = App.library.syncState.collectAsState().value.error
+    val sync = App.library.syncState.collectAsState().value
     val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
     Column(Modifier.fillMaxSize()) {
         if (header) TabHeader(LibraryTab.ARTISTS, actions)
@@ -815,6 +847,7 @@ private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
             reversed = reversed,
         ) {
             localAccessNotice(needsAccess) { audioPermission?.launch() }
+            syncProgressNotice(sorted.isEmpty(), sync)
             items(sorted, key = { it.name }) { artist ->
                 ArtistRow(
                     name = artist.name,

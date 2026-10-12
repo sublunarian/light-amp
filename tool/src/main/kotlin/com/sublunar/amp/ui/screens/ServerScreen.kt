@@ -13,6 +13,7 @@ import com.sublunar.amp.App
 import com.sublunar.amp.data.Cleartext
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
+import com.sublunar.amp.data.SourceLibrary
 import com.sublunar.amp.data.newSourceId
 import com.sublunar.amp.data.SubsonicClient
 import com.sublunar.amp.data.SubsonicConfig
@@ -239,6 +240,12 @@ class ServerScreen(
                                         LibraryNav.selectTab(LibraryTab.ALBUMS)
                                         popToRoot()
                                     }
+                                    is SaveOutcome.ChooseLibraries -> withContext(Dispatchers.Main) {
+                                        navigateTo<Unit>(
+                                            { LibraryVisibilityScreen(it, outcome.sourceId, adding = true) },
+                                            resultCallback = { finishAdding(outcome.sourceId) },
+                                        )
+                                    }
                                     is SaveOutcome.Said -> {
                                         status = outcome.text
                                         saving = false
@@ -248,6 +255,17 @@ class ServerScreen(
                         },
                     )
                 }
+            }
+        }
+    }
+
+    /** The libraries are chosen: make the source active, which starts its sync, and go to it. */
+    private fun finishAdding(sourceId: String) {
+        App.scope.launch {
+            App.settings.setActiveSource(sourceId)
+            withContext(Dispatchers.Main) {
+                LibraryNav.selectTab(LibraryTab.ALBUMS)
+                popToRoot()
             }
         }
     }
@@ -303,11 +321,8 @@ class ServerScreen(
             // generated, forty characters of them, which is exactly the kind
             // there is a typo in. So the address is settled by the ping and the
             // account by a read that needs one.
-            val refused = if (ok.isSuccess) {
-                runCatching { client.getMusicFolders() }.exceptionOrNull()
-            } else {
-                null
-            }
+            val folders = if (ok.isSuccess) runCatching { client.getMusicFolders() } else null
+            val refused = folders?.exceptionOrNull()
             client.close()
             if (ok.isFailure) {
                 val error = ok.exceptionOrNull()
@@ -351,13 +366,19 @@ class ServerScreen(
                 kind = SourceKind.SUBSONIC,
                 name = nickname,
             )
+            // The libraries the login check just read, kept for a source being
+            // added: with two or more, the user picks which to show before the
+            // first sync — see SaveOutcome.ChooseLibraries.
+            val libraries = folders?.getOrNull().orEmpty().map { SourceLibrary(it.id, it.name) }
             App.settings.saveSource(
                 existing.copy(
                     baseUrl = candidate,
                     username = username,
                     password = password,
+                    libraries = if (source == null && libraries.isNotEmpty()) libraries else existing.libraries,
                 ),
             )
+            if (source == null && libraries.size >= 2) return SaveOutcome.ChooseLibraries(existing.id)
             // A source added from here becomes the one being browsed: adding it
             // is asking for it.
             if (source == null) {
@@ -385,6 +406,14 @@ private sealed interface SaveOutcome {
 
     /** A source was added and made active — the form has nothing left to say. */
     data object Added : SaveOutcome
+
+    /**
+     * A source was added, and its server holds several libraries: they are
+     * offered to pick from first, and only then is it made active. Becoming
+     * active is what starts its first sync, and a library hidden here is one
+     * that sync never fetches.
+     */
+    data class ChooseLibraries(val sourceId: String) : SaveOutcome
 }
 
 /** What the folders call said about the account, once the ping has settled the address. */
