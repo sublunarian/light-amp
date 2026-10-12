@@ -134,24 +134,8 @@ class Downloader(
     @Volatile
     private var userPaused = false
 
-    /**
-     * When to try each source again after its server stopped answering — not
-     * *whether* to.
-     *
-     * This used to be a boolean latched on the first failed transfer and
-     * cleared only by a successful library sync. A single blip therefore parked
-     * downloads indefinitely: the queue sat on "Waiting for the server" on
-     * perfectly good wifi, and nothing about downloading could get it going
-     * again, because only syncing could clear the flag. A deadline retries by
-     * itself and needs nobody's permission.
-     *
-     * Per source, because a server that is down is one server: its tracks wait,
-     * everyone else's are picked instead — see [eligible].
-     */
-    private val retryAtBySource = ConcurrentHashMap<String, Long>()
-
-    /** Consecutive failed transfers per source, for how long to wait before the next try. */
-    private val failuresBySource = ConcurrentHashMap<String, Int>()
+    /** When to try each source again after its server stopped answering — see [SourceBackOff]. */
+    private val backOffs = SourceBackOff()
 
     /**
      * Sources whose server refused a download outright — 401, the login; 403,
@@ -179,6 +163,9 @@ class Downloader(
         if (refusals.remove(sourceId) != null) _refused.value = refusals.mapValues { it.value.first }
     }
 
+    /** With the queue gone there is nothing left to refuse, and a row saying so would be about nothing. */
+    private fun forgiveAll() = refusals.keys.toList().forEach { forgive(it) }
+
     /** Whether [source]'s downloads still wait on a refusal made under the record it has now. */
     private fun stillRefused(source: MusicSource): Boolean {
         val (_, refusedAs) = refusals[source.id] ?: return false
@@ -187,30 +174,85 @@ class Downloader(
         return false
     }
 
+    /**
+     * Sources whose server has stopped answering for long enough that the
+     * worker stopped asking — see [SourceBackOff.PARK_AFTER_FAILURES] — with
+     * the last error and the record they were parked under.
+     *
+     * The back-off alone retried for ever: a server down all afternoon kept
+     * the worker polling once a second and the transfer service up the
+     * whole time, which spends the six hours a day Android allows a
+     * `dataSync` service, so the downloads after the outage ran throttled.
+     * Parked, the source's entries stay queued, the worker ends like it does
+     * for a refusal, and the Downloads page says why.
+     *
+     * Never on one failure, and never for good: a download asked for by
+     * hand, a tap on that row, the browsed server answering or syncing, the
+     * record changing, or a ping answered on a change of link, a mode
+     * opening, the app coming back to the front or the half-hourly job —
+     * see [wakeParked] — each puts it back in line.
+     */
+    private val parkings = ConcurrentHashMap<String, Pair<String?, MusicSource>>()
+    private val _parked = MutableStateFlow<Map<String, String?>>(emptyMap())
+
+    /** Sources whose downloads wait because their server stopped answering, with the last error — for the Downloads page. */
+    val parked: StateFlow<Map<String, String?>> = _parked
+
+    private fun park(source: MusicSource, error: String?) {
+        parkings[source.id] = error to source
+        _parked.value = parkings.mapValues { it.value.first }
+        android.util.Log.i("AmpDl", "parked ${source.name} after ${SourceBackOff.PARK_AFTER_FAILURES} failures (${error ?: "no reason"})")
+    }
+
+    /** Clears the back-off either way; true when the source was parked. */
+    private fun unpark(sourceId: String): Boolean {
+        clearBackOff(sourceId)
+        if (parkings.remove(sourceId) == null) return false
+        _parked.value = parkings.mapValues { it.value.first }
+        return true
+    }
+
+    private fun unparkAll() = parkings.keys.toList().forEach { unpark(it) }
+
+    /** Whether [source]'s downloads are still parked under the record it has now. */
+    private fun stillParked(source: MusicSource): Boolean {
+        val (_, parkedAs) = parkings[source.id] ?: return false
+        if (parkedAs == source) return true
+        unpark(source.id)
+        return false
+    }
+
     /** Sources nothing in the queue can be fetched from until something about them changes. */
     private fun heldUntilChanged(sources: List<MusicSource>): Set<String> =
-        sources.filter { !it.downloadFormatAvailable || stillRefused(it) }.map { it.id }.toSet()
+        sources.filter { !it.downloadFormatAvailable || stillRefused(it) || stillParked(it) }.map { it.id }.toSet()
 
-    private fun waiting(sourceId: String): Boolean =
-        System.currentTimeMillis() < (retryAtBySource[sourceId] ?: 0L)
+    private fun waiting(sourceId: String): Boolean = backOffs.waiting(sourceId, System.currentTimeMillis())
 
     /** Whether a source's tracks may be picked right now. */
     private fun eligible(sourceId: String): Boolean =
         sourceId != syncingSourceId && !waiting(sourceId)
 
-    /** Backs off to a minute, so a server that is really down isn't hammered. */
-    private fun backOff(sourceId: String) {
-        val failures = (failuresBySource[sourceId] ?: 0) + 1
-        failuresBySource[sourceId] = failures
-        val wait = (RETRY_BASE_MS * (1L shl (failures - 1).coerceAtMost(6)))
-            .coerceAtMost(RETRY_MAX_MS)
-        retryAtBySource[sourceId] = System.currentTimeMillis() + wait
-    }
+    /** A failed try; true once the source has failed long enough to park. */
+    private fun backOff(sourceId: String): Boolean = backOffs.fail(sourceId, System.currentTimeMillis())
 
-    /** A transfer that worked proves the server is there, whatever else said. */
-    private fun clearBackOff(sourceId: String) {
-        failuresBySource.remove(sourceId)
-        retryAtBySource.remove(sourceId)
+    private fun clearBackOff(sourceId: String) = backOffs.clear(sourceId)
+
+    /**
+     * The pauses that hold everyone: the user's, and the data mode's. See
+     * [drain] for why the worker ends on them rather than waiting them out.
+     */
+    private fun heldForEveryone(): Boolean = userPaused || !heavyDataAllowed()
+
+    /**
+     * What the Downloads page shows for a queue held for everyone, with no
+     * worker left to say it: still queued, and what it waits for.
+     */
+    private fun showHeld(pending: Int) {
+        _progress.value = _progress.value.copy(
+            pending = pending,
+            currentTitle = if (userPaused) "Paused" else waitingLabel(),
+            currentSource = null,
+        )
     }
 
     // --- Public API ----------------------------------------------------------
@@ -238,7 +280,7 @@ class Downloader(
         // last failure decided about waiting, the person tapping Download has
         // better information about whether the server is up than we do.
         if (manual) {
-            clearBackOff(source.id)
+            unpark(source.id)
             forgive(source.id)
         }
         scope.launch {
@@ -287,15 +329,40 @@ class Downloader(
      */
     fun setOffline(sourceId: String, value: Boolean) {
         // A reachability signal is a hint, not a verdict: it schedules the next
-        // attempt, and a success clears it. See retryAtBySource.
-        if (value) backOff(sourceId) else clearBackOff(sourceId)
+        // attempt, and a success clears it. See SourceBackOff. Only a real
+        // transfer failing parks a source, so the count it returns is not
+        // this signal's business.
+        if (value) backOff(sourceId) else tryNow(sourceId)
     }
 
-    /** The user's own pause, from the Downloads page. Survives a restart. */
+    /** Something says [sourceId]'s server is there — it answered, or someone asked by hand: try it now. */
+    fun tryNow(sourceId: String) {
+        if (unpark(sourceId)) retry()
+    }
+
+    /**
+     * The user's own pause, from the Downloads page. Survives a restart.
+     *
+     * A worker either way: resuming starts the queue again, and pausing one
+     * that no worker is holding — see [drain] — still has to change what
+     * the Downloads page says about it.
+     */
     fun setUserPaused(value: Boolean) {
         userPaused = value
         scope.launch { settings.setDownloadsPaused(value) }
-        if (!value) scope.launch { lock.withLock { startWorkerLocked() } }
+        scope.launch { lock.withLock { startWorkerLocked() } }
+    }
+
+    /**
+     * The rule that holds everyone's downloads moved — heavy data allowed
+     * again, or waiting for something else. A queue held by it has no worker
+     * (see [drain]), so this is what starts one: to move the queue, or to
+     * find it still held and leave the Downloads page saying what for. Any
+     * entry will do, held by its source or not, because a worker that finds
+     * nothing it may fetch ends before it starts the transfer service.
+     */
+    fun holdChanged() {
+        scope.launch { lock.withLock { if (!queue.isEmpty()) startWorkerLocked() } }
     }
 
     fun cancelAll() {
@@ -304,6 +371,8 @@ class Downloader(
                 queue.clear()
                 abandoned = null
             }
+            unparkAll()
+            forgiveAll()
             worker?.cancel()
             worker = null
             _progress.value = DownloadProgress()
@@ -319,6 +388,9 @@ class Downloader(
     suspend fun cancelSource(sourceId: String) {
         lock.withLock {
             queue.removeSource(sourceId)
+            // Nothing of its source's is left to refuse or to wait for.
+            unpark(sourceId)
+            forgive(sourceId)
             val current = inFlight
             if (current?.sourceId == sourceId) abandoned = current
             _progress.value = if (queue.isEmpty() && current == null) {
@@ -326,12 +398,17 @@ class Downloader(
             } else {
                 _progress.value.copy(pending = queue.size + (if (current != null) 1 else 0))
             }
-            // With no worker running, whatever is left is only entries held for
-            // a quality their server can't meet (a worker ends on exactly that),
-            // so nothing is moving and the count above would show a
-            // "Downloading" row for it. Idle is the truth.
+            // With no worker running, whatever is left is held: for everyone,
+            // which the page goes on saying, or until something about its
+            // source changes — a worker ends on exactly that — so nothing is
+            // moving and the count above would show a "Downloading" row for
+            // it. Idle is the truth.
             if (worker?.isActive != true) {
-                _progress.value = DownloadProgress(completed = _progress.value.completed)
+                if (!queue.isEmpty() && heldForEveryone()) {
+                    showHeld(queue.size)
+                } else {
+                    _progress.value = DownloadProgress(completed = _progress.value.completed)
+                }
             }
         }
     }
@@ -458,34 +535,30 @@ class Downloader(
     private companion object {
         const val PAUSE_POLL_MS = 1_000L
 
-        /** Seconds between link re-reads after [heldSeconds] held: 1, then 5, then 30. */
-        private fun refreshEvery(heldSeconds: Long): Long = when {
-            heldSeconds < 30 -> 1L
-            heldSeconds < 300 -> 5L
-            else -> 30L
-        }
-
         /** How many lyric refills one pass will attempt — see refillMissingLyrics. */
         private const val LYRICS_REFILL_PER_RUN = 200
 
-        /** First retry after a failed transfer; doubles up to [RETRY_MAX_MS]. */
-        private const val RETRY_BASE_MS = 2_000L
-        private const val RETRY_MAX_MS = 60_000L
+        /**
+         * How long the transfer service is kept after it was started, at the
+         * least: the five seconds Android gives a started service to reach the
+         * foreground — see LightTransferService and [drain].
+         */
+        private const val SERVICE_SETTLE_MS = 5_000L
     }
 
     // --- Worker --------------------------------------------------------------
 
     /**
      * Picks the queue up again after something that held it changed — a
-     * download quality the server couldn't meet, chosen again. A queue with
-     * nothing it can move ends the worker straight away, without ever
-     * starting the foreground service.
+     * download quality the server couldn't meet, chosen again, or a parked
+     * server answering. A queue with nothing it can move ends the worker
+     * straight away, without ever starting the foreground service.
      */
     fun retry() {
         scope.launch {
-            // Only when something queued can actually move now — otherwise a
-            // worker would start just to wait, polling, behind a pause or a
-            // Wi-Fi rule, for a queue it could never touch.
+            // Only when something queued isn't held by its own source: a
+            // worker for a queue it could never touch would start only to find
+            // that out and end.
             val blocked = heldUntilChanged(settings.sources.first())
             lock.withLock {
                 if (queue.sourceIds().any { it !in blocked }) startWorkerLocked()
@@ -493,10 +566,61 @@ class Downloader(
         }
     }
 
+    private val probing = Mutex()
+
+    /**
+     * Ask each parked server once whether it is back, and put the ones that
+     * answer back in line — see [parkings]. No worker and no transfer
+     * service unless one does.
+     *
+     * Asked the way the browsed server is asked, by [Reachability]: a 5xx is
+     * a proxy saying the thing behind it is down, so no; a refused login is
+     * the server answering, so yes, and the transfer that follows meets the
+     * refusal and says so.
+     */
+    suspend fun wakeParked() {
+        if (parkings.isEmpty() || !heavyDataAllowed()) return
+        if (!probing.tryLock()) return
+        try {
+            val sources = settings.sources.first()
+            var woke = false
+            for (id in parkings.keys.toList()) {
+                val source = sources.firstOrNull { it.id == id }
+                if (source == null) {
+                    // Removed since it was parked; nothing is left to wake.
+                    unpark(id)
+                    continue
+                }
+                val client = clientFor(source) ?: continue
+                val answered = Reachability(scope, client = { client }, mayAsk = heavyDataAllowed).verify()
+                android.util.Log.i("AmpDl", "parked ${source.name}: ping → ${answered ?: "no verdict"}")
+                if (answered == true && unpark(id)) woke = true
+            }
+            if (woke) retry()
+        } finally {
+            probing.unlock()
+        }
+    }
+
+    /**
+     * Asked for a worker while one was still running. Mid-queue that changes
+     * nothing — its next pass sees whatever the asking was about — but one
+     * that has already decided to end does not look again, and a resume or
+     * an answer arriving in that moment was lost: the queue sat until
+     * something else came along. So a worker that was asked for looks once
+     * more after it has gone, with its service already stopped.
+     */
+    @Volatile
+    private var askedWhileRunning = false
+
     /** Must be called with [lock] held. */
     private fun startWorkerLocked() {
-        if (worker?.isActive == true) return
-        worker = scope.launch {
+        if (worker?.isActive == true) {
+            askedWhileRunning = true
+            return
+        }
+        askedWhileRunning = false
+        val job = scope.launch {
             try {
                 drain()
             } catch (_: CancellationException) {
@@ -508,6 +632,11 @@ class Downloader(
                 LightTransferService.stop(lightContext)
             }
         }
+        // Not after a cancel: cancelAll has just emptied the queue.
+        job.invokeOnCompletion { cause ->
+            if (cause == null && askedWhileRunning) scope.launch { lock.withLock { startWorkerLocked() } }
+        }
+        worker = job
     }
 
     /**
@@ -547,32 +676,43 @@ class Downloader(
         // service for a queue that turns out to be empty means starting and
         // stopping it within milliseconds, and Android kills the process when a
         // foreground service is torn down before it ever reached the foreground.
-        var holdingService = false
+        var serviceSinceMs: Long? = null
+        // For the same reason, a worker that ends a moment after its first
+        // transfer began — refused at once, or cut off by the rule it is about
+        // to end on — keeps the service until it has had those seconds.
+        suspend fun letServiceSettle() {
+            serviceSinceMs?.let { delay(SERVICE_SETTLE_MS - (System.currentTimeMillis() - it)) }
+        }
         val wantKaraoke = settings.karaokeLyrics.first()
         // One budget for the tool, not one per source — see AppSettings.downloadLimit.
         val limit = settings.downloadLimit.first()
         var completed = 0
 
-        var heldTicks = 0L
         while (true) {
             // The pauses that hold everyone: the user's, and the data mode's.
             // Checked between tracks, so a sync starting mid-file lets that file
             // finish rather than abandoning the bytes already fetched.
-            while (userPaused || !heavyDataAllowed()) {
-                _progress.value = _progress.value.copy(
-                    currentTitle = if (userPaused) "Paused" else waitingLabel(),
-                    currentSource = null,
-                )
-                // Nothing else is going to end this wait if the callback misses
-                // the change — see Connectivity.refresh. Once a second, only
-                // while a queue is actually held.
-                // Every second at first, then less and less often: a queue can
-                // be held for Wi-Fi all day, and a change of network is also
-                // heard through the callback and on returning to the app.
-                if (!userPaused && heldTicks++ % refreshEvery(heldTicks) == 0L) Connectivity.refresh()
-                delay(PAUSE_POLL_MS)
+            //
+            // The worker ends on them and the entries stay queued. It used to
+            // wait them out, polling, and once a transfer had run the service
+            // stayed up for as long as the wait lasted — a Wi-Fi rule can hold
+            // a queue all day, and that spends the hours a day Android allows
+            // the service. Resuming starts it again (setUserPaused), and so
+            // does the rule moving (holdChanged), which App hears from the
+            // link's callback, on the way back to the front, and from the
+            // half-hourly job: the moments this loop used to re-read the link
+            // for itself in case the callback missed one.
+            if (heldForEveryone()) {
+                val waiting = lock.withLock { queue.size }
+                if (waiting == 0) break
+                // Time spent not trying is not time spent failing: a run of
+                // failures from before the wait must not park a server on the
+                // first one after it.
+                backOffs.clearAll()
+                showHeld(waiting)
+                letServiceSettle()
+                return
             }
-            heldTicks = 0L
             // A transfer is the greediest thing on the link; a stream being
             // started waits for nobody else — see App.yieldToPlayback.
             yieldToPlayback()
@@ -585,6 +725,7 @@ class Downloader(
             // entries wait in the queue rather than being fetched as something
             // else. Read every pass, so changing the quality frees them.
             // And one whose server refused the last download: see [refusals].
+            // And one parked after its server stopped answering: see [parkings].
             val blocked = heldUntilChanged(settings.sources.first())
             val (picked, held) = lock.withLock {
                 val next = queue.next { eligible(it) && it !in blocked }
@@ -592,11 +733,12 @@ class Downloader(
             }
             if (picked == null) {
                 if (held.isEmpty()) break
-                // Only sources waiting on a quality change are left. Nothing
-                // here can end that wait, so the worker ends instead — which is
-                // what lets the foreground service go — and the entries stay
-                // queued. Changing the quality starts it again; see [retry]. The
-                // Downloads page says why, from the settings themselves.
+                // Only sources waiting on a quality change, a refusal, or a
+                // server parked after ten minutes of failures are left.
+                // Nothing here can end that wait, so the worker ends instead —
+                // which is what lets the foreground service go — and the
+                // entries stay queued. Whatever ends the wait starts it again;
+                // see [retry]. The Downloads page says why.
                 if (held.all { it in blocked }) break
                 // Something is queued, and every source it belongs to is held:
                 // on its server to answer again, or for its sync to finish.
@@ -629,12 +771,17 @@ class Downloader(
             // can only ever answer for its own source.
             if (store.usedBytesEverywhere() >= limit) {
                 lock.withLock { queue.clear() }
+                // A row saying a server isn't answering, or refused, would be
+                // about entries that are no longer there.
+                unparkAll()
+                forgiveAll()
                 _progress.value = _progress.value.copy(
                     pending = 0,
                     currentTitle = null,
                     currentSource = null,
                     limitReached = true,
                 )
+                letServiceSettle()
                 return
             }
 
@@ -652,7 +799,7 @@ class Downloader(
                 // one that isn't answering, so the others aren't held up by it.
                 _progress.value = _progress.value.copy(error = "Not connected")
                 lock.withLock { queue.requeueFront(picked) }
-                backOff(source.id)
+                if (backOff(source.id)) park(source, "Not connected")
                 continue
             }
 
@@ -668,12 +815,12 @@ class Downloader(
             }
             val dao = daoFor(source)
 
-            if (!holdingService) {
+            if (serviceSinceMs == null) {
                 // Without this the process drops to the cached bucket the moment the
                 // user leaves the app and transfers are throttled about ninefold —
                 // see LightTransferService for the measurements.
                 LightTransferService.start(lightContext, "Syncing your library for offline")
-                holdingService = true
+                serviceSinceMs = System.currentTimeMillis()
             }
             inFlight = entry.key
             val file = try {
@@ -739,14 +886,17 @@ class Downloader(
                 // reachability check start it again, rather than failing all ten
                 // thousand in a row. Where the track goes back to — front, or
                 // back after enough strikes — is the queue's rule; see
-                // [DownloadQueue.fail].
+                // [DownloadQueue.fail]. Failing for long enough parks the
+                // source instead: see [parkings].
                 lock.withLock { queue.fail(picked) }
-                _progress.value = _progress.value.copy(error = store.lastError)
-                backOff(source.id)
+                val error = store.lastError
+                _progress.value = _progress.value.copy(error = error)
+                if (backOff(source.id)) park(source, error)
                 continue
             }
         }
 
         _progress.value = DownloadProgress(completed = completed)
+        letServiceSettle()
     }
 }

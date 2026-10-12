@@ -60,6 +60,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.drop
@@ -444,6 +445,9 @@ object App {
     /** How long the server must stay silent before the lists narrow to downloads. */
     private const val SERVER_GONE_SETTLE_MS = 20_000L
 
+    /** How long a new link settles before parked download servers are asked about it. */
+    private const val PARKED_PROBE_SETTLE_MS = 2_000L
+
     /** The mode as it stands, for gates that must answer synchronously. */
     val dataMode: StateFlow<DataMode> by lazy {
         settings.dataMode.stateIn(scope, SharingStarted.Eagerly, DataMode.WIFI_ONLY)
@@ -527,6 +531,8 @@ object App {
         if (!coreReady) return
         Connectivity.refresh()
         if (!serverReachable.value) reachability.check(delayMs = 0L)
+        // Nothing, unless a download server is parked — see Downloader.wakeParked.
+        scope.launch { downloader.wakeParked() }
     }
 
     /**
@@ -647,6 +653,10 @@ object App {
             // library data exists is also the right moment to top up downloads.
             library.onSyncSucceeded = {
                 reportServerReachable(true)
+                // Its downloads too, if they were parked — the reachability
+                // flow only speaks on a change, and a download failing never
+                // tells it anything. See Downloader.parkings.
+                downloader.tryNow(source.value.id)
                 scope.launch {
                     // Fresh library rows are also the first chance to work out
                     // which album a reindexed download belongs to.
@@ -743,20 +753,46 @@ object App {
                     .collect { downloader.retry() }
             }
             // And those a server refused, once their record changes — signed
-            // in again, say. See Downloader.refusals.
+            // in again, say. See Downloader.refusals. Or parked, when an address
+            // changed is the reason it stopped answering: Downloader.parkings.
             scope.launch {
                 settings.sources
                     .drop(1)
-                    .collect { if (downloader.refused.value.isNotEmpty()) downloader.retry() }
+                    .collect {
+                        if (downloader.refused.value.isNotEmpty() || downloader.parked.value.isNotEmpty()) downloader.retry()
+                    }
             }
             // Bulk work put off on a metered link — every playlist's contents,
             // and with them the playlist downloads and badges — is picked up
             // the moment the link stops costing money, not at the next launch.
+            // A server parked while bytes could move is asked again once they
+            // may — a mode change with no change of link included, say Low Data
+            // to Make it Hurt on cellular. After the same settle as a change of
+            // link (below): when the link did change too, the one ping should
+            // not go out in its first seconds. See Downloader.wakeParked.
             scope.launch {
                 rules.map { it.mayMoveHeavyBytes }
                     .distinctUntilChanged()
                     .drop(1)
-                    .collect { may -> if (may) topUpDownloads() }
+                    .collect { may ->
+                        if (may) {
+                            scope.launch {
+                                delay(PARKED_PROBE_SETTLE_MS)
+                                downloader.wakeParked()
+                            }
+                            topUpDownloads()
+                        }
+                    }
+            }
+            // A queue held for everyone by the rule has no worker waiting on
+            // it — see Downloader.drain — so the rule moving is what starts
+            // one: opening, or now waiting for something else, which the
+            // Downloads page says.
+            scope.launch {
+                rules.map { it.heavyWaitingFor }
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collect { downloader.holdChanged() }
             }
             // The covers a sync on cellular couldn't fetch, or a run that Wi-Fi
             // dropping cut short. Its own edge rather than the one above:
@@ -802,6 +838,21 @@ object App {
                     .distinctUntilChanged()
                     .drop(1)
                     .collect { reachability.check() }
+            }
+            // ...and so is every parked download server, not only the browsed
+            // one: nothing else asks them. After a settle, because the first
+            // seconds on a new link are the worst moment to ask (see
+            // NetworkGate.linkChanged), and a server that has been gone ten
+            // minutes is in no hurry.
+            scope.launch {
+                Connectivity.network
+                    .map { Triple(it.isConnected, it.isMetered, it.isWifi) }
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collectLatest {
+                        delay(PARKED_PROBE_SETTLE_MS)
+                        downloader.wakeParked()
+                    }
             }
             scope.launch {
                 combine(serverClient, Connectivity.changed) { client, (connected, _) ->

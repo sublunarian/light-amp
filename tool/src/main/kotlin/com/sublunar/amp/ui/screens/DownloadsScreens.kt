@@ -135,6 +135,11 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
         // And servers that refused the last download — see Downloader.refusals.
         val refusedStatus by App.downloader.refused.collectAsState()
         val refused = sources.filter { it.id in refusedStatus && it !in unmet }
+        // And servers that stopped answering for long enough that downloading
+        // from them stopped — see Downloader.parkings. No worker is running
+        // for them, so without this row their queue would simply be invisible.
+        val parkedError by App.downloader.parked.collectAsState()
+        val parked = sources.filter { it.id in parkedError && it !in unmet && it !in refused }
 
         // No tab bar and no menu: this is reached from Settings, and it is a
         // page about storage rather than a way of browsing the library. Back
@@ -148,7 +153,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 title = "Downloads",
                 fitTitle = true,
             )
-            if (total == 0 && !progress.active && bytes == 0L && unmet.isEmpty() && refused.isEmpty()) {
+            if (total == 0 && !progress.active && bytes == 0L && unmet.isEmpty() && refused.isEmpty() && parked.isEmpty()) {
                 // Says how, not just that: the one user who came looking here
                 // had no way to learn that holding a row is the way in.
                 EmptyState("Nothing downloaded yet.\nHold a song, album or artist and choose Download.")
@@ -192,6 +197,17 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                                 subtitleLines = 2,
                             )
                         }
+                    }
+                }
+                parked.forEach { source ->
+                    item(key = "parked/${source.id}") {
+                        // A tap is someone saying the server is back: try now.
+                        TextRow(
+                            title = "${source.name} isn't answering",
+                            subtitle = listOfNotNull("Its downloads wait for it", parkedError[source.id]).joinToString(" · "),
+                            subtitleLines = 2,
+                            onClick = { App.downloader.tryNow(source.id) },
+                        )
                     }
                 }
                 if (progress.active || paused) {
