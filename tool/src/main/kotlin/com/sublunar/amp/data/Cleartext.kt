@@ -37,7 +37,7 @@ object Cleartext {
      * [refuses] with the platform's answer passed in, so it can be checked off
      * the phone. Anything that isn't a whole http:// or https:// address is not
      * refused here: an address without a scheme is tried as https:// first (see
-     * SubsonicConfig.candidates), and one that doesn't parse fails the way it
+     * ServerAddress.candidates), and one that doesn't parse fails the way it
      * always has.
      */
     fun refuses(address: String, permitted: (host: String) -> Boolean): Boolean {

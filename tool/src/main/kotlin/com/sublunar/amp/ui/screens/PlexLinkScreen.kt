@@ -17,10 +17,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
-import com.sublunar.amp.data.Cleartext
 import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.PlexClient
+import com.sublunar.amp.data.PlexException
 import com.sublunar.amp.data.PlexAccount
 import com.sublunar.amp.data.PlexResource
 import com.sublunar.amp.data.SourceKind
@@ -36,9 +36,11 @@ import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import kotlinx.serialization.SerializationException
 
 /**
  * Linking a Plex account by code.
@@ -182,14 +184,15 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
      */
     private suspend fun prepare(server: PlexResource, accountToken: String): PendingServer? {
         val uri = PlexAccount.reachable(server, accountToken) ?: return null
-        val pending = inspectPlexServer(
+        val found = inspectPlexServer(
             name = server.name,
             uri = uri,
             token = server.accessToken ?: accountToken,
             // An account already knows the server's id; only the typed-in path
             // has to go and ask for it.
             machineIdentifier = server.clientIdentifier,
-        ) ?: return null
+        ) as? SignInOutcome.Found ?: return null
+        val pending = found.server
         // Keep the addresses that didn't win too: the one that answers at home
         // is usually the LAN address, which is unreachable from anywhere else.
         // See MusicSource.connections.
@@ -219,21 +222,51 @@ data class PendingServer(val source: MusicSource, val sections: List<MusicFolder
  * Everything about a server that has to be settled before it becomes a source:
  * that it answers, what it calls itself, and what music libraries it holds.
  *
- * Null when the address and token don't get us in — better found here than by a
- * sync that fails after the source is already saved.
+ * Better found here than by a sync that fails after the source is already
+ * saved — and said in a way that tells a wrong address from a wrong token.
+ * Plex answers `/identity` without a token, so that settles the address, and
+ * the libraries call settles the token.
  */
 suspend fun inspectPlexServer(
     name: String,
     uri: String,
     token: String,
     machineIdentifier: String? = null,
-): PendingServer? {
+): SignInOutcome {
     val client = PlexClient(uri, token, machineIdentifier.orEmpty())
     try {
         // Without the machine id nothing can be added to a playlist, so a server
         // that won't tell us who it is isn't usable as a source.
-        val identity = machineIdentifier ?: client.identity() ?: return null
-        val sections = runCatching { client.getMusicFolders() }.getOrNull() ?: return null
+        val identity = machineIdentifier
+            ?: try {
+                client.publicIdentity()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val status = e.plexStatus()
+                return when {
+                    status != null && status in 500..599 ->
+                        SignInOutcome.Missed(unavailableReason(status), answered = true)
+                    e is PlexException || e is SerializationException -> SignInOutcome.Missed(NOT_PLEX, answered = true)
+                    else -> SignInOutcome.Missed(unreachedReason(e), answered = false)
+                }
+            }
+            ?: return SignInOutcome.Missed(NOT_PLEX, answered = true)
+        val sections = try {
+            client.getMusicFolders()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val status = e.plexStatus()
+            return SignInOutcome.Settled(
+                uri,
+                when {
+                    status in REFUSED_STATUSES -> PLEX_TOKEN_REFUSED
+                    status != null -> "Plex couldn't list its libraries (error $status). Try again."
+                    else -> "That address answered, then stopped before the token could be checked. Try again."
+                },
+            )
+        }
         val source = MusicSource(
             id = newSourceId(),
             kind = SourceKind.PLEX,
@@ -246,11 +279,20 @@ suspend fun inspectPlexServer(
             // sync to discover what we already know here.
             libraries = sections.map { SourceLibrary(it.id, it.name) },
         )
-        return PendingServer(source, sections)
+        return SignInOutcome.Found(PendingServer(source, sections))
     } finally {
         client.close()
     }
 }
+
+private fun Throwable.plexStatus(): Int? =
+    generateSequence(this) { it.cause }.take(8).filterIsInstance<PlexException>().firstOrNull()?.status
+
+private val REFUSED_STATUSES = setOf(401, 403)
+
+private const val PLEX_TOKEN_REFUSED = "Plex didn't accept that token."
+
+private const val NOT_PLEX = "That address answered, but it isn't a Plex server. Check the address and port."
 
 /** The fallback: a server address and a token, typed in. */
 class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
@@ -304,7 +346,7 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                 item {
                     TextRow(
                         title = "Address",
-                        value = address.ifBlank { "http://192.168.1.10:32400" },
+                        value = address.ifBlank { "Required" },
                     ) { edit("Address", address) { address = it } }
                 }
                 item {
@@ -319,32 +361,32 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                             status = "Fill in all three."
                             return@TextRow
                         }
-                        // Said before trying, as on the Jellyfin form: the check
-                        // below can only report that it didn't get in.
-                        if (Cleartext.refuses(address)) {
-                            status = Cleartext.REFUSED
-                            return@TextRow
-                        }
                         checking = true
                         status = "Checking…"
                         App.scope.launch {
                             // Proven before it is saved: a source that can't be
                             // reached would otherwise sit there failing to sync
                             // with nothing to say why.
-                            val next = inspectPlexServer(
-                                name = name.trim(),
-                                uri = address.trim().trimEnd('/'),
-                                token = token.trim(),
-                            )
+                            val outcome = firstAnsweringSpelling(address) { uri ->
+                                inspectPlexServer(name = name.trim(), uri = uri, token = token.trim())
+                            }
                             // Main, and only while this page is up — see
                             // JellyfinLinkScreen.signIn.
                             withContext(Dispatchers.Main.immediate) {
                                 if (gone) return@withContext
                                 checking = false
-                                when {
-                                    next == null -> status = "Couldn't get in with that address and token."
-                                    next.sections.size < 2 -> save(next.source)
-                                    else -> pending = next
+                                when (outcome) {
+                                    is SignInOutcome.Found -> {
+                                        val next = outcome.server
+                                        // As on the Jellyfin form: the spelling that answered.
+                                        address = next.source.baseUrl
+                                        if (next.sections.size < 2) save(next.source) else pending = next
+                                    }
+                                    is SignInOutcome.Settled -> {
+                                        address = outcome.uri
+                                        status = outcome.reason
+                                    }
+                                    is SignInOutcome.Missed -> status = outcome.reason
                                 }
                             }
                         }

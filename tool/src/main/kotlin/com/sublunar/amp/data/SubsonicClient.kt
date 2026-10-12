@@ -27,19 +27,14 @@ data class SubsonicConfig(
 ) {
     companion object {
         /**
-         * Base URLs to try for a raw input, in order. When the user omits a
-         * scheme, prefer HTTPS and fall back to HTTP (for LAN servers). Drops a
-         * trailing slash and a `/rest` suffix.
+         * Base URLs to try for a raw input, in order — see [ServerAddress] for
+         * when http:// follows https://. Drops a trailing slash and a `/rest`
+         * suffix.
          */
-        fun candidates(raw: String): List<String> {
-            var url = raw.trim().trimEnd('/')
-            url = url.replace(Regex("/rest$", RegexOption.IGNORE_CASE), "")
-            return if (url.matches(Regex("^https?://.*", RegexOption.IGNORE_CASE))) {
-                listOf(url)
-            } else {
-                listOf("https://$url", "http://$url")
-            }
-        }
+        fun candidates(raw: String): List<String> =
+            ServerAddress.candidates(
+                raw.trim().trimEnd('/').replace(Regex("/rest$", RegexOption.IGNORE_CASE), ""),
+            )
     }
 }
 

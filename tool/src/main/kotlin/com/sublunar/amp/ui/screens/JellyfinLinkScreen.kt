@@ -9,8 +9,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
-import com.sublunar.amp.data.Cleartext
 import com.sublunar.amp.data.JellyfinSignIn
+import com.sublunar.amp.data.JellyfinSignInResult
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.SourceLibrary
@@ -76,7 +76,7 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                 item {
                     TextRow(
                         title = "Address",
-                        value = address.ifBlank { "http://192.168.1.10:8096" },
+                        value = address.ifBlank { "Required" },
                     ) { edit("Address", address) { address = it } }
                 }
                 item {
@@ -101,12 +101,6 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
                             status = "An address and a username, at least."
                             return@TextRow
                         }
-                        // Said before trying: the sign-in below can only report
-                        // that it failed, not that this build refused to send it.
-                        if (Cleartext.refuses(address)) {
-                            status = Cleartext.REFUSED
-                            return@TextRow
-                        }
                         signIn()
                     }
                 }
@@ -120,11 +114,9 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
         App.scope.launch {
             // Proven before it is saved: a source that can't be reached would
             // otherwise sit there failing to sync with nothing to say why.
-            val next = inspectJellyfinServer(
-                uri = address.trim().trimEnd('/'),
-                username = username.trim(),
-                password = password,
-            )
+            val outcome = firstAnsweringSpelling(address) { uri ->
+                inspectJellyfinServer(uri = uri, username = username.trim(), password = password)
+            }
             // Back on Main, and only if this page is still up: App.scope is
             // Default, and save() goes back — which, after the user has left,
             // would pop whatever is on top, the root included, off the main
@@ -132,11 +124,23 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
             withContext(Dispatchers.Main.immediate) {
                 if (gone) return@withContext
                 checking = false
-                when {
-                    next == null -> status = "Couldn't sign in with that address and account."
-                    next.sections.isEmpty() -> status = "Signed in, but that account has no music library."
-                    next.sections.size < 2 -> save(next.source)
-                    else -> pending = next
+                when (outcome) {
+                    is SignInOutcome.Found -> {
+                        val next = outcome.server
+                        // The spelling that answered, https:// and all, so the
+                        // form shows what was actually reached.
+                        address = next.source.baseUrl
+                        when {
+                            next.sections.isEmpty() -> status = "Signed in, but that account has no music library."
+                            next.sections.size < 2 -> save(next.source)
+                            else -> pending = next
+                        }
+                    }
+                    is SignInOutcome.Settled -> {
+                        address = outcome.uri
+                        status = outcome.reason
+                    }
+                    is SignInOutcome.Missed -> status = outcome.reason
                 }
             }
         }
@@ -167,25 +171,48 @@ class JellyfinLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(
  * source: that it answers, who we are on it, what it calls itself, and what
  * music libraries that account can see.
  *
- * Null when the address and the account don't get us in — better found here
- * than by a sync that fails after the source is already saved.
+ * Better found here than by a sync that fails after the source is already
+ * saved — and said in a way that tells a wrong address from a wrong account.
  */
 suspend fun inspectJellyfinServer(
     uri: String,
     username: String,
     password: String,
-): PendingServer? {
-    val signIn = JellyfinSignIn.authenticate(uri, username, password) ?: return null
+): SignInOutcome {
+    val signIn = when (val result = JellyfinSignIn.authenticate(uri, username, password)) {
+        is JellyfinSignInResult.SignedIn -> result.session
+        is JellyfinSignInResult.Unreached ->
+            return SignInOutcome.Missed(unreachedReason(result.error), answered = false)
+        JellyfinSignInResult.NotJellyfin -> return SignInOutcome.Missed(
+            "That address answered, but it isn't a Jellyfin server. Check the address and port.",
+            answered = true,
+        )
+        is JellyfinSignInResult.Unavailable ->
+            return SignInOutcome.Missed(unavailableReason(result.status), answered = true)
+        is JellyfinSignInResult.Refused ->
+            return SignInOutcome.Settled(result.baseUrl, "Jellyfin didn't accept that username and password.")
+        is JellyfinSignInResult.Failed -> return SignInOutcome.Settled(
+            result.baseUrl,
+            when (val status = result.status) {
+                null -> "The sign-in didn't finish. Try again."
+                // Followed for the address check but not for the sign-in: a
+                // redirect to another host, which isn't followed with a password.
+                in 300..399 -> "That address sends the sign-in somewhere else. Type the address it leads to."
+                else -> "Jellyfin couldn't sign that account in (error $status). Try again."
+            },
+        )
+    }
     val client = signIn.client
     try {
-        val sections = runCatching { client.getMusicFolders() }.getOrNull() ?: return null
+        val sections = runCatching { client.getMusicFolders() }.getOrNull()
+            ?: return SignInOutcome.Settled(signIn.baseUrl, "Signed in, but the server didn't list its libraries. Try again.")
         val source = MusicSource(
             id = newSourceId(),
             kind = SourceKind.JELLYFIN,
             // The server's own name where it gave one, so the Sources page
             // reads as the server rather than as its IP address.
-            name = signIn.serverName.ifBlank { MusicSource.nameFor(uri) },
-            baseUrl = uri,
+            name = signIn.serverName.ifBlank { MusicSource.nameFor(signIn.baseUrl) },
+            baseUrl = signIn.baseUrl,
             username = username,
             token = signIn.token,
             userId = signIn.userId,
@@ -194,7 +221,7 @@ suspend fun inspectJellyfinServer(
             // sync to discover what we already know here.
             libraries = sections.map { SourceLibrary(it.id, it.name) },
         )
-        return PendingServer(source, sections)
+        return SignInOutcome.Found(PendingServer(source, sections))
     } finally {
         client.close()
     }

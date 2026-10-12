@@ -174,6 +174,22 @@ class PlexClient(
     suspend fun identity(): String? =
         runCatching { fetch("/identity").container.machineIdentifier }.getOrNull()
 
+    /**
+     * [identity] asked without the token, failing with the reason. Plex answers
+     * it to anyone, so a typed-in address is settled before the token is in
+     * question: whatever turns this down is something other than Plex.
+     */
+    suspend fun publicIdentity(): String? {
+        val response = http.get(baseUrl.trimEnd('/') + "/identity") {
+            header("Accept", "application/json")
+            identityHeaders.forEach { (k, v) -> header(k, v) }
+        }
+        if (!response.status.isSuccess()) {
+            throw PlexException("Plex says ${response.status.value} for /identity", response.status.value)
+        }
+        return decode(response.bodyAsText()).container.machineIdentifier
+    }
+
     // --- Browsing ------------------------------------------------------------
 
     override suspend fun getMusicFolders(): List<MusicFolder> =

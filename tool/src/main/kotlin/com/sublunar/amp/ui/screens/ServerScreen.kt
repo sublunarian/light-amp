@@ -29,10 +29,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
-import java.net.ConnectException
-import java.net.SocketTimeoutException
-import java.net.UnknownHostException
-import javax.net.ssl.SSLException
 
 /**
  * Edit the server connection in place.
@@ -475,16 +471,5 @@ private fun explain(error: Throwable?): String {
     chain.filterIsInstance<SubsonicException>().firstOrNull()?.let {
         return it.message ?: "Couldn't connect."
     }
-    return when {
-        chain.any { it is UnknownHostException } ->
-            "Couldn't find that address. Check the spelling, and that this phone is " +
-                "on the same network."
-        chain.any { it is SSLException } ->
-            "The HTTPS certificate wasn't accepted. A self-signed certificate needs " +
-                "http:// instead."
-        chain.any { it is ConnectException || it is SocketTimeoutException } ->
-            "Nothing answered at that address. Check the server is running and the " +
-                "port is right."
-        else -> error.message ?: "Couldn't connect."
-    }
+    return unreachedReason(error)
 }
