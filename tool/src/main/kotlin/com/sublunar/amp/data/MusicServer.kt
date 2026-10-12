@@ -266,6 +266,17 @@ interface MusicServer {
         streamUrl(track, format, estimateContentLength = false)
 
     /**
+     * Another address for the same original file, for a server that serves
+     * some files on one address and not the other. Null where there is no
+     * other, which is every server but Plex — see [PlexClient.alternateOriginalUrl].
+     *
+     * Asked for only once the usual original stream has failed a song, and
+     * never in place of a format the user chose: it is the same bytes,
+     * reached another way.
+     */
+    fun alternateOriginalUrl(track: Track): String? = null
+
+    /**
      * Settle whatever the server needs settling before it will serve a stream.
      *
      * Most servers need nothing and the default says so. Plex is the exception:

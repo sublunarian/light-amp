@@ -652,30 +652,54 @@ class PlexClient(
         }
         // The original file is served whole and direct, with no transcode
         // session behind it to identify — nothing to attach sessionId to.
-        return baseUrl.trimEnd('/') + track.streamPath +
-            (if (track.streamPath.contains('?')) "&" else "?") +
-            "download=0&X-Plex-Token=" + enc(token)
+        return partUrl(track, download = false)
     }
+
+    /**
+     * The same file, asked for as a download — for the songs whose
+     * direct-play address [streamUrl] Plex won't serve.
+     *
+     * A file whose media analysis Plex never finished is answered 500 at
+     * `download=0`, and served at `download=1` byte for byte: the same length,
+     * the same ranges, only marked as an attachment. It is the second choice
+     * rather than the only one because Plex holds that address to the
+     * account's "Allow downloads" permission, and a shared account kept from
+     * downloading would be refused every song instead of just these.
+     */
+    override fun alternateOriginalUrl(track: Track): String? =
+        if (track.streamPath.isBlank()) null else partUrl(track, download = true)
 
     /**
      * A copy to keep, rather than a stream to play.
      *
-     * The original needs no transcode and is already served whole, so that path
-     * is unchanged. For anything else `download=1` asks Plex's transcoder for a
-     * complete file instead of the segmented live encode `start.mp3` produces —
-     * the latter has no Xing header, so nothing downstream can know how long it
+     * The original is the file itself, asked for as a download. The stream's
+     * own `download=0` is refused for files Plex never finished analysing —
+     * see [alternateOriginalUrl] — so those could not be kept at all. This is
+     * also the address Plex holds to the account's "Allow downloads", so a
+     * shared account the owner keeps from downloading is refused by the
+     * server rather than keeping copies anyway.
+     *
+     * For anything else `download=1` asks Plex's transcoder for a complete
+     * file instead of the segmented live encode `start.mp3` produces — the
+     * latter has no Xing header, so nothing downstream can know how long it
      * is: ExoPlayer falls back to size ÷ the first frame's bitrate, and on a
      * variable-rate encode that read a 3:07 song as 22:57 and then played
      * silence for the difference.
      */
     override fun downloadUrl(track: Track, format: StreamFormat): String {
         if (format == StreamFormat.RAW && track.streamPath.isNotBlank()) {
-            return streamUrl(track, format, estimateContentLength = false)
+            return partUrl(track, download = true)
         }
         val query = (transcodeParams(track.id, format, 0, null) + ("download" to "1"))
             .joinToString("&") { (k, v) -> "$k=${enc(v)}" }
         return baseUrl.trimEnd('/') + "/music/:/transcode/universal/start.mp3?$query"
     }
+
+    /** The file at the path the track's metadata gave, to play or to keep. */
+    private fun partUrl(track: Track, download: Boolean): String =
+        baseUrl.trimEnd('/') + track.streamPath +
+            (if (track.streamPath.contains('?')) "&" else "?") +
+            "download=${if (download) 1 else 0}&X-Plex-Token=" + enc(token)
 
     /**
      * Words for a song, where the library has them.

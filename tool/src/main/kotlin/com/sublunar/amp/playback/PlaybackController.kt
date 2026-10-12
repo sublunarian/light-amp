@@ -380,6 +380,18 @@ class PlaybackController(
      */
     private val streamFailed = mutableSetOf<String>()
 
+    /**
+     * Songs whose original the server failed on its usual address, which are
+     * fetched from the other address it has for the same file — see
+     * [playOriginalElsewhere]. By source as well as id, since two servers can
+     * each have a song of the same id. Kept for as long as the process: a file
+     * the server wouldn't serve the usual way on one queue won't on the next.
+     */
+    private val originalElsewhere = mutableSetOf<Pair<String, String>>()
+
+    /** This song's entry in [originalElsewhere]: the source playing it, and its id there. */
+    private fun Track.originalKey(): Pair<String, String> = App.source.value.id to id
+
     // Queue order captured when shuffle was switched on, so switching it back off
     // can restore it.
     private var preShuffleOrder: List<Track>? = null
@@ -730,6 +742,10 @@ class PlaybackController(
                 // back to and nothing to latch — the server is not unreachable,
                 // it is unasked.
                 blockedAtCurrent()
+            } else if (error.isServerFault() && playOriginalElsewhere(p)) {
+                // Rebuilt on the other address the server has for the same
+                // file. Only a failure there as well comes down to the path
+                // below, which says so like any other refusal.
             } else {
                 // A bad HTTP status is proof the server is *there*: it answered, it
                 // just didn't like the request. Treating that as "unreachable" takes
@@ -1628,6 +1644,10 @@ class PlaybackController(
             .firstNotNullOfOrNull { Regex("""Response code: (\d{3})""").find(it.message.orEmpty()) }
             ?.groupValues?.get(1)?.toIntOrNull()
 
+    /** The server answered, and the failure was its own: a 5xx rather than a no to the request. */
+    private fun PlaybackException.isServerFault(): Boolean =
+        errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && httpStatus() in 500..599
+
     /** Whether the player's own connection was refused by the network rule. */
     private fun PlaybackException.refusedByGate(): Boolean =
         generateSequence<Throwable>(this) { it.cause }.any {
@@ -1977,7 +1997,7 @@ class PlaybackController(
     private fun serverSeek(p: LightAudioPlayer, track: Track, ms: Long) {
         val client = serverClient.value ?: return
         val target = ms.coerceAtLeast(0L)
-        val url = client.streamUrl(
+        val url = client.playableUrl(
             track,
             effectiveFormat(),
             timeOffsetSeconds = (target / 1000).toInt(),
@@ -3155,7 +3175,7 @@ class PlaybackController(
         // stream and stops at the length it implies — about 23 seconds early on
         // that track. Chunked is honest: it plays to the end of the audio, and the
         // duration it displays comes from the DIDL metadata either way.
-        val url = serverClient.value?.streamUrl(
+        val url = serverClient.value?.playableUrl(
             track,
             format,
             estimateContentLength = false,
@@ -3225,7 +3245,7 @@ class PlaybackController(
         format: StreamFormat,
         key: String,
     ): Boolean? {
-        val probeUrl = serverClient.value?.streamUrl(
+        val probeUrl = serverClient.value?.playableUrl(
             track,
             format,
             estimateContentLength = false,
@@ -3283,7 +3303,7 @@ class PlaybackController(
         // at once during the hand-off, and Plex tears down whichever one
         // shares an identifier with the other.
         val url = serverClient.value
-            ?.streamUrl(track, format, estimateContentLength = false, sessionId = sessionIdFor(track.id))
+            ?.playableUrl(track, format, estimateContentLength = false, sessionId = sessionIdFor(track.id))
             ?: return
         if (url == castNextUrl) return
         castNextArmedFor = after
@@ -3338,7 +3358,7 @@ class PlaybackController(
         val sink = runCatching { DlnaCast.sinkFormats(renderer) }.getOrDefault(emptySet())
         // Same as probeSeekable: this asks the music server; DlnaCast's own
         // switch stands in front of it.
-        val mime = client?.let { DlnaCast.probeMime(it.streamUrl(track, desired)) }
+        val mime = client?.let { DlnaCast.probeMime(it.playableUrl(track, desired)) }
             ?: assumedMime(desired)
         val choice = if (sinkAccepts(sink, mime)) {
             desired to mime
@@ -3746,6 +3766,50 @@ class PlaybackController(
     }
 
     /**
+     * The original stream of the song the player is on failed on the server's
+     * side: move the song to the other address its server has for the same
+     * file, for good, and carry on from where it stood. Main only, like
+     * [rebuildQueueAt]. False leaves the failure to the usual path.
+     *
+     * Plex answers its direct-play address with a 500 for files whose media
+     * analysis never finished, and serves the identical file asked for as a
+     * download — same length, same ranges — so seeking and the loopback
+     * door's pickups go on working as they did. Once per song: one that fails
+     * on the other address as well — a shared account the owner keeps from
+     * downloading is refused there — goes down the usual path, and nothing
+     * here ever changes the format.
+     *
+     * The index is the player's, not [_index]: a song that fails as the
+     * player moves onto it fails before the index collector has caught up.
+     */
+    private fun playOriginalElsewhere(p: LightAudioPlayer): Boolean {
+        if (isCasting) return false
+        val index = p.currentMediaItemIndex.value
+        val track = _queue.value.getOrNull(index) ?: return false
+        if (queuedSources.getOrNull(index) !is LightAudioSource.UrlSource) return false
+        if (effectiveFormat() != StreamFormat.RAW || track.originalKey() in originalElsewhere) return false
+        if (serverClient.value?.alternateOriginalUrl(track) == null) return false
+        originalElsewhere += track.originalKey()
+        android.util.Log.i(
+            "AmpNet",
+            "server failed the original at idx=$index — playing it from its other address from now on",
+        )
+        // Arrived on it by itself and not yet heard of here: landed on the
+        // way the index collector would have, so the song is announced and
+        // timed as the one playing, from its start.
+        if (index != _index.value) landedOn(p, index, startMs = 0L)
+        val wanted = p.playWhenReady
+        rebuildQueueAt(p, _queue.value, index, _positionMs.value)
+        if (wanted) {
+            starting(index)
+            withStreamDecision { player?.play() }
+        } else {
+            p.pause()
+        }
+        return true
+    }
+
+    /**
      * A stream died — carry on from the downloaded copy, at the same second.
      *
      * Losing the network mid-track otherwise just stops the music: the player
@@ -4033,6 +4097,25 @@ class PlaybackController(
     }
 
     /**
+     * [MusicServer.streamUrl], except for a song moved to the other address
+     * its server has for the original — see [playOriginalElsewhere]. Every
+     * URL this controller plays, casts or probes is made here, so a moved
+     * song stays moved however it is reached next: a seek, a rebuild, a
+     * speaker.
+     */
+    private fun MusicServer.playableUrl(
+        track: Track,
+        format: StreamFormat,
+        timeOffsetSeconds: Int = 0,
+        estimateContentLength: Boolean = true,
+        sessionId: String? = null,
+    ): String {
+        val moved = format == StreamFormat.RAW && track.originalKey() in originalElsewhere
+        return (if (moved) alternateOriginalUrl(track) else null)
+            ?: streamUrl(track, format, timeOffsetSeconds, estimateContentLength, sessionId)
+    }
+
+    /**
      * Where to play a track from.
      *
      * Downloads win by default — that's the point of having them. A download is
@@ -4075,7 +4158,7 @@ class PlaybackController(
             // it here covers every source that ever might, and costs the other
             // two nothing.
             App.streamProxy.wrap(
-                serverClient.value?.streamUrl(
+                serverClient.value?.playableUrl(
                     this,
                     effectiveFormat(),
                     estimateContentLength = false,
@@ -4115,7 +4198,7 @@ class PlaybackController(
         val client = serverClient.value
         if (at > 1_000L && client != null && needsServerSeek(track, askPlayer = false)) {
             android.util.Log.i("AmpCast", "rebuild idx=$index at=$at via server offset")
-            val url = client.streamUrl(
+            val url = client.playableUrl(
                 track,
                 effectiveFormat(),
                 timeOffsetSeconds = (at / 1000).toInt(),
