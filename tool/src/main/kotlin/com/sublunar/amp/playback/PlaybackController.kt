@@ -291,6 +291,44 @@ class PlaybackController(
     private val _buffering = MutableStateFlow(false)
     val buffering: StateFlow<Boolean> = _buffering
 
+    /** Sound is coming out: the start is over, whatever asked for it. */
+    private fun heardSound() {
+        hasPlayed = true
+        // The pick has been honoured. From here on, whatever happens to this
+        // track happened to playback, not to a request — see blockedAtCurrent.
+        pickedIndex = -1
+        lastSkipTarget = -1
+        _buffering.value = false
+    }
+
+    /** Where the position stood when a start was first seen buffering, and when — see [noteProgress]. */
+    private var bufferingProbe: Pair<Long, Long>? = null
+
+    /**
+     * The player's own "playing" can go stale — see [stop] — and a start that
+     * is never reported leaves "Buffering…" and a play button over music that
+     * is plainly playing. A position that moves is sound coming out, whatever
+     * the flag says: a second of the track in a second of time, so a seek's
+     * jump doesn't count.
+     */
+    private fun noteProgress(positionMs: Long) {
+        if (!_buffering.value) {
+            bufferingProbe = null
+            return
+        }
+        val now = android.os.SystemClock.elapsedRealtime()
+        val seen = bufferingProbe
+        if (seen == null || positionMs < seen.first) {
+            bufferingProbe = positionMs to now
+            return
+        }
+        if (positionMs - seen.first >= PROGRESS_PROOF_MS && now - seen.second >= PROGRESS_PROOF_MS) {
+            bufferingProbe = null
+            _isPlaying.value = true
+            heardSound()
+        }
+    }
+
     /** Mark a start at [index] — buffering only if that row is a stream. */
     private fun starting(index: Int) {
         _buffering.value = queuedSources.getOrNull(index) is LightAudioSource.UrlSource
@@ -853,13 +891,7 @@ class PlaybackController(
                 if (isCasting) return@collect
                 _isPlaying.value = playing
                 if (playing) {
-                    hasPlayed = true
-                    // The pick has been honoured. From here on, whatever
-                    // happens to this track happened to playback, not to a
-                    // request — see blockedAtCurrent.
-                    pickedIndex = -1
-                    lastSkipTarget = -1
-                    _buffering.value = false
+                    heardSound()
                 } else if (hasPlayed) {
                     rewindIfQueueFinished(p)
                 }
@@ -874,7 +906,10 @@ class PlaybackController(
                     snapshot = false
                     return@collect
                 }
-                if (!isCasting) _positionMs.value = it + streamOffsetMs
+                if (!isCasting) {
+                    _positionMs.value = it + streamOffsetMs
+                    noteProgress(it)
+                }
             }
         }
         scope.launch(handle) {
@@ -2044,6 +2079,14 @@ class PlaybackController(
         // source's queue under an empty one on the screen.
         scope.launch(Dispatchers.Main.immediate) {
             val cur = player ?: return@launch
+            // Paused first. A stop alone leaves the player wanting to play,
+            // and through the SDK's media controller it then never reports
+            // that it stopped: its "playing" stays true, so the next song's
+            // start is no change, nothing hears it, and the screen sat on
+            // "Buffering…" with a play button over the music. A pause is
+            // reported. It also means a new queue waits for its stream
+            // decision before making a sound, as every start is meant to.
+            cur.pause()
             cur.stop()
             cur.setMediaQueue(emptyList())
         }
@@ -4105,6 +4148,9 @@ class PlaybackController(
          * the system anything all afternoon.
          */
         private const val PARKED_POLL_LIMIT_MS = 10 * 60 * 1000L
+
+        /** How much of a track has to pass, in as much time, to count as playing — see noteProgress. */
+        private const val PROGRESS_PROOF_MS = 1_000L
 
         /** The longest a stream start is treated as "in progress" — see [buffering]. */
         private const val BUFFERING_LIMIT_MS = 45_000L
