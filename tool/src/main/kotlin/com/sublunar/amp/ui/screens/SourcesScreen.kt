@@ -481,16 +481,40 @@ class SourceDetailScreen(
                         },
                         subtitle = "Forgets its library and its downloads",
                         onClick = {
-                            // Stop first: the queue holds stream URLs signed for
-                            // the server we are about to forget.
-                            if (source.id == App.source.value.id) App.playback.stop()
-                            App.scope.launch {
-                                // Wipe while the source still exists to name its
-                                // database and its download folder.
-                                App.forgetSource(source)
-                                App.settings.removeSource(source.id)
-                            }
-                            goBack()
+                            // Asked first: what goes with it can't be had back
+                            // without the network, and downloads are what this
+                            // phone keeps for when there is none.
+                            val local = source.kind == SourceKind.LOCAL
+                            navigateTo<Boolean>(
+                                {
+                                    ConfirmScreen(
+                                        it,
+                                        title = if (local) "Remove Source" else "Log Out",
+                                        message = if (local) {
+                                            "This removes ${source.name} from Amp. The music " +
+                                                "files stay on this phone."
+                                        } else {
+                                            "This removes ${source.name} from Amp and deletes " +
+                                                "all of its downloads from this phone."
+                                        },
+                                        confirmLabel = if (local) "Remove" else "Log Out",
+                                    )
+                                },
+                                resultCallback = { confirmed ->
+                                    if (confirmed == true) {
+                                        // Stop first: the queue holds stream URLs
+                                        // signed for the server we are about to forget.
+                                        if (source.id == App.source.value.id) App.playback.stop()
+                                        App.scope.launch {
+                                            // Wipe while the source still exists to
+                                            // name its database and its download folder.
+                                            App.forgetSource(source)
+                                            App.settings.removeSource(source.id)
+                                        }
+                                        goBack()
+                                    }
+                                },
+                            )
                         },
                     )
                 }

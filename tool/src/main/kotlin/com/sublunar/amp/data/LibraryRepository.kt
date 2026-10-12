@@ -932,6 +932,22 @@ class LibraryRepository(
     }
 
     /**
+     * Start the sync state over for the source just switched to, from the time
+     * it last finished a sync.
+     *
+     * There is one state for the whole app, and it used to carry straight
+     * across a switch: the source just added read "last synced 2 minutes ago"
+     * — the previous one's time — and, worse, its first sync was turned away by
+     * the floor in [syncInBackground], which asked that same clock, so a new
+     * server sat empty until minutes later something asked again. The last
+     * one's error and its refusal to scan were inherited the same way.
+     */
+    fun adoptSource(lastSyncedMs: Long) {
+        scanRefused = false
+        _syncState.value = SyncState(lastSyncedMs = lastSyncedMs)
+    }
+
+    /**
      * Put back a `syncing` claim that [runSync] turned out to have no work for.
      *
      * Only clears the flag: an error already set here by an earlier run is
@@ -1281,7 +1297,9 @@ class LibraryRepository(
                 syncing = false,
                 lastSyncedMs = finishedAt,
             )
-            runCatching { settings.activeSource.first()?.id?.let { settings.setLastSyncedMs(it, finishedAt) } }
+            // The source this ran for, not whichever is active by now: a switch
+            // made while it ran would otherwise be told it had just synced.
+            runCatching { source?.id?.let { settings.setLastSyncedMs(it, finishedAt) } }
             learnServerFeatures(dao, client, source)
             onSyncSucceeded?.invoke()
         } catch (e: CancellationException) {
@@ -1382,7 +1400,7 @@ class LibraryRepository(
                 syncing = false,
                 lastSyncedMs = finishedAt,
             )
-            runCatching { settings.activeSource.first()?.id?.let { settings.setLastSyncedMs(it, finishedAt) } }
+            runCatching { settings.setLastSyncedMs(sourceId, finishedAt) }
             onSyncSucceeded?.invoke()
         } catch (e: CancellationException) {
             _syncState.value = _syncState.value.copy(syncing = false)

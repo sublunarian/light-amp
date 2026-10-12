@@ -82,6 +82,7 @@ import com.thelightphone.sdk.cast.DlnaCast
 import com.sublunar.amp.art.ArtworkNeed
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.withContext
 
 /**
  * App-scoped service locator. Initialized once from the boot screen (which owns
@@ -1218,6 +1219,8 @@ object App {
         // source's downloads goes with it.
         library.cancelSync()
         downloader.setSyncing(null)
+        // And whatever it said about syncing — see LibraryRepository.adoptSource.
+        library.adoptSource(runCatching { settings.lastSyncedMs(next.id) }.getOrDefault(0L))
         // Popular songs, the playlists, the search index and the artist ids are
         // all keyed by name rather than by source, so they answer for the wrong
         // server until they're dropped. Cleared *before* the source changes
@@ -1240,6 +1243,13 @@ object App {
         // What was known about the server being left says nothing about this
         // one: assume it is there, and ask.
         reachability.reset()
+        // Its own sync, now that everything it pins is in place, rather than
+        // whenever the root screen next happens to ask: that ask races this
+        // switch, and losing it left a server just added empty for minutes.
+        // The floor still applies, so a source synced a moment ago isn't
+        // fetched again. On Main, where every other caller is, because the
+        // check-then-claim inside isn't atomic.
+        withContext(Dispatchers.Main) { library.syncInBackground() }
     }
 
     /**
