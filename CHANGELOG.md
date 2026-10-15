@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.1
+
+### Fixed
+
+- Large libraries no longer crash Amp or make playback stutter (#17, thanks
+  @kitschmensch).
+- Syncing a large library is much faster.
+
 ## 0.8.0
 
 ### Fixed
