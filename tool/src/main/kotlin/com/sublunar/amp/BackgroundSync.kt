@@ -1,5 +1,6 @@
 package com.sublunar.amp
 
+import com.sublunar.amp.data.noteOom
 import com.thelightphone.sdk.LightJob
 import com.thelightphone.sdk.LightJobHandler
 import com.thelightphone.sdk.LightJobResult
@@ -20,7 +21,7 @@ val librarySyncJob: LightJobHandler = { _, _ ->
     // and a callback that missed Wi-Fi arriving is caught here — the fresh
     // look moves the rules, and the rules start the queue again.
     if (App.isReady && App.rulesNow().mayMoveHeavyBytes) {
-        runCatching { App.library.sync() }
+        runCatching { App.library.sync() }.noteOom("background sync")
         // The one background moment a download server that stopped answering
         // is asked again. Awaited, so the job holds the process while it asks.
         runCatching { App.downloader.wakeParked() }

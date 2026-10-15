@@ -4,7 +4,9 @@ import com.sublunar.amp.data.db.AlbumEntity
 import com.sublunar.amp.data.db.DownloadFile
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.LikedArtistEntity
+import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.sublunar.amp.data.db.TopSongEntity
+import com.sublunar.amp.data.db.TrackEntity
 import com.sublunar.amp.data.db.toAlbum
 import com.sublunar.amp.data.db.toEntity
 import com.sublunar.amp.data.db.toTrack
@@ -16,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -35,6 +38,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.SharingCommand
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -42,6 +49,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class SyncState(
     val syncing: Boolean = false,
@@ -143,13 +151,25 @@ class LibraryRepository(
      * truth: the old source's music is not this source's music, and everything
      * else about the switch already says so.
      *
-     * Each list is also read afresh whenever [reread] moves — see there. That
-     * re-read is not blanked first: it is the same source, and an empty list
-     * in between would be a flicker, not the truth.
+     * Each list is also read afresh whenever [rereads] moves — see [reread].
+     * That re-read is not blanked first: it is the same source, and an empty
+     * list in between would be a flicker, not the truth.
+     *
+     * A [paced] list is read at most once every [SYNC_REREAD_MS] while its own
+     * source syncs — see [pacedWhileSyncing].
      */
-    private fun <T> observing(empty: T, select: (LibraryDao) -> Flow<T>): Flow<T> =
+    private fun <T> observing(
+        empty: T,
+        rereads: StateFlow<Int> = reread,
+        paced: Boolean = false,
+        select: (LibraryDao) -> Flow<T>,
+    ): Flow<T> =
         daos.flatMapLatest { current ->
-            current?.let { dao -> reread.flatMapLatest { select(dao) }.onStart { emit(empty) } } ?: emptyFlow()
+            current?.let { dao ->
+                rereads.flatMapLatest { n ->
+                    if (paced) select(dao).pacedWhileSyncing(dao) { rereads.value != n } else select(dao)
+                }.onStart { emit(empty) }
+            } ?: emptyFlow()
         }
 
     /**
@@ -161,8 +181,58 @@ class LibraryRepository(
      * 2.8.1 each fixed such a race. A new source showed it: the first sync
      * stored its albums and the Albums page stayed empty until something
      * else wrote to the same table.
+     *
+     * The tracks have [rereadTracks] of their own, moved only by a sync that
+     * wrote to them: every sync rewrites the album rows, and reading the whole
+     * library again after one that changed no song was a second copy of it
+     * built for nothing.
      */
     private val reread = MutableStateFlow(0)
+    private val rereadTracks = MutableStateFlow(0)
+
+    /** The database a sync is writing to right now, if one is — see [pacedWhileSyncing]. */
+    private val syncingDao = MutableStateFlow<LibraryDao?>(null)
+
+    /** Moved by every like and rating made here — see [pacedWhileSyncing]. */
+    private val localWrites = MutableStateFlow(0)
+
+    private fun wroteHere() = localWrites.update { it + 1 }
+
+    /**
+     * Each read handed on at once; the next one, while [dao]'s sync runs, not
+     * before [SYNC_REREAD_MS], the sync's end, or a like or rating made here.
+     *
+     * Room reads the whole table again after every write to it, and a first
+     * sync writes forty albums at a time: on a large library, a whole read
+     * about every half second, each with the artists, the tag lists and the
+     * song sort worked out again behind it, ran the heap out. Room's flow
+     * keeps only the latest change while its reader is busy, so holding the
+     * reader here after it hands a list on is what bounds the reads — and the
+     * waiting ends the moment the sync does, as does the re-read it asks for.
+     *
+     * Your own edits end the wait too. Held back, a like still read "Like"
+     * when the sheet was opened again, and the second tap liked the song
+     * twice rather than taking it back.
+     *
+     * The sync's end both ends the wait and asks for its re-read, in no set
+     * order. A wait ended first would go on to read the change it was holding
+     * back, which the re-read reads anyway — a second whole library at the end
+     * of every sync. So once [superseded], it waits to be cancelled instead.
+     */
+    private fun <T> Flow<T>.pacedWhileSyncing(dao: LibraryDao, superseded: () -> Boolean): Flow<T> = flow {
+        // Taken before each read, so an edit landing while one runs still ends the wait after it.
+        var writes = localWrites.value
+        collect { rows ->
+            emit(rows)
+            if (syncingDao.value === dao) {
+                withTimeoutOrNull(SYNC_REREAD_MS) {
+                    combine(syncingDao, localWrites) { syncing, n -> syncing !== dao || n != writes }.first { it }
+                }
+                if (superseded()) awaitCancellation()
+            }
+            writes = localWrites.value
+        }
+    }
 
     /**
      * The downloads table, read once for everything that needs it.
@@ -220,14 +290,36 @@ class LibraryRepository(
         // it. Opening it is enough now.
         scope.launch {
             daos.filterNotNull().collect { d ->
-                val orphans = runCatching { d.orphanedTrackCount() }.getOrDefault(0)
+                val orphans = runCatching { d.orphanedTrackCount() }.noteOom("orphan count").getOrDefault(0)
                 if (orphans > 0) {
                     android.util.Log.w("AmpSync", "dropping $orphans orphaned track(s) on open")
-                    runCatching { d.deleteOrphanedTracks() }
+                    runCatching { d.deleteOrphanedTracks() }.noteOom("orphan sweep")
                 }
             }
         }
     }
+
+    /**
+     * The last whole read of the tracks table, and the database it came from:
+     * what the next read of the same database reuses unchanged songs from.
+     *
+     * Only ever the browsed database's. A source switch drops it in
+     * [trackRows] when the lists change over, so a read never compares one
+     * source's rows against another's, and the source left behind isn't kept
+     * alive for its objects.
+     */
+    @Volatile private var lastTracksRead: Pair<LibraryDao, TrackGeneration>? = null
+
+    /**
+     * The songs the lists hold right now, if they were read from [dao]; none
+     * when they are another database's, or nothing has been read yet.
+     *
+     * For a page that reads songs out of more than one source's database —
+     * see App.downloadsBySource — and wants the browsed one's as the objects
+     * already in memory rather than a second copy of them.
+     */
+    fun loadedTracks(dao: LibraryDao): List<Track> =
+        lastTracksRead?.takeIf { it.first === dao }?.second?.tracks.orEmpty()
 
     /**
      * Every cached track, whichever library it belongs to.
@@ -236,10 +328,39 @@ class LibraryRepository(
      * observing again, so choosing a library costs a filter and not a second
      * scan of ten thousand rows. Downloads read from here — what is on the disk
      * is on the disk regardless of which library is being browsed.
+     *
+     * Room still says when to read: it counts the table again after every
+     * write to it and hands each count on, the same number or not, so a count
+     * arriving is the signal and its value only sizes the read. The read
+     * itself is [readTracks], which keeps the songs that didn't change.
      */
     private val trackRows: StateFlow<List<Track>> =
-        observing(emptyList()) { it.observeTracks() }.map { rows -> rows.map { row -> row.toTrack() } }
-            .stateIn(scope, SharingStarted.Eagerly, emptyList())
+        observing(emptyList(), rereadTracks, paced = true) { dao ->
+            if (lastTracksRead?.first !== dao) lastTracksRead = null
+            dao.observeTrackCount().map { count -> readTracks(dao, count) }
+        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * The tracks table as [dao] holds it now, in storage order.
+     *
+     * A row at the same rowid with the same content as last time is handed
+     * back as the object it was then — see [TrackRead]. A write that changes
+     * one song therefore costs one song and a new list, where it used to cost
+     * a whole library of new objects, alive next to the old one until every
+     * holder of the old list let go.
+     */
+    private suspend fun readTracks(dao: LibraryDao, count: Int): List<Track> {
+        val previous = lastTracksRead?.takeIf { it.first === dao }?.second ?: TrackGeneration.EMPTY
+        val read = TrackRead(previous, count)
+        dao.readTracks(TRACK_PAGE) { page -> page.forEach { read.add(it.rowId, it.track) } }
+        val next = read.finish()
+        // Kept only while it is still the browsed database's: a read finishing
+        // just after a source switch would otherwise hold the source left
+        // behind, every song of it, until the next read.
+        if (daos.value === dao) lastTracksRead = dao to next
+        android.util.Log.i("AmpLists", "tracks table → ${next.size} rows, ${read.reused} kept as they were")
+        return next.tracks
+    }
 
     /** Which of the server's libraries is chosen, or null for all of them. */
     private val selectedLibrary: StateFlow<String?> =
@@ -271,7 +392,7 @@ class LibraryRepository(
      */
     /** The album table as stored, library tags and all. */
     private val albumRows: StateFlow<List<AlbumEntity>> =
-        observing(emptyList()) { it.observeAlbums() }
+        observing(emptyList(), paced = true) { it.observeAlbums() }
             .onEach { android.util.Log.i("AmpLists", "albums table → ${it.size} rows (re-read ${reread.value})") }
             .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
@@ -336,15 +457,16 @@ class LibraryRepository(
     // How many tracks each album has, rebuilt only when the library itself changes.
     // Without this the album-badge flow re-grouped all ten thousand tracks after
     // every single completed download.
-    private var albumSizesFor: List<Track>? = null
-    private var albumSizes: Map<String, Int> = emptyMap()
+    //
+    // Each memo holds the list it was worked out from, and with it every song
+    // in it — so it is dropped wherever that list stops being refreshed: on a
+    // source switch (see forgetDerived), and once there are no downloads to
+    // badge. Kept, it held a library long gone.
+    @Volatile private var albumSizes: Pair<List<Track>, Map<String, Int>>? = null
 
-    private fun albumSizes(list: List<Track>): Map<String, Int> {
-        if (albumSizesFor === list) return albumSizes
-        albumSizes = list.mapNotNull { it.albumId }.groupingBy { it }.eachCount()
-        albumSizesFor = list
-        return albumSizes
-    }
+    private fun albumSizes(list: List<Track>): Map<String, Int> =
+        albumSizes?.takeIf { it.first === list }?.second
+            ?: list.mapNotNull { it.albumId }.groupingBy { it }.eachCount().also { albumSizes = list to it }
 
     /**
      * Albums whose every cached track is downloaded — drives the download badge.
@@ -355,7 +477,10 @@ class LibraryRepository(
      */
     val downloadedAlbumIds: StateFlow<Set<String>> =
         combine(allTracks, downloadFiles) { list, rows ->
-            if (rows.isEmpty()) return@combine emptySet()
+            if (rows.isEmpty()) {
+                albumSizes = null
+                return@combine emptySet()
+            }
             val sizes = albumSizes(list)
             val have = HashMap<String, Int>()
             for (row in rows) {
@@ -369,15 +494,11 @@ class LibraryRepository(
 
     // How many tracks each artist has, rebuilt only when the library itself
     // changes — the same memoisation as albumSizes, for the same reason.
-    private var artistSizesFor: List<Track>? = null
-    private var artistSizes: Map<String, Int> = emptyMap()
+    @Volatile private var artistSizes: Pair<List<Track>, Map<String, Int>>? = null
 
-    private fun artistSizes(list: List<Track>): Map<String, Int> {
-        if (artistSizesFor === list) return artistSizes
-        artistSizes = list.flatMap { it.albumArtistNames() }.groupingBy { it }.eachCount()
-        artistSizesFor = list
-        return artistSizes
-    }
+    private fun artistSizes(list: List<Track>): Map<String, Int> =
+        artistSizes?.takeIf { it.first === list }?.second
+            ?: list.flatMap { it.albumArtistNames() }.groupingBy { it }.eachCount().also { artistSizes = list to it }
 
     /**
      * Artists whose every cached track is downloaded — drives the artist list's
@@ -385,11 +506,15 @@ class LibraryRepository(
      */
     val downloadedArtistNames: StateFlow<Set<String>> =
         combine(allTracks, downloadFiles) { list, rows ->
-            if (rows.isEmpty()) return@combine emptySet()
+            if (rows.isEmpty()) {
+                artistSizes = null
+                trackIndex = null
+                return@combine emptySet()
+            }
             val sizes = artistSizes(list)
-            // The shared index, not one of its own: this recomputes every time a
-            // download lands, and building a ten-thousand-entry map per finished
-            // track is exactly what that memo exists to avoid.
+            // The memoised index: this recomputes every time a download lands,
+            // and building a ten-thousand-entry map per finished track is
+            // exactly what that memo exists to avoid.
             val byId = trackIndex(list)
             val have = HashMap<String, Int>()
             for (row in rows) {
@@ -403,30 +528,13 @@ class LibraryRepository(
             }
         }.stateIn(scope, SharingStarted.Eagerly, emptySet())
 
-    // Track lookup for the Downloads page, memoised on the library list instance so
-    // a completed download doesn't rebuild a ten-thousand-entry map.
-    private var trackIndexFor: List<Track>? = null
-    private var trackIndex: Map<String, Track> = emptyMap()
+    // Track lookup for downloadedArtistNames, memoised on the library list
+    // instance so a completed download doesn't rebuild a ten-thousand-entry map.
+    @Volatile private var trackIndex: Pair<List<Track>, Map<String, Track>>? = null
 
-    private fun trackIndex(list: List<Track>): Map<String, Track> {
-        if (trackIndexFor === list) return trackIndex
-        trackIndex = list.associateBy { it.id }
-        trackIndexFor = list
-        return trackIndex
-    }
-
-    /** Downloaded tracks, newest first — the Downloads page. */
-    val downloads: Flow<List<Track>> =
-        // Every library's, not the chosen one's: this page is about what is on
-        // the phone, and a file does not stop being downloaded because you are
-        // looking at a different library.
-        combine(downloadFiles, trackRows) { rows, library ->
-            val byId = trackIndex(library)
-            // Sorted here rather than in SQL: this flow is cold, so the ordering
-            // is done when the Downloads page is open instead of on every read
-            // of the shared list.
-            rows.sortedByDescending { it.downloadedAtMs }.mapNotNull { byId[it.trackId] }
-        }
+    private fun trackIndex(list: List<Track>): Map<String, Track> =
+        trackIndex?.takeIf { it.first === list }?.second
+            ?: list.associateBy { it.id }.also { trackIndex = list to it }
 
     /**
      * The tag values this library actually uses.
@@ -435,12 +543,35 @@ class LibraryRepository(
      * is no equivalent for composers, and a list built from the tracks on hand is
      * the same answer for all three. Empty means the server doesn't fill that
      * field — which is how the More page decides whether to offer it at all.
+     *
+     * Worked out only while a page shows them. Once started they used to run
+     * for the rest of the process, two passes over the whole library on every
+     * read of it, a sync's included. Stopped, they keep their last answer, so
+     * a page opening shows that while the new one is worked out rather than
+     * an empty list — unless the source has changed since, when that answer
+     * is another server's, and could set a filter this library can't match.
      */
-    val genres: StateFlow<List<String>> =
-        tracksFlowOf { it.genre }.stateIn(scope, SharingStarted.Lazily, emptyList())
+    private val tagValues = mutableListOf<MutableStateFlow<List<String>>>()
 
-    val composers: StateFlow<List<String>> =
-        tracksFlowOf { it.composer }.stateIn(scope, SharingStarted.Lazily, emptyList())
+    val genres: StateFlow<List<String>> = tagValuesOf { it.genre }
+
+    val composers: StateFlow<List<String>> = tagValuesOf { it.composer }
+
+    /**
+     * What stateIn with WhileSubscribed does, by hand: a stateIn's value can't
+     * be emptied from outside, and a source switch has to — see forgetDerived.
+     */
+    private fun tagValuesOf(select: (Track) -> String): StateFlow<List<String>> {
+        val values = MutableStateFlow(emptyList<String>())
+        tagValues += values
+        scope.launch {
+            SharingStarted.WhileSubscribed(TAG_VALUES_KEEP_MS).command(values.subscriptionCount)
+                .collectLatest { command ->
+                    if (command == SharingCommand.START) tracksFlowOf(select).collect { values.value = it }
+                }
+        }
+        return values.asStateFlow()
+    }
 
     private fun tracksFlowOf(select: (Track) -> String): Flow<List<String>> =
         tracks.map { list ->
@@ -514,7 +645,7 @@ class LibraryRepository(
         if (_artistImages.value.isNotEmpty()) return
         if (!metadataAllowed()) return
         val client = serverClient.value ?: return
-        val refs = runCatching { client.getArtistIndex(libraryId.first()) }.getOrNull() ?: return
+        val refs = runCatching { client.getArtistIndex(libraryId.first()) }.noteOom("artist index").getOrNull() ?: return
         // Doubles as the id index that starring needs, which is the same call.
         if (artistIds == null) artistIds = refs.associate { it.name to it.id }
         _artistImages.value = refs
@@ -790,7 +921,7 @@ class LibraryRepository(
         }
         if (!metadataAllowed()) return
         awaitPlaylistWrites()
-        val tracks = runCatching { serverClient.value?.getPlaylistTracks(id) }.getOrNull() ?: return
+        val tracks = runCatching { serverClient.value?.getPlaylistTracks(id) }.noteOom("playlist prime $id").getOrNull() ?: return
         _playlistTrackIds.update { it + (id to tracks.map { track -> track.id }) }
     }
 
@@ -1127,6 +1258,9 @@ class LibraryRepository(
         // turned up in a Navidrome library, untagged, with ids Navidrome had
         // never issued.
         _syncState.value = _syncState.value.copy(syncing = true, error = null, phase = "Connecting")
+        syncingDao.value = dao
+        // What the run wrote, so the re-read at its end covers that and no more.
+        val wrote = SyncWrites()
         try {
             // Read before the first write — see reportDroppedCovers.
             val coversBefore = coverIdsOrNull(dao)
@@ -1148,6 +1282,7 @@ class LibraryRepository(
                         named += ids.size
                         ids.chunked(500).forEach { chunk -> stamped += dao.tagAlbums(folder.id, chunk) }
                     }
+                    if (stamped > 0) wrote.albums = true
                     // Whatever is still untagged after every folder has spoken is
                     // an album the server has nowhere — its id gone or changed,
                     // as a re-import does — and, being untagged, it was exempt
@@ -1164,6 +1299,8 @@ class LibraryRepository(
                         android.util.Log.w("AmpSync", "dropping albums the server has nowhere, e.g. $sample")
                         dead.forEach { dao.deleteTracksForAlbum(it) }
                         dao.deleteAlbums(dead)
+                        wrote.tracks = true
+                        wrote.albums = true
                     }
                     android.util.Log.i(
                         "AmpSync",
@@ -1189,6 +1326,7 @@ class LibraryRepository(
             // rather than being reconciled against an empty answer — which
             // unliked everything — or failing the whole sync over them.
             val starred = runCatching { folderIds.map { client.getStarred(it) }.mergeStarred() }
+                .noteOom("sync: favourites")
                 .onFailure { android.util.Log.w("AmpSync", "favourites unread, likes kept: $it") }
                 .getOrNull()
             val cached = dao.allAlbumsSnapshot().associateBy { it.id }
@@ -1222,6 +1360,7 @@ class LibraryRepository(
             )
 
             dao.upsertAlbums(serverAlbums.map { it.toEntity(libraryOf[it.id]) })
+            if (serverAlbums.isNotEmpty()) wrote.albums = true
 
             // Prune albums (and their tracks) that no longer exist on the server —
             // but never on an empty result.
@@ -1255,6 +1394,7 @@ class LibraryRepository(
                 if (staleAlbumIds.isNotEmpty()) {
                     staleAlbumIds.forEach { dao.deleteTracksForAlbum(it) }
                     dao.deleteAlbums(staleAlbumIds.toList())
+                    wrote.tracks = true
                 }
                 // And the tracks that belong to no album here at all. The prune
                 // above only reaches albums this library knows, so a song
@@ -1270,6 +1410,7 @@ class LibraryRepository(
                 if (orphans > 0) {
                     android.util.Log.w("AmpSync", "dropping $orphans track(s) belonging to no album here")
                     dao.deleteOrphanedTracks()
+                    wrote.tracks = true
                 }
             }
 
@@ -1337,6 +1478,7 @@ class LibraryRepository(
                 null
             } else {
                 runCatching { client.songChangesSince(songCheck.mark, folderIds) }
+                    .noteOom("sync: song changes")
                     .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: $it") }
                     .getOrNull()
             }
@@ -1368,17 +1510,20 @@ class LibraryRepository(
             // like it is being cut short.
             _syncState.value = _syncState.value.copy(phase = "Albums 0/${albumsToFetch.size}")
             val likedSongs = starred?.songIds ?: dao.likedTrackIds().toHashSet()
-            val unread = fetchAndStoreSongs(dao, client, albumsToFetch, likedSongs, libraryOf)
+            val unread = fetchAndStoreSongs(dao, client, albumsToFetch, likedSongs, libraryOf, wrote)
             // Settled only once every album it covers is read: one that failed
             // keeps the old mark, so it is asked about again next time.
             if (source != null && reread != null && unread == 0 && reread.next != songCheck) {
                 settings.setSongCheck(source.id, reread.next)
             }
 
-            // Reconcile track likes across the whole library (cheap two-query pass).
-            if (starred != null) dao.replaceTrackLikes(starred.songIds.toList())
-
-            if (starred != null) dao.replaceLikedArtists(starred.artistNames.map { LikedArtistEntity(it) })
+            // Reconcile track likes across the whole library — writing only
+            // the ones that moved, see LibraryDao.replaceTrackLikes.
+            if (starred != null) {
+                val moved = dao.replaceTrackLikes(starred.songIds.toList())
+                if (moved > 0) wrote.tracks = true
+                if (dao.replaceLikedArtists(starred.artistNames) > 0) wrote.likedArtists = true
+            }
 
             // Only now: a run that threw part-way leaves the old number in place
             // so the refill is attempted again rather than being marked done.
@@ -1391,9 +1536,14 @@ class LibraryRepository(
             // the album's here, as every launch already does, so a record
             // has one sleeve rather than one per era, and so the old one is
             // seen to have been let go of just below.
-            runCatching { dao.collapseTrackCovers() }
+            runCatching { dao.collapseTrackCovers() }.noteOom("sync: cover collapse")
+                .onSuccess { if (it > 0) wrote.tracks = true }
             reportDroppedCovers(dao, source?.id, coversBefore)
-            rereadLists()
+            if (wrote.tracks || wrote.albums || wrote.likedArtists) rereadLists(tracks = wrote.tracks)
+            // The writing is over, so the lists read freely again — after the
+            // re-read above is asked for, so a list this wakes already sees it
+            // is superseded and leaves the reading to it: see pacedWhileSyncing.
+            syncingDao.compareAndSet(dao, null)
 
             val finishedAt = System.currentTimeMillis()
             _syncState.value = SyncState(
@@ -1422,6 +1572,8 @@ class LibraryRepository(
                 error = syncErrorMessage(e),
             )
             onSyncFailed?.invoke(isAuthFailure(e))
+        } finally {
+            syncingDao.compareAndSet(dao, null)
         }
     }
 
@@ -1456,7 +1608,7 @@ class LibraryRepository(
             val current = settings.sources.first().firstOrNull { it.id == source.id }
                 ?: return@runCatching
             settings.saveSource(current.copy(features = learned))
-        }
+        }.noteOom("sync: server features")
     }
 
     private suspend fun runLocalScan(dao: LibraryDao, sourceId: String) {
@@ -1490,7 +1642,7 @@ class LibraryRepository(
             dao.upsertAlbums(scan.albums.map { it.toEntity() })
             dao.upsertTracks(scan.tracks.map { it.toEntity() })
             reportDroppedCovers(dao, sourceId, coversBefore)
-            rereadLists()
+            rereadLists(tracks = true)
             val finishedAt = System.currentTimeMillis()
             _syncState.value = SyncState(
                 syncing = false,
@@ -1524,7 +1676,21 @@ class LibraryRepository(
     var onCoversDropped: (suspend (sourceId: String, coverArtIds: Set<String>) -> Unit)? = null
 
     private suspend fun coverIdsOrNull(dao: LibraryDao): Set<String>? =
-        runCatching { dao.allCoverArtIds().toSet() }.getOrNull()
+        runCatching { dao.allCoverArtIds().toSet() }.noteOom("sync: cover ids").getOrNull()
+
+    /** See [reread]; the tracks too when [tracks], the run having written to them. */
+    private fun rereadLists(tracks: Boolean) {
+        android.util.Log.i("AmpLists", "sync done; reading the lists again" + if (tracks) "" else ", songs unchanged")
+        reread.update { it + 1 }
+        if (tracks) rereadTracks.update { it + 1 }
+    }
+
+    /** Which tables a sync wrote to — see [rereadLists]. */
+    private class SyncWrites {
+        var tracks = false
+        var albums = false
+        var likedArtists = false
+    }
 
     /**
      * Name the covers that were in this database before the run and aren't now.
@@ -1543,18 +1709,13 @@ class LibraryRepository(
      * orphans. What that misses, the cache ages out on its own (see
      * ArtworkLoader.expireUnclaimed).
      */
-    /** See [reread]. */
-    private fun rereadLists() {
-        android.util.Log.i("AmpLists", "sync done; reading the lists again")
-        reread.update { it + 1 }
-    }
-
     private suspend fun reportDroppedCovers(dao: LibraryDao, sourceId: String?, before: Set<String>?) {
         if (sourceId == null || before.isNullOrEmpty()) return
         val after = coverIdsOrNull(dao) ?: return
         val dropped = before - after
         if (dropped.isEmpty()) return
         runCatching { onCoversDropped?.invoke(sourceId, dropped) }
+            .noteOom("sync: dropped covers")
             .onFailure { if (it is CancellationException) throw it }
     }
     /**
@@ -1572,6 +1733,7 @@ class LibraryRepository(
         starredSongIds: Set<String>,
         /** Which library each album came from — see the count write-back below. */
         libraryOf: Map<String, String?>,
+        wrote: SyncWrites,
     ): Int = coroutineScope {
         val gate = Semaphore(SYNC_CONCURRENCY)
         val done = AtomicInteger(0)
@@ -1609,10 +1771,20 @@ class LibraryRepository(
             ensureActive()
             val read = batch.indices.filter { fetched[it] != null }
             unread += batch.size - read.size
-            dao.replaceAlbumTracks(
-                read.map { batch[it].id },
-                read.flatMap { fetched[it].orEmpty() }.map { it.toEntity() },
-            )
+            // Only the albums whose songs aren't what is cached already — see
+            // songsChanged. One rewritten unchanged is deleted and inserted
+            // again, which moves its rows in the table and so changes the
+            // library list as surely as a real edit: a whole re-read of it, and
+            // everything worked out from it, for nothing.
+            val cachedRows = dao.tracksForAlbums(read.map { batch[it].id }).groupBy { it.albumId }
+            val changed = read.mapNotNull { i ->
+                val rows = fetched[i].orEmpty().map { it.toEntity() }
+                (batch[i].id to rows).takeIf { songsChanged(cachedRows[batch[i].id].orEmpty(), rows) }
+            }
+            if (changed.isNotEmpty()) {
+                dao.replaceAlbumTracks(changed.map { it.first }, changed.flatMap { it.second })
+                wrote.tracks = true
+            }
             // Write back the count we actually got for any album whose server
             // didn't provide one, so the next sync has something to compare
             // against and doesn't re-fetch the whole library every time.
@@ -1623,7 +1795,10 @@ class LibraryRepository(
             // With its library tag: an upsert replaces the whole row, and a
             // row written back without its tag is an album that then shows
             // in every library — see allAlbums.
-            if (counted.isNotEmpty()) dao.upsertAlbums(counted.map { it.toEntity(libraryOf[it.id]) })
+            if (counted.isNotEmpty()) {
+                dao.upsertAlbums(counted.map { it.toEntity(libraryOf[it.id]) })
+                wrote.albums = true
+            }
         }
         unread
     }
@@ -1784,10 +1959,17 @@ class LibraryRepository(
         val client = serverClient.value ?: return null
         val fresh = runCatching { client.getAlbumTracks(albumId) }.getOrNull()
             ?.takeIf { it.isNotEmpty() } ?: return null
-        val liked = dao.tracksForAlbum(albumId).associate { it.id to it.liked }
+        val cached = dao.tracksForAlbum(albumId)
+        val liked = cached.associate { it.id to it.liked }
         val merged = fresh.map { it.copy(liked = liked[it.id] ?: it.liked) }
         if (daos.value !== dao) return null
-        dao.replaceAlbumTracks(listOf(albumId), merged.map { it.toEntity() })
+        // Written only if something moved — see fetchAndStoreSongs: rewritten
+        // as it was, the album still changed the library list, and opening any
+        // record online cost a whole re-read of the library.
+        val rows = merged.map { it.toEntity() }
+        if (songsChanged(cached, rows)) {
+            dao.replaceAlbumTracks(listOf(albumId), rows)
+        }
         return narrowedToDownloads(merged).sortedWith(TRACK_ORDER)
     }
 
@@ -1830,8 +2012,8 @@ class LibraryRepository(
     /** Tracks for the given ids, preserving id order (used by playlists/queue restore). */
     suspend fun getTracksByIds(ids: List<String>): List<Track> {
         if (ids.isEmpty()) return emptyList()
-        val byId = dao.tracksByIds(ids).associateBy { it.id }
-        return ids.mapNotNull { byId[it]?.toTrack() }
+        val byId = ids.chunked(MAX_BOUND_IDS).flatMap { dao.tracksByIds(it) }.associateBy { it.id }
+        return ids.mapNotNull { byId[it] }
     }
 
     /** All tracks for an artist, from cache, ordered by album then track. */
@@ -1911,8 +2093,12 @@ class LibraryRepository(
      */
     suspend fun radioFrom(seed: Track): List<Track> {
         val client = serverClient.value ?: return emptyList()
-        val byId = tracks.value.associateBy { it.id }
         val answered = client.getSimilarSongs(seed.id, RADIO_LENGTH)
+        // Matched once the server has answered, and only the songs it named:
+        // a map of the whole library made before the call held that library
+        // for as long as the server took, past any read of it in between.
+        val named = answered.mapTo(HashSet()) { it.id }
+        val byId = tracks.value.filter { it.id in named }.associateBy { it.id }
         val similar = answered
             .filter { it.id != seed.id }
             .distinctBy { it.id }
@@ -2005,12 +2191,16 @@ class LibraryRepository(
         val pinned = dao
         val client = reachableClient()
         pinned.setTrackLiked(track.id, liked)
+        wroteHere()
         val source = settings.activeSource.first()?.id
         val kind = if (liked) PendingAction.Kind.STAR_SONG else PendingAction.Kind.UNSTAR_SONG
         mirror(
             PendingAction(kind, track.id, sourceId = source), client, say = true,
             send = { if (liked) it.starSong(track.id) else it.unstarSong(track.id) },
-            undo = { pinned.setTrackLiked(track.id, !liked) },
+            undo = {
+                pinned.setTrackLiked(track.id, !liked)
+                wroteHere()
+            },
         )
     }
 
@@ -2058,12 +2248,16 @@ class LibraryRepository(
         val pinned = dao
         val client = reachableClient()
         pinned.setAlbumLiked(album.id, liked)
+        wroteHere()
         val source = settings.activeSource.first()?.id
         val kind = if (liked) PendingAction.Kind.STAR_ALBUM else PendingAction.Kind.UNSTAR_ALBUM
         mirror(
             PendingAction(kind, album.id, sourceId = source), client, say = true,
             send = { if (liked) it.starAlbum(album.id) else it.unstarAlbum(album.id) },
-            undo = { pinned.setAlbumLiked(album.id, !liked) },
+            undo = {
+                pinned.setAlbumLiked(album.id, !liked)
+                wroteHere()
+            },
         )
     }
 
@@ -2076,15 +2270,25 @@ class LibraryRepository(
      * "Ólafur Arnalds". Folding the query is free; folding the haystack is not, so
      * doing it per keystroke across ten thousand tracks would be visibly slow —
      * hence the cache, keyed on the list instance the flow last emitted.
+     *
+     * Kept only while that list is the library. It holds the list, and with it
+     * every song in it, so held past the next read it was a whole second
+     * library in memory until the next search came along.
      */
-    private var haystackFor: List<Track>? = null
-    private var haystack: List<String> = emptyList()
+    @Volatile private var haystack: Pair<List<Track>, List<String>>? = null
+
+    init {
+        scope.launch { tracks.collect { list -> if (haystack?.first !== list) haystack = null } }
+    }
 
     private fun haystack(list: List<Track>): List<String> {
-        if (haystackFor === list) return haystack
-        haystack = list.map { titleKey(it.title + "\n" + it.artist + "\n" + it.album) }
-        haystackFor = list
-        return haystack
+        haystack?.let { (forList, hay) -> if (forList === list) return hay }
+        val hay = list.map { titleKey(it.title + "\n" + it.artist + "\n" + it.album) }
+        haystack = list to hay
+        // A newer list may have arrived while this one was folded, and been
+        // told there was nothing to drop: then this is what drops it.
+        if (tracks.value !== list) haystack = null
+        return hay
     }
 
     fun search(query: String): SearchResults {
@@ -2118,7 +2322,10 @@ class LibraryRepository(
     suspend fun setRating(id: String, stars: Int, isAlbum: Boolean, previous: Int): WriteResult {
         val pinned = dao
         val client = reachableClient()
-        val store: suspend (Int) -> Unit = { if (isAlbum) pinned.setAlbumRating(id, it) else pinned.setTrackRating(id, it) }
+        val store: suspend (Int) -> Unit = {
+            if (isAlbum) pinned.setAlbumRating(id, it) else pinned.setTrackRating(id, it)
+            wroteHere()
+        }
         store(stars)
         val source = settings.activeSource.first()?.id
         val kind = if (isAlbum) PendingAction.Kind.RATE_ALBUM else PendingAction.Kind.RATE_SONG
@@ -2195,8 +2402,17 @@ class LibraryRepository(
         topSongs.clear()
         artistIds = null
         _artistImages.value = emptyMap()
-        haystackFor = null
-        haystack = emptyList()
+        haystack = null
+        // Not lastTracksRead: the database hasn't changed over yet, and a write
+        // the cancelled sync lands before it does is read against it. Dropped
+        // here, that read was a whole library of new objects; trackRows drops
+        // it the moment the lists change over.
+        // Each holds a list of the source being left — see albumSizes.
+        albumSizes = null
+        artistSizes = null
+        trackIndex = null
+        // Stopped, these would still offer the last source's — see genres.
+        tagValues.forEach { it.value = emptyList() }
     }
 
     private fun deriveArtists(
@@ -2259,6 +2475,15 @@ class LibraryRepository(
         private const val SYNC_WRITE_BATCH = 40
         private const val SYNC_CONCURRENCY = 6
         private const val SEARCH_LIMIT = 100
+
+        /** Rows per page of a library read: a page is one CursorWindow fill, and the new objects held at once. See readTracks. */
+        private const val TRACK_PAGE = 1_000
+
+        /** At most one read of the library this often while its own sync writes: one per forty albums ran the heap out. See pacedWhileSyncing. */
+        private const val SYNC_REREAD_MS = 10_000L
+
+        /** How long the tag lists go on after the last page showing them, so one page leading to the next doesn't start them over. */
+        private const val TAG_VALUES_KEEP_MS = 5_000L
 
 
         /** Chronological by release date; albums with no date sort to the end. */
@@ -2394,3 +2619,24 @@ internal const val WALK_BATCH = 30
 
 /** How long a finished walk rests before another may start — see [rereadFor]. */
 internal const val WALK_REST_MS = 12 * 60 * 60 * 1000L
+
+/**
+ * Whether [fresh], an album's songs as the server has them, says anything its
+ * [cached] rows don't. Compared as sets: the server's order is not the table's.
+ *
+ * Plays this phone has counted already are not news. A song played here is
+ * stamped here at once (markPlayed), and the server's figures for it never
+ * match the stamp — its own clock, Plex to the second, a scrobble still on its
+ * way — so opening the album of the song just heard rewrote it, and read the
+ * whole library again, every time. A count higher than the cached one is a
+ * play somewhere else, and is.
+ */
+internal fun songsChanged(cached: List<TrackEntity>, fresh: List<TrackEntity>): Boolean {
+    val before = cached.associateBy { it.id }
+    val heard = fresh.mapTo(HashSet()) { row ->
+        val old = before[row.id]
+        if (old == null || row.playCount > old.playCount) row
+        else row.copy(playCount = old.playCount, lastPlayedMs = old.lastPlayedMs)
+    }
+    return heard != cached.toHashSet()
+}

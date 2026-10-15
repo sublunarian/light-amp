@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -25,7 +26,7 @@ class DownloadQueueTest {
 
     private fun DownloadQueue.drain(eligible: (String) -> Boolean = all): List<String> =
         generateSequence { next(eligible) }
-            .map { "${it.entry.sourceId}:${it.entry.track.id}" }
+            .map { "${it.entry.sourceId}:${it.entry.trackId}" }
             .toList()
 
     @Test
@@ -74,7 +75,7 @@ class DownloadQueueTest {
         q.add(entry("navidrome", "n1"), manual = false)
         q.add(entry("plex", "p2"), manual = false)
         val picked = q.next { it != "plex" }
-        assertEquals("n1", picked?.entry?.track?.id)
+        assertEquals("n1", picked?.entry?.trackId)
         // Nothing else qualifies, but the queue is not empty — the caller waits.
         assertNull(q.next { it != "plex" })
         assertFalse(q.isEmpty())
@@ -87,7 +88,7 @@ class DownloadQueueTest {
         q.add(entry("plex", "hand"), manual = true)
         q.add(entry("navidrome", "auto"), manual = false)
         val picked = q.next { it != "plex" }
-        assertEquals("navidrome:auto", "${picked?.entry?.sourceId}:${picked?.entry?.track?.id}")
+        assertEquals("navidrome:auto", "${picked?.entry?.sourceId}:${picked?.entry?.trackId}")
         assertEquals(false, picked?.manual)
     }
 
@@ -98,11 +99,11 @@ class DownloadQueueTest {
         q.add(entry("a", "good"), manual = false)
         repeat(DownloadQueue.FAILURES_BEFORE_BACK - 1) {
             val picked = q.next(all)!!
-            assertEquals("bad", picked.entry.track.id)
+            assertEquals("bad", picked.entry.trackId)
             assertFalse(q.fail(picked))
         }
         val third = q.next(all)!!
-        assertEquals("bad", third.entry.track.id)
+        assertEquals("bad", third.entry.trackId)
         assertTrue(q.fail(third))
         assertEquals(listOf("a:good", "a:bad"), q.drain())
     }
@@ -140,7 +141,7 @@ class DownloadQueueTest {
         val hand = q.next(all)!!
         q.fail(hand)
         // Still ahead of the automatic lane — it went back to the manual one.
-        assertEquals("hand", q.next(all)?.entry?.track?.id)
+        assertEquals("hand", q.next(all)?.entry?.trackId)
     }
 
     @Test
@@ -155,6 +156,81 @@ class DownloadQueueTest {
         assertEquals(2, q.removeSource("plex"))
         assertEquals(0, q.strikes(picked.entry.key))
         assertEquals(listOf("navidrome:n-hand", "navidrome:n-auto"), q.drain())
+    }
+
+    @Test
+    fun `an offline mode's entry is an id alone, and one by hand keeps its track`() {
+        val auto = QueuedDownload("a", "x")
+        val hand = entry("a", "y")
+        assertNull(auto.track)
+        assertEquals("y", hand.track?.id)
+        assertEquals(DownloadQueue.Key("a", "x"), auto.key)
+        assertEquals(DownloadQueue.Key("a", "y"), hand.key)
+    }
+
+    @Test
+    fun `id entries drain in the order they were queued, behind the manual lane`() {
+        val q = DownloadQueue()
+        q.add(QueuedDownload("a", "1"), manual = false)
+        q.add(QueuedDownload("b", "2"), manual = false)
+        q.add(QueuedDownload("a", "3"), manual = false)
+        q.add(entry("a", "hand"), manual = true)
+        assertEquals(listOf("a:hand", "a:1", "b:2", "a:3"), q.drain())
+    }
+
+    @Test
+    fun `asking by hand for a track waiting by id promotes it, carrying the track`() {
+        val q = DownloadQueue()
+        q.add(QueuedDownload("a", "x"), manual = false)
+        q.add(QueuedDownload("a", "z"), manual = false)
+        q.add(entry("a", "x"), manual = true)
+        assertEquals(2, q.size)
+        val picked = q.next(all)!!
+        assertTrue(picked.manual)
+        assertEquals("x", picked.entry.track?.id)
+        assertEquals(listOf("a:z"), q.drain())
+    }
+
+    @Test
+    fun `an id entry queued again by a later pass keeps its place and is not doubled`() {
+        val q = DownloadQueue()
+        q.add(QueuedDownload("a", "1"), manual = false)
+        q.add(QueuedDownload("a", "2"), manual = false)
+        q.add(QueuedDownload("a", "1"), manual = false)
+        assertEquals(2, q.size)
+        assertEquals(listOf("a:1", "a:2"), q.drain())
+    }
+
+    @Test
+    fun `a later pass's equal id entry leaves the one waiting in place`() {
+        val q = DownloadQueue()
+        val first = QueuedDownload("a", "1")
+        q.add(first, manual = false)
+        q.add(QueuedDownload("a", "1"), manual = false)
+        assertSame(first, q.next(all)!!.entry)
+    }
+
+    @Test
+    fun `an id entry that fails goes back to the front of the automatic lane, still an id`() {
+        val q = DownloadQueue()
+        q.add(QueuedDownload("a", "1"), manual = false)
+        q.add(QueuedDownload("a", "2"), manual = false)
+        val picked = q.next(all)!!
+        assertFalse(q.fail(picked))
+        val again = q.next(all)!!
+        assertEquals("1", again.entry.trackId)
+        assertNull(again.entry.track)
+        assertEquals(false, again.manual)
+        assertEquals(1, q.strikes(again.entry.key))
+    }
+
+    @Test
+    fun `removing a source drops its id entries too`() {
+        val q = DownloadQueue()
+        q.add(QueuedDownload("plex", "p1"), manual = false)
+        q.add(QueuedDownload("navidrome", "n1"), manual = false)
+        assertEquals(1, q.removeSource("plex"))
+        assertEquals(listOf("navidrome:n1"), q.drain())
     }
 
     @Test

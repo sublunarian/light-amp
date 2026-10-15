@@ -1468,8 +1468,11 @@ class PlaybackController(
      * Resolving ids against the cached library means a track deleted server-side
      * simply drops out. The index is remapped onto whatever survived so the right
      * song is still cued rather than an arbitrary neighbour.
+     *
+     * [library] is asked for only once the waits below are over, so none of
+     * them holds a list a write may have replaced in the meantime.
      */
-    suspend fun restoreState(library: List<Track>) {
+    suspend fun restoreState(library: () -> List<Track>) {
         if (player == null || _queue.value.isNotEmpty()) return
         // Wait for the downloads to be known before deciding anything.
         //
@@ -1506,7 +1509,7 @@ class PlaybackController(
             // the user can see here is never replaced by one they can't.
             serverClient.value?.let { runCatching { it.getPlayQueue() }.getOrNull() }
         } ?: return
-        val byId = library.associateBy { it.id }
+        val byId = library().associateBy { it.id }
         val tracks = saved.trackIds.mapNotNull { byId[it] }
         if (tracks.isEmpty()) return
         val index = tracks.indexOfFirst { it.id == saved.currentId }.takeIf { it >= 0 } ?: 0
@@ -1521,6 +1524,7 @@ class PlaybackController(
             // player over in between, and the handle it replaced is released.
             val p = player ?: return@withContext
             _queue.value = tracks
+            preShuffleOrder = null
             lastScrobbledId = null
             nowPlayingId = null
             // Start position goes in at prepare time: seekTo() clamps to the
@@ -1656,9 +1660,13 @@ class PlaybackController(
         playbackSession.value = newSessionId()
         val start = startIndex.coerceIn(0, tracks.lastIndex)
         if (_shuffle.value) {
-            val first = tracks[start]
-            val rest = tracks.toMutableList().apply { removeAt(start) }.shuffled()
-            setQueue(capped(listOf(first) + rest, 0).first, 0)
+            // Shuffled as positions, the tapped one first, so the window also
+            // has an order to go back to when shuffle is turned off: its songs
+            // as the list had them. setQueue drops the last queue's.
+            val rest = IntArray(tracks.size - 1) { if (it < start) it else it + 1 }.apply { shuffle() }
+            val picked = listOf(start) + rest.take(MAX_QUEUE - 1)
+            setQueue(picked.map { tracks[it] }, 0)
+            preShuffleOrder = picked.sorted().map { tracks[it] }
         } else {
             val (window, index) = capped(tracks, start)
             setQueue(window, index)
@@ -1677,11 +1685,16 @@ class PlaybackController(
      * The window is centred on the track being played, keeping a little history
      * behind it, so "play the 3,000th song" still works — it just doesn't carry
      * the other seven thousand along.
+     *
+     * A copy either way, never the caller's list or a view of it. Play from the
+     * Songs tab hands over the whole sorted library, and a sublist kept as the
+     * queue kept that list — and every song in it — alive after the library
+     * had moved on to its next read: two libraries in memory where one fits.
      */
     private fun capped(tracks: List<Track>, startIndex: Int): Pair<List<Track>, Int> {
-        if (tracks.size <= MAX_QUEUE) return tracks to startIndex
+        if (tracks.size <= MAX_QUEUE) return tracks.toList() to startIndex
         val first = (startIndex - QUEUE_LOOKBACK).coerceIn(0, tracks.size - MAX_QUEUE)
-        return tracks.subList(first, first + MAX_QUEUE) to (startIndex - first)
+        return tracks.subList(first, first + MAX_QUEUE).toList() to (startIndex - first)
     }
 
     fun togglePlayPause() {
@@ -2213,6 +2226,7 @@ class PlaybackController(
         // refused four times over as the player retried. A queue belongs to the
         // source it was built from, and must not outlive the decision to leave.
         _queue.value = emptyList()
+        preShuffleOrder = null
         _queueName.value = null
         _index.value = -1
         _waitingFor.value = null
@@ -2666,13 +2680,13 @@ class PlaybackController(
         val q = _queue.value
         val current = _index.value
         if (q.isEmpty() || current < 0) {
-            preShuffleOrder = if (on) q.takeIf { it.isNotEmpty() } else null
+            preShuffleOrder = if (on) q.takeIf { it.isNotEmpty() }?.toList() else null
             return
         }
         val head = q.take(current + 1)
         val tail = q.drop(current + 1)
         val newTail = if (on) {
-            preShuffleOrder = q
+            preShuffleOrder = q.toList()
             tail.shuffled()
         } else {
             val original = preShuffleOrder
@@ -3830,6 +3844,8 @@ class PlaybackController(
     private fun setQueue(tracks: List<Track>, startIndex: Int) {
         val p = player ?: return
         _queue.value = tracks
+        // The order shuffle would go back to is the last queue's, not this one's.
+        preShuffleOrder = null
         lastScrobbledId = null
         // Keep the local player loaded even while casting, so switching back to
         // this device resumes instantly instead of re-preparing the queue.

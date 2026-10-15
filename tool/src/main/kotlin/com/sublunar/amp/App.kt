@@ -34,11 +34,13 @@ import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.OfflineMode
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.TagFilter
+import com.sublunar.amp.data.creditNames
 import com.sublunar.amp.data.hasComposer
 import com.sublunar.amp.data.hasGenre
+import com.sublunar.amp.data.noteOom
 import com.sublunar.amp.data.SourceLibrary
 import com.sublunar.amp.data.db.LibraryDao
-import com.sublunar.amp.data.db.toTrack
+import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.db.LibraryDatabase
 import com.sublunar.amp.playback.LateUnbindGuard
@@ -62,7 +64,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -225,12 +226,31 @@ object App {
     suspend fun downloadsBySource(): List<Pair<String, List<Track>>> =
         settings.sources.first().mapNotNull { source ->
             val dao = databaseFor(source).libraryDao()
-            val ids = runCatching { dao.downloadedIds() }.getOrDefault(emptyList())
+            val ids = runCatching { dao.downloadedIds() }
+                .noteOom("downloads of ${source.name}").getOrDefault(emptyList())
             if (ids.isEmpty()) return@mapNotNull null
-            val tracks = runCatching { dao.tracksByIds(ids).map { it.toTrack() } }
+            val tracks = runCatching { downloadedTracks(dao, ids) }
+                .noteOom("downloaded tracks of ${source.name}")
                 .getOrDefault(emptyList())
             if (tracks.isEmpty()) null else source.name to tracks
         }
+
+    /**
+     * The songs of [ids] that [dao] holds, in id order: the order its query
+     * has always handed them back in, which the page's sort keeps among equals.
+     *
+     * The browsed source's come out of the library already in memory, as the
+     * objects its lists hold. Read afresh, they were a second copy of every
+     * downloaded song — of the whole library, in Everything mode — built again
+     * each time a download landed. Only what that library hasn't read yet is
+     * asked for.
+     */
+    private suspend fun downloadedTracks(dao: LibraryDao, ids: List<String>): List<Track> {
+        val unread = ids.toHashSet()
+        val loaded = library.loadedTracks(dao).filter { unread.remove(it.id) }
+        val read = unread.toList().chunked(MAX_BOUND_IDS).flatMap { dao.tracksByIds(it) }
+        return (loaded + read).sortedBy { it.id }
+    }
 
     /**
      * Drop a source's cached library and downloaded audio.
@@ -245,7 +265,8 @@ object App {
         val db = databaseFor(source)
         // Named before the tables go: the covers on disk can only be found
         // through the ids this database holds — see ArtworkLoader.forget.
-        val covers = runCatching { db.libraryDao().allCoverArtIds() }.getOrDefault(emptyList())
+        val covers = runCatching { db.libraryDao().allCoverArtIds() }
+            .noteOom("covers of ${source.name}").getOrDefault(emptyList())
         db.libraryDao().apply {
             clearTracks()
             clearAlbums()
@@ -269,6 +290,7 @@ object App {
     private suspend fun protectedCoverFiles(): Set<String> =
         settings.sources.first().flatMap { source ->
             runCatching { databaseFor(source).libraryDao().downloadedCoverArtIds() }
+                .noteOom("protected covers of ${source.name}")
                 .getOrDefault(emptyList())
                 .map { artwork.fileNameFor(source.id, it) }
         }.toSet()
@@ -284,7 +306,8 @@ object App {
     private suspend fun claimedCoverFiles(): Set<String>? {
         val claimed = HashSet<String>()
         for (source in settings.sources.first()) {
-            val ids = runCatching { databaseFor(source).libraryDao().allCoverArtIds() }.getOrNull() ?: return null
+            val ids = runCatching { databaseFor(source).libraryDao().allCoverArtIds() }
+                .noteOom("claimed covers of ${source.name}").getOrNull() ?: return null
             ids.mapTo(claimed) { artwork.fileNameFor(source.id, it) }
         }
         return claimed
@@ -324,6 +347,7 @@ object App {
                 // LibraryRepository.allAlbums — newest first: those are the
                 // covers a run cut short is most likely to be asked for.
                 val wanted = runCatching { databaseFor(source).libraryDao().allAlbumsSnapshot() }
+                    .noteOom("cover sync of ${source.name}")
                     .getOrDefault(emptyList())
                     .filter { source.libraryId == null || it.libraryId == null || it.libraryId == source.libraryId }
                     .sortedByDescending { it.createdMs }
@@ -563,6 +587,9 @@ object App {
      */
     fun heavyDataAllowed(): Boolean = rules.value.mayMoveHeavyBytes
 
+    // Volatile: set at the end of boot on the main thread, and read by the
+    // collectors boot starts, which run on others — see topUpDownloads.
+    @Volatile
     private var coreReady = false
     val isReady: Boolean get() = coreReady
 
@@ -649,8 +676,9 @@ object App {
                 metadataAllowed = ::metadataAllowed,
             )
 
-            // A finished sync is proof the server is there, and the moment fresh
-            // library data exists is also the right moment to top up downloads.
+            // A finished sync is proof the server is there. (Its end tops up the
+            // downloads too, as any sync's end does — see the size collector
+            // below; asked again here as well, it was a second pass.)
             library.onSyncSucceeded = {
                 reportServerReachable(true)
                 // Its downloads too, if they were parked — the reachability
@@ -660,11 +688,10 @@ object App {
                 scope.launch {
                     // Fresh library rows are also the first chance to work out
                     // which album a reindexed download belongs to.
-                    runCatching { dao().backfillDownloadAlbums() }
+                    runCatching { dao().backfillDownloadAlbums() }.noteOom("download album backfill")
                     // ...and the first chance to put back the words a rebuilt
                     // download row lost, which the files themselves don't carry.
                     runCatching { downloader.refillMissingLyrics() }
-                    topUpDownloads()
                 }
                 // And the covers of whatever the sync just brought in.
                 syncCovers()
@@ -921,11 +948,6 @@ object App {
                     .distinctUntilChanged()
                     .collect { topUpDownloads() }
             }
-            // ...and again once the cached library actually exists. The collector
-            // above runs at boot, when Room has usually not finished loading, so it
-            // returns early with nothing to queue. Without this the only other
-            // trigger is a *successful* sync — so a launch where the sync is a
-            // no-op leaves the queue empty and downloads quietly stop.
             // Rebuild the download index from disk before anything reads it: a
             // schema bump wipes the table, and without this the app would re-fetch
             // audio it already has.
@@ -945,6 +967,7 @@ object App {
             scope.launch {
                 settings.sources.first().forEach { source ->
                     runCatching { databaseFor(source).libraryDao().collapseTrackCovers() }
+                        .noteOom("cover collapse of ${source.name}")
                         .onSuccess { if (it > 0) android.util.Log.i("AmpArt", "${source.name}: $it tracks now share their album's cover") }
                 }
                 claimedCoverFiles()?.let { artwork.expireUnclaimed(it) }
@@ -980,7 +1003,6 @@ object App {
             // one silently does nothing and is never retried, so the order of
             // those two is not something to leave to chance.
             scope.launch {
-                val tracks = library.fullTracks.filter { it.isNotEmpty() }.first()
                 playback.bound.first { it }
                 // And for the client, when this source has one. Restoring builds
                 // the whole queue as audio items up front, and an item's stream
@@ -998,13 +1020,45 @@ object App {
                 if (active?.kind != SourceKind.LOCAL) {
                     serverClient.filter { it != null }.first()
                 }
-                playback.restoreState(tracks)
+                // Waited for last and not kept: the restore waits on more
+                // besides, and a list held across those waits is a whole
+                // library kept alive once a write replaces it. It is read
+                // again at the moment the ids are matched.
+                library.fullTracks.first { it.isNotEmpty() }
+                playback.restoreState { library.fullTracks.value }
             }
+            // The download top-up again once the cached library actually exists,
+            // at the end of every sync, and whenever the library changes size
+            // outside one — a library shown again, an album page that found new
+            // songs. The mode collector above runs at boot, before there may be
+            // anything to queue; with only a *successful* sync behind it, a
+            // launch whose sync did nothing, or failed, left the queue empty and
+            // downloads quietly stopped.
+            //
+            // The first library counts the moment it lands, sync or not: it is
+            // read while a launch's sync is starting, and held for that sync's
+            // end it waited on a sync that might fail, and on every other
+            // source's downloads with it. After that a sync's batches, which
+            // move the size forty albums at a time, wait for its end — any end,
+            // since one that failed may still have written songs.
+            //
+            // Sizes only, and nothing awaited in the collector: a collector
+            // suspended on a list holds it, and this one used to hold a whole
+            // library through every pass it started.
             scope.launch {
-                library.fullTracks
-                    .filter { it.isNotEmpty() }
-                    .distinctUntilChangedBy { it.size }
-                    .collect { topUpDownloads() }
+                var requestedAt = 0
+                var wasSyncing = false
+                combine(library.fullTracks.map { it.size }, library.syncState.map { it.syncing }, ::Pair)
+                    .distinctUntilChanged()
+                    .collect { (size, syncing) ->
+                        val syncEnded = wasSyncing && !syncing
+                        wasSyncing = syncing
+                        val firstLibrary = requestedAt == 0 && size > 0
+                        val moved = !syncing && size > 0 && size != requestedAt
+                        if (!syncEnded && !firstLibrary && !moved) return@collect
+                        if (size > 0) requestedAt = size
+                        scope.launch { topUpDownloads() }
+                    }
             }
             // Once per process like the rest. Started on every boot, as it
             // was, each new activity left one more of these running for good.
@@ -1427,15 +1481,18 @@ object App {
             // has no business fetching anything on their behalf.
             if (!source.mayDownload || source.offlineMode == OfflineMode.MANUAL) continue
             runCatching { topUpDownloads(source) }
+                .noteOom("top-up ${source.name}")
                 .onFailure { android.util.Log.w("AmpDl", "top-up failed for ${source.name}", it) }
         }
     }
 
     private suspend fun topUpDownloads(source: MusicSource) {
         val startedMs = System.currentTimeMillis()
-        // This source's own tables, read once. Not the repository's lists —
-        // those follow the browsed source, and a top-up that read them for
-        // another source would hold one server's identity and another's music.
+        // This source's own tables. Not the repository's lists — those follow
+        // the browsed source, and a top-up that read them for another source
+        // would hold one server's identity and another's music. Asked for ids,
+        // not read whole: the whole table as tracks was a second copy of the
+        // library, held through the playlist fetch below.
         val dao = databaseFor(source).libraryDao()
         // Only ever download from the libraries kept on the Sources page.
         //
@@ -1446,40 +1503,59 @@ object App {
         // fetching it anyway, in the background, onto a phone with a size
         // limit, is not a reading of that. Not the browsed library either —
         // what to *keep* is a wider question than what to look at right now.
-        val hidden = source.hiddenLibraryIds.filterNotNull().toSet()
-        val albums = dao.allAlbumsSnapshot()
-            .filter { hidden.isEmpty() || it.libraryId == null || it.libraryId !in hidden }
-        val albumIds = albums.mapTo(HashSet()) { it.id }
-        val tracks = dao.allTracksSnapshot()
-            .asSequence()
-            .filter { hidden.isEmpty() || it.albumId == null || it.albumId in albumIds }
-            .map { it.toTrack() }
-            .toList()
-        if (tracks.isEmpty()) return
+        val hidden = source.hiddenLibraryIds.filterNotNull().distinct()
+        val noneHidden = hidden.isEmpty()
+        if (!dao.hasKeptTracks(hidden, noneHidden)) return
         // Playlists count in both modes — Favorites promises them outright, and
         // Everything fetches them first — so what they hold has to be known
         // here, not just on the Playlists tab. No server sends membership with
         // the list, so each playlist's songs are asked for, once.
         val playlistTrackIds = playlistTrackIdsFor(source)
+        // Starred on the server, whatever is on screen — not derived from
+        // the artists list, which narrows with the offline view.
+        val likedArtists = dao.likedArtistNames().toSet()
         downloader.applyAutoMode(
             source = source,
-            allTracks = tracks,
-            likedTracks = tracks.filter { it.liked },
-            // Scoped as `tracks` above is: a liked record in a hidden library
-            // is not fetched, and one in a library not being browsed is.
-            likedAlbumIds = albums.filter { it.liked }.mapTo(HashSet()) { it.id },
-            playlistTracks = tracks.filter { it.id in playlistTrackIds },
-            // Starred on the server, whatever is on screen — not derived from
-            // the artists list, which narrows with the offline view.
-            likedArtistNames = dao.likedArtistNames().toSet(),
+            likedTrackIds = dao.likedKeptTrackIds(hidden, noneHidden),
+            playlistTrackIds = playlistTrackIds.toList().chunked(MAX_BOUND_IDS)
+                .flatMap { dao.keptTrackIdsAmong(it, hidden, noneHidden) },
+            // Scoped as the rest are: a liked record in a hidden library is
+            // not fetched, and one in a library not being browsed is.
+            likedAlbumTrackIds = dao.likedAlbumTrackIds(hidden),
+            likedArtistTrackIds = trackIdsCreditedTo(dao, likedArtists, hidden, noneHidden),
+            everyTrackId = { dao.keptTrackIdsNotDownloaded(hidden, noneHidden) },
         )
         // One line per source per pass — the cost of a pass is the thing worth
         // knowing about this, and the playlists are where it goes.
         android.util.Log.i(
             "AmpDl",
-            "top-up ${source.name} (${source.offlineMode}): ${tracks.size} rows, " +
+            "top-up ${source.name} (${source.offlineMode}): " +
                 "${playlistTrackIds.size} in playlists, ${System.currentTimeMillis() - startedMs} ms",
         )
+    }
+
+    /**
+     * The tracks of [dao]'s library credited to any of [artists], as
+     * Track.albumArtistNames reads a credit — worked out over the distinct
+     * credits rather than over every row, then asked for by the credits that
+     * matched. A blank credit stands for the track artist, as it does there.
+     */
+    private suspend fun trackIdsCreditedTo(
+        dao: LibraryDao,
+        artists: Set<String>,
+        hidden: List<String>,
+        noneHidden: Boolean,
+    ): List<String> {
+        if (artists.isEmpty()) return emptyList()
+        val (blank, credits) = dao.albumArtistCredits().partition { it.isBlank() }
+        val matched = credits.filter { credit -> creditNames(credit).any { it in artists } }
+        val byCredit = matched.chunked(MAX_BOUND_IDS).flatMap { dao.keptTrackIdsCredited(it, hidden, noneHidden) }
+        if (blank.isEmpty()) return byCredit
+        val byArtist = dao.artistsCreditedAs(blank)
+            .filter { artist -> creditNames(artist).any { it in artists } }
+            .chunked(MAX_BOUND_IDS)
+            .flatMap { dao.keptTrackIdsByArtist(blank, it, hidden, noneHidden) }
+        return byCredit + byArtist
     }
 
     /** Every track id in any of [source]'s playlists, as far as they can be known. */
@@ -1492,6 +1568,7 @@ object App {
             // no playlist at all.
             if (library.playlists.value.isEmpty()) runCatching { library.refreshPlaylists() }
             runCatching { library.primePlaylistTrackIds(library.playlists.value.map { it.id }) }
+                .noteOom("playlists of ${source.name}")
             return library.playlistTrackIds.value.values.flatten().toHashSet()
         }
         val client = clientFor(source) ?: return emptySet()
@@ -1519,7 +1596,8 @@ object App {
                 missing.map { id ->
                     async {
                         gate.withPermit {
-                            id to runCatching { client.getPlaylistTracks(id) }.getOrNull()?.map { it.id }
+                            id to runCatching { client.getPlaylistTracks(id) }
+                                .noteOom("playlist $id of ${source.name}").getOrNull()?.map { it.id }
                         }
                     }
                 }.awaitAll()

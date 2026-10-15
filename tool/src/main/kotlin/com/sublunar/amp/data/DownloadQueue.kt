@@ -1,8 +1,18 @@
 package com.sublunar.amp.data
 
-/** One track waiting to be fetched, and the source that can serve it. */
-data class QueuedDownload(val sourceId: String, val track: Track) {
-    val key: DownloadQueue.Key get() = DownloadQueue.Key(sourceId, track.id)
+/**
+ * One track waiting to be fetched, and the source that can serve it.
+ *
+ * An offline mode's entries are ids alone, and the row is read from the
+ * source's tables when its turn comes: Everything over a large library is
+ * the whole library queued, and as tracks that was a second copy of it held
+ * for as long as the queue took to drain. One asked for by hand keeps its
+ * [track], which may be a song the library doesn't hold — a radio's, say.
+ */
+data class QueuedDownload(val sourceId: String, val trackId: String, val track: Track? = null) {
+    constructor(sourceId: String, track: Track) : this(sourceId, track.id, track)
+
+    val key: DownloadQueue.Key get() = DownloadQueue.Key(sourceId, trackId)
 }
 
 /**
@@ -57,6 +67,11 @@ class DownloadQueue {
      * Queue [entry]. A manual add moves it out of the automatic lane if it was
      * waiting there; an automatic add of something already asked for by hand
      * is dropped. Re-adding to the same lane keeps the place it had.
+     *
+     * An automatic add of something already waiting keeps the entry that is
+     * there. Each top-up offers the whole of what its mode wants again, and an
+     * entry swapped for its equal left the lane holding both their ids — over
+     * a library queued whole, every id twice.
      */
     fun add(entry: QueuedDownload, manual: Boolean) {
         val key = entry.key
@@ -64,7 +79,7 @@ class DownloadQueue {
             autoLane.remove(key)
             manualLane[key] = entry
         } else if (key !in manualLane) {
-            autoLane[key] = entry
+            autoLane.putIfAbsent(key, entry)
         }
     }
 

@@ -62,6 +62,16 @@ class AlbumArtistCreditTest {
     }
 
     @Test
+    fun `a credit read on its own splits exactly as a track's does`() {
+        // The download top-up reads distinct credits rather than tracks, and
+        // must reach the same artists the Artists tab shows.
+        for (raw in listOf("Johann Sebastian Bach; Glenn Gould", "Earth, Wind & Fire", "A;;B;", " ; ", "Solo")) {
+            assertEquals(track(raw).albumArtistNames(), creditNames(raw))
+        }
+        assertEquals(track("", artist = "Performer").albumArtistNames(), creditNames("Performer"))
+    }
+
+    @Test
     fun `the primary credit is the first one`() {
         assertEquals("Johann Sebastian Bach", track("Johann Sebastian Bach; Glenn Gould").primaryAlbumArtist())
     }

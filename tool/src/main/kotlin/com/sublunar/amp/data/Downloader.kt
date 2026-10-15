@@ -3,7 +3,6 @@ package com.sublunar.amp.data
 import com.sublunar.amp.App
 import com.sublunar.amp.data.db.DownloadEntity
 import com.sublunar.amp.data.db.LibraryDao
-import com.sublunar.amp.data.db.toTrack
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.transfer.LightTransferService
 import java.util.concurrent.ConcurrentHashMap
@@ -261,18 +260,18 @@ class Downloader(
      * Queue [tracks] from the source being browsed — what the library screens
      * call, about the rows on them.
      */
-    fun enqueue(tracks: List<Track>, manual: Boolean = true) =
-        enqueue(activeSource(), tracks, manual)
+    fun enqueue(tracks: List<Track>) = enqueue(activeSource(), tracks)
 
     /**
-     * Queue [tracks] of [source] for download.
-     *
-     * [manual] is what the user asked for by name — an album, a playlist, a
-     * selection — and jumps ahead of anything an offline mode queued. Only
-     * [applyAutoMode] passes false.
+     * Queue [tracks] of [source] for download, as asked for by name — an album,
+     * a playlist, a selection — which jumps ahead of anything an offline mode
+     * queued. Only [applyAutoMode] queues anything else, and it queues ids.
      */
-    fun enqueue(source: MusicSource, tracks: List<Track>, manual: Boolean = true) {
-        if (tracks.isEmpty()) return
+    fun enqueue(source: MusicSource, tracks: List<Track>) =
+        queueUp(source, tracks.map { QueuedDownload(source.id, it) }, manual = true)
+
+    private fun queueUp(source: MusicSource, entries: List<QueuedDownload>, manual: Boolean) {
+        if (entries.isEmpty()) return
         // Nothing to fetch for the phone's own music: the files are already
         // here, and this app has no business asking anyone for them.
         if (!source.mayDownload) return
@@ -289,15 +288,15 @@ class Downloader(
             // and it did so while holding the lock.
             val already = daoFor(source).downloadedIds().toHashSet()
             lock.withLock {
-                tracks.forEach { track ->
-                    if (track.id in already) return@forEach
+                entries.forEach { entry ->
+                    if (entry.trackId in already) return@forEach
                     // A file on this phone is not something to fetch a copy of.
                     // Belt as well as braces — the UI hides the action, and
                     // App.topUpDownloads never offers these — because a stray
                     // enqueue here would ask the server for an id it has never
                     // heard of, once per track.
-                    if (LocalLibrary.isLocal(track.id)) return@forEach
-                    queue.add(QueuedDownload(source.id, track), manual)
+                    if (LocalLibrary.isLocal(entry.trackId)) return@forEach
+                    queue.add(entry, manual)
                 }
                 _progress.value = _progress.value.copy(
                     pending = queue.size + (if (inFlight != null) 1 else 0),
@@ -437,7 +436,7 @@ class Downloader(
     suspend fun reindexFromDisk() {
         settings.sources.first()
             .filter { it.supportsDownloads }
-            .forEach { source -> runCatching { reindexFromDisk(source) } }
+            .forEach { source -> runCatching { reindexFromDisk(source) }.noteOom("reindex ${source.name}") }
     }
 
     private suspend fun reindexFromDisk(source: MusicSource) {
@@ -445,18 +444,13 @@ class Downloader(
         val known = dao.downloadedIds().toHashSet()
         val missing = store.onDisk(source.id).filter { (id, _) -> id !in known }
         if (missing.isEmpty()) return
-        // The file name carries only the track id, so the album comes from the
-        // library — which on a rebuilt cache is usually empty at this point.
-        // [LibraryDao.backfillDownloadAlbums] finishes the job after the sync.
-        val albums = dao.tracksByIds(missing.map { it.first })
-            .associate { it.id to it.albumId }
         for ((id, format) in missing) {
             val file = store.fileFor(source.id, id, format)
             if (!file.isFile) continue
             dao.upsertDownload(
                 DownloadEntity(
                     trackId = id,
-                    albumId = albums[id],
+                    albumId = null,
                     fileName = file.name,
                     format = format.id,
                     bytes = file.length(),
@@ -465,6 +459,12 @@ class Downloader(
                 ),
             )
         }
+        // The file name carries only the track id, so the album comes from the
+        // library — which on a rebuilt cache is usually empty at this point, so
+        // this runs again after the sync. Asked in SQL rather than by reading
+        // the songs: that was a whole song apiece for one column, and with more
+        // missing than one statement binds it failed and reindexed nothing.
+        dao.backfillDownloadAlbums()
     }
 
     /**
@@ -495,7 +495,7 @@ class Downloader(
         val wantKaraoke = settings.karaokeLyrics.first()
         val tracks = dao.tracksByIds(ids).associateBy { it.id }
         for (id in ids) {
-            val track = tracks[id]?.toTrack() ?: continue
+            val track = tracks[id] ?: continue
             val row = dao.download(id) ?: continue
             val words = runCatching { fetchLyrics(client, track, wantKaraoke) }.getOrNull()
             dao.upsertDownload(row.copy(lyrics = words.orEmpty()))
@@ -503,33 +503,40 @@ class Downloader(
     }
 
     /**
-     * Queue whatever [source]'s [OfflineMode] implies. Safe to call repeatedly —
-     * already-downloaded tracks are skipped, so this just tops up.
+     * Queue whatever [source]'s [OfflineMode] implies, by id — see
+     * [QueuedDownload]. Safe to call repeatedly — already-downloaded tracks
+     * are skipped, so this just tops up. [everyTrackId] is only asked for in
+     * Everything mode.
      */
     suspend fun applyAutoMode(
         source: MusicSource,
-        allTracks: List<Track>,
-        likedTracks: List<Track>,
-        likedAlbumIds: Set<String>,
-        playlistTracks: List<Track>,
-        likedArtistNames: Set<String>,
+        likedTrackIds: List<String>,
+        playlistTrackIds: List<String>,
+        likedAlbumTrackIds: List<String>,
+        likedArtistTrackIds: List<String>,
+        everyTrackId: suspend () -> List<String>,
     ) {
         // Order is priority: the queue drains front to back and the size limit cuts
         // it off wherever it runs out, so whatever matters most has to come first.
-        val favourites = likedTracks +
-            playlistTracks +
-            allTracks.filter { it.albumId in likedAlbumIds } +
-            allTracks.filter {
-                it.albumArtistNames().any { name -> name in likedArtistNames }
-            }
-        val wanted = when (source.offlineMode) {
+        val wanted = LinkedHashSet<String>().apply {
+            addAll(likedTrackIds)
+            addAll(playlistTrackIds)
+            addAll(likedAlbumTrackIds)
+            addAll(likedArtistTrackIds)
+        }
+        when (source.offlineMode) {
             OfflineMode.MANUAL -> return
-            OfflineMode.FAVORITES -> favourites
+            OfflineMode.FAVORITES -> Unit
             // Everything, but favourites first so they are never the tracks that
             // lose out when the budget runs dry.
-            OfflineMode.ALL -> favourites + allTracks
+            //
+            // And the rest only while there is room for any of it. With the
+            // budget spent, the worker empties the queue at its first pick, and
+            // every pass built and queued the whole library's ids just for that.
+            OfflineMode.ALL ->
+                if (store.usedBytesEverywhere() < settings.downloadLimit.first()) wanted.addAll(everyTrackId())
         }
-        enqueue(source, wanted.distinctBy { it.id }, manual = false)
+        queueUp(source, wanted.map { QueuedDownload(source.id, it) }, manual = false)
     }
 
     private companion object {
@@ -750,13 +757,29 @@ class Downloader(
                 continue
             }
             val entry = picked.entry
-            val next = entry.track
 
             // The record as it stands now, not as it was when queued: a token
             // renewed or an address changed since then is the one to use.
             val source = settings.sources.first().firstOrNull { it.id == entry.sourceId }
             if (source == null) {
                 // Removed since it was queued; the entry goes with it.
+                continue
+            }
+            val dao = daoFor(source)
+            // Fetched while it waited. A top-up queues what isn't downloaded
+            // yet, and one that ran while this same song was transferring found
+            // it in no lane and no table, and queued it again behind itself.
+            if (dao.download(entry.trackId) != null) {
+                lock.withLock { queue.complete(entry) }
+                continue
+            }
+            // An offline mode's entry is an id — see QueuedDownload — read from
+            // its source's tables now, so it is also the row as it stands now.
+            // One no longer there left the library since it was queued, and
+            // there is nothing to fetch.
+            val next = entry.track ?: dao.tracksByIds(listOf(entry.trackId)).firstOrNull()
+            if (next == null) {
+                lock.withLock { queue.complete(entry) }
                 continue
             }
 
@@ -813,7 +836,6 @@ class Downloader(
                 lock.withLock { queue.requeueFront(picked) }
                 continue
             }
-            val dao = daoFor(source)
 
             if (serviceSinceMs == null) {
                 // Without this the process drops to the cached bucket the moment the

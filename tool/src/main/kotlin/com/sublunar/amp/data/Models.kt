@@ -52,8 +52,13 @@ data class Track(
  * lists take the opposite view: see LibraryRepository.splitTag, where a comma
  * really does separate two genres.)
  */
-fun Track.albumArtistNames(): List<String> {
-    val raw = albumArtist.ifBlank { artist }
+fun Track.albumArtistNames(): List<String> = creditNames(albumArtist.ifBlank { artist })
+
+/**
+ * The names in one credit as stored — [albumArtistNames] without a track, for
+ * the download top-up, which reads the distinct credits rather than every row.
+ */
+fun creditNames(raw: String): List<String> {
     val names = raw.split(';').map { it.trim() }.filter { it.isNotEmpty() }
     return names.ifEmpty { listOfNotNull(raw.takeIf { it.isNotBlank() }) }
 }

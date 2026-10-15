@@ -42,9 +42,11 @@ import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AlphabetIndex
 import com.sublunar.amp.ui.components.CORNER_ICON_PX
 import com.sublunar.amp.ui.components.HEADER_BAR_PX
+import com.sublunar.amp.ui.components.LatestList
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.clearText
 import com.sublunar.amp.ui.components.ROW_LEAD_PX
+import com.sublunar.amp.ui.components.rememberLatest
 import com.sublunar.amp.ui.components.ROW_GAP_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
@@ -603,6 +605,7 @@ internal fun syncProgressText(phase: String): String {
 private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
     val view by App.sortedAlbums.collectAsState()
     val sorted = view.items
+    val rows = rememberLatest(sorted)
     val letters = view.letters
     val reversed by App.settings.albumSortReversed.collectAsState(initial = false)
     val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
@@ -633,7 +636,7 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
                     state = gridState,
                 ) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
-                        RandomAlbumRow(sorted, actions)
+                        RandomAlbumRow(rows, actions)
                     }
                     if (sorted.isEmpty() && sync.syncing) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
@@ -654,11 +657,12 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
                 headerCount = 1,
                 reversed = reversed,
             ) {
-                item { RandomAlbumRow(sorted, actions) }
+                item { RandomAlbumRow(rows, actions) }
                 localAccessNotice(needsAccess) { audioPermission?.launch() }
                 syncErrorNotice(syncError, actions.settings)
                 syncProgressNotice(sorted.isEmpty(), sync)
-                items(sorted, key = { it.id }) { album ->
+                items(sorted.size, key = { rows[it]?.id ?: it }) { i ->
+                    val album = rows[i] ?: return@items
                     TrackRow(
                         title = album.title,
                         subtitle = album.artist,
@@ -682,9 +686,9 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
  * list as it stands, so a filter or a search narrows what can come up.
  */
 @Composable
-private fun RandomAlbumRow(albums: List<Album>, actions: ShellActions) {
+private fun RandomAlbumRow(albums: LatestList<Album>, actions: ShellActions) {
     PlayAllRow(AppIcons.Shuffle, "Play Random Album") {
-        val album = albums.randomOrNull() ?: return@PlayAllRow
+        val album = albums.items.randomOrNull() ?: return@PlayAllRow
         App.scope.launch {
             // Reading the album's tracks is a database call and belongs off the
             // main thread; handing them to the player is not. ExoPlayer's looper
@@ -751,6 +755,7 @@ private fun ColumnScope.IndexedList(
 private fun SongsTab(actions: ShellActions, header: Boolean = true) {
     val view by App.sortedSongs.collectAsState()
     val sorted = view.items
+    val rows = rememberLatest(sorted)
     val letters = view.letters
     val reversed by App.settings.songSortReversed.collectAsState(initial = false)
     val downloadedIds by App.library.downloadedTrackIds.collectAsState()
@@ -769,7 +774,7 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
         if (header) {
             if (selection.active) {
                 SelectionHeader(selection) {
-                    actions.selectionActions(selection.pick(sorted) { it.id }, selection)
+                    actions.selectionActions(selection.pick(rows.items) { it.id }, selection)
                 }
             } else {
                 TabHeader(LibraryTab.SONGS, actions)
@@ -784,7 +789,7 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
             if (!selection.active) {
                 item {
                     PlayAllRow(AppIcons.Shuffle, "Shuffle") {
-                        App.playback.playQueue(shuffled(sorted), 0)
+                        App.playback.playQueue(shuffled(rows.items), 0)
                         actions.nowPlaying()
                     }
                 }
@@ -792,7 +797,9 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
                 syncErrorNotice(syncError, actions.settings)
                 syncProgressNotice(sorted.isEmpty(), sync)
             }
-            items(sorted, key = { it.id }) { track ->
+            // Read through [rows], never captured — see LatestList.
+            items(sorted.size, key = { rows[it]?.id ?: it }) { i ->
+                val track = rows[i] ?: return@items
                 TrackRow(
                     title = track.title,
                     subtitle = track.artist,
@@ -803,8 +810,9 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
                         if (selection.active) {
                             selection.toggle(track.id)
                         } else {
-                            val index = sorted.indexOfFirst { it.id == track.id }
-                            App.playback.playQueue(sorted, index.coerceAtLeast(0))
+                            val list = rows.items
+                            val index = list.indexOfFirst { it.id == track.id }
+                            App.playback.playQueue(list, index.coerceAtLeast(0))
                             actions.nowPlaying()
                         }
                     },
@@ -821,6 +829,7 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
 private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
     val view by App.sortedArtists.collectAsState()
     val sorted = view.items
+    val rows = rememberLatest(sorted)
     val letters = view.letters
     val reversed by App.settings.artistSortReversed.collectAsState(initial = false)
     // Both read unconditionally: behind && the second collectAsState is a
@@ -848,7 +857,8 @@ private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
         ) {
             localAccessNotice(needsAccess) { audioPermission?.launch() }
             syncProgressNotice(sorted.isEmpty(), sync)
-            items(sorted, key = { it.name }) { artist ->
+            items(sorted.size, key = { rows[it]?.name ?: it }) { i ->
+                val artist = rows[i] ?: return@items
                 ArtistRow(
                     name = artist.name,
                     subtitle = "${artist.albumCount} albums · ${artist.trackCount} songs",

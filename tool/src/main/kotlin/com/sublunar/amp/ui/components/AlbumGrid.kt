@@ -70,6 +70,7 @@ fun AlbumGrid(
     // it reads and the bar freezes where it was — the same trap the songs tab
     // documents for collectAsState.
     val target = rememberScrollTarget(state)
+    val rows = rememberLatest(albums)
     Box(modifier = modifier.fillMaxSize()) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(GRID_COLUMNS),
@@ -91,8 +92,9 @@ fun AlbumGrid(
         verticalArrangement = Arrangement.spacedBy(px(GRID_GAP_PX)),
     ) {
         header?.invoke(this)
-        items(albums.size, key = { albums[it].id }) { index ->
-            val album = albums[index]
+        // Read through [rows], never captured — see LatestList.
+        items(albums.size, key = { rows[it]?.id ?: it }) { index ->
+            val album = rows[index] ?: return@items
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
