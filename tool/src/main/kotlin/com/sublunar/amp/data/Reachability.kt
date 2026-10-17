@@ -59,6 +59,7 @@ class Reachability(
             retry?.cancel()
             misses = 0
         }
+        if (_reachable.value != reachable) log("reported ${if (reachable) "reachable" else "gone"} by ${Trace.caller("Reachability", "App.reportServerReachable")}")
         _reachable.value = reachable
     }
 
@@ -77,7 +78,7 @@ class Reachability(
      */
     fun check(delayMs: Long = SETTLE_MS) {
         retry?.cancel()
-        log("check in ${delayMs}ms (was ${if (_reachable.value) "reachable" else "gone"})")
+        log("check in ${delayMs}ms (was ${if (_reachable.value) "reachable" else "gone"}) from ${Trace.caller("Reachability", "App.reportServerReachable")}")
         retry = scope.launch {
             delay(delayMs)
             var attempt = 0
@@ -87,7 +88,11 @@ class Reachability(
                 // link). Not an answer about the server — leave what is known
                 // alone; the next network change asks again.
                 if (verdict == null || verdict) return@launch
-                val wait = RETRY_MS.getOrNull(attempt++) ?: return@launch
+                val wait = RETRY_MS.getOrNull(attempt++)
+                    ?: run {
+                        log("gave up after $attempt pings; waiting for a network change or a press")
+                        return@launch
+                    }
                 delay(wait)
             }
         }
@@ -105,11 +110,12 @@ class Reachability(
             // and the rules already keep anything from being sent. Without this
             // a "gone" learnt on a dying Wi-Fi survived the switch to a mode
             // that may use cellular, with nothing left to question it.
+            if (!_reachable.value) log("rules forbid asking — dropping the old \"gone\"")
             misses = 0
             _reachable.value = true
             return null
         }
-        val server = client() ?: return null
+        val server = client() ?: return null.also { log("no client to ask") }
         val askedAtMs = System.nanoTime() / 1_000_000
         var why = "answered"
         val answered: Boolean? = try {

@@ -79,6 +79,8 @@ import kotlin.time.Duration.Companion.minutes
 import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.LinkRules
 import com.sublunar.amp.data.LogFile
+import com.sublunar.amp.data.Trace
+import kotlinx.coroutines.flow.onEach
 import com.sublunar.amp.data.Reachability
 import com.sublunar.amp.data.StreamProxy
 import kotlinx.coroutines.withTimeoutOrNull
@@ -417,6 +419,7 @@ object App {
      * at once, instead of being believed until the next sync.
      */
     fun reportServerReachable(reachable: Boolean) {
+        if (!reachable) Trace.i("reach", "suspicion from ${Trace.caller("App.reportServerReachable")} → asking now")
         if (reachable) reachability.report(true) else reachability.check(delayMs = 0L)
     }
 
@@ -434,7 +437,17 @@ object App {
                 serverReachable = reachable,
                 wifi = net.isConnected && net.isWifi,
             )
-        }.stateIn(scope, SharingStarted.Eagerly, LinkRules.UNKNOWN)
+        }
+            .distinctUntilChanged()
+            .onEach { r ->
+                Trace.i(
+                    "rules",
+                    "connected=${r.connected} wifi=${r.wifi} unmetered=${r.unmetered} mode=${r.mode} " +
+                        "serverReachable=${r.serverReachable} → talk=${r.mayTalkToServer} " +
+                        "stream=${r.mayStream} heavy=${r.mayMoveHeavyBytes} waitingFor=${r.waitingFor}",
+                )
+            }
+            .stateIn(scope, SharingStarted.Eagerly, LinkRules.UNKNOWN)
     }
 
     /**
@@ -879,6 +892,28 @@ object App {
                         delay(PARKED_PROBE_SETTLE_MS)
                         downloader.wakeParked()
                     }
+            }
+            // Tracing: the moment the lists narrow to downloads, and which
+            // address the browsed server is being reached at.
+            scope.launch {
+                offlineOnly.collect { off ->
+                    val r = rules.value
+                    Trace.i(
+                        "offline",
+                        if (!off) "lists show the whole library"
+                        else "lists narrowed to downloads (talk=${r.mayTalkToServer}, serverReachable=${r.serverReachable})",
+                    )
+                }
+            }
+            scope.launch {
+                _source.collect { s ->
+                    val others = (s.connections - s.baseUrl).joinToString { Trace.host(it) }
+                    Trace.i(
+                        "source",
+                        "${s.kind} \"${s.name}\" at ${Trace.host(s.baseUrl)}" +
+                            if (others.isEmpty()) "" else "; other addresses: $others",
+                    )
+                }
             }
             scope.launch {
                 combine(serverClient, Connectivity.changed) { client, (connected, _) ->
