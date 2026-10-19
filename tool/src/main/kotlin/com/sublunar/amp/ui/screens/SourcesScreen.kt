@@ -41,7 +41,7 @@ import kotlinx.coroutines.launch
  * Which library the app is showing — and nothing else.
  *
  * This is the page reached while listening, so it does two things: every
- * source's libraries, one tap each, and Sync Now for the one in use. Adding a source, or changing anything about one,
+ * source's libraries, one tap each, and Sync Now for the one in use (Rescan Library on the phone's own music). Adding a source, or changing anything about one,
  * lives in Settings under Sources — see [SourceListScreen]. Splitting them keeps
  * the switch you make often away from the settings you set once, where a
  * mistaken tap costs a re-sync.

@@ -48,7 +48,7 @@ class ServerScreen(
     private val adding: Boolean = false,
     /**
      * Adding Bandcamp: its address is always the same, so it is filled in, and
-     * the line at the top says where its credentials come from — they are made
+     * a line above the login fields says where its credentials come from — they are made
      * for Subsonic apps on Bandcamp's site, not the account's own login, and
      * long enough that the form offers to scan them, as it does when editing a
      * Bandcamp source. Nothing else about the source is special; it is a
