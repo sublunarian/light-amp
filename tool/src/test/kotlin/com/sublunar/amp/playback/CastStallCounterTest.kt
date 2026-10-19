@@ -1,6 +1,5 @@
 package com.sublunar.amp.playback
 
-import com.thelightphone.sdk.cast.DlnaState
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.junit.Test

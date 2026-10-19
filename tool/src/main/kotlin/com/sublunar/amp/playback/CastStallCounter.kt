@@ -1,7 +1,5 @@
 package com.sublunar.amp.playback
 
-import com.thelightphone.sdk.cast.DlnaState
-
 /**
  * How long a cast renderer has gone without being seen to play.
  *

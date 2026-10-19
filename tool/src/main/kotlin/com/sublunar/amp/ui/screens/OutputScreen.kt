@@ -40,10 +40,10 @@ import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.sublunar.amp.data.PlexPlayer
+import com.sublunar.amp.playback.DlnaRenderer
 import com.sublunar.amp.playback.PlaybackController
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
-import com.thelightphone.sdk.cast.DlnaRenderer
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.sublunar.amp.ui.components.appClickable
@@ -55,9 +55,9 @@ import kotlin.math.roundToInt
  * The volume fader drives the phone's own media volume. Speaker-vs-Bluetooth
  * routing is LightOS's job (a tool has no access to the audio-routing APIs), so
  * that part of the list is informational. Network speakers found over DLNA *can*
- * be switched to — see the temporary cast support in `DlnaCast` — and so can
- * other Plex players (an Apple TV's Plex app, say) when the active source is
- * Plex, over Plex's own Companion protocol.
+ * be switched to (see `DlnaCast`), and so can other Plex players (an Apple TV's
+ * Plex app, say) when the active source is Plex, over Plex's own Companion
+ * protocol.
  */
 class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
 

@@ -59,8 +59,8 @@ Two rules make that seam work:
   quietly send something else — it doesn't offer the choice in the first place.
 
 **`PlaybackController`** owns the player, the queue, position and duration, and
-the cast session. The DLNA section is fenced off behind its own banner comment
-because it is a workaround due for removal — see [SDK-GAPS.md](SDK-GAPS.md).
+the cast session. DLNA and Plex Companion casting each sit behind their own
+banner comment.
 
 **`ui/screens`** is one file per screen. `LibraryShell` is the tabbed root;
 `BootScreen` hosts it and decides what to show while the library loads.

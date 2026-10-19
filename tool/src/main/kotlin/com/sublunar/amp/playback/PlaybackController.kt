@@ -1,9 +1,6 @@
 package com.sublunar.amp.playback
 
 import androidx.media3.common.Player
-import com.thelightphone.sdk.cast.DlnaCast
-import com.thelightphone.sdk.cast.DlnaRenderer
-import com.thelightphone.sdk.cast.DlnaState
 import com.thelightphone.sdk.audio.LightAudioNetworkBlockedException
 import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.AppSettings
@@ -471,7 +468,7 @@ class PlaybackController(
     // can restore it.
     private var preShuffleOrder: List<Track>? = null
 
-    // --- DLNA casting (TEMPORARY — removed before submitting to Light) --------
+    // --- DLNA casting --------------------------------------------------------
 
     private val _castRenderer = MutableStateFlow<DlnaRenderer?>(null)
     val castRenderer: StateFlow<DlnaRenderer?> = _castRenderer
@@ -481,7 +478,7 @@ class PlaybackController(
 
     private var castJob: Job? = null
 
-    // --- Plex Companion casting (permanent — plain HTTP, all in tool code) ----
+    // --- Plex Companion casting ----------------------------------------------
 
     private val _plexPlayer = MutableStateFlow<PlexPlayer?>(null)
     val plexPlayer: StateFlow<PlexPlayer?> = _plexPlayer

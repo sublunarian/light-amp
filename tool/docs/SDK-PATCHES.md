@@ -224,18 +224,12 @@ Needs `WRITE_SECURE_SETTINGS`, declared in the `debug` and `release` manifest
 overlays but never in `src/main` — the plugin validates `src/main` only, so it
 cannot reach a submitted build.
 
-### 15. `cast/DlnaCast.kt`
+### 15. ~~`cast/DlnaCast.kt`~~ — moved into the tool 15 Oct 2026
 
-SSDP discovery and SOAP control, written by hand because the sandbox blocks the
-libraries that would normally do this.
-
----
-
-`DlnaCast.allowsNetwork` is the one switch in front of everything it sends —
-discovery, the two probes of the music server, the description fetch and every
-SOAP call. Amp wires it to `LinkRules.mayUseLan`: on Wi-Fi, and in Wi-Fi Only
-not on a metered hotspot. Off Wi-Fi a control call is a connection attempt to a
-private address over cellular, and a probe is real data on a forbidden link.
+DLNA casting was never something the sandbox blocked: it only uses `java.net`
+and coroutines, which the plugin allows, just like Amp's own Plex discovery. It
+now lives in `tool/.../playback/DlnaCast.kt` and ships in store builds. Its
+network switch, `DlnaCast.allowsNetwork`, is still wired to `LinkRules.mayUseLan`.
 
 
 ## Seeing them as a diff

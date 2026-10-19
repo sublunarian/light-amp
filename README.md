@@ -58,8 +58,8 @@ opens anywhere else, and one you drop in that folder shows up in Amp.
 
 ## What isn't in the SDK yet
 
-Three things sit outside the official SDK: **background downloads**, and two
-extras that would come out for a store build, **colour** and **DLNA casting**.
+Two things sit outside the official SDK: **background downloads**, and an extra
+that would come out for a store build, **colour**.
 Amp also adds to the SDK's player (queue editing, repeat, volume) in patches
 meant to go upstream. A build from Light's own store builder can't carry any of
 these yet, so getting Amp into the Tool Library is still work in progress.
