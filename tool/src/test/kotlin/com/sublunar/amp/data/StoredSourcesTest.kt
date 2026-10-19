@@ -197,18 +197,51 @@ class StoredSourcesTest {
     }
 
     @Test
-    fun `one unreadable record hides the whole list today`() = runBlocking {
-        // Pinned as it stands, not as it should be: the Welcome screen, and
-        // adding a source from there writes over every other one.
+    fun `a record this build can't read hides only itself`() = runBlocking {
         for (unreadable in listOf(UNKNOWN_KIND, MISSING_NAME, NULL_FOR_STR)) {
             val phone = Phone(SOURCES to list(SUBSONIC_FULL, unreadable))
-            assertEquals(emptyList(), phone.settings.sources.first(), unreadable)
-            assertNull(phone.settings.activeSource.first(), unreadable)
+            assertEquals(listOf(subsonicFull), phone.settings.sources.first(), unreadable)
+            assertEquals(subsonicFull, phone.settings.activeSource.first(), unreadable)
             phone.settings.saveSource(local)
-            assertEquals(list(LOCAL), phone.stored, unreadable)
+            assertEquals(list(SUBSONIC_FULL, unreadable, LOCAL), phone.stored, unreadable)
         }
         val withLegacy = Phone(*legacyKeys, SOURCES to list(SUBSONIC_FULL, UNKNOWN_KIND))
-        assertEquals(listOf(legacy.filled()), withLegacy.settings.sources.first())
+        assertEquals(listOf(subsonicFull), withLegacy.settings.sources.first())
+    }
+
+    @Test
+    fun `it keeps its place through an edit to the others`() = runBlocking {
+        val phone = Phone(SOURCES to list(UNKNOWN_KIND, SUBSONIC_FULL, PLEX))
+        phone.settings.setSourceLibraryId("src-p1", "7")
+        assertEquals(
+            list(UNKNOWN_KIND, SUBSONIC_FULL, PLEX.replace(""""libraries"""", """"libraryId":"7","libraries"""")),
+            phone.stored,
+        )
+    }
+
+    @Test
+    fun `removing the source in front of it leaves it stored`() = runBlocking {
+        val phone = Phone(SOURCES to list(SUBSONIC_FULL, UNKNOWN_KIND))
+        phone.settings.removeSource("server")
+        assertEquals(list(UNKNOWN_KIND), phone.stored)
+    }
+
+    @Test
+    fun `the source chosen being unreadable shows the first readable one, and the choice stays`() = runBlocking {
+        val phone = Phone(SOURCES to list(SUBSONIC_FULL, UNKNOWN_KIND), ACTIVE_SOURCE to "src-q1")
+        assertEquals(subsonicFull, phone.settings.activeSource.first())
+        assertEquals("src-q1", phone.store.raw("pref.activeSource"))
+    }
+
+    @Test
+    fun `a list with nothing readable is empty, not the old server, and adding a source keeps it`() = runBlocking {
+        // The Welcome screen, as "[]" always was. The old keys are what a list
+        // that isn't there at all falls back to, not one this build can't read.
+        val phone = Phone(*legacyKeys, SOURCES to list(UNKNOWN_KIND))
+        assertEquals(emptyList(), phone.settings.sources.first())
+        assertNull(phone.settings.activeSource.first())
+        phone.settings.saveSource(local)
+        assertEquals(list(UNKNOWN_KIND, LOCAL), phone.stored)
     }
 
     @Test
@@ -219,10 +252,10 @@ class StoredSourcesTest {
     }
 
     @Test
-    fun `an unreadable record stops the download limit moving up today`() = runBlocking {
+    fun `an unreadable record doesn't stop the download limit moving up`() = runBlocking {
         val phone = Phone(SOURCES to list(SUBSONIC_FULL, UNKNOWN_KIND))
         phone.settings.migrateDownloadLimit()
-        assertEquals(2147483648L, phone.settings.downloadLimit.first())
+        assertEquals(21474836480L, phone.settings.downloadLimit.first())
     }
 
     private val subsonicFull = MusicSource(

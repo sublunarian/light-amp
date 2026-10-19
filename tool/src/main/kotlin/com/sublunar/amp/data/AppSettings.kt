@@ -127,12 +127,13 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * A pre-sources install has its single server under the old flat keys; that
      * is folded in here rather than migrated in place, so downgrading the app
      * still finds its server where it left it.
+     *
+     * Read one record at a time — see [StoredSources]. One this build can't
+     * read is left out, and the rest still show.
      */
     val sources: Flow<List<MusicSource>> = dataStore.data.map { p ->
-        val stored = p[SOURCES]?.let { text ->
-            runCatching { sourcesJson.decodeFromString<List<MusicSource>>(text) }.getOrNull()
-        }
-        val list = stored ?: legacySource(p)?.let { listOf(it) } ?: emptyList()
+        val stored = p[SOURCES]?.let { StoredSources.decode(sourcesJson, it) }
+        val list = stored?.readable ?: legacySource(p)?.let { listOf(it) } ?: emptyList()
         // Downloads used to be configured once for the whole app. A source saved
         // before they moved here has none of its own, and would otherwise read
         // as the defaults — quietly changing what the user had set. The old
@@ -172,12 +173,15 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { it[ACTIVE_SOURCE] = id }
     }
 
+    /**
+     * Rewrite the stored list through [block], which is handed only what this
+     * build can read. The records it can't read go back where they were.
+     */
     private suspend fun editSources(block: (List<MusicSource>) -> List<MusicSource>) {
         dataStore.edit { p ->
-            val current = p[SOURCES]?.let { text ->
-                runCatching { sourcesJson.decodeFromString<List<MusicSource>>(text) }.getOrNull()
-            } ?: listOfNotNull(legacySource(p))
-            p[SOURCES] = sourcesJson.encodeToString(block(current))
+            val stored = p[SOURCES]?.let { StoredSources.decode(sourcesJson, it) }
+            val current = stored?.readable ?: listOfNotNull(legacySource(p))
+            p[SOURCES] = (stored ?: StoredSources.NONE).encode(sourcesJson, block(current))
         }
     }
 
@@ -415,9 +419,8 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun migrateDownloadLimit() {
         val p = dataStore.data.first()
         if (p[DOWNLOAD_LIMIT] != null) return
-        val perSource = runCatching {
-            sourcesJson.decodeFromString<List<MusicSource>>(p[SOURCES].orEmpty())
-        }.getOrDefault(emptyList()).mapNotNull { it.downloadLimitBytes }
+        val perSource = StoredSources.decode(sourcesJson, p[SOURCES].orEmpty())
+            ?.readable.orEmpty().mapNotNull { it.downloadLimitBytes }
         if (perSource.isEmpty()) return
         setDownloadLimit(perSource.max())
     }
