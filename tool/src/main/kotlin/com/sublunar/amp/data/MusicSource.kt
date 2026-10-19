@@ -372,12 +372,6 @@ data class MusicSource(
     val supportsLibraries: Boolean get() = capabilities.libraries
 
     companion object {
-        /** The id the phone's own music always has — there can only be one. */
-        const val LOCAL_ID = "local"
-
-        fun local(): MusicSource =
-            MusicSource(id = LOCAL_ID, kind = SourceKind.LOCAL, name = "Local Music")
-
         /** A readable default name for a server the user just added. */
         fun nameFor(baseUrl: String): String =
             baseUrl.substringAfter("://").substringBefore('/').ifBlank { "Server" }

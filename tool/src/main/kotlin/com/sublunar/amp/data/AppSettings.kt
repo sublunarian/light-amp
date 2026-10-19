@@ -695,6 +695,14 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         /** The id given to a server configured before sources existed. */
         const val LEGACY_SOURCE_ID = "server"
 
+        /**
+         * What stands in for a source while there is none to read: before
+         * boot has read the saved one, and at boot when nothing is saved yet.
+         * The server from before sources existed, as the boot fallback always
+         * was.
+         */
+        fun placeholderSource(): MusicSource = MusicSource(LEGACY_SOURCE_ID, SourceKind.SUBSONIC, "Server")
+
         private val DOWNLOADS_PAUSED = booleanPreferencesKey("pref.downloadsPaused")
         private val CACHED_PLAYLISTS = stringPreferencesKey("state.playlists")
         private val PENDING_ACTIONS = stringPreferencesKey("state.pendingActions")

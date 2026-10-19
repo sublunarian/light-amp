@@ -28,6 +28,11 @@ import com.sublunar.amp.source.SourceUi
 object LocalProvider : SourceProvider {
     override val kind = SourceKind.LOCAL
 
+    /** The id the phone's own music always has — there can only be one. */
+    const val SOURCE_ID = "local"
+
+    fun newSource(): MusicSource = MusicSource(id = SOURCE_ID, kind = SourceKind.LOCAL, name = "Local Music")
+
     /** The phone's own music is never transcoded at all. */
     override val streamFormats: List<StreamFormat> get() = emptyList()
 
@@ -76,7 +81,7 @@ internal object LocalPhoneLibrary : PhoneLibrary {
 private object LocalUi : SourceUi {
     // Only ever one: it is the phone, and there is only one phone.
     override val addEntries = listOf(
-        AddEntry("Music on This Phone", AddIcon.PHONE, AddAction.AddAtOnce { MusicSource.local() }, singleton = true),
+        AddEntry("Music on This Phone", AddIcon.PHONE, AddAction.AddAtOnce { LocalProvider.newSource() }, singleton = true),
     )
 
     /** Nothing to connect to: the music is on the phone. */

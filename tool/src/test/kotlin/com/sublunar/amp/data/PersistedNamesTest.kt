@@ -1,6 +1,7 @@
 package com.sublunar.amp.data
 
 import com.sublunar.amp.data.db.libraryDatabaseName
+import com.sublunar.amp.source.local.LocalProvider
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -43,6 +44,11 @@ class PersistedNamesTest {
     @Test
     fun `the two ids that are not generated`() {
         assertEquals("server", AppSettings.LEGACY_SOURCE_ID)
-        assertEquals("local", MusicSource.LOCAL_ID)
+        assertEquals("local", LocalProvider.SOURCE_ID)
+    }
+
+    @Test
+    fun `before there is a source, the pre-sources server stands in`() {
+        assertEquals(MusicSource("server", SourceKind.SUBSONIC, "Server"), AppSettings.placeholderSource())
     }
 }

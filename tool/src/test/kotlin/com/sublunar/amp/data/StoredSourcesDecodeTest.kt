@@ -2,6 +2,7 @@ package com.sublunar.amp.data
 
 import com.sublunar.amp.data.StoredSourcesTest.Companion.LOCAL
 import com.sublunar.amp.data.StoredSourcesTest.Companion.UNKNOWN_KIND
+import com.sublunar.amp.source.local.LocalProvider
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -41,7 +42,7 @@ class StoredSourcesDecodeTest {
             json,
             """[ {"kind": "QOBUZ", "id": "q", "bytes": 21474836480, "gain": 1.50e3} , $LOCAL ]""",
         )!!
-        assertEquals(listOf(MusicSource.local()), stored.readable)
+        assertEquals(listOf(LocalProvider.newSource()), stored.readable)
         assertEquals(
             """[{"kind":"QOBUZ","id":"q","bytes":21474836480,"gain":1500.0},$LOCAL]""",
             stored.encode(json, stored.readable),
@@ -52,6 +53,6 @@ class StoredSourcesDecodeTest {
     fun `nothing readable is an empty list, with what was stored still kept`() {
         val stored = StoredSources.decode(json, "[$UNKNOWN_KIND]")!!
         assertEquals(emptyList(), stored.readable)
-        assertEquals("[$UNKNOWN_KIND,$LOCAL]", stored.encode(json, listOf(MusicSource.local())))
+        assertEquals("[$UNKNOWN_KIND,$LOCAL]", stored.encode(json, listOf(LocalProvider.newSource())))
     }
 }

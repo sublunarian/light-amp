@@ -32,7 +32,6 @@ import com.sublunar.amp.data.Downloader
 import com.sublunar.amp.data.LibraryRepository
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.OfflineMode
-import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.TagFilter
 import com.sublunar.amp.data.creditNames
 import com.sublunar.amp.data.hasComposer
@@ -117,7 +116,7 @@ object App {
      * The source the library is showing, as state rather than a preferences Flow —
      * the UI reads it on every screen to decide what a source can do.
      */
-    private val _source = MutableStateFlow(MusicSource.local())
+    private val _source = MutableStateFlow(AppSettings.placeholderSource())
     val source: StateFlow<MusicSource> = _source
 
     /**
@@ -636,7 +635,7 @@ object App {
             // largest of the old per-source ones up to it.
             runBlocking { settings.migrateDownloadLimit() }
             val first = runBlocking { settings.activeSource.first() }
-                ?: MusicSource(AppSettings.LEGACY_SOURCE_ID, SourceKind.SUBSONIC, "Server")
+                ?: AppSettings.placeholderSource()
             _source.value = first
             _dao.value = databaseFor(first).libraryDao()
             downloads = DownloadStore(context.filesDir)

@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.source.local.LocalProvider
 import com.sublunar.amp.source.subsonic.toSubsonicConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -104,6 +105,6 @@ class ClientFactoryTest {
 
     @Test
     fun `the phone's own music has no client`() {
-        clientOf(MusicSource.local()) { assertNull(it) }
+        clientOf(LocalProvider.newSource()) { assertNull(it) }
     }
 }
