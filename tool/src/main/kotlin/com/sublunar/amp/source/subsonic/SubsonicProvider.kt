@@ -5,8 +5,6 @@ import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
-import com.sublunar.amp.data.SubsonicClient
-import com.sublunar.amp.data.SubsonicConfig
 import com.sublunar.amp.data.allows
 import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
@@ -15,7 +13,6 @@ import com.sublunar.amp.source.ConnectionRow
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
 import com.sublunar.amp.source.SourceUi
-import com.sublunar.amp.ui.screens.ServerScreen
 
 /**
  * A Subsonic-compatible server: Navidrome, Airsonic, gonic, Ampache, Bandcamp…

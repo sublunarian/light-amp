@@ -1,5 +1,9 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.subsonic
 
+import com.sublunar.amp.data.MusicSource
+import com.sublunar.amp.data.ServerFeatures
+import com.sublunar.amp.data.SourceKind
+import com.sublunar.amp.data.StreamFormat
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

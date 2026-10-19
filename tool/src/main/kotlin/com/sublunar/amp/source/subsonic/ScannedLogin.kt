@@ -1,4 +1,4 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.subsonic
 
 /**
  * A username and password read out of a QR code.

@@ -1,6 +1,5 @@
-package com.sublunar.amp.ui.screens
+package com.sublunar.amp.source.subsonic
 
-import com.sublunar.amp.data.SubsonicException
 import java.io.IOException
 import java.net.UnknownHostException
 import kotlin.test.Test

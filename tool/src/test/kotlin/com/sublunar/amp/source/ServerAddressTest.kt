@@ -1,7 +1,7 @@
 package com.sublunar.amp.source
 
 import kotlin.test.Test
-import com.sublunar.amp.data.SubsonicConfig
+import com.sublunar.amp.source.subsonic.SubsonicConfig
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue

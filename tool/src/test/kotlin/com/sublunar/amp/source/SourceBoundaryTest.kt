@@ -192,11 +192,6 @@ class SourceBoundaryTest {
 
         /** Files outside a protocol's folder that may name its package, each with why and what removes it. */
         val ALLOWED: List<Allowance> = listOf(
-            Allowance(
-                "ui/screens/ServerScreen.kt",
-                "subsonic",
-                "Subsonic's own sign-in form, reading a saved login through toSubsonicConfig. Goes when the form moves into source/subsonic/",
-            ),
         )
 
         /** Files outside a kind's folder that may name its SourceKind, each with why and what removes it. */
@@ -205,11 +200,6 @@ class SourceBoundaryTest {
                 "data/AppSettings.kt",
                 "subsonic",
                 "the one server from before sources existed was a Subsonic server, and stands in until a source is read. Stays: it is what older installs stored",
-            ),
-            Allowance(
-                "ui/screens/ServerScreen.kt",
-                "subsonic",
-                "Subsonic's sign-in form makes Subsonic sources. Goes when it moves into source/subsonic/",
             ),
             Allowance(
                 "ui/screens/JellyfinLinkScreen.kt",

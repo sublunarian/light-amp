@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.source.subsonic.SubsonicException
 import java.net.SocketTimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals

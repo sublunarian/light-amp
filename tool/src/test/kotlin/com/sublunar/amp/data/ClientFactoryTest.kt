@@ -2,6 +2,8 @@ package com.sublunar.amp.data
 
 import com.sublunar.amp.source.local.LocalProvider
 import com.sublunar.amp.source.subsonic.toSubsonicConfig
+import com.sublunar.amp.source.subsonic.SubsonicClient
+import com.sublunar.amp.source.subsonic.SubsonicConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs

@@ -1,4 +1,4 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.subsonic
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

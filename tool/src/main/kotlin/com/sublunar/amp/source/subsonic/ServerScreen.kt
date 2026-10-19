@@ -1,4 +1,4 @@
-package com.sublunar.amp.ui.screens
+package com.sublunar.amp.source.subsonic
 
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,13 +14,10 @@ import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.SourceLibrary
 import com.sublunar.amp.data.newSourceId
-import com.sublunar.amp.data.SubsonicClient
-import com.sublunar.amp.data.SubsonicConfig
-import com.sublunar.amp.data.SUBSONIC_REQUEST_FAILED
-import com.sublunar.amp.data.ScannedLogin
-import com.sublunar.amp.data.SubsonicException
-import com.sublunar.amp.source.subsonic.toSubsonicConfig
 import com.sublunar.amp.source.unreachedReason
+import com.sublunar.amp.ui.screens.QrScanScreen
+import com.sublunar.amp.ui.screens.TextEntryScreen
+import com.sublunar.amp.ui.screens.finishAddingSource
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.ScrollableList

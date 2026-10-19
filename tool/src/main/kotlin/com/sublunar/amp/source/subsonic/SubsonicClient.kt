@@ -1,4 +1,4 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.subsonic
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
@@ -17,6 +17,26 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.random.Random
 import com.sublunar.amp.source.ServerAddress
+import com.sublunar.amp.data.Album
+import com.sublunar.amp.data.ArtistRef
+import com.sublunar.amp.data.CANT_DO_THAT
+import com.sublunar.amp.data.LyricLine
+import com.sublunar.amp.data.Lyrics
+import com.sublunar.amp.data.MusicFolder
+import com.sublunar.amp.data.MusicServer
+import com.sublunar.amp.data.NetworkGate
+import com.sublunar.amp.data.Playlist
+import com.sublunar.amp.data.SavedQueue
+import com.sublunar.amp.data.ScanRequest
+import com.sublunar.amp.data.ServerException
+import com.sublunar.amp.data.ServerFeatures
+import com.sublunar.amp.data.SongChanges
+import com.sublunar.amp.data.Starred
+import com.sublunar.amp.data.StreamFormat
+import com.sublunar.amp.data.Track
+import com.sublunar.amp.data.UNREACHABLE
+import com.sublunar.amp.data.WriteResult
+import com.sublunar.amp.data.md5Hex
 
 /** Connection + credentials for a Navidrome/Subsonic server. */
 data class SubsonicConfig(
