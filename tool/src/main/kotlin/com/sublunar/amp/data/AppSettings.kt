@@ -748,7 +748,7 @@ internal fun mergeSource(list: List<MusicSource>, source: MusicSource): Pair<Lis
         )
         return list.toMutableList().also { it[sameId] = edited } to old.id
     }
-    val sameServer = list.indexOfFirst { it.kind == source.kind && it.isSameServerAs(source) }
+    val sameServer = list.indexOfFirst { it.kind == source.kind && it.provider.isSameServer(it, source) }
     if (sameServer < 0) return list + source to source.id
     val old = list[sameServer]
     val relinked = source.copy(
@@ -765,12 +765,6 @@ internal fun mergeSource(list: List<MusicSource>, source: MusicSource): Pair<Lis
         features = old.features,
     )
     return list.toMutableList().also { it[sameServer] = relinked } to old.id
-}
-
-private fun MusicSource.isSameServerAs(other: MusicSource): Boolean = when (kind) {
-    SourceKind.PLEX -> machineIdentifier.isNotBlank() && machineIdentifier == other.machineIdentifier
-    SourceKind.JELLYFIN -> userId.isNotBlank() && userId == other.userId
-    else -> false
 }
 
 /**

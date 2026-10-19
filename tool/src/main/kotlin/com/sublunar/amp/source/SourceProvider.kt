@@ -45,6 +45,15 @@ interface SourceProvider {
 
     /** Music that is files on this phone — see [PhoneLibrary]. Null for every kind with a server. */
     val phoneLibrary: PhoneLibrary? get() = null
+
+    /**
+     * Whether [incoming], a sign-in under a new id, is the server and account
+     * [existing] already is — so it updates that source in place rather than
+     * becoming a second one — see mergeSource. Both are of this kind. False
+     * unless the kind has an id that names its server and account for
+     * certain: without one, a second sign-in is a second source.
+     */
+    fun isSameServer(existing: MusicSource, incoming: MusicSource): Boolean = false
 }
 
 /** What a kind of source can do — read through the matching `supports…` on MusicSource, which is what the screens ask. */

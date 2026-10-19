@@ -59,6 +59,10 @@ object PlexProvider : SourceProvider {
         }
 
     override val ui: SourceUi get() = PlexUi
+
+    /** Matched by the server's own id, so a server re-linked from another address is still the one it was. */
+    override fun isSameServer(existing: MusicSource, incoming: MusicSource): Boolean =
+        existing.machineIdentifier.isNotBlank() && existing.machineIdentifier == incoming.machineIdentifier
 }
 
 private object PlexUi : SourceUi {

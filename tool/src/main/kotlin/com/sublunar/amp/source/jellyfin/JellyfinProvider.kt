@@ -59,6 +59,10 @@ object JellyfinProvider : SourceProvider {
 
     override val ui: SourceUi get() = JellyfinUi
 
+    /** Matched by the user id — a GUID, so one account on one server. */
+    override fun isSameServer(existing: MusicSource, incoming: MusicSource): Boolean =
+        existing.userId.isNotBlank() && existing.userId == incoming.userId
+
     /** Ends the sign-in on the server too, so the phone stops being listed there — see [JellyfinClient.signOut]. */
     override suspend fun signOut(source: MusicSource) {
         val client = createClient(source) as? JellyfinClient ?: return
