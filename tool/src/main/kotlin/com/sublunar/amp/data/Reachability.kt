@@ -126,28 +126,28 @@ class Reachability(
 
     private fun log(text: String) = android.util.Log.i("AmpNet", "reachability: $text")
 
-    /**
-     * Whether an answer that wasn't the expected one still came from the
-     * *server*. A refused login or a bad request did: the server is there and
-     * the rest is someone else's problem. A 5xx usually didn't — it is a
-     * reverse proxy saying the thing behind it is down — and neither did a
-     * body that won't parse, which is a captive portal's login page more often
-     * than it is the server.
-     */
-    private fun answeredBy(e: Exception): Boolean {
-        val status = when (e) {
-            is SubsonicException -> e.status
-            is PlexException -> e.status
-            is JellyfinException -> e.status
-            else -> return e !is kotlinx.serialization.SerializationException
-        }
-        return status == null || status !in 500..599
-    }
-
     private companion object {
         const val SETTLE_MS = 400L
         const val PING_TIMEOUT_MS = 6_000L
         /** Then silence, until something changes. About two minutes in all. */
         val RETRY_MS = listOf(2_000L, 5_000L, 15_000L, 30_000L, 60_000L)
     }
+}
+
+/**
+ * Whether an answer that wasn't the expected one still came from the
+ * *server*. A refused login or a bad request did: the server is there and
+ * the rest is someone else's problem. A 5xx usually didn't — it is a
+ * reverse proxy saying the thing behind it is down — and neither did a
+ * body that won't parse, which is a captive portal's login page more often
+ * than it is the server.
+ */
+internal fun answeredBy(e: Exception): Boolean {
+    val status = when (e) {
+        is SubsonicException -> e.status
+        is PlexException -> e.status
+        is JellyfinException -> e.status
+        else -> return e !is kotlinx.serialization.SerializationException
+    }
+    return status == null || status !in 500..599
 }

@@ -1151,53 +1151,6 @@ class LibraryRepository(
 
     /** The actual scoped sync (null = all libraries); callers serialize via [syncMutex]. */
     /**
-     * A sync failure in words the person holding the phone can act on.
-     *
-     * The raw messages are the server's, not theirs: "Plex says 521 for
-     * /library/sections/3/all" is accurate, unreadable, and long enough to be
-     * truncated to nonsense in the one row that shows it. 5xx in particular
-     * matters — it means the server is down rather than anything being wrong
-     * with the app or the login, and without saying so the only visible symptom
-     * is a Sync button that flashes and does nothing.
-     */
-    /**
-     * Whether a failure was the server turning us away rather than not being
-     * there at all.
-     *
-     * The difference matters: an unreachable server means the library can only
-     * show what is downloaded, while a refused login means the library is fine
-     * and the credentials are stale. Treating the second as the first hides a
-     * perfectly good cached library and says nothing about why.
-     */
-    private fun isAuthFailure(e: Exception): Boolean {
-        val code = Regex("""\b(\d{3})\b""").find(e.message.orEmpty())?.value?.toIntOrNull()
-        return code == 401 || code == 403
-    }
-
-    private fun syncErrorMessage(e: Exception): String {
-        // The status the server actually sent, from the exception that carries
-        // it. This used to scrape any three-digit number out of the message —
-        // and a timeout's message names the URL it was fetching, whose
-        // `Container-Size=500` read as "the server had an error (500)".
-        val code = when (e) {
-            is SubsonicException -> e.status
-            is PlexException -> e.status
-            is JellyfinException -> e.status
-            else -> null
-        }
-        if (code == null && e is java.io.IOException) return "Couldn't reach the server"
-        return when {
-            code == null -> e.message?.takeIf { it.length < 60 } ?: "Couldn't reach the server"
-            // 52x are Cloudflare's: it answered, the server behind it didn't.
-            code in 520..529 -> "Your server isn't responding ($code)"
-            code in 500..599 -> "The server had an error ($code)"
-            code == 401 || code == 403 -> "The server refused the login. Sign in again in Sources."
-            code == 404 -> "That library isn't on the server any more"
-            else -> "The server said $code"
-        }
-    }
-
-    /**
      * Try the server's other advertised addresses, and keep one that answers.
      *
      * Plex hands out a LAN address and one or more remote ones. Whichever
@@ -2639,4 +2592,51 @@ internal fun songsChanged(cached: List<TrackEntity>, fresh: List<TrackEntity>): 
         else row.copy(playCount = old.playCount, lastPlayedMs = old.lastPlayedMs)
     }
     return heard != cached.toHashSet()
+}
+
+/**
+ * Whether a failure was the server turning us away rather than not being
+ * there at all.
+ *
+ * The difference matters: an unreachable server means the library can only
+ * show what is downloaded, while a refused login means the library is fine
+ * and the credentials are stale. Treating the second as the first hides a
+ * perfectly good cached library and says nothing about why.
+ */
+internal fun isAuthFailure(e: Exception): Boolean {
+    val code = Regex("""\b(\d{3})\b""").find(e.message.orEmpty())?.value?.toIntOrNull()
+    return code == 401 || code == 403
+}
+
+/**
+ * A sync failure in words the person holding the phone can act on.
+ *
+ * The raw messages are the server's, not theirs: "Plex says 521 for
+ * /library/sections/3/all" is accurate, unreadable, and long enough to be
+ * truncated to nonsense in the one row that shows it. 5xx in particular
+ * matters — it means the server is down rather than anything being wrong
+ * with the app or the login, and without saying so the only visible symptom
+ * is a Sync button that flashes and does nothing.
+ */
+internal fun syncErrorMessage(e: Exception): String {
+    // The status the server actually sent, from the exception that carries
+    // it. This used to scrape any three-digit number out of the message —
+    // and a timeout's message names the URL it was fetching, whose
+    // `Container-Size=500` read as "the server had an error (500)".
+    val code = when (e) {
+        is SubsonicException -> e.status
+        is PlexException -> e.status
+        is JellyfinException -> e.status
+        else -> null
+    }
+    if (code == null && e is java.io.IOException) return "Couldn't reach the server"
+    return when {
+        code == null -> e.message?.takeIf { it.length < 60 } ?: "Couldn't reach the server"
+        // 52x are Cloudflare's: it answered, the server behind it didn't.
+        code in 520..529 -> "Your server isn't responding ($code)"
+        code in 500..599 -> "The server had an error ($code)"
+        code == 401 || code == 403 -> "The server refused the login. Sign in again in Sources."
+        code == 404 -> "That library isn't on the server any more"
+        else -> "The server said $code"
+    }
 }

@@ -91,6 +91,19 @@ class WriteResultTest {
     }
 
     @Test
+    fun `which is asked first, where more than one could answer`() {
+        // A page is unreachable before its status is read.
+        assertEquals(UNREACHABLE, unreachable(SubsonicException("Server returned HTTP 502.", status = 502, notJson = true)))
+        assertEquals("The server doesn't allow that", refused(SubsonicException("Server returned HTTP 403.", status = 403)))
+        assertEquals("Your server isn't responding (529)", unreachable(PlexException("Plex says 529 for /:/rate", 529)))
+        // A status outside the ranges is no reading of its own: the message stands, when it fits.
+        assertEquals("Jellyfin says 302 for /x", refused(JellyfinException("Jellyfin says 302 for /x", 302)))
+        assertEquals("short", refused(PlexException("short")))
+        assertEquals("Couldn't save", refused(PlexException("p".repeat(80))))
+        assertEquals("The server said no", refused(SubsonicException("s".repeat(80))))
+    }
+
+    @Test
     fun `attemptWrite says how a write went`() = runBlocking {
         assertEquals(WriteResult.Saved, attemptWrite { })
         assertEquals(WriteResult.Refused("x"), attemptWrite { throw RefusedWrite("x") })
