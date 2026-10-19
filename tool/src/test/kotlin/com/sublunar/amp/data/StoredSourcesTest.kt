@@ -70,15 +70,45 @@ class StoredSourcesTest {
     }
 
     @Test
-    fun `a key this build doesn't know is ignored on read and dropped on write`() = runBlocking {
+    fun `a key this build doesn't know is ignored on read and kept on write`() = runBlocking {
         val phone = Phone(SOURCES to list(EXTRA_KEY))
         assertEquals(
             listOf(MusicSource("src-s2", SourceKind.SUBSONIC, "Extra", baseUrl = "https://x.example").filled()),
             phone.settings.sources.first(),
         )
         phone.settings.setSourceLibraryId("src-s2", null)
+        assertEquals(list(EXTRA_KEY), phone.stored)
+        phone.settings.setSourceLibraryId("src-s2", "4")
         assertEquals(
-            list("""{"id":"src-s2","kind":"SUBSONIC","name":"Extra","baseUrl":"https://x.example"}"""),
+            list(
+                """{"id":"src-s2","kind":"SUBSONIC","name":"Extra","baseUrl":"https://x.example","libraryId":"4","futureField":{"a":1}}""",
+            ),
+            phone.stored,
+        )
+    }
+
+    @Test
+    fun `a known field set back to its default stays there, beside the unknown ones`() = runBlocking {
+        val phone = Phone(
+            SOURCES to list(
+                """{"id":"src-s2","kind":"SUBSONIC","name":"Extra","baseUrl":"https://x.example","playerName":"Kitchen","futureField":{"a":1}}""",
+            ),
+        )
+        phone.settings.saveSource(MusicSource("src-s2", SourceKind.SUBSONIC, "Extra", baseUrl = "https://x.example"))
+        assertEquals(list(EXTRA_KEY), phone.stored)
+    }
+
+    @Test
+    fun `only the record they came with keeps them`() = runBlocking {
+        val phone = Phone(SOURCES to list(EXTRA_KEY))
+        phone.settings.saveSource(local)
+        assertEquals(list(EXTRA_KEY, LOCAL), phone.stored)
+        // Removed and added again is a new record: what the old one carried
+        // went with it.
+        phone.settings.removeSource("src-s2")
+        phone.settings.saveSource(MusicSource("src-s2", SourceKind.SUBSONIC, "Extra", baseUrl = "https://x.example"))
+        assertEquals(
+            list(LOCAL, """{"id":"src-s2","kind":"SUBSONIC","name":"Extra","baseUrl":"https://x.example"}"""),
             phone.stored,
         )
     }
