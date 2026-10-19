@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.2
+
+### Fixed
+
+- Local music no longer disappears when there's no connection (#24, thanks
+  @bgmeulem).
+
 ## 0.8.1
 
 ### Fixed
