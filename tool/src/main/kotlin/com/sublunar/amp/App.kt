@@ -448,6 +448,10 @@ object App {
      * True when the library should show only what is on the phone: nothing
      * else can be played right now, whatever the reason — the mode's rule, no
      * link, or a server that isn't answering.
+     *
+     * Never for the phone's own music: all of it is on the phone already, and
+     * none of it counts as a download — narrowed to downloads, a local library
+     * went blank whenever there was no connection.
      */
     @OptIn(FlowPreview::class)
     val offlineOnly: Flow<Boolean> by lazy {
@@ -460,10 +464,11 @@ object App {
         // still reacts to the first miss (a track that can't be had parks or
         // is skipped); only the lists wait to see whether the silence holds.
         combine(
+            source.map { it.kind == SourceKind.LOCAL }.distinctUntilChanged(),
             rules.map { !it.mayTalkToServer }.distinctUntilChanged(),
             rules.map { !it.serverReachable }.distinctUntilChanged()
                 .debounce { gone -> if (gone) SERVER_GONE_SETTLE_MS else 0L },
-        ) { link, server -> link || server }.distinctUntilChanged()
+        ) { local, link, server -> !local && (link || server) }.distinctUntilChanged()
     }
 
     /** How long the server must stay silent before the lists narrow to downloads. */
