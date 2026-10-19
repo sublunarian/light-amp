@@ -21,4 +21,11 @@ abstract class ServerException(
 
     /** A refusal's words when there is no status, and the server's own message is missing or too long to show. */
     open val refusalWords: String get() = "Couldn't save"
+
+    /**
+     * Whether the server turned the login away in its protocol's own words
+     * rather than with a 401 or 403 — see isAuthFailure, for which the
+     * difference is the library staying as it is.
+     */
+    open val refusedLogin: Boolean get() = false
 }

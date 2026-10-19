@@ -2606,8 +2606,12 @@ internal fun songsChanged(cached: List<TrackEntity>, fresh: List<TrackEntity>): 
  * show what is downloaded, while a refused login means the library is fine
  * and the credentials are stale. Treating the second as the first hides a
  * perfectly good cached library and says nothing about why.
+ *
+ * A Subsonic server says so in its own error codes, with no status at all —
+ * see ServerException.refusedLogin. Anything else is read from the message.
  */
 internal fun isAuthFailure(e: Exception): Boolean {
+    if ((e as? ServerException)?.refusedLogin == true) return true
     val code = Regex("""\b(\d{3})\b""").find(e.message.orEmpty())?.value?.toIntOrNull()
     return code == 401 || code == 403
 }
@@ -2628,14 +2632,17 @@ internal fun syncErrorMessage(e: Exception): String {
     // and a timeout's message names the URL it was fetching, whose
     // `Container-Size=500` read as "the server had an error (500)".
     val code = (e as? ServerException)?.status
+    if ((e as? ServerException)?.refusedLogin == true) return LOGIN_REFUSED
     if (code == null && e is java.io.IOException) return "Couldn't reach the server"
     return when {
         code == null -> e.message?.takeIf { it.length < 60 } ?: "Couldn't reach the server"
         // 52x are Cloudflare's: it answered, the server behind it didn't.
         code in 520..529 -> "Your server isn't responding ($code)"
         code in 500..599 -> "The server had an error ($code)"
-        code == 401 || code == 403 -> "The server refused the login. Sign in again in Sources."
+        code == 401 || code == 403 -> LOGIN_REFUSED
         code == 404 -> "That library isn't on the server any more"
         else -> "The server said $code"
     }
 }
+
+private const val LOGIN_REFUSED = "The server refused the login. Sign in again in Sources."

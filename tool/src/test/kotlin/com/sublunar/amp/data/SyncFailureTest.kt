@@ -34,6 +34,23 @@ class SyncFailureTest {
         assertTrue(isAuthFailure(jellyfin))
     }
 
+    /**
+     * Subsonic says it in its own error codes, with no status: once read only
+     * from the message, which carries no number, so a wrong password counted
+     * as a server that might be gone and showed whatever words it came in.
+     */
+    @Test
+    fun `a Subsonic login refusal is the login refused too`() {
+        for (code in listOf(40, 41, 44)) {
+            val refused = SubsonicException("Wrong username or password", code = code, envelope = true)
+            assertTrue(isAuthFailure(refused), "code $code")
+            assertEquals("The server refused the login. Sign in again in Sources.", syncErrorMessage(refused), "code $code")
+        }
+        val notAllowed = SubsonicException("Not authorized", code = 50, envelope = true)
+        assertFalse(isAuthFailure(notAllowed))
+        assertEquals("Not authorized", syncErrorMessage(notAllowed))
+    }
+
     @Test
     fun `other statuses say what they are`() {
         assertEquals("That library isn't on the server any more", syncErrorMessage(PlexException("Plex says 404 for /x", 404)))
@@ -42,7 +59,7 @@ class SyncFailureTest {
 
     @Test
     fun `without a status, a short message is shown as it stands and a long one is not`() {
-        assertEquals("Wrong username or password", syncErrorMessage(SubsonicException("Wrong username or password", code = 40, envelope = true)))
+        assertEquals("Song not found", syncErrorMessage(SubsonicException("Song not found", code = 70, envelope = true)))
         assertEquals(
             "Unexpected response from server.",
             syncErrorMessage(SubsonicException("Unexpected response from server.", notJson = true)),
@@ -61,13 +78,12 @@ class SyncFailureTest {
     }
 
     /**
-     * Read from the message rather than from a status, so it is pinned as it
-     * stands: a Subsonic login refusal carries no number and doesn't count,
-     * and a number in a timeout's URL does.
+     * Anything but a Subsonic login refusal is read from the message rather
+     * than from a status, and is pinned as it stands: a number in a timeout's
+     * URL counts.
      */
     @Test
-    fun `a refused login is read from the message's first three-digit number`() {
-        assertFalse(isAuthFailure(SubsonicException("Wrong username or password", code = 40, envelope = true)))
+    fun `otherwise a refused login is read from the message's first three-digit number`() {
         assertTrue(isAuthFailure(SocketTimeoutException("GET /rest/stream?id=401&c=amp")))
         assertFalse(isAuthFailure(SocketTimeoutException("HTTP 500 /401")))
         assertFalse(isAuthFailure(SubsonicException("Server returned HTTP 502.", status = 502)))

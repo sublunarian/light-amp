@@ -88,13 +88,16 @@ class SubsonicException(
         // A portal's or a proxy's page: the server itself was never asked.
         notJson -> WriteResult.Unreachable(UNREACHABLE)
         endpointMissing -> WriteResult.Refused(CANT_DO_THAT)
-        code == 40 || code == 41 || code == 44 -> WriteResult.Refused("The server refused the login")
+        refusedLogin -> WriteResult.Refused("The server refused the login")
         code == 50 -> WriteResult.Refused("The server doesn't allow that")
         code == 70 -> WriteResult.Refused("The server doesn't have that")
         else -> null
     }
 
     override val refusalWords: String get() = "The server said no"
+
+    /** 40 is the wrong login, 41 a login that can't use tokens, 44 an API key the server won't take. */
+    override val refusedLogin: Boolean get() = code == 40 || code == 41 || code == 44
 }
 
 /**
