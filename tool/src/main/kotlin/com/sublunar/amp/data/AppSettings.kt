@@ -137,9 +137,10 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         // Downloads used to be configured once for the whole app. A source saved
         // before they moved here has none of its own, and would otherwise read
         // as the defaults — quietly changing what the user had set. The old
-        // values stand in until each is chosen for this source, and are filled
-        // in on read rather than written back, so nothing is rewritten behind
-        // them.
+        // values stand in until each is chosen for this source. They are filled
+        // in here, on read, and the next change to that source writes them into
+        // its record with the rest, because every edit saves the source as it
+        // reads here: the same values, kept from then on by the source itself.
         list.map { source ->
             source.copy(
                 downloadFormatId = source.downloadFormatId ?: p[DOWNLOAD_FORMAT],

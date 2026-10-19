@@ -133,9 +133,9 @@ class StoredSourcesTest {
 
     @Test
     fun `and the next per-source edit writes them into the record`() = runBlocking {
-        // AppSettings.sources says the old choices are not written back, and
-        // an edit made through editSource writes back what sources read.
-        // Pinned as it stands.
+        // Every edit saves the source as AppSettings.sources reads it, so the
+        // old choices standing in for its own go into its record with the
+        // change: the same values, no longer read from the old keys.
         val phone = Phone(
             SOURCES to list(SUBSONIC_OLD, SUBSONIC_FULL),
             DOWNLOAD_FORMAT to "flac",
