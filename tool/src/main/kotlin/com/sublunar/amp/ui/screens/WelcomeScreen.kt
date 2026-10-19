@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.ui.PlayerTheme
+import com.sublunar.amp.source.AddEntry
 
 /**
  * First run: pick where the music comes from.
@@ -32,11 +33,11 @@ import com.sublunar.amp.ui.PlayerTheme
  */
 @Composable
 fun WelcomeContent(
-    onBandcamp: () -> Unit,
-    onSubsonic: () -> Unit,
-    onPlex: () -> Unit,
-    onJellyfin: () -> Unit,
-    onLocal: () -> Unit,
+    /** The ways to add a source — Providers.addEntries, the same as Add Source. */
+    entries: List<AddEntry>,
+    /** What the kinds cover, under the choices. */
+    notes: List<String>,
+    onChoose: (AddEntry) -> Unit,
 ) {
     PlayerTheme {
         Column(
@@ -57,29 +58,19 @@ fun WelcomeContent(
                     .padding(bottom = px(80)),
             )
 
-            // Bandcamp leads: it is the only one here that needs nothing
-            // self-hosted, so it is the choice most likely to tell a reader this
-            // app is for them after all. It is a Subsonic server underneath —
-            // the choice only fills in its address and says where its
-            // credentials come from.
-            ChoiceButton("BANDCAMP", onBandcamp)
-            ChoiceButton("SUBSONIC SERVER", onSubsonic)
-            ChoiceButton("PLEX SERVER", onPlex)
-            ChoiceButton("JELLYFIN SERVER", onJellyfin)
-            ChoiceButton("MUSIC ON THIS PHONE", onLocal)
+            entries.forEach { entry -> ChoiceButton(entry.label.uppercase()) { onChoose(entry) } }
 
             Spacer(Modifier.height(px(60)))
 
-            // Named because "Subsonic" is the protocol, not the thing most
-            // people run — someone with a Navidrome server needs telling that
-            // the Subsonic option is theirs. Bandcamp has its own choice above.
-            AppText(
-                "Subsonic covers Navidrome, Airsonic and Ampache.",
-                pxSp(LightType.DETAIL_PX),
-                dim = true,
-                align = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            notes.forEach { note ->
+                AppText(
+                    "$note.",
+                    pxSp(LightType.DETAIL_PX),
+                    dim = true,
+                    align = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }

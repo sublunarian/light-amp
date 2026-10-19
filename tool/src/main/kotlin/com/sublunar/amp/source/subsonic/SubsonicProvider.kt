@@ -8,8 +8,13 @@ import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.SubsonicClient
 import com.sublunar.amp.data.SubsonicConfig
 import com.sublunar.amp.data.allows
+import com.sublunar.amp.source.AddAction
+import com.sublunar.amp.source.AddEntry
+import com.sublunar.amp.source.AddIcon
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
+import com.sublunar.amp.source.SourceUi
+import com.sublunar.amp.ui.screens.ServerScreen
 
 /**
  * A Subsonic-compatible server: Navidrome, Airsonic, gonic, Ampache, Bandcamp…
@@ -41,6 +46,28 @@ object SubsonicProvider : SourceProvider {
 
     override fun createClient(source: MusicSource): MusicServer? =
         source.toSubsonicConfig()?.let { SubsonicClient(it) }
+
+    override val ui: SourceUi get() = SubsonicUi
+}
+
+private object SubsonicUi : SourceUi {
+    // Bandcamp leads: it is the only one offered that needs nothing
+    // self-hosted, so it is the choice most likely to tell a reader this app
+    // is for them after all. It is a Subsonic server underneath — the choice
+    // only fills in its address and says where its credentials come from.
+    override val addEntries = listOf(
+        AddEntry(
+            "Bandcamp",
+            AddIcon.ADD,
+            AddAction.OpenScreen { ServerScreen(it, sourceId = null, adding = true, bandcamp = true) },
+        ),
+        AddEntry("Subsonic Server", AddIcon.ADD, AddAction.OpenScreen { ServerScreen(it, sourceId = null, adding = true) }),
+    )
+
+    // Named because "Subsonic" is the protocol, not the thing most people
+    // run — someone with a Navidrome server needs telling that the Subsonic
+    // choice is theirs.
+    override val addNote = "Subsonic covers Navidrome, Airsonic and Ampache"
 }
 
 /**

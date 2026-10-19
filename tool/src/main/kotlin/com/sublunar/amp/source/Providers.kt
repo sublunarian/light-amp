@@ -1,5 +1,6 @@
 package com.sublunar.amp.source
 
+import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.source.jellyfin.JellyfinProvider
 import com.sublunar.amp.source.local.LocalProvider
@@ -19,4 +20,19 @@ object Providers {
 
     /** The provider for [kind]. Every kind has one — ProvidersTest fails the build otherwise. */
     fun of(kind: SourceKind): SourceProvider = byKind.getValue(kind)
+
+    /**
+     * Every way to add a source, given the ones there are already: the same
+     * list on Add Source and on the first-run screen, which once kept a copy
+     * of its own and quietly lacked Plex because nobody updated it.
+     */
+    fun addEntries(existing: List<MusicSource>): List<AddEntry> =
+        all.flatMap { provider ->
+            provider.ui.addEntries.filter { entry ->
+                !entry.singleton || existing.none { it.kind == provider.kind }
+            }
+        }
+
+    /** What the kinds cover, where their names alone don't say. */
+    val addNotes: List<String> get() = all.mapNotNull { it.ui.addNote }
 }

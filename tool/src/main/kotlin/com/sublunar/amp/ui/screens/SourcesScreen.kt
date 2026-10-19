@@ -12,11 +12,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import com.sublunar.amp.App
 import com.sublunar.amp.data.JellyfinClient
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.SyncState
+import com.sublunar.amp.source.AddAction
+import com.sublunar.amp.source.AddEntry
+import com.sublunar.amp.source.AddIcon
+import com.sublunar.amp.source.Providers
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.PlayAllRow
@@ -365,11 +370,12 @@ class SourceListScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
 }
 
 /**
- * The three kinds of source, offered as equals.
+ * Every kind of source, offered as equals.
  *
- * One screen rather than a set of rows repeated wherever sources can be added:
+ * One list rather than a set of rows repeated wherever sources can be added:
  * the first-run screen used to carry its own copy of this and quietly lacked
- * Plex, because the second copy was never updated when Plex arrived.
+ * Plex, because the second copy was never updated when Plex arrived. Both
+ * read [Providers.addEntries] now.
  */
 class AddSourceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
 
@@ -383,42 +389,42 @@ class AddSourceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
 
         ListScreen(onBack = { goBack() }, title = "Add Source") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                item { SectionLabel("Subsonic covers Navidrome, Airsonic and Ampache") }
-                item {
-                    PlayAllRow(AppIcons.Add, "Bandcamp") {
-                        go { ServerScreen(it, sourceId = null, adding = true, bandcamp = true) }
-                    }
-                }
-                item {
-                    PlayAllRow(AppIcons.Add, "Subsonic Server") {
-                        go { ServerScreen(it, sourceId = null, adding = true) }
-                    }
-                }
-                item {
-                    PlayAllRow(AppIcons.Add, "Plex Server") { go { PlexLinkScreen(it) } }
-                }
-                item {
-                    PlayAllRow(AppIcons.Add, "Jellyfin Server") { go { JellyfinLinkScreen(it) } }
-                }
-                // Only ever one: it is the phone, and there is only one phone.
-                if (sources.none { it.kind == SourceKind.LOCAL }) {
+                Providers.addNotes.forEach { note -> item { SectionLabel(note) } }
+                Providers.addEntries(sources).forEach { entry ->
                     item {
-                        PlayAllRow(AppIcons.Smartphone, "Music on This Phone") { addLocal() }
+                        PlayAllRow(entry.icon.vector, entry.label) { begin(entry, thenBack = true) }
                     }
                 }
             }
         }
     }
+}
 
-    private fun addLocal() {
-        App.scope.launch {
-            val local = MusicSource.local()
-            App.settings.saveSource(local)
-            App.settings.setActiveSource(local.id)
+/**
+ * Start adding a source the way [entry] says, from Add Source or the
+ * first-run screen. Only Add Source goes back once a source is added at
+ * once ([thenBack]): the first-run screen is the root, and turns into the
+ * library by itself as soon as there is a source.
+ */
+internal fun SimpleLightScreen<*>.begin(entry: AddEntry, thenBack: Boolean) {
+    when (val action = entry.action) {
+        is AddAction.OpenScreen -> go(action.screen)
+        is AddAction.AddAtOnce -> {
+            App.scope.launch {
+                val source = action.source()
+                App.settings.saveSource(source)
+                App.settings.setActiveSource(source.id)
+            }
+            if (thenBack) goBack()
         }
-        goBack()
     }
 }
+
+private val AddIcon.vector: ImageVector
+    get() = when (this) {
+        AddIcon.ADD -> AppIcons.Add
+        AddIcon.PHONE -> AppIcons.Smartphone
+    }
 
 /** Where a source's music comes from, for the row that names it. */
 private fun subtitleFor(source: MusicSource): String = when (source.kind) {

@@ -20,7 +20,7 @@ import com.sublunar.amp.data.LayoutMode
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.filterNotNull
 import com.sublunar.amp.data.LastSection
-import com.sublunar.amp.data.MusicSource
+import com.sublunar.amp.source.Providers
 import com.sublunar.amp.ui.PlayerTheme
 import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
@@ -142,18 +142,12 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
 
         when (state) {
             BootState.Loading -> Splash()
+            // No source this build can read, so nothing is there yet to
+            // leave out of the choices.
             BootState.NeedsLogin -> WelcomeContent(
-                onBandcamp = { go { ServerScreen(it, sourceId = null, adding = true, bandcamp = true) } },
-                onSubsonic = { go { ServerScreen(it, sourceId = null, adding = true) } },
-                onPlex = { go { PlexLinkScreen(it) } },
-                onJellyfin = { go { JellyfinLinkScreen(it) } },
-                onLocal = {
-                    App.scope.launch {
-                        val local = MusicSource.local()
-                        App.settings.saveSource(local)
-                        App.settings.setActiveSource(local.id)
-                    }
-                },
+                entries = Providers.addEntries(emptyList()),
+                notes = Providers.addNotes,
+                onChoose = { begin(it, thenBack = false) },
             )
             BootState.Ready -> {
                 val tab by viewModel.currentTab.collectAsState()

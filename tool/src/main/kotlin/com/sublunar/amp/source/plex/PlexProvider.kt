@@ -6,8 +6,13 @@ import com.sublunar.amp.data.PlexClient
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
+import com.sublunar.amp.source.AddAction
+import com.sublunar.amp.source.AddEntry
+import com.sublunar.amp.source.AddIcon
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
+import com.sublunar.amp.source.SourceUi
+import com.sublunar.amp.ui.screens.PlexLinkScreen
 
 /**
  * A Plex Media Server's music library.
@@ -51,6 +56,12 @@ object PlexProvider : SourceProvider {
                 source.plexClientIdentifier,
             )
         }
+
+    override val ui: SourceUi get() = PlexUi
+}
+
+private object PlexUi : SourceUi {
+    override val addEntries = listOf(AddEntry("Plex Server", AddIcon.ADD, AddAction.OpenScreen { PlexLinkScreen(it) }))
 }
 
 /** Who a Plex link says it is — see MusicSource.deviceId. */

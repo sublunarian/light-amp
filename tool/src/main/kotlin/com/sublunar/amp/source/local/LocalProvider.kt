@@ -5,8 +5,12 @@ import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
+import com.sublunar.amp.source.AddAction
+import com.sublunar.amp.source.AddEntry
+import com.sublunar.amp.source.AddIcon
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
+import com.sublunar.amp.source.SourceUi
 
 /**
  * The phone's own music folder — the same files the Light Music app plays.
@@ -41,4 +45,13 @@ object LocalProvider : SourceProvider {
 
     /** There is no server behind the phone's own music at all. */
     override fun createClient(source: MusicSource): MusicServer? = null
+
+    override val ui: SourceUi get() = LocalUi
+}
+
+private object LocalUi : SourceUi {
+    // Only ever one: it is the phone, and there is only one phone.
+    override val addEntries = listOf(
+        AddEntry("Music on This Phone", AddIcon.PHONE, AddAction.AddAtOnce { MusicSource.local() }, singleton = true),
+    )
 }

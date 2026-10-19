@@ -32,6 +32,9 @@ interface SourceProvider {
      * every call.
      */
     fun createClient(source: MusicSource): MusicServer?
+
+    /** What screens show of this kind — see [SourceUi]. A getter, so loading a provider never loads screens. */
+    val ui: SourceUi
 }
 
 /** What a kind of source can do — read through the matching `supports…` on MusicSource, which is what the screens ask. */

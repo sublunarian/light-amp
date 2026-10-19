@@ -6,8 +6,13 @@ import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
+import com.sublunar.amp.source.AddAction
+import com.sublunar.amp.source.AddEntry
+import com.sublunar.amp.source.AddIcon
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
+import com.sublunar.amp.source.SourceUi
+import com.sublunar.amp.ui.screens.JellyfinLinkScreen
 
 /**
  * A Jellyfin server's music library.
@@ -49,4 +54,10 @@ object JellyfinProvider : SourceProvider {
                 source.deviceId.ifBlank { JellyfinClient.LEGACY_DEVICE_ID },
             )
         }
+
+    override val ui: SourceUi get() = JellyfinUi
+}
+
+private object JellyfinUi : SourceUi {
+    override val addEntries = listOf(AddEntry("Jellyfin Server", AddIcon.ADD, AddAction.OpenScreen { JellyfinLinkScreen(it) }))
 }
