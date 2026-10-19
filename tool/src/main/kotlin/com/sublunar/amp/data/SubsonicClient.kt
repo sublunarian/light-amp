@@ -98,6 +98,9 @@ class SubsonicException(
 
     /** 40 is the wrong login, 41 a login that can't use tokens, 44 an API key the server won't take. */
     override val refusedLogin: Boolean get() = code == 40 || code == 41 || code == 44
+
+    /** A page where JSON should be is never Subsonic's: see [notJson]. */
+    override val fromServer: Boolean get() = !notJson
 }
 
 /**

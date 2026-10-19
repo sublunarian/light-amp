@@ -27,15 +27,9 @@ class ReachabilityVerdictTest {
         assertTrue(answeredBy(JellyfinException("Jellyfin says 400 for /x", 400)))
     }
 
-    /**
-     * Pinned as it stands: a page that isn't JSON comes with no status, and
-     * so counts as the server answering, though its KDoc says such a body is
-     * more often a captive portal's.
-     */
     @Test
-    fun `no status at all counts as answered, a page where JSON should be included`() {
+    fun `no status at all counts as answered`() {
         assertTrue(answeredBy(SubsonicException("Wrong username or password", code = 40, envelope = true)))
-        assertTrue(answeredBy(SubsonicException("Unexpected response from server.", notJson = true)))
         assertTrue(answeredBy(Exception("m".repeat(59))))
         assertTrue(answeredBy(Exception("m".repeat(60))))
         assertTrue(answeredBy(IllegalStateException()))
@@ -45,5 +39,17 @@ class ReachabilityVerdictTest {
     @Test
     fun `a body that won't parse is not the server`() {
         assertFalse(answeredBy(SerializationException("bad")))
+    }
+
+    /**
+     * A captive portal answers a ping with its login page and a 200. That
+     * used to count as the server answering: a page with no status, or any
+     * status short of a 5xx, read like a refusal from the server itself.
+     */
+    @Test
+    fun `a page where the server's JSON should be is not the server`() {
+        assertFalse(answeredBy(SubsonicException("Unexpected response from server.", notJson = true)))
+        assertFalse(answeredBy(SubsonicException("Server returned HTTP 404.", status = 404, notJson = true)))
+        assertTrue(answeredBy(SubsonicException("Unexpected response from server.", notSubsonic = true)))
     }
 }

@@ -28,4 +28,11 @@ abstract class ServerException(
      * difference is the library staying as it is.
      */
     open val refusedLogin: Boolean get() = false
+
+    /**
+     * Whether the server itself said this, rather than something in front of
+     * it answering in its place — a captive portal's login page, a proxy's
+     * error page — where the server's own answer should have been.
+     */
+    open val fromServer: Boolean get() = true
 }

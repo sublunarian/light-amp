@@ -139,11 +139,12 @@ class Reachability(
  * *server*. A refused login or a bad request did: the server is there and
  * the rest is someone else's problem. A 5xx usually didn't — it is a
  * reverse proxy saying the thing behind it is down — and neither did a
- * body that won't parse, which is a captive portal's login page more often
- * than it is the server.
+ * body that won't parse, or a page where the server's JSON should be, which
+ * is a captive portal's login page more often than it is the server.
  */
 internal fun answeredBy(e: Exception): Boolean {
     if (e !is ServerException) return e !is kotlinx.serialization.SerializationException
+    if (!e.fromServer) return false
     val status = e.status
     return status == null || status !in 500..599
 }
