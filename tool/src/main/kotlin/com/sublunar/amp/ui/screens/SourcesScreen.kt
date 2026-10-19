@@ -15,7 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.sublunar.amp.App
 import com.sublunar.amp.data.MusicSource
-import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.SyncState
 import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
@@ -33,14 +32,9 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
-import com.sublunar.amp.data.LocalLibrary
-import com.thelightphone.sdk.rememberPermissionRequestLauncher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
-
-/** Reading the phone's own music; see LocalLibrary and lighttool.toml. */
-private val READ_MEDIA_AUDIO = LocalLibrary.PERMISSION
 
 /**
  * Which library the app is showing — and nothing else.
@@ -113,7 +107,7 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
         // will never appear until the server itself is set to look for them.
         App.library.scanRefused -> "won't scan on request — last synced ${relativeTime(sync.lastSyncedMs)}"
         sync.lastSyncedMs > 0L -> "last synced ${relativeTime(sync.lastSyncedMs)}"
-        source.kind == SourceKind.LOCAL -> "rescan this phone's music"
+        source.phoneLibrary != null -> "rescan this phone's music"
         // A server with no scan call of its own is only ever read from — see
         // MusicSource.supportsServerScan.
         !source.supportsServerScan -> "fetch the library again"
@@ -140,26 +134,28 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
      * you are, and hiding the one you are on would leave the page unable to say.
      * Switch away and it disappears as asked.
      */
-    private fun rowsUnder(source: MusicSource, activeLibraryId: String?): List<LibraryEntry> = when {
-        source.kind == SourceKind.LOCAL ->
-            listOf(LibraryEntry(LocalLibrary.FOLDER, null))
-        // Several libraries shown: the whole server is a choice of its own, and
-        // it has to be a row now that the source above doesn't select anything.
-        // Which libraries appear here is the source's own setting — see
-        // LibraryVisibilityScreen; All Libraries comes with two or more of
-        // them, never by choice — see MusicSource.showsAllLibraries.
-        source.showsAllLibraries ->
-            listOf(LibraryEntry(ALL_LIBRARIES, null)) +
-                source.libraries
-                    .filter { it.id !in source.hiddenLibraryIds || it.id == activeLibraryId }
-                    .map { LibraryEntry(it.name, it.id) }
-        // All but one hidden: that one is everything shown, so its row means
-        // the whole of what is shown, as a single library's always has.
-        source.libraries.size >= 2 ->
-            listOf(LibraryEntry(source.visibleLibraries.firstOrNull()?.name ?: ALL_LIBRARIES, null))
-        // One library, or a server not yet synced: no choice to offer, just the
-        // one row that turns it on.
-        else -> listOf(LibraryEntry(source.libraries.firstOrNull()?.name ?: ALL_LIBRARIES, null))
+    private fun rowsUnder(source: MusicSource, activeLibraryId: String?): List<LibraryEntry> {
+        // The phone's own music is one folder, by definition.
+        source.phoneLibrary?.let { return listOf(LibraryEntry(it.folderLabel, null)) }
+        return when {
+            // Several libraries shown: the whole server is a choice of its own, and
+            // it has to be a row now that the source above doesn't select anything.
+            // Which libraries appear here is the source's own setting — see
+            // LibraryVisibilityScreen; All Libraries comes with two or more of
+            // them, never by choice — see MusicSource.showsAllLibraries.
+            source.showsAllLibraries ->
+                listOf(LibraryEntry(ALL_LIBRARIES, null)) +
+                    source.libraries
+                        .filter { it.id !in source.hiddenLibraryIds || it.id == activeLibraryId }
+                        .map { LibraryEntry(it.name, it.id) }
+            // All but one hidden: that one is everything shown, so its row means
+            // the whole of what is shown, as a single library's always has.
+            source.libraries.size >= 2 ->
+                listOf(LibraryEntry(source.visibleLibraries.firstOrNull()?.name ?: ALL_LIBRARIES, null))
+            // One library, or a server not yet synced: no choice to offer, just the
+            // one row that turns it on.
+            else -> listOf(LibraryEntry(source.libraries.firstOrNull()?.name ?: ALL_LIBRARIES, null))
+        }
     }
 
     /**
@@ -426,11 +422,8 @@ private val AddIcon.vector: ImageVector
     }
 
 /** Where a source's music comes from, for the row that names it. */
-private fun subtitleFor(source: MusicSource): String = when (source.kind) {
-    SourceKind.LOCAL -> LocalLibrary.FOLDER
-    SourceKind.SUBSONIC, SourceKind.PLEX, SourceKind.JELLYFIN ->
-        source.baseUrl.ifBlank { "Not connected" }
-}
+private fun subtitleFor(source: MusicSource): String =
+    source.phoneLibrary?.folderLabel ?: source.baseUrl.ifBlank { "Not connected" }
 
 /**
  * One source's own settings: what it is called, and how it is reached.
@@ -457,16 +450,18 @@ class SourceDetailScreen(
         val sync by App.library.syncState.collectAsState()
 
         // Re-checked on every sync, because granting access is what the user
-        // goes off to do and coming back is when it should have changed.
+        // goes off to do and coming back is when it should have changed. Keyed
+        // on the source too: the list starts empty, and an answer taken before
+        // the source had loaded would stand until the next sync.
         var access by remember { mutableStateOf(PhoneAccess.GRANTED) }
-        LaunchedEffect(sync) { access = LocalLibrary.access() }
+        LaunchedEffect(sync, source?.id) { access = source?.phoneLibrary?.access() ?: PhoneAccess.GRANTED }
         val canRead = access == PhoneAccess.GRANTED
-        val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
+        val askAccess = rememberAccessRequest(source?.phoneLibrary)
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Source") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
                 if (source == null) return@ScrollableList
-                if (source.kind == SourceKind.LOCAL && !canRead) {
+                if (source.phoneLibrary != null && !canRead) {
                     // The folder listing comes back empty rather than failing
                     // without the permission, so without this the source would
                     // just look like a phone with no music on it.
@@ -478,7 +473,7 @@ class SourceDetailScreen(
                             } else {
                                 "Needed to read this phone's music folder"
                             },
-                            onClick = { audioPermission?.launch() },
+                            onClick = askAccess,
                         )
                     }
                 }
@@ -497,7 +492,7 @@ class SourceDetailScreen(
                 // What this source reports itself as to the server — the
                 // scrobbling client Navidrome names a "Player" from, or Plex's
                 // product/device fields. Blank keeps the app's own default.
-                if (source.kind != SourceKind.LOCAL) {
+                if (source.hasServer) {
                     item {
                         TextRow(
                             title = "Player name",
@@ -543,7 +538,7 @@ class SourceDetailScreen(
                 item { SectionLabel("Remove") }
                 item {
                     TextRow(
-                        title = if (source.kind == SourceKind.LOCAL) {
+                        title = if (!source.hasServer) {
                             "Remove Source"
                         } else {
                             "Log Out"
@@ -553,7 +548,7 @@ class SourceDetailScreen(
                             // Asked first: what goes with it can't be had back
                             // without the network, and downloads are what this
                             // phone keeps for when there is none.
-                            val local = source.kind == SourceKind.LOCAL
+                            val local = !source.hasServer
                             navigateTo<Boolean>(
                                 {
                                     ConfirmScreen(

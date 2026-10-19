@@ -457,7 +457,7 @@ object App {
         // still reacts to the first miss (a track that can't be had parks or
         // is skipped); only the lists wait to see whether the silence holds.
         combine(
-            source.map { it.kind == SourceKind.LOCAL }.distinctUntilChanged(),
+            source.map { !it.hasServer }.distinctUntilChanged(),
             rules.map { !it.mayTalkToServer }.distinctUntilChanged(),
             rules.map { !it.serverReachable }.distinctUntilChanged()
                 .debounce { gone -> if (gone) SERVER_GONE_SETTLE_MS else 0L },
@@ -1015,7 +1015,7 @@ object App {
                 // usually wins that race. A local source never has a client and
                 // must not be waited for.
                 val active = settings.activeSource.filter { it != null }.first()
-                if (active?.kind != SourceKind.LOCAL) {
+                if (active?.hasServer != false) {
                     serverClient.filter { it != null }.first()
                 }
                 // Waited for last and not kept: the restore waits on more

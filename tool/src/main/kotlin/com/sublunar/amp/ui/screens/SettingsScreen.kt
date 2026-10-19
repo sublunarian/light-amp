@@ -19,7 +19,6 @@ import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.DataMode
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.MusicSource
-import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
@@ -107,7 +106,7 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
         // music side by side, streaming and downloads still deserve their pages
         // while the local source happens to be the one playing. Only a phone
         // with no servers at all has nothing to stream and nothing to fetch.
-        val hasServers = sources.any { it.kind != SourceKind.LOCAL }
+        val hasServers = sources.any { it.hasServer }
 
         ListScreen(onBack = { goBack() }, title = "Settings") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
@@ -295,7 +294,7 @@ class DataScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) 
         val dataMode by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
         val sources by App.settings.sources.collectAsState(initial = emptyList())
         // The phone's own music never crosses the network.
-        val servers = sources.filter { it.kind != SourceKind.LOCAL }
+        val servers = sources.filter { it.hasServer }
 
         ListScreen(onBack = { goBack() }, title = "Data") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {

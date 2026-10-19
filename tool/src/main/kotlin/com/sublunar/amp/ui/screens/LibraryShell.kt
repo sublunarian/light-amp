@@ -32,6 +32,8 @@ import com.sublunar.amp.App
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.thelightphone.sdk.rememberPermissionRequestLauncher
+import com.sublunar.amp.source.PhoneAccess
+import com.sublunar.amp.source.PhoneLibrary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -68,9 +70,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import com.sublunar.amp.ui.components.AlbumGrid
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.ui.components.PlayAllRow
-import com.sublunar.amp.data.LocalLibrary
 import com.sublunar.amp.data.LayoutMode
-import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.SyncState
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.components.SelectionState
@@ -96,8 +96,6 @@ import com.sublunar.amp.ui.components.TextRow
  */
 const val BOTTOM_BAR_PX = 160
 
-/** Reading the phone's own music; see LocalLibrary and lighttool.toml. */
-private val READ_MEDIA_AUDIO = LocalLibrary.PERMISSION
 
 enum class LibraryTab(val title: String) {
     PLAYLISTS("Playlists"),
@@ -546,9 +544,22 @@ private fun rememberLocalAccess(): Boolean {
     val sync by App.library.syncState.collectAsState()
     var readable by remember(source.id) { mutableStateOf(true) }
     LaunchedEffect(source.id, sync.lastSyncedMs) {
-        readable = source.kind != SourceKind.LOCAL || LocalLibrary.permitted()
+        readable = source.phoneLibrary?.let { it.access() == PhoneAccess.GRANTED } ?: true
     }
     return readable
+}
+
+/**
+ * Asks LightOS to let this tool read [phone]'s folder — see lighttool.toml.
+ * Does nothing for a source with a server, which has no folder to be let in to.
+ *
+ * The launcher is made whatever the source, so this is never a conditional
+ * composable call — see the note in AlbumsTab.
+ */
+@Composable
+internal fun rememberAccessRequest(phone: PhoneLibrary?): () -> Unit {
+    val launcher = rememberPermissionRequestLauncher(phone?.permission.orEmpty())
+    return { if (phone != null) launcher?.launch() }
 }
 
 /**
@@ -619,7 +630,7 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
     val needsAccess = !rememberLocalAccess()
     val sync = App.library.syncState.collectAsState().value
     val syncError = sync.error
-    val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
+    val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
     val grid = App.albumGrid.collectAsState().value
     Column(Modifier.fillMaxSize()) {
         if (header) TabHeader(LibraryTab.ALBUMS, actions)
@@ -658,7 +669,7 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
                 reversed = reversed,
             ) {
                 item { RandomAlbumRow(rows, actions) }
-                localAccessNotice(needsAccess) { audioPermission?.launch() }
+                localAccessNotice(needsAccess, askAccess)
                 syncErrorNotice(syncError, actions.settings)
                 syncProgressNotice(sorted.isEmpty(), sync)
                 items(sorted.size, key = { rows[it]?.id ?: it }) { i ->
@@ -768,7 +779,7 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
     val needsAccess = !rememberLocalAccess()
     val sync = App.library.syncState.collectAsState().value
     val syncError = sync.error
-    val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
+    val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
 
     Column(Modifier.fillMaxSize()) {
         if (header) {
@@ -793,7 +804,7 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
                         actions.nowPlaying()
                     }
                 }
-                localAccessNotice(needsAccess) { audioPermission?.launch() }
+                localAccessNotice(needsAccess, askAccess)
                 syncErrorNotice(syncError, actions.settings)
                 syncProgressNotice(sorted.isEmpty(), sync)
             }
@@ -846,7 +857,7 @@ private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
     LaunchedEffect(artistImages) { if (artistImages) App.library.primeArtistImages() }
     val needsAccess = !rememberLocalAccess()
     val sync = App.library.syncState.collectAsState().value
-    val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
+    val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
     Column(Modifier.fillMaxSize()) {
         if (header) TabHeader(LibraryTab.ARTISTS, actions)
         IndexedList(
@@ -855,7 +866,7 @@ private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
             headerCount = 0,
             reversed = reversed,
         ) {
-            localAccessNotice(needsAccess) { audioPermission?.launch() }
+            localAccessNotice(needsAccess, askAccess)
             syncProgressNotice(sorted.isEmpty(), sync)
             items(sorted.size, key = { rows[it]?.name ?: it }) { i ->
                 val artist = rows[i] ?: return@items

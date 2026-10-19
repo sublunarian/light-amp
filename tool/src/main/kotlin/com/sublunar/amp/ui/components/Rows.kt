@@ -37,7 +37,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.sublunar.amp.App
-import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.ui.CANVAS_W_PX
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
@@ -279,7 +278,7 @@ fun ArtistRow(
     // can lose theirs on their own, without the sleeves going with them.
     // Read unconditionally, both of them — see the note in TrackRow.
     val wantsCovers = !App.hideArtistImages.collectAsState().value
-    val local = App.source.collectAsState().value.kind == SourceKind.LOCAL
+    val local = !App.source.collectAsState().value.hasServer
     // The phone's own library has no artist pictures to fetch — nothing keeps
     // them and no server can be asked — so the slot would be a column of empty
     // circles. Text at the tighter pitch says the same thing in less room.
