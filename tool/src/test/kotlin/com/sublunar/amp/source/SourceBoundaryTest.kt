@@ -280,18 +280,7 @@ class SourceBoundaryTest {
         )
 
         /** Files outside a protocol's folder that may name its package, each with why and what removes it. */
-        val ALLOWED: List<Allowance> = listOf(
-            Allowance(
-                "ui/screens/OutputScreen.kt",
-                "plex",
-                "lists Plex players as outputs; goes behind the Output contract (step 3)",
-            ),
-            Allowance(
-                "ui/screens/OutputScreen.kt",
-                "dlna",
-                "lists DLNA speakers by their family; goes when the page lists every family without naming one (step 3d)",
-            ),
-        )
+        val ALLOWED: List<Allowance> = emptyList()
 
         /** Files outside a kind's folder that may name its SourceKind, each with why and what removes it. */
         val KIND_ALLOWED: List<Allowance> = listOf(

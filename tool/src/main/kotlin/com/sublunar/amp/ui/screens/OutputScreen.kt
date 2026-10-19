@@ -41,8 +41,6 @@ import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.VolumeControl
-import com.sublunar.amp.playback.output.dlna.DlnaFamily
-import com.sublunar.amp.source.plex.companion.PlexCompanionFamily
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
@@ -53,12 +51,13 @@ import kotlin.math.roundToInt
 /**
  * Output + volume sheet reached from the Now Playing transport.
  *
- * The volume fader drives the phone's own media volume. Speaker-vs-Bluetooth
- * routing is LightOS's job (a tool has no access to the audio-routing APIs), so
- * that part of the list is informational. Network speakers found over DLNA *can*
- * be switched to (see `DlnaFamily`), and so can other Plex players (an Apple TV's
- * Plex app, say) when the active source is Plex, over Plex's own Companion
- * protocol.
+ * The volume fader drives the phone's own media volume, or, while the sound
+ * is elsewhere, the output's. Speaker-vs-Bluetooth routing is LightOS's job (a
+ * tool has no access to the audio-routing APIs), so that part of the list is
+ * informational. Below it is everywhere the sound *can* be switched to: the
+ * phone's own output families — speakers on the network — and the active
+ * source's, such as the Plex players a Plex server steers. The page names none
+ * of them; see OutputFamilies.
  */
 class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
 
@@ -71,19 +70,18 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
         val volume by App.playback.volume.collectAsState()
         val active by App.playback.active.collectAsState()
         val volumeControl = active?.volumeControl?.collectAsState()?.value
-        var renderers by remember { mutableStateOf<List<OutputTarget>>(emptyList()) }
-        var plexPlayers by remember { mutableStateOf<List<OutputTarget>>(emptyList()) }
+        val families = remember { App.playback.outputFamilies() }
+        var found by remember { mutableStateOf<Map<String, List<OutputTarget>>>(emptyMap()) }
         var scanning by remember { mutableStateOf(true) }
 
         // Discovery is a few seconds of UDP waiting, so it runs once on open and
         // is repeatable from the Scan row rather than on every recomposition.
-        // The Plex ask is one HTTP round trip, so it goes first and its players
-        // appear while the UDP wait is still on.
+        // A source's own players are one HTTP round trip, so they are asked
+        // first and appear while the UDP wait is still on — see searchOrder.
         var scanToken by remember { mutableStateOf(0) }
         LaunchedEffect(scanToken) {
             scanning = true
-            plexPlayers = App.playback.find(PlexCompanionFamily)
-            renderers = App.playback.find(DlnaFamily)
+            for (family in families.searchOrder) found = found + (family.id to App.playback.find(family))
             scanning = false
         }
 
@@ -132,35 +130,23 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
                     }
 
                     item { SectionLabel(if (scanning) "Network — searching…" else "Network") }
-                    items(renderers, key = { it.id }) { renderer ->
-                        val selected = active?.family === DlnaFamily && active?.target?.id == renderer.id
-                        OutputRow(
-                            icon = AppIcons.Cast,
-                            label = renderer.name,
-                            selected = selected,
-                        ) {
-                            if (selected) {
-                                App.playback.playHere()
-                            } else {
-                                App.playback.castTo(DlnaFamily, renderer)
+                    for (family in families.listOrder) {
+                        items(found[family.id].orEmpty(), key = { "${family.id}:${it.id}" }) { target ->
+                            val selected = active?.family === family && active?.target?.id == target.id
+                            OutputRow(
+                                icon = AppIcons.Cast,
+                                label = target.name,
+                                selected = selected,
+                            ) {
+                                if (selected) {
+                                    App.playback.playHere()
+                                } else {
+                                    App.playback.castTo(family, target)
+                                }
                             }
                         }
                     }
-                    items(plexPlayers, key = { "plex-" + it.id }) { p ->
-                        val selected = active?.family === PlexCompanionFamily && active?.target?.id == p.id
-                        OutputRow(
-                            icon = AppIcons.Cast,
-                            label = p.name,
-                            selected = selected,
-                        ) {
-                            if (selected) {
-                                App.playback.playHere()
-                            } else {
-                                App.playback.castTo(PlexCompanionFamily, p)
-                            }
-                        }
-                    }
-                    if (!scanning && renderers.isEmpty() && plexPlayers.isEmpty()) {
+                    if (!scanning && found.values.all { it.isEmpty() }) {
                         item {
                             AppText(
                                 "No network speakers found. They need to be on the same Wi-Fi.",

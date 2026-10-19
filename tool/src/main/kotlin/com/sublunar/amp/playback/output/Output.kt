@@ -250,6 +250,18 @@ interface OutputHost {
     fun endedOnItsOwn(output: Output, target: OutputTarget)
 }
 
+/**
+ * Everywhere the Output page can send the sound: the active source's own
+ * families — a Plex server's players — and the phone's.
+ */
+data class OutputFamilies(val ofSource: List<OutputFamily>, val ofPhone: List<OutputFamily>) {
+    /** Asked in this order, each shown as it answers: a server's list is one round trip, the network's a few seconds of listening. */
+    val searchOrder: List<OutputFamily> get() = ofSource + ofPhone
+
+    /** Shown in this order: the phone's own first, as they always were. */
+    val listOrder: List<OutputFamily> get() = ofPhone + ofSource
+}
+
 /** How long a track has to have played before previous restarts it rather than going back — on every output. */
 const val PREVIOUS_RESTARTS_AFTER_MS = 3_000L
 

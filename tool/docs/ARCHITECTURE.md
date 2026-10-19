@@ -93,7 +93,8 @@ listed in `Outputs`, Amp's own code rather than an SDK patch. Plex Companion is
 the other, in `source/plex/companion` — discovery, the listener and the cast —
 offered by the Plex provider (`SourceProvider.outputFamilies`), so only a Plex
 source lists its players; its calls stay on `PlexClient`, which holds the token
-and the lock they need.
+and the lock they need. The Output page lists `OutputFamilies` — the source's
+and the phone's — without naming any of them.
 
 **`ui/screens`** is one file per screen. `LibraryShell` is the tabbed root;
 `BootScreen` hosts it and decides what to show while the library loads.

@@ -22,9 +22,11 @@ import com.sublunar.amp.playback.output.ActiveOutput
 import com.sublunar.amp.playback.output.Disconnect
 import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputControls
+import com.sublunar.amp.playback.output.OutputFamilies
 import com.sublunar.amp.playback.output.OutputFamily
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
+import com.sublunar.amp.playback.output.Outputs
 import com.sublunar.amp.playback.output.PREVIOUS_RESTARTS_AFTER_MS
 import com.sublunar.amp.playback.output.QueueEdit
 import com.sublunar.amp.data.TimelineState
@@ -2405,6 +2407,9 @@ class PlaybackController(
     }
 
     // --- Where the sound goes ------------------------------------------------
+
+    /** Every family the sound can go to from here: the active source's own, and the phone's. */
+    fun outputFamilies() = OutputFamilies(App.source.value.provider.outputFamilies, Outputs.phone)
 
     /** Every [OutputTarget] [family] can play to right now. Does its own waiting off Main. */
     suspend fun find(family: OutputFamily): List<OutputTarget> = outputOf(family).find()
