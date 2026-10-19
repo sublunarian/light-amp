@@ -1,6 +1,5 @@
-package com.sublunar.amp.ui.screens
+package com.sublunar.amp.source
 
-import com.sublunar.amp.data.ServerAddress
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException

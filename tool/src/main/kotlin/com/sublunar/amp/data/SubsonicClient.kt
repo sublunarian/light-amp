@@ -16,6 +16,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.random.Random
+import com.sublunar.amp.source.ServerAddress
 
 /** Connection + credentials for a Navidrome/Subsonic server. */
 data class SubsonicConfig(

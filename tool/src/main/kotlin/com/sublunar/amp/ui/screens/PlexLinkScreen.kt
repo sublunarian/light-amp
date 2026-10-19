@@ -17,7 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
-import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.PlexClient
 import com.sublunar.amp.data.PlexException
@@ -26,6 +25,11 @@ import com.sublunar.amp.data.PlexResource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.SourceLibrary
 import com.sublunar.amp.data.newSourceId
+import com.sublunar.amp.source.PendingServer
+import com.sublunar.amp.source.SignInOutcome
+import com.sublunar.amp.source.firstAnsweringSpelling
+import com.sublunar.amp.source.unavailableReason
+import com.sublunar.amp.source.unreachedReason
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
@@ -230,9 +234,6 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
     }
 
 }
-
-/** A server we can reach, and the music libraries on it. */
-data class PendingServer(val source: MusicSource, val sections: List<MusicFolder>)
 
 /**
  * Everything about a server that has to be settled before it becomes a source:

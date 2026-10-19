@@ -1,4 +1,4 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source
 
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
