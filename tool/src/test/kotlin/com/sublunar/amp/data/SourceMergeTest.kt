@@ -66,6 +66,111 @@ class SourceMergeTest {
     }
 
     @Test
+    fun `two Subsonic logins are two sources, even to the same server as the same user`() {
+        val one = MusicSource(
+            id = "s1",
+            kind = SourceKind.SUBSONIC,
+            name = "Navidrome",
+            baseUrl = "https://music.example.com",
+            username = "armin",
+        )
+        val (list, id) = mergeSource(listOf(one), one.copy(id = "s2"))
+        assertEquals("s2", id)
+        assertEquals(listOf("s1", "s2"), list.map { it.id })
+    }
+
+    @Test
+    fun `a blank server or user id is never the same server`() {
+        val plex = MusicSource(id = "p1", kind = SourceKind.PLEX, name = "Plex", token = "a")
+        assertEquals(2, mergeSource(listOf(plex), plex.copy(id = "p2")).first.size)
+        val unsigned = jellyfin.copy(userId = "")
+        assertEquals(2, mergeSource(listOf(unsigned), unsigned.copy(id = "src-new")).first.size)
+    }
+
+    @Test
+    fun `a re-link keeps the user's choices and takes the rest from the new sign-in`() {
+        val old = MusicSource(
+            id = "p-old",
+            kind = SourceKind.PLEX,
+            name = "Old name",
+            baseUrl = "http://10.0.0.2:32400",
+            username = "old-user",
+            password = "old-pass",
+            streamFormatId = "raw",
+            cellularFormatId = "mp3",
+            downloadFormatId = "raw",
+            offlineModeName = "ALL",
+            downloadLimitBytes = 1L,
+            playerName = "Kitchen",
+            token = "old-token",
+            userId = "old-uid",
+            machineIdentifier = "m1",
+            deviceId = "amp-old",
+            parserGeneration = 2,
+            libraryId = "7",
+            libraries = listOf(SourceLibrary("7", "Music")),
+            hiddenLibraryIds = listOf("9"),
+            connections = listOf("http://10.0.0.2:32400"),
+            features = ServerFeatures(missing = listOf(ServerFeatures.KEEP_COPIES)),
+        )
+        val signIn = MusicSource(
+            id = "p-new",
+            kind = SourceKind.PLEX,
+            name = "New name",
+            baseUrl = "https://plex.example:32400",
+            username = "new-user",
+            password = "new-pass",
+            token = "new-token",
+            userId = "new-uid",
+            machineIdentifier = "m1",
+            deviceId = "amp-new",
+            libraries = listOf(SourceLibrary("7", "Music"), SourceLibrary("9", "Audiobooks")),
+            connections = listOf("https://plex.example:32400", "http://10.0.0.2:32400"),
+        )
+        val (list, id) = mergeSource(listOf(old), signIn)
+        assertEquals("p-old", id)
+        assertEquals(
+            MusicSource(
+                id = "p-old",
+                kind = SourceKind.PLEX,
+                name = "New name",
+                baseUrl = "https://plex.example:32400",
+                username = "new-user",
+                password = "new-pass",
+                streamFormatId = "raw",
+                cellularFormatId = "mp3",
+                downloadFormatId = "raw",
+                offlineModeName = "ALL",
+                downloadLimitBytes = 1L,
+                playerName = "Kitchen",
+                token = "new-token",
+                userId = "new-uid",
+                machineIdentifier = "m1",
+                deviceId = "amp-new",
+                parserGeneration = 2,
+                libraryId = "7",
+                libraries = listOf(SourceLibrary("7", "Music"), SourceLibrary("9", "Audiobooks")),
+                hiddenLibraryIds = listOf("9"),
+                connections = listOf("https://plex.example:32400", "http://10.0.0.2:32400"),
+                features = ServerFeatures(missing = listOf(ServerFeatures.KEEP_COPIES)),
+            ),
+            list.single(),
+        )
+    }
+
+    @Test
+    fun `an edit that leaves a choice unset keeps the one stored`() {
+        val chosen = jellyfin.copy(
+            downloadFormatId = "flac",
+            offlineModeName = "FAVORITES",
+            downloadLimitBytes = 5L,
+            libraryId = "a1",
+        )
+        val (list, _) = mergeSource(listOf(chosen), jellyfin.copy(name = "Renamed"))
+        assertEquals(chosen.copy(name = "Renamed"), list.single())
+    }
+
+    @Test
     fun `a Plex player name is folded to what a header can carry`() {
         assertEquals("Armin's Amp", "Armin’s Amp".headerSafe())
         assertEquals("Amp", "東京".headerSafe())
