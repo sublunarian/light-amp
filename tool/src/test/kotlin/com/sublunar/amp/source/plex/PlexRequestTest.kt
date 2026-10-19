@@ -1,5 +1,7 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.plex
 
+import com.sublunar.amp.data.StreamFormat
+import com.sublunar.amp.data.Track
 import com.sublunar.amp.source.jellyfin.JellyfinClient
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

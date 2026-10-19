@@ -1,4 +1,4 @@
-package com.sublunar.amp.ui.screens
+package com.sublunar.amp.source.plex
 
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.Arrangement
@@ -18,10 +18,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.data.MusicSource
-import com.sublunar.amp.data.PlexClient
-import com.sublunar.amp.data.PlexException
-import com.sublunar.amp.data.PlexAccount
-import com.sublunar.amp.data.PlexResource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.SourceLibrary
 import com.sublunar.amp.data.newSourceId
@@ -45,6 +41,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerializationException
+import com.sublunar.amp.ui.screens.TextEntryScreen
+import com.sublunar.amp.ui.screens.adoptServer
 
 /**
  * Linking a Plex account by code.

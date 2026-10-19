@@ -1,6 +1,6 @@
 package com.sublunar.amp.data
 
-import com.sublunar.amp.data.PlexClient.Companion.headerSafe
+import com.sublunar.amp.source.plex.PlexClient.Companion.headerSafe
 import kotlin.test.assertEquals
 import org.junit.Test
 

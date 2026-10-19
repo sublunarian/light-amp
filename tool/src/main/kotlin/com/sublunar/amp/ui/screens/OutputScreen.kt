@@ -39,7 +39,7 @@ import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
-import com.sublunar.amp.data.PlexPlayer
+import com.sublunar.amp.source.plex.PlexPlayer
 import com.sublunar.amp.playback.DlnaRenderer
 import com.sublunar.amp.playback.PlaybackController
 import com.thelightphone.sdk.SealedLightActivity

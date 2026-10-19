@@ -1,10 +1,12 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.plex.companion
 
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.sublunar.amp.data.NetworkGate
+import com.sublunar.amp.source.plex.PlexPlayer
 
 /**
  * Plex's own LAN discovery — GDM — for finding players on this network.

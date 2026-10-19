@@ -1,7 +1,10 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.plex
 
+import com.sublunar.amp.data.MusicSource
+import com.sublunar.amp.data.SourceKind
+import com.sublunar.amp.data.StreamFormat
+import com.sublunar.amp.data.Track
 import com.sublunar.amp.source.jellyfin.JellyfinClient
-import com.sublunar.amp.source.plex.plexClientIdentifier
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals

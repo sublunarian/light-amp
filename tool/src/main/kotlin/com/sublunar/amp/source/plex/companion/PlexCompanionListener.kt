@@ -1,4 +1,4 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.plex.companion
 
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.sublunar.amp.data.NetworkGate
 
 /**
  * The other half of a Companion subscription: somewhere for a player to push

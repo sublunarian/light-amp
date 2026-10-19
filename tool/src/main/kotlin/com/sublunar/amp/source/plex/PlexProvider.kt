@@ -2,8 +2,6 @@ package com.sublunar.amp.source.plex
 
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.MusicSource
-import com.sublunar.amp.data.PlexAccount
-import com.sublunar.amp.data.PlexClient
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
@@ -14,7 +12,6 @@ import com.sublunar.amp.source.ConnectionRow
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
 import com.sublunar.amp.source.SourceUi
-import com.sublunar.amp.ui.screens.PlexLinkScreen
 
 /**
  * A Plex Media Server's music library.

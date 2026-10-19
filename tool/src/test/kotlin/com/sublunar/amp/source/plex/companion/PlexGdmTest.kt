@@ -1,6 +1,5 @@
-package com.sublunar.amp
+package com.sublunar.amp.source.plex.companion
 
-import com.sublunar.amp.data.PlexGdm
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

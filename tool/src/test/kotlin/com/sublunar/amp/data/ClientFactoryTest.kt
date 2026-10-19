@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.source.plex.PlexClient
 import com.sublunar.amp.source.jellyfin.JellyfinClient
 import com.sublunar.amp.source.local.LocalProvider
 import com.sublunar.amp.source.subsonic.toSubsonicConfig

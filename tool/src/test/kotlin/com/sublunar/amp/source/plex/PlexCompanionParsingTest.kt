@@ -1,7 +1,5 @@
-package com.sublunar.amp
+package com.sublunar.amp.source.plex
 
-import com.sublunar.amp.data.plexTimelineFrom
-import com.sublunar.amp.data.plexXmlElements
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

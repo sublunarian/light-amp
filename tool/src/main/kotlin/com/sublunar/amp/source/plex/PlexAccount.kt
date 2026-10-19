@@ -1,4 +1,4 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.plex
 
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -9,6 +9,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import com.sublunar.amp.data.NetworkGate
 
 /**
  * Linking a Plex account, and finding the servers on it.
