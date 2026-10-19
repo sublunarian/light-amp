@@ -2,7 +2,9 @@ package com.sublunar.amp.source.subsonic
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ScannedLoginTest {
 
@@ -27,5 +29,14 @@ class ScannedLoginTest {
         assertNull(ScannedLogin.parse("justoneword"))
         assertNull(ScannedLogin.parse("https://bandcamp.com/api/subsonic\nuser\npass"))
         assertNull(ScannedLogin.parse("one two three"))
+    }
+
+    @Test
+    fun `the scan is offered when editing Bandcamp, and no other server`() {
+        assertTrue(isBandcampAddress("https://bandcamp.com/api/subsonic"))
+        assertTrue(isBandcampAddress("HTTPS://Bandcamp.com/api/subsonic/"))
+        assertFalse(isBandcampAddress("https://music.example.com"))
+        assertFalse(isBandcampAddress("https://bandcamp.com.example.net/api/subsonic"))
+        assertFalse(isBandcampAddress(""))
     }
 }

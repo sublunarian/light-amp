@@ -49,8 +49,10 @@ class ServerScreen(
     /**
      * Adding Bandcamp: its address is always the same, so it is filled in, and
      * the line at the top says where its credentials come from — they are made
-     * for Subsonic apps on Bandcamp's site, not the account's own login.
-     * Nothing else about the source is special; it is a Subsonic server.
+     * for Subsonic apps on Bandcamp's site, not the account's own login, and
+     * long enough that the form offers to scan them, as it does when editing a
+     * Bandcamp source. Nothing else about the source is special; it is a
+     * Subsonic server.
      */
     private val bandcamp: Boolean = false,
 ) : SimpleLightScreen<Unit>(sealed) {
@@ -185,10 +187,11 @@ class ServerScreen(
                         },
                     )
                 }
-                // Long generated credentials — Bandcamp's are — are typed on a
-                // computer instead: any QR generator, the username on the first
-                // line and the password on the second, and one scan fills both.
-                item {
+                // Bandcamp's long generated credentials are typed on a computer
+                // instead: any QR generator, the username on the first line and
+                // the password on the second, and one scan fills both. Only for
+                // Bandcamp: any other server's login is the one you know.
+                if (bandcamp || (source != null && isBandcampAddress(source.baseUrl))) item {
                     TextRow(
                         title = "Scan Username & Password",
                         subtitle = "On a computer, paste the username and password into any QR code " +
@@ -365,6 +368,10 @@ class ServerScreen(
 
 /** Bandcamp's Subsonic server — the same for every account. */
 private const val BANDCAMP_ADDRESS = "https://bandcamp.com/api/subsonic"
+
+/** Whether a source's stored [address] is Bandcamp's, however it was typed when it was added. */
+internal fun isBandcampAddress(address: String): Boolean =
+    address.trim().trimEnd('/').equals(BANDCAMP_ADDRESS, ignoreCase = true)
 
 /** Where Bandcamp's Subsonic credentials come from, shown just above the username and password. */
 private const val BANDCAMP_HINT =
