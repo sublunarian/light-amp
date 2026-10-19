@@ -1,5 +1,9 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.jellyfin
 
+import com.sublunar.amp.data.MusicSource
+import com.sublunar.amp.data.ServerFeatures
+import com.sublunar.amp.data.SourceKind
+import com.sublunar.amp.data.StreamFormat
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull

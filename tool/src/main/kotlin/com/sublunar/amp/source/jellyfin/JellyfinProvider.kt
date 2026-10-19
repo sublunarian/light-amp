@@ -1,6 +1,5 @@
 package com.sublunar.amp.source.jellyfin
 
-import com.sublunar.amp.data.JellyfinClient
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
@@ -13,7 +12,6 @@ import com.sublunar.amp.source.ConnectionRow
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
 import com.sublunar.amp.source.SourceUi
-import com.sublunar.amp.ui.screens.JellyfinLinkScreen
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**

@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.source.jellyfin.JellyfinClient
 import com.sublunar.amp.source.plex.plexClientIdentifier
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

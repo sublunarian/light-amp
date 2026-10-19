@@ -1,4 +1,4 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.jellyfin
 
 import java.time.Instant
 import java.time.Duration
@@ -19,6 +19,23 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import com.sublunar.amp.data.Album
+import com.sublunar.amp.data.ArtistRef
+import com.sublunar.amp.data.LyricLine
+import com.sublunar.amp.data.Lyrics
+import com.sublunar.amp.data.MusicFolder
+import com.sublunar.amp.data.MusicServer
+import com.sublunar.amp.data.NetworkGate
+import com.sublunar.amp.data.Playlist
+import com.sublunar.amp.data.ScanRequest
+import com.sublunar.amp.data.ServerException
+import com.sublunar.amp.data.ServerFeatures
+import com.sublunar.amp.data.SongChanges
+import com.sublunar.amp.data.Starred
+import com.sublunar.amp.data.StreamFormat
+import com.sublunar.amp.data.TimelineState
+import com.sublunar.amp.data.Track
+import com.sublunar.amp.data.serverClock
 
 /**
  * A Jellyfin server's music library, behind the same [MusicServer] interface

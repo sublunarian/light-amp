@@ -1,5 +1,6 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.jellyfin
 
+import com.sublunar.amp.data.LyricLine
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue

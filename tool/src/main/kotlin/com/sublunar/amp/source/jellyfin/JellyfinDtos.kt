@@ -1,4 +1,4 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.jellyfin
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable

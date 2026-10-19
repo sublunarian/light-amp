@@ -1,4 +1,4 @@
-package com.sublunar.amp.ui.screens
+package com.sublunar.amp.source.jellyfin
 
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,9 +9,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
-import com.sublunar.amp.data.JellyfinClient
-import com.sublunar.amp.data.JellyfinSignIn
-import com.sublunar.amp.data.JellyfinSignInResult
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.SourceLibrary
@@ -30,6 +27,8 @@ import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import com.sublunar.amp.ui.screens.TextEntryScreen
+import com.sublunar.amp.ui.screens.adoptServer
 
 /**
  * A Jellyfin server, its address and an account on it.

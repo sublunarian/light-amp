@@ -1,4 +1,4 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.jellyfin
 
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -14,6 +14,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import com.sublunar.amp.data.NetworkGate
 
 /** A signed-in Jellyfin session, and a client already holding it. */
 data class JellyfinSession(

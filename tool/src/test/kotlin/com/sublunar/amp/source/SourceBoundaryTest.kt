@@ -202,11 +202,6 @@ class SourceBoundaryTest {
                 "the one server from before sources existed was a Subsonic server, and stands in until a source is read. Stays: it is what older installs stored",
             ),
             Allowance(
-                "ui/screens/JellyfinLinkScreen.kt",
-                "jellyfin",
-                "Jellyfin's sign-in screen makes Jellyfin sources. Goes when it moves into source/jellyfin/",
-            ),
-            Allowance(
                 "ui/screens/PlexLinkScreen.kt",
                 "plex",
                 "Plex's link screen makes Plex sources. Goes when it moves into source/plex/",

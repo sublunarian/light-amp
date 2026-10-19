@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.source.jellyfin.JellyfinException
 import com.sublunar.amp.source.subsonic.SubsonicException
 import kotlin.test.Test
 import kotlin.test.assertFalse
