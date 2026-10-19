@@ -411,8 +411,9 @@ class AboutScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed)
                 )
                 AppText(
                     "(A)nother (M)usic (P)layer — for the Light Phone III. Streams " +
-                        "and downloads from your own Navidrome, Subsonic, Plex or " +
-                        "Bandcamp library, and plays files kept on the phone.",
+                        "and downloads from your own library on a Subsonic server " +
+                        "(Navidrome, Airsonic, Gonic, Bandcamp), Plex or Jellyfin, " +
+                        "and plays files kept on the phone.",
                     pxSp(LightType.PARAGRAPH_PX),
                     lineHeight = pxSp(LightType.PARAGRAPH_LINE_PX),
                     dim = true,
