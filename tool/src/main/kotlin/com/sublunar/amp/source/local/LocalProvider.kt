@@ -8,6 +8,7 @@ import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
+import com.sublunar.amp.source.ConnectionRow
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
 import com.sublunar.amp.source.SourceUi
@@ -54,4 +55,7 @@ private object LocalUi : SourceUi {
     override val addEntries = listOf(
         AddEntry("Music on This Phone", AddIcon.PHONE, AddAction.AddAtOnce { MusicSource.local() }, singleton = true),
     )
+
+    /** Nothing to connect to: the music is on the phone. */
+    override fun connection(source: MusicSource): ConnectionRow? = null
 }

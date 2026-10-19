@@ -9,6 +9,7 @@ import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
+import com.sublunar.amp.source.ConnectionRow
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
 import com.sublunar.amp.source.SourceUi
@@ -62,6 +63,11 @@ object PlexProvider : SourceProvider {
 
 private object PlexUi : SourceUi {
     override val addEntries = listOf(AddEntry("Plex Server", AddIcon.ADD, AddAction.OpenScreen { PlexLinkScreen(it) }))
+
+    // Plex signs in by token, so there are no fields to edit — a different
+    // server or account means linking again, which updates this source in
+    // place. The row still answers where the music comes from.
+    override fun connection(source: MusicSource) = ConnectionRow()
 }
 
 /** Who a Plex link says it is — see MusicSource.deviceId. */

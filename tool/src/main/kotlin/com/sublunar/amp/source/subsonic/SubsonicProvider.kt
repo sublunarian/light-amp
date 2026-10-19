@@ -11,6 +11,7 @@ import com.sublunar.amp.data.allows
 import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
+import com.sublunar.amp.source.ConnectionRow
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
 import com.sublunar.amp.source.SourceUi
@@ -68,6 +69,8 @@ private object SubsonicUi : SourceUi {
     // run — someone with a Navidrome server needs telling that the Subsonic
     // choice is theirs.
     override val addNote = "Subsonic covers Navidrome, Airsonic and Ampache"
+
+    override fun connection(source: MusicSource) = ConnectionRow(open = { ServerScreen(it, sourceId = source.id) })
 }
 
 /**

@@ -14,7 +14,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.sublunar.amp.App
-import com.sublunar.amp.data.JellyfinClient
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.SyncState
@@ -35,7 +34,6 @@ import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.sublunar.amp.data.LocalLibrary
 import com.thelightphone.sdk.rememberPermissionRequestLauncher
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
@@ -483,35 +481,15 @@ class SourceDetailScreen(
                         )
                     }
                 }
-                if (source.kind == SourceKind.SUBSONIC) {
+                // How this kind of source is reached, and changed, is its
+                // own to say — see SourceUi.connection.
+                source.provider.ui.connection(source)?.let { row ->
                     item {
                         TextRow(
                             title = "Connection",
                             value = source.baseUrl.ifBlank { "Not set" },
-                            onClick = { go { ServerScreen(it, sourceId = source.id) } },
-                        )
-                    }
-                } else if (source.kind == SourceKind.JELLYFIN) {
-                    // Signing in again, here rather than by logging out and
-                    // adding the server anew, keeps its library and downloads.
-                    item {
-                        TextRow(
-                            title = "Connection",
-                            value = source.baseUrl.ifBlank { "Not set" },
-                            subtitle = "Sign in again",
-                            onClick = { go { JellyfinLinkScreen(it, again = source) } },
-                        )
-                    }
-                } else if (source.kind != SourceKind.LOCAL) {
-                    // Plex signs in by token, so there are no fields to edit —
-                    // a different server or account means linking again, which
-                    // updates this source in place. The row still answers where
-                    // the music comes from; a stating row takes no press — see
-                    // TextRow.
-                    item {
-                        TextRow(
-                            title = "Connection",
-                            value = source.baseUrl.ifBlank { "Not set" },
+                            subtitle = row.subtitle,
+                            onClick = row.open?.let { open -> { go(open) } },
                         )
                     }
                 }
@@ -598,9 +576,7 @@ class SourceDetailScreen(
                                         // Ended on the server too, on its own: the
                                         // phone stops being listed there, and nothing
                                         // here waits on a server that may be gone.
-                                        if (source.kind == SourceKind.JELLYFIN) {
-                                            App.scope.launch { signOutQuietly(source) }
-                                        }
+                                        App.scope.launch { source.provider.signOut(source) }
                                         App.scope.launch {
                                             // Wipe while the source still exists to
                                             // name its database and its download folder.
@@ -618,15 +594,3 @@ class SourceDetailScreen(
         }
     }
 }
-
-/** Log Out's word to a Jellyfin server — see [JellyfinClient.signOut]. Best effort, and brief. */
-private suspend fun signOutQuietly(source: MusicSource) {
-    val client = source.toClient() as? JellyfinClient ?: return
-    try {
-        runCatching { withTimeoutOrNull(SIGN_OUT_TIMEOUT_MS) { client.signOut() } }
-    } finally {
-        client.close()
-    }
-}
-
-private const val SIGN_OUT_TIMEOUT_MS = 5_000L

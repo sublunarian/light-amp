@@ -9,10 +9,12 @@ import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
+import com.sublunar.amp.source.ConnectionRow
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
 import com.sublunar.amp.source.SourceUi
 import com.sublunar.amp.ui.screens.JellyfinLinkScreen
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * A Jellyfin server's music library.
@@ -56,8 +58,25 @@ object JellyfinProvider : SourceProvider {
         }
 
     override val ui: SourceUi get() = JellyfinUi
+
+    /** Ends the sign-in on the server too, so the phone stops being listed there — see [JellyfinClient.signOut]. */
+    override suspend fun signOut(source: MusicSource) {
+        val client = createClient(source) as? JellyfinClient ?: return
+        try {
+            runCatching { withTimeoutOrNull(SIGN_OUT_TIMEOUT_MS) { client.signOut() } }
+        } finally {
+            client.close()
+        }
+    }
 }
+
+private const val SIGN_OUT_TIMEOUT_MS = 5_000L
 
 private object JellyfinUi : SourceUi {
     override val addEntries = listOf(AddEntry("Jellyfin Server", AddIcon.ADD, AddAction.OpenScreen { JellyfinLinkScreen(it) }))
+
+    // Signing in again, here rather than by logging out and adding the
+    // server anew, keeps its library and downloads.
+    override fun connection(source: MusicSource) =
+        ConnectionRow("Sign in again") { JellyfinLinkScreen(it, again = source) }
 }

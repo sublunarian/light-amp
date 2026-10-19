@@ -5,7 +5,8 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 
 /**
- * A kind of source's half that only screens read: how it is added.
+ * A kind of source's half that only screens read: how it is added, and the
+ * Connection row on a source's own page.
  *
  * Kept apart from the rest of [SourceProvider], and reached through a
  * getter, so that loading a provider — which every capability check does —
@@ -17,7 +18,17 @@ interface SourceUi {
 
     /** A line beside the add choices saying what this kind covers, where its name alone doesn't. */
     val addNote: String? get() = null
+
+    /** The Connection row on [source]'s own page, or null where there is nothing to connect to. */
+    fun connection(source: MusicSource): ConnectionRow?
 }
+
+/** What a source's Connection row says under the address, and what pressing it opens. */
+class ConnectionRow(
+    val subtitle: String? = null,
+    /** Null for a row that states where the music comes from and takes no press — TextRow's own convention. */
+    val open: ((SealedLightActivity) -> SimpleLightScreen<Unit>)? = null,
+)
 
 /** One way to add a source: a row on Add Source, and a choice on the first-run screen. */
 class AddEntry(

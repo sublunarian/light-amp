@@ -35,6 +35,13 @@ interface SourceProvider {
 
     /** What screens show of this kind — see [SourceUi]. A getter, so loading a provider never loads screens. */
     val ui: SourceUi
+
+    /**
+     * Log Out's word to the server, for a kind whose server keeps a sign-in
+     * of its own to end. Best effort and brief: the source is forgotten
+     * whatever happens here, and nothing waits on a server that may be gone.
+     */
+    suspend fun signOut(source: MusicSource) {}
 }
 
 /** What a kind of source can do — read through the matching `supports…` on MusicSource, which is what the screens ask. */
