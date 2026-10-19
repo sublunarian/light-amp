@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -69,7 +70,10 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
     override fun Content() {
         val volume by App.playback.volume.collectAsState()
         val active by App.playback.active.collectAsState()
-        val volumeControl = active?.volumeControl?.collectAsState()?.value
+        // Keyed by the output, so a switch straight from one to another starts
+        // from the new one's answer instead of holding the last one's for a frame.
+        val control = active?.volumeControl
+        val volumeControl = key(control) { control?.collectAsState()?.value }
         val families = remember { App.playback.outputFamilies() }
         var found by remember { mutableStateOf<Map<String, List<OutputTarget>>>(emptyMap()) }
         var scanning by remember { mutableStateOf(true) }
