@@ -1,5 +1,7 @@
 package com.sublunar.amp.source.local
 
+import com.sublunar.amp.data.MusicServer
+import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
@@ -36,4 +38,7 @@ object LocalProvider : SourceProvider {
         serverScan = false,
         libraries = false,
     )
+
+    /** There is no server behind the phone's own music at all. */
+    override fun createClient(source: MusicSource): MusicServer? = null
 }

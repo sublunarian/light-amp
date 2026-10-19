@@ -202,10 +202,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         )
     }
 
-    /** The active source's connection, or null when it is the phone's own music. */
-    val serverConfig: Flow<SubsonicConfig?> =
-        activeSource.map { it?.toConfig() }.distinctUntilChanged()
-
     /** Selected library (music folder) id; null means all libraries. */
     val libraryId: Flow<String?> = activeSource.map { it?.libraryId }.distinctUntilChanged()
 

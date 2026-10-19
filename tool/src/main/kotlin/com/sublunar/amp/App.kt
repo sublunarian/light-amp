@@ -184,7 +184,6 @@ object App {
 
     /** The client that talks to [source], or null for the phone's own music. */
     fun clientFor(source: MusicSource): MusicServer? {
-        if (source.kind == SourceKind.LOCAL) return null
         synchronized(clients) {
             val held = clients[source.id]
             if (held != null && held.first == source) return held.second

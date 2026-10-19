@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.source.subsonic.toSubsonicConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -36,7 +37,7 @@ class ClientFactoryTest {
     fun `a Subsonic source without an address has no client`() {
         val blank = subsonic.copy(baseUrl = "")
         clientOf(blank) { assertNull(it) }
-        assertNull(blank.toConfig())
+        assertNull(blank.toSubsonicConfig())
     }
 
     @Test
@@ -54,7 +55,7 @@ class ClientFactoryTest {
 
     @Test
     fun `only a Subsonic source has a Subsonic login`() {
-        assertNull(subsonic.copy(kind = SourceKind.PLEX).toConfig())
+        assertNull(subsonic.copy(kind = SourceKind.PLEX).toSubsonicConfig())
     }
 
     private val plex = MusicSource(

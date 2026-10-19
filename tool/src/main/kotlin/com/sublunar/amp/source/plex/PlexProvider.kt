@@ -1,5 +1,7 @@
 package com.sublunar.amp.source.plex
 
+import com.sublunar.amp.data.MusicServer
+import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.PlexClient
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
@@ -36,4 +38,20 @@ object PlexProvider : SourceProvider {
         serverScan = true,
         libraries = true,
     )
+
+    override fun createClient(source: MusicSource): MusicServer? =
+        if (source.baseUrl.isBlank() || source.token.isBlank()) {
+            null
+        } else {
+            PlexClient(
+                source.baseUrl,
+                source.token,
+                source.machineIdentifier,
+                source.playerName.ifBlank { null },
+                source.plexClientIdentifier,
+            )
+        }
 }
+
+/** Who a Plex link says it is — see MusicSource.deviceId. */
+val MusicSource.plexClientIdentifier: String get() = deviceId.ifBlank { PlexClient.LEGACY_CLIENT_ID }

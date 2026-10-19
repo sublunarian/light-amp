@@ -1,5 +1,7 @@
 package com.sublunar.amp.source
 
+import com.sublunar.amp.data.MusicServer
+import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
@@ -22,6 +24,14 @@ interface SourceProvider {
 
     /** What this kind can do, less whatever [features] says its server answered for as missing. */
     fun capabilities(features: ServerFeatures?): SourceCapabilities
+
+    /**
+     * The client that talks to [source], or null where there is none: no
+     * server behind this kind at all, or a source missing what its server
+     * needs to be asked anything — better no client than one that fails on
+     * every call.
+     */
+    fun createClient(source: MusicSource): MusicServer?
 }
 
 /** What a kind of source can do — read through the matching `supports…` on MusicSource, which is what the screens ask. */

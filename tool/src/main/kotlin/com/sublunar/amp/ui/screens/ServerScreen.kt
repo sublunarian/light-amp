@@ -19,6 +19,7 @@ import com.sublunar.amp.data.SubsonicConfig
 import com.sublunar.amp.data.SUBSONIC_REQUEST_FAILED
 import com.sublunar.amp.data.ScannedLogin
 import com.sublunar.amp.data.SubsonicException
+import com.sublunar.amp.source.subsonic.toSubsonicConfig
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.ScrollableList
@@ -100,7 +101,7 @@ class ServerScreen(
         val sources by App.settings.sources.collectAsState(initial = emptyList())
         val active by App.settings.activeSource.collectAsState(initial = null)
         val source = if (adding) null else sources.firstOrNull { it.id == sourceId } ?: active
-        val config = source?.toConfig()
+        val config = source?.toSubsonicConfig()
 
         // Seed from the stored config once it arrives, without clobbering edits.
         LaunchedEffect(config) {

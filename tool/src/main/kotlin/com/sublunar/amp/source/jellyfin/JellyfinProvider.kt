@@ -1,6 +1,8 @@
 package com.sublunar.amp.source.jellyfin
 
 import com.sublunar.amp.data.JellyfinClient
+import com.sublunar.amp.data.MusicServer
+import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
@@ -34,4 +36,17 @@ object JellyfinProvider : SourceProvider {
         serverScan = true,
         libraries = true,
     )
+
+    override fun createClient(source: MusicSource): MusicServer? =
+        if (source.baseUrl.isBlank() || source.token.isBlank() || source.userId.isBlank()) {
+            null
+        } else {
+            JellyfinClient(
+                source.baseUrl,
+                source.token,
+                source.userId,
+                source.playerName.ifBlank { null },
+                source.deviceId.ifBlank { JellyfinClient.LEGACY_DEVICE_ID },
+            )
+        }
 }

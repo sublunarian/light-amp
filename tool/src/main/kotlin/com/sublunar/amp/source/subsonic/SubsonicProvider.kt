@@ -1,9 +1,12 @@
 package com.sublunar.amp.source.subsonic
 
+import com.sublunar.amp.data.MusicServer
+import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.SubsonicClient
+import com.sublunar.amp.data.SubsonicConfig
 import com.sublunar.amp.data.allows
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
@@ -35,4 +38,19 @@ object SubsonicProvider : SourceProvider {
         serverScan = features.allows(ServerFeatures.SCAN_STATUS),
         libraries = true,
     )
+
+    override fun createClient(source: MusicSource): MusicServer? =
+        source.toSubsonicConfig()?.let { SubsonicClient(it) }
 }
+
+/**
+ * Null unless this is a Subsonic server with somewhere to point. The kind is
+ * checked here rather than left to the caller: the server form falls back to
+ * whichever source is active, and that can be any kind.
+ */
+fun MusicSource.toSubsonicConfig(): SubsonicConfig? =
+    if (kind == SourceKind.SUBSONIC && baseUrl.isNotBlank()) {
+        SubsonicConfig(baseUrl, username, password, playerName.ifBlank { null })
+    } else {
+        null
+    }

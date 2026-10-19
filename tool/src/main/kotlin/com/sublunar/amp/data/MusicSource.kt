@@ -282,41 +282,10 @@ data class MusicSource(
 
     /**
      * The client that talks to this source, or null for the phone's own music —
-     * which has no server behind it at all.
+     * which has no server behind it at all — and for a source missing what its
+     * server needs. See [SourceProvider.createClient].
      */
-    fun toClient(): MusicServer? = when (kind) {
-        SourceKind.LOCAL -> null
-        SourceKind.SUBSONIC -> toConfig()?.let { SubsonicClient(it) }
-        SourceKind.PLEX ->
-            if (baseUrl.isBlank() || token.isBlank()) {
-                null
-            } else {
-                PlexClient(baseUrl, token, machineIdentifier, playerName.ifBlank { null }, plexClientIdentifier)
-            }
-        SourceKind.JELLYFIN ->
-            if (baseUrl.isBlank() || token.isBlank() || userId.isBlank()) {
-                null
-            } else {
-                JellyfinClient(
-                    baseUrl,
-                    token,
-                    userId,
-                    playerName.ifBlank { null },
-                    deviceId.ifBlank { JellyfinClient.LEGACY_DEVICE_ID },
-                )
-            }
-    }
-
-    /** Who a Plex link says it is — see [deviceId]. */
-    val plexClientIdentifier: String get() = deviceId.ifBlank { PlexClient.LEGACY_CLIENT_ID }
-
-    /** Null unless this is a Subsonic server with somewhere to point. */
-    fun toConfig(): SubsonicConfig? =
-        if (kind == SourceKind.SUBSONIC && baseUrl.isNotBlank()) {
-            SubsonicConfig(baseUrl, username, password, playerName.ifBlank { null })
-        } else {
-            null
-        }
+    fun toClient(): MusicServer? = provider.createClient(this)
 
     // What this kind of source can actually do, as its provider answers it.
     // Read by the UI so a feature that can't work is absent rather than present
