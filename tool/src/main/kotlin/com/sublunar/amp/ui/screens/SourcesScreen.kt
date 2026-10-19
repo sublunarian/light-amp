@@ -70,10 +70,17 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
                 // only one a sync can work on, and the only one that needs it,
                 // since switching to another syncs that one as it opens. The
                 // line under it names the source, so which one is never a guess.
+                // The phone's own music has no server to sync with: it is
+                // read again from the folder, and the row says so.
                 active?.let { current ->
                     item(key = "sync") {
+                        val phone = current.phoneLibrary != null
                         TextRow(
-                            title = if (sync.syncing) "Syncing…" else "Sync Now",
+                            title = when {
+                                sync.syncing -> if (phone) "Scanning…" else "Syncing…"
+                                phone -> "Rescan Library"
+                                else -> "Sync Now"
+                            },
                             subtitle = "${current.name} · ${syncStatus(current, sync)}",
                             onClick = { if (!sync.syncing) App.library.scanAndSyncInBackground() },
                         )
@@ -100,13 +107,14 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
         }
     }
 
-    /** How the source in use stands, for the line under Sync Now. */
+    /** How the source in use stands, for the line under Sync Now (Rescan Library on the phone's own music). */
     private fun syncStatus(source: MusicSource, sync: SyncState): String = when {
         sync.syncing -> sync.phase.ifBlank { "Working" }
         sync.error != null -> sync.error
         // Worth saying every time it is true: it means new files on the server
         // will never appear until the server itself is set to look for them.
         App.library.scanRefused -> "won't scan on request — last synced ${relativeTime(sync.lastSyncedMs)}"
+        sync.lastSyncedMs > 0L && source.phoneLibrary != null -> "last scanned ${relativeTime(sync.lastSyncedMs)}"
         sync.lastSyncedMs > 0L -> "last synced ${relativeTime(sync.lastSyncedMs)}"
         source.phoneLibrary != null -> "rescan this phone's music"
         // A server with no scan call of its own is only ever read from — see
