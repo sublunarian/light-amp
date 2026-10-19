@@ -1,4 +1,4 @@
-package com.sublunar.amp.data
+package com.sublunar.amp.source.local
 
 import java.io.ByteArrayOutputStream
 import java.io.File

@@ -1,6 +1,6 @@
 package com.sublunar.amp.source
 
-import com.sublunar.amp.data.LocalPlaylists
+import com.sublunar.amp.source.local.LocalPlaylists
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.source.local.LocalPhoneLibrary

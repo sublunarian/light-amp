@@ -1,7 +1,5 @@
 package com.sublunar.amp.source.local
 
-import com.sublunar.amp.data.LocalLibrary
-import com.sublunar.amp.data.LocalPlaylists
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
