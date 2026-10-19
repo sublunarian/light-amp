@@ -39,10 +39,10 @@ import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
-import com.sublunar.amp.source.plex.PlexPlayer
-import com.sublunar.amp.playback.PlaybackController
 import com.sublunar.amp.playback.output.OutputTarget
+import com.sublunar.amp.playback.output.VolumeControl
 import com.sublunar.amp.playback.output.dlna.DlnaFamily
+import com.sublunar.amp.source.plex.companion.PlexCompanionFamily
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
@@ -70,10 +70,9 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
     override fun Content() {
         val volume by App.playback.volume.collectAsState()
         val active by App.playback.active.collectAsState()
-        val plexCasting by App.playback.plexPlayer.collectAsState()
-        val plexVolume by App.playback.plexVolume.collectAsState()
+        val volumeControl = active?.volumeControl?.collectAsState()?.value
         var renderers by remember { mutableStateOf<List<OutputTarget>>(emptyList()) }
-        var plexPlayers by remember { mutableStateOf<List<PlexPlayer>>(emptyList()) }
+        var plexPlayers by remember { mutableStateOf<List<OutputTarget>>(emptyList()) }
         var scanning by remember { mutableStateOf(true) }
 
         // Discovery is a few seconds of UDP waiting, so it runs once on open and
@@ -83,7 +82,7 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
         var scanToken by remember { mutableStateOf(0) }
         LaunchedEffect(scanToken) {
             scanning = true
-            plexPlayers = App.playback.findPlexPlayers()
+            plexPlayers = App.playback.find(PlexCompanionFamily)
             renderers = App.playback.find(DlnaFamily)
             scanning = false
         }
@@ -92,8 +91,7 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
         // a volume it doesn't own, takes the command and changes nothing. Once
         // that is established the control is disabled rather than left to lie.
         // Dimmed rather than hidden, so the page doesn't jump.
-        val faderLive = plexCasting == null ||
-            plexVolume != PlaybackController.PlexVolume.NotOurs
+        val faderLive = volumeControl != VolumeControl.NotOurs
 
         PlayerTheme {
             Column(modifier = Modifier.fillMaxSize()) {
@@ -110,7 +108,7 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
                     ) {
                         AppText("Volume", pxSp(LightType.DETAIL_PX))
                         AppText(
-                            if (faderLive) "${(volume * 100).roundToInt()}%" else "on the TV",
+                            if (faderLive) "${(volume * 100).roundToInt()}%" else active?.family?.volumeElsewhere.orEmpty(),
                             pxSp(LightType.DETAIL_PX),
                             dim = true,
                         )
@@ -126,7 +124,7 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
                         OutputRow(
                             AppIcons.Smartphone,
                             "This device",
-                            selected = active == null && plexCasting == null,
+                            selected = active == null,
                         ) { App.playback.playHere() }
                     }
                     item {
@@ -149,15 +147,16 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
                         }
                     }
                     items(plexPlayers, key = { "plex-" + it.id }) { p ->
+                        val selected = active?.family === PlexCompanionFamily && active?.target?.id == p.id
                         OutputRow(
                             icon = AppIcons.Cast,
                             label = p.name,
-                            selected = plexCasting?.id == p.id,
+                            selected = selected,
                         ) {
-                            if (plexCasting?.id == p.id) {
-                                App.playback.stopPlexCasting()
+                            if (selected) {
+                                App.playback.playHere()
                             } else {
-                                App.playback.castToPlex(p)
+                                App.playback.castTo(PlexCompanionFamily, p)
                             }
                         }
                     }

@@ -5,6 +5,7 @@ import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
+import com.sublunar.amp.playback.output.OutputFamily
 import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
@@ -12,6 +13,7 @@ import com.sublunar.amp.source.ConnectionRow
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
 import com.sublunar.amp.source.SourceUi
+import com.sublunar.amp.source.plex.companion.PlexCompanionFamily
 
 /**
  * A Plex Media Server's music library.
@@ -57,6 +59,9 @@ object PlexProvider : SourceProvider {
         }
 
     override val ui: SourceUi get() = PlexUi
+
+    /** The account's Plex players — an Apple TV, another Plexamp — which the server steers for us. */
+    override val outputFamilies: List<OutputFamily> get() = listOf(PlexCompanionFamily)
 
     /** Matched by the server's own id, so a server re-linked from another address is still the one it was. */
     override fun isSameServer(existing: MusicSource, incoming: MusicSource): Boolean =

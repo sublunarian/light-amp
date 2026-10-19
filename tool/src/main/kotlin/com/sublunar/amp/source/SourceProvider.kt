@@ -5,6 +5,7 @@ import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
+import com.sublunar.amp.playback.output.OutputFamily
 
 /**
  * Everything shared code needs from one kind of source.
@@ -45,6 +46,12 @@ interface SourceProvider {
 
     /** Music that is files on this phone — see [PhoneLibrary]. Null for every kind with a server. */
     val phoneLibrary: PhoneLibrary? get() = null
+
+    /**
+     * Somewhere else a source of this kind can play to, besides what the
+     * phone offers itself: players its server steers. Empty for most kinds.
+     */
+    val outputFamilies: List<OutputFamily> get() = emptyList()
 
     /**
      * Whether [incoming], a sign-in under a new id, is the server and account

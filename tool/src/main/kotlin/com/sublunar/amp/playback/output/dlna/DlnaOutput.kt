@@ -8,10 +8,13 @@ import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.PREVIOUS_RESTARTS_AFTER_MS
+import com.sublunar.amp.playback.output.VolumeControl
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -39,6 +42,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     override val needsLan = true
 
     override fun handBackPlays(wasPlaying: Boolean) = true
+
+    // The fader drives the renderer's own RenderingControl.
+    override val volumeControl: StateFlow<VolumeControl> = MutableStateFlow(VolumeControl.Ours)
 
     /**
      * How far into the track the renderer's stream starts — the trick the

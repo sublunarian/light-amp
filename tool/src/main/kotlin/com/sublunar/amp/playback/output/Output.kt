@@ -1,6 +1,7 @@
 package com.sublunar.amp.playback.output
 
 import com.sublunar.amp.data.LinkRules
+import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.Track
@@ -88,8 +89,14 @@ interface OutputControls {
 interface Output : OutputControls {
     val family: OutputFamily
 
+    /** Whether the fader moves the far end's volume — see [VolumeControl]. */
+    val volumeControl: StateFlow<VolumeControl>
+
     /** What can be played to right now. Does its own waiting off Main. */
     suspend fun find(): List<OutputTarget>
+
+    /** Whether there is anything to steer with right now — a client of the right kind, say. */
+    fun canSteer(): Boolean = true
 
     /**
      * Start playing at [target], from [fromMs] into the queue's current
@@ -107,12 +114,16 @@ interface Output : OutputControls {
 }
 
 /**
- * A kind of output: speakers on the network, say. Listed by whoever offers
- * it — the phone's own in [Outputs].
+ * A kind of output: speakers on the network, Plex players. Listed by whoever
+ * offers it — the phone's own in [Outputs], a kind of source's by its
+ * provider.
  */
 interface OutputFamily {
     /** Keys its rows and names it in logs. A constant: never stored, never worked out from a class name. */
     val id: String
+
+    /** What the fader says in place of a level once the volume is [VolumeControl.NotOurs]. */
+    val volumeElsewhere: String get() = ""
 
     fun create(host: OutputHost): Output
 
@@ -137,7 +148,21 @@ class ActiveOutput internal constructor(
     val family: OutputFamily,
     val target: OutputTarget,
     internal val output: Output,
-)
+) {
+    val volumeControl: StateFlow<VolumeControl> get() = output.volumeControl
+}
+
+/** Whether the fader can move the far end's volume. */
+enum class VolumeControl {
+    /** Not settled yet: a drag goes out as a probe, and what the far end reports next decides. */
+    Unknown,
+
+    /** The fader is the far end's volume. */
+    Ours,
+
+    /** The far end's volume is owned by something after it — a receiver — so the fader is disabled rather than left to lie. */
+    NotOurs,
+}
 
 /**
  * What an output is given of the controller: the state the screens read,
@@ -155,9 +180,11 @@ interface OutputHost {
 
     val queue: StateFlow<List<Track>>
     val index: StateFlow<Int>
+    val isPlaying: StateFlow<Boolean>
     val positionMs: StateFlow<Long>
     val durationMs: StateFlow<Long>
     val repeatMode: StateFlow<RepeatMode>
+    val shuffle: StateFlow<Boolean>
 
     /** The target [output] steers, or null once it has been let go: what every loop and late check asks. */
     fun steering(output: Output): OutputTarget?
@@ -167,10 +194,18 @@ interface OutputHost {
     fun showPosition(ms: Long)
     fun showDuration(ms: Long)
     fun showIndex(index: Int)
+    fun showRepeat(mode: RepeatMode)
+    fun showShuffle(on: Boolean)
     fun showVolume(level: Float)
+
+    /** The active source's client, read fresh each time: one rebuilt for the same source is the one that answers. */
+    fun client(): MusicServer?
 
     /** The link's rules as of now, read on the spot rather than from the flow. */
     fun rules(): LinkRules
+
+    /** Whether the server may be spoken to at all — the data mode's courtesy rule. */
+    fun mayTalkToServer(): Boolean
 
     /** The format this link asks the server for. */
     fun streamFormat(): StreamFormat
@@ -199,6 +234,20 @@ interface OutputHost {
 
     /** Move the phone's own media volume. Main only: it is the player's call. */
     fun setPhoneVolume(level: Float)
+
+    /**
+     * [output] gave up on [target] before anything played there: let go of it,
+     * and nothing else. The phone sits paused where the cast began. Only if
+     * [target] is still the one being steered — a newer cast is left alone.
+     */
+    fun dropped(output: Output, target: OutputTarget)
+
+    /**
+     * The far end stopped on its own — stop pressed on the TV, its app quit:
+     * let go of [target], show paused, give the fader back to the phone and
+     * cue the queue on the phone where the far end left it, paused. Any thread.
+     */
+    fun endedOnItsOwn(output: Output, target: OutputTarget)
 }
 
 /** How long a track has to have played before previous restarts it rather than going back — on every output. */

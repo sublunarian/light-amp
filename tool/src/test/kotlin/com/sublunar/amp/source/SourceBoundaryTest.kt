@@ -282,11 +282,6 @@ class SourceBoundaryTest {
         /** Files outside a protocol's folder that may name its package, each with why and what removes it. */
         val ALLOWED: List<Allowance> = listOf(
             Allowance(
-                "playback/PlaybackController.kt",
-                "plex",
-                "Plex Companion casting; leaves PlaybackController with the cast session (step 3)",
-            ),
-            Allowance(
                 "ui/screens/OutputScreen.kt",
                 "plex",
                 "lists Plex players as outputs; goes behind the Output contract (step 3)",

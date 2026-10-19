@@ -15,7 +15,7 @@ source/                one folder per kind of library, and what they share
   SignInOutcome.kt, PendingServer.kt, ServerAddress.kt   shared sign-in pieces
   subsonic/            Navidrome, gonic, Airsonic, Bandcamp…: client, wire types, sign-in form
   plex/                client, wire types, plex.tv account, link screens
-    companion/         Plex Companion: GDM discovery, timeline listener
+    companion/         Plex Companion: casting to Plex players, an output the provider offers
   jellyfin/            client, wire types, sign-in, link screen
   local/               the phone's own files: scan, m3u playlists, ReplayGain tags
 
@@ -89,9 +89,11 @@ instead (`playback/output/Output.kt`); none means this phone. An `Output` steers
 one far end and keeps the controller's state true through `OutputHost`, so the
 screens read the same flows whoever is playing. DLNA is one, in
 `playback/output/dlna` — discovery, the SOAP calls (`DlnaCast`) and the cast —
-listed in `Outputs`, Amp's own code rather than an SDK patch. Plex Companion's
-discovery and listener live in `source/plex/companion`, and its calls are on
-`PlexClient`; its cast session is still in the controller for now.
+listed in `Outputs`, Amp's own code rather than an SDK patch. Plex Companion is
+the other, in `source/plex/companion` — discovery, the listener and the cast —
+offered by the Plex provider (`SourceProvider.outputFamilies`), so only a Plex
+source lists its players; its calls stay on `PlexClient`, which holds the token
+and the lock they need.
 
 **`ui/screens`** is one file per screen. `LibraryShell` is the tabbed root;
 `BootScreen` hosts it and decides what to show while the library loads.
@@ -105,7 +107,8 @@ A folder under `source/` with its client (implements `MusicServer`), its
 provider (implements `SourceProvider`) and its sign-in screens; one
 `SourceKind` constant, which is the name its sources are stored under, so it is
 never renamed; and one line in `Providers`. Nothing outside the folder may
-import it.
+import it. A kind whose server can steer players of its own offers them as an
+output family, from its provider, as Plex does.
 
 ## Things that will bite you
 
