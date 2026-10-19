@@ -30,6 +30,8 @@ If a change isn't marked, it isn't ours.
   more than a patch without one.
 - **Make it build.** `./gradlew :tool:compileDebugKotlin` at minimum; `./gradlew
   check` if you have touched anything shared.
+- **Run the tests.** `./gradlew :tool:test`. They include the boundary test,
+  which fails when code outside a server's folder reaches into it.
 - **Don't add to what stops a store build.** `scripts/store-build-check.sh`
   builds Amp the way Light's store builder will and lists what stands in its
   way. A change shouldn't make that list longer.
@@ -43,10 +45,18 @@ If a change isn't marked, it isn't ours.
 
 - Features that only work on one kind of server. A capability a backend cannot
   support should be *absent* on that backend, not present and broken.
+- Code that names one kind of server from outside its folder. Go through its
+  provider, or move what two kinds share up into `source/`.
 - Silent fallbacks. If someone picks FLAC and FLAC fails, it must fail —
   substituting something they didn't choose is worse than an error.
 - Anything that needs a permission or an API outside the SDK's allow-list,
   unless it comes with a plan for removing it again.
+
+## Adding a kind of server
+
+A folder under `tool/src/main/kotlin/com/sublunar/amp/source/`, a `SourceKind`
+name and a line in `Providers`. [ARCHITECTURE](tool/docs/ARCHITECTURE.md) says
+what goes in the folder.
 
 ## Reporting a security issue
 

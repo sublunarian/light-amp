@@ -89,6 +89,8 @@ git submodule update --init
 ./gradlew :tool:assembleRelease
 ```
 
+Where things live, and how to add a kind of server: [ARCHITECTURE](tool/docs/ARCHITECTURE.md).
+
 ## Licence
 
 MIT. The app is © Amp contributors; Light's SDK, © The Light Phone, comes in

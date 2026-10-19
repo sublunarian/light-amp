@@ -1,17 +1,28 @@
 # How it fits together
 
-About 17,000 lines in `com.sublunar.amp`, in five parts. If you're looking for
-where something lives, start here.
+About 38,000 lines in `com.sublunar.amp`. If you're looking for where something
+lives, start here.
 
 ```
 App.kt                 wiring: what owns what, and what happens on a source switch
 ToolEntryPoint.kt      the SDK's way in
 BackgroundSync.kt      the periodic library refresh
 
-data/                  servers, storage, settings — everything non-visual
+source/                one folder per kind of library, and what they share
+  SourceProvider.kt    what a kind of source fills in (SourceUi.kt: the part screens read)
+  Providers.kt         the registry: one line per kind
+  PhoneLibrary.kt      what the app asks of music that is files on the phone
+  SignInOutcome.kt, PendingServer.kt, ServerAddress.kt   shared sign-in pieces
+  subsonic/            Navidrome, gonic, Airsonic, Bandcamp…: client, wire types, sign-in form
+  plex/                client, wire types, plex.tv account, link screens
+    companion/         Plex Companion: GDM discovery, timeline listener
+  jellyfin/            client, wire types, sign-in, link screen
+  local/               the phone's own files: scan, m3u playlists, ReplayGain tags
+
+data/                  the app's own models, settings, storage, downloads, the network wall
   db/                  Room: one database file per source
 
-playback/              the player, the queue, casting
+playback/              the player, the queue, casting (DLNA in DlnaCast.kt)
 art/                   artwork fetching, decoding and caching
 ui/components/         the shared kit — rows, headers, scroll furniture
 ui/screens/            one file per screen, plus the tabbed shell
@@ -45,28 +56,51 @@ Playlists are the exception — they have no table and live in memory, which is 
 they need clearing by hand on a switch.
 
 **`MusicServer`** is the seam between the app and whatever it is talking to.
-`SubsonicClient` and `PlexClient` implement it; the phone's own files are a third
-source with no client at all. Everything above this line works in the app's own
-models (`Track`, `Album`, `Playlist`).
+`SubsonicClient`, `PlexClient` and `JellyfinClient` implement it, each in its
+folder under `source/`; the phone's own files (`source/local`) have no client.
+Everything above this line works in the app's own models (`Track`, `Album`,
+`Playlist`).
 
 Two rules make that seam work:
 
 - **A server declares what it can do.** Methods only some backends support have
-  no-op defaults, `MusicSource` carries capability flags the UI reads, and
-  `MusicServer.streamFormats` says which formats a server will *actually*
-  deliver. A feature a server can't support is absent, not present and broken.
+  no-op defaults; each kind's provider says what it can do, which `MusicSource`
+  passes on as the capability flags the UI reads; and `MusicServer.streamFormats`
+  says which formats a server will *actually* deliver. A feature a server can't
+  support is absent, not present and broken.
 - **No silent substitution.** If a chosen format can't be served, the app doesn't
   quietly send something else — it doesn't offer the choice in the first place.
 
+**`SourceProvider`** is what a kind of source fills in: its formats, what it can
+do, how to build its client, how it is added, its Connection row, Log Out's word
+to the server. `Providers` lists one per kind, and shared code asks a source's
+provider (`source.provider`, or `Providers.of(kind)`) rather than testing its
+kind. The phone's own files have no server, so their provider hands out a
+`PhoneLibrary` instead — the scan, the m3u playlists, the permission — and
+that is the only way the app reaches them. Their track ids name the file
+(`PhoneFiles`, in `data/`), because playback, covers and downloads have to tell
+a phone file from a server's track whichever source is being browsed.
+
 **`PlaybackController`** owns the player, the queue, position and duration, and
 the cast session. DLNA and Plex Companion casting each sit behind their own
-banner comment.
+banner comment. DLNA itself — discovery, the SOAP calls — is `DlnaCast`, beside
+it in `playback/`, Amp's own code rather than an SDK patch. Plex Companion's
+discovery and listener live in `source/plex/companion`, and its calls are on
+`PlexClient`; the cast session itself is still here for now.
 
 **`ui/screens`** is one file per screen. `LibraryShell` is the tabbed root;
 `BootScreen` hosts it and decides what to show while the library loads.
 `LibraryNav` holds the navigation state screens share, because the tab bar is
 visible on nested pages and a screen three levels deep still has to be able to
 select a tab.
+
+## Adding a kind of source
+
+A folder under `source/` with its client (implements `MusicServer`), its
+provider (implements `SourceProvider`) and its sign-in screens; one
+`SourceKind` constant, which is the name its sources are stored under, so it is
+never renamed; and one line in `Providers`. Nothing outside the folder may
+import it.
 
 ## Things that will bite you
 
@@ -156,6 +190,12 @@ transport, not a set of checks: HTTP clients are built with
 and the raw paths ask `NetworkGate.check()`. A bare `HttpClient(OkHttp)` or
 `URL.openConnection()` anywhere else is a hole in that wall — the courtesy
 checks (`metadataAllowed`, `heavyDataAllowed`) only save work, they stop nothing.
+
+**A protocol's folder is fenced.** `SourceBoundaryTest` fails when anything
+outside `source/<kind>/` names that package, except `Providers.kt` (its provider
+only) and the listed allowances, each saying what removes it. It also fails
+when shared code names a kind's `SourceKind` constant: ask the provider
+instead. Kotlin's `internal` can't do this, because Amp is one module.
 
 **Conditional composable calls stop subscribing.** A `collectAsState` behind an
 `&&` or inside an `if` silently stops triggering recomposition. Read
