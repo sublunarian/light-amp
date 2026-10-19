@@ -54,6 +54,13 @@ interface SourceProvider {
      * certain: without one, a second sign-in is a second source.
      */
     fun isSameServer(existing: MusicSource, incoming: MusicSource): Boolean = false
+
+    /**
+     * After a failed sync: [source] at another address of the same server
+     * that answers, or null where there is none to try — and for every kind
+     * that keeps only the one address it was given.
+     */
+    suspend fun relocate(source: MusicSource): MusicSource? = null
 }
 
 /** What a kind of source can do — read through the matching `supports…` on MusicSource, which is what the screens ask. */

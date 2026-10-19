@@ -2,6 +2,7 @@ package com.sublunar.amp.source.plex
 
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.MusicSource
+import com.sublunar.amp.data.PlexAccount
 import com.sublunar.amp.data.PlexClient
 import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
@@ -63,7 +64,30 @@ object PlexProvider : SourceProvider {
     /** Matched by the server's own id, so a server re-linked from another address is still the one it was. */
     override fun isSameServer(existing: MusicSource, incoming: MusicSource): Boolean =
         existing.machineIdentifier.isNotBlank() && existing.machineIdentifier == incoming.machineIdentifier
+
+    /**
+     * The server's other advertised addresses, tried for one that answers.
+     *
+     * Plex hands out a LAN address and one or more remote ones. Whichever
+     * answered at link time is almost always the LAN one — and it stops working
+     * the moment the phone leaves that network, with nothing to re-resolve it.
+     * The stored source then points at 192.168.x.x for ever and Plex appears
+     * broken on cellular no matter what else is changed.
+     */
+    override suspend fun relocate(source: MusicSource): MusicSource? {
+        if (source.connections.isEmpty()) return null
+        val found = PlexAccount.firstReachable(relocationOrder(source), source.token, source.plexClientIdentifier)
+            ?: return null
+        return if (found == source.baseUrl) null else source.copy(baseUrl = found)
+    }
 }
+
+/**
+ * The other addresses first, and the one that just failed last. A minus on a
+ * list drops only the first match, so a stored address listed twice is still
+ * tried once early — kept as it always was.
+ */
+internal fun relocationOrder(source: MusicSource): List<String> = (source.connections - source.baseUrl) + source.baseUrl
 
 private object PlexUi : SourceUi {
     override val addEntries = listOf(AddEntry("Plex Server", AddIcon.ADD, AddAction.OpenScreen { PlexLinkScreen(it) }))

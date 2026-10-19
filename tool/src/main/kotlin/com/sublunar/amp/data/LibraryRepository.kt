@@ -13,7 +13,6 @@ import com.sublunar.amp.data.db.toTrack
 import com.sublunar.amp.source.PhoneLibrary
 import com.sublunar.amp.source.PhonePlaylists
 import com.sublunar.amp.source.PhoneAccess
-import com.sublunar.amp.source.plex.plexClientIdentifier
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
@@ -1163,25 +1162,17 @@ class LibraryRepository(
 
     /** The actual scoped sync (null = all libraries); callers serialize via [syncMutex]. */
     /**
-     * Try the server's other advertised addresses, and keep one that answers.
-     *
-     * Plex hands out a LAN address and one or more remote ones. Whichever
-     * answered at link time is almost always the LAN one — and it stops working
-     * the moment the phone leaves that network, with nothing to re-resolve it.
-     * The stored source then points at 192.168.x.x for ever and Plex appears
-     * broken on cellular no matter what else is changed.
+     * Try the active source's other addresses for the same server, and keep
+     * one that answers — see SourceProvider.relocate.
      *
      * Returns true when the address changed; saving the source rebuilds the
      * client, so playback and downloads follow it without being told.
      */
-    private suspend fun repointPlex(): Boolean {
+    private suspend fun repoint(): Boolean {
         val source = settings.activeSource.first() ?: return false
-        if (source.kind != SourceKind.PLEX || source.connections.isEmpty()) return false
-        val ordered = (source.connections - source.baseUrl) + source.baseUrl
-        val found = PlexAccount.firstReachable(ordered, source.token, source.plexClientIdentifier) ?: return false
-        if (found == source.baseUrl) return false
-        android.util.Log.i("AmpSync", "plex moved: ${source.baseUrl} -> $found")
-        settings.saveSource(source.copy(baseUrl = found))
+        val moved = source.provider.relocate(source) ?: return false
+        android.util.Log.i("AmpSync", "${source.kind.name.lowercase()} moved: ${source.baseUrl} -> ${moved.baseUrl}")
+        settings.saveSource(moved)
         return true
     }
 
@@ -1527,9 +1518,9 @@ class LibraryRepository(
             throw e
         } catch (e: Exception) {
             android.util.Log.w("AmpSync", "sync failed: ${e::class.simpleName}: ${e.message}", e)
-            // The address may simply have moved — see repointPlex. Only once,
+            // The address may simply have moved — see repoint. Only once,
             // so a genuinely dead server can't loop.
-            if (allowRepoint && repointPlex()) {
+            if (allowRepoint && repoint()) {
                 runSync(musicFolderId, allowRepoint = false)
                 return
             }
