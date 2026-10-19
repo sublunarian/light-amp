@@ -24,23 +24,10 @@ import kotlin.coroutines.coroutineContext
  * music folder with `java.io`, reading tags with [MediaMetadataRetriever], which
  * takes a plain path and needs no context. That is exactly what this does.
  *
- * Ids are the file's own path behind [ID_PREFIX], so they're stable across
- * rescans without a database of their own, and playback can turn any track back
- * into a file without a lookup.
+ * Ids are the file's own path — see [PhoneFiles], which every part of the app
+ * that needs to tell a phone file from a server's track reads them with.
  */
 object LocalLibrary {
-
-    /** Marks an id as a path on this phone rather than something from a server. */
-    const val ID_PREFIX = "file:"
-
-    fun idFor(file: File): String = ID_PREFIX + file.absolutePath
-
-    fun pathOf(id: String): String? =
-        if (id.startsWith(ID_PREFIX)) id.removePrefix(ID_PREFIX) else null
-
-    fun fileOf(id: String): File? = pathOf(id)?.let { File(it) }.takeIf { it?.isFile == true }
-
-    fun isLocal(id: String): Boolean = id.startsWith(ID_PREFIX)
 
     /**
      * The folder this app claims inside the shared music directory.
@@ -217,7 +204,7 @@ object LocalLibrary {
         val albumArtist = tags.albumArtist?.trim().orEmpty().ifBlank { artist }
 
         return Track(
-            id = idFor(file),
+            id = PhoneFiles.idFor(file),
             title = title,
             artist = artist,
             album = album,
@@ -225,7 +212,7 @@ object LocalLibrary {
             albumId = albumId(albumArtist, album),
             // The file is its own cover: see ArtworkLoader, which reads the
             // embedded picture for any id that points at a path.
-            coverArtId = idFor(file),
+            coverArtId = PhoneFiles.idFor(file),
             durationMs = tags.durationMs,
             trackNumber = tags.track?.substringBefore('/')?.trim()?.toIntOrNull(),
             discNumber = tags.disc?.substringBefore('/')?.trim()?.toIntOrNull(),
@@ -260,12 +247,12 @@ object LocalLibrary {
                     releaseDate = 0L,
                     // Newest file in the album, so "Recently Added" means what it
                     // does everywhere else.
-                    createdMs = group.mapNotNull { fileOf(it.id)?.lastModified() }.maxOrNull() ?: 0L,
+                    createdMs = group.mapNotNull { PhoneFiles.fileOf(it.id)?.lastModified() }.maxOrNull() ?: 0L,
                 )
             }
 
     private fun albumId(albumArtist: String, album: String): String =
-        ID_PREFIX + "album/" + albumArtist.lowercase() + "/" + album.lowercase()
+        PhoneFiles.ID_PREFIX + "album/" + albumArtist.lowercase() + "/" + album.lowercase()
 
     private data class Tags(
         val title: String?,

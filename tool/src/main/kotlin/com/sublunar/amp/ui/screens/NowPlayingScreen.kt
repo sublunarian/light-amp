@@ -106,7 +106,7 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.sublunar.amp.ui.components.appClickable
 import kotlinx.coroutines.launch
 import com.sublunar.amp.data.NetworkGate
-import com.sublunar.amp.data.LocalLibrary
+import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.art.ArtworkNeed
 
 /** Where the active synced-lyric line sits in the pane, as a fraction of its height. */
@@ -429,7 +429,7 @@ class NowPlayingScreen(
                     // A row that has to wait for the server stays in the queue
                     // and says so the way a played row does: stepped back. It
                     // plays again the moment the rules allow — see LinkRules.
-                    val mustWait = !canStream && track.id !in onPhone && !LocalLibrary.isLocal(track.id)
+                    val mustWait = !canStream && track.id !in onPhone && !PhoneFiles.isPhoneFile(track.id)
                     val rowKey = "$i-${track.id}"
                     val isDragging = rowKey in drag.draggingKeys
                     // Clear coords on dispose: LazyColumn recycles nodes, so a stale

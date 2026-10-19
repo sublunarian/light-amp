@@ -6,7 +6,7 @@ import android.media.MediaMetadataRetriever
 import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import com.sublunar.amp.data.LocalLibrary
+import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.md5Hex
 import io.ktor.client.call.body
@@ -136,7 +136,7 @@ class ArtworkLoader(
     private suspend fun fetch(client: MusicServer?, coverArtId: String, need: ArtworkNeed): ByteArray? {
         // A local track's cover id is its own path: the sleeve is inside the
         // file, and there is no server to ask for it.
-        LocalLibrary.fileOf(coverArtId)?.let { return embedded(it) }
+        PhoneFiles.fileOf(coverArtId)?.let { return embedded(it) }
         // A cover is a quarter-megabyte at panel size. One for what is playing
         // is nothing next to the song; a listful is not, so those wait for
         // cheap bytes: the placeholder shows, nothing is cached, and the next

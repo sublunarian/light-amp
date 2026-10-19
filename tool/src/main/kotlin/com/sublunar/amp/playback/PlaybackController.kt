@@ -6,7 +6,7 @@ import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.Connectivity
 import com.sublunar.amp.data.DownloadStore
-import com.sublunar.amp.data.LocalLibrary
+import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.RepeatMode
 import android.view.KeyEvent
 import androidx.media3.common.PlaybackException
@@ -1793,7 +1793,7 @@ class PlaybackController(
     fun isPlayable(track: Track): Boolean = isPlayable(track, App.rules.value)
 
     private fun isPlayable(track: Track, rules: LinkRules): Boolean =
-        LocalLibrary.isLocal(track.id) || localFiles.containsKey(track.id) || rules.mayStream
+        PhoneFiles.isPhoneFile(track.id) || localFiles.containsKey(track.id) || rules.mayStream
 
     /**
      * The current track needs the server and can't have it. Main only.
@@ -1878,7 +1878,7 @@ class PlaybackController(
         }
         val track = tracks[index]
         val rules = App.rulesNow()
-        if (!isPlayable(track, rules) || (!localFiles.containsKey(track.id) && !LocalLibrary.isLocal(track.id) && !NetworkGate.isOpen())) {
+        if (!isPlayable(track, rules) || (!localFiles.containsKey(track.id) && !PhoneFiles.isPhoneFile(track.id) && !NetworkGate.isOpen())) {
             // Still not allowed. Say why as of now — the reason can have
             // changed since the park — and leave the player alone.
             _waitingFor.value = rules.waitingFor ?: _waitingFor.value
@@ -4088,7 +4088,7 @@ class PlaybackController(
         if (_plexPlayer.value != null) return
         val track = _queue.value.getOrNull(_index.value) ?: return
         // Nothing playing on the server's behalf to report on.
-        if (LocalLibrary.isLocal(track.id)) return
+        if (PhoneFiles.isPhoneFile(track.id)) return
         sessions.report(
             TimelineReport(sessionIdFor(track.id), track.id, state, _positionMs.value, _durationMs.value),
         )
@@ -4105,7 +4105,7 @@ class PlaybackController(
     private fun followCurrentSong(atMs: Long = 0L) {
         if (_plexPlayer.value != null) return
         val track = _queue.value.getOrNull(_index.value)
-        if (track == null || LocalLibrary.isLocal(track.id)) {
+        if (track == null || PhoneFiles.isPhoneFile(track.id)) {
             // Nothing of the server's is playing any more: an emptied queue,
             // the last song taken out of it.
             sessions.close()
@@ -4170,7 +4170,7 @@ class PlaybackController(
         val track = _queue.value.getOrNull(_index.value) ?: return
         // Nothing to tell, and nowhere to keep a play count: a local file's
         // history would be invented by this app and restorable by nothing.
-        if (LocalLibrary.isLocal(track.id)) return
+        if (PhoneFiles.isPhoneFile(track.id)) return
         if (track.id == nowPlayingId) return
         // Same as the timeline: "playing this now" is only true now.
         if (!metadataAllowed()) return
@@ -4199,7 +4199,7 @@ class PlaybackController(
      */
     private fun maybeSubmitPlay(positionMs: Long) {
         val track = _queue.value.getOrNull(_index.value) ?: return
-        if (LocalLibrary.isLocal(track.id)) return
+        if (PhoneFiles.isPhoneFile(track.id)) return
         if (track.id == lastScrobbledId) return
         if (positionMs < submitAfterMs(_durationMs.value)) return
         lastScrobbledId = track.id
@@ -4302,7 +4302,7 @@ class PlaybackController(
     private fun Track.source(): LightAudioSource {
         // A track from the phone's own library is the file, always — there is no
         // stream to prefer and no server to ask.
-        LocalLibrary.fileOf(id)?.let { return LightAudioSource.FileSource(it) }
+        PhoneFiles.fileOf(id)?.let { return LightAudioSource.FileSource(it) }
         val local = localFiles[id]
         if (local != null) {
             val (file, downloadedFormat) = local

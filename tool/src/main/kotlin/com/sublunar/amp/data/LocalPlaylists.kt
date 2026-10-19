@@ -17,7 +17,7 @@ import kotlinx.coroutines.withContext
  * supported way to make a playlist.
  *
  * Entries are absolute paths, which is also exactly what a track id is once
- * [LocalLibrary.ID_PREFIX] is taken off — so the mapping in both directions is
+ * [PhoneFiles.ID_PREFIX] is taken off — so the mapping in both directions is
  * a string operation and never needs the library to be loaded.
  *
  * Everything here touches the disk, so it all runs on [Dispatchers.IO].
@@ -165,7 +165,7 @@ object LocalPlaylists : PhonePlaylists {
                 // the count is honest, so fall back to plain normalisation.
                 val path = runCatching { entry.canonicalPath }
                     .getOrElse { entry.normalize().absolutePath }
-                LocalLibrary.ID_PREFIX + path
+                PhoneFiles.ID_PREFIX + path
             }
     }.getOrElse {
         Log.w(TAG, "couldn't read ${file.name}: ${it.message}")
@@ -174,7 +174,7 @@ object LocalPlaylists : PhonePlaylists {
 
     /** Absolute paths, one per line, under a header that marks the encoding. */
     private fun writeIds(file: File, trackIds: List<String>): Boolean = runCatching {
-        val body = trackIds.mapNotNull { LocalLibrary.pathOf(it) }
+        val body = trackIds.mapNotNull { PhoneFiles.pathOf(it) }
         file.writeText((listOf("#EXTM3U") + body).joinToString("\n", postfix = "\n"))
         true
     }.getOrElse {

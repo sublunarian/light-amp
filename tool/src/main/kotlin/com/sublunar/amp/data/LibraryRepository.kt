@@ -835,7 +835,7 @@ class LibraryRepository(
         // A song from the phone's own folder needs no server, so it stays whatever
         // the connection is.
         val downloaded = downloadedTrackIds.value
-        val playable = shown.filter { it.id in downloaded || LocalLibrary.isLocal(it.id) }
+        val playable = shown.filter { it.id in downloaded || PhoneFiles.isPhoneFile(it.id) }
         return PlaylistView(playable, wholeShown && playable.size == shown.size)
     }
 

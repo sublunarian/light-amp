@@ -31,7 +31,7 @@ class PersistedNamesTest {
 
     @Test
     fun `a phone file's track id is its path`() {
-        assertEquals("file:", LocalLibrary.ID_PREFIX)
+        assertEquals("file:", PhoneFiles.ID_PREFIX)
     }
 
     @Test

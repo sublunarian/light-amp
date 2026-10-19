@@ -295,7 +295,7 @@ class Downloader(
                     // App.topUpDownloads never offers these — because a stray
                     // enqueue here would ask the server for an id it has never
                     // heard of, once per track.
-                    if (LocalLibrary.isLocal(entry.trackId)) return@forEach
+                    if (PhoneFiles.isPhoneFile(entry.trackId)) return@forEach
                     queue.add(entry, manual)
                 }
                 _progress.value = _progress.value.copy(
