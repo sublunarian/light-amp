@@ -47,7 +47,7 @@ internal const val SUBSONIC_REQUEST_FAILED = "Request failed."
 /** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */
 class SubsonicException(
     message: String,
-    val status: Int? = null,
+    status: Int? = null,
     /**
      * The server answered in JSON, but not in Subsonic's envelope — what
      * Bandcamp sends for an endpoint it doesn't have (`{"error":true,
@@ -71,7 +71,7 @@ class SubsonicException(
      */
     val envelope: Boolean = false,
     cause: Throwable? = null,
-) : Exception(message, cause) {
+) : ServerException(message, status, cause) {
     /**
      * The server has no such endpoint — as opposed to having one and refusing.
      *
@@ -83,6 +83,18 @@ class SubsonicException(
      * can throw.
      */
     val endpointMissing: Boolean get() = (notSubsonic && !notJson) || status == 404 || status == 501
+
+    override fun writeResult(): WriteResult? = when {
+        // A portal's or a proxy's page: the server itself was never asked.
+        notJson -> WriteResult.Unreachable(UNREACHABLE)
+        endpointMissing -> WriteResult.Refused(CANT_DO_THAT)
+        code == 40 || code == 41 || code == 44 -> WriteResult.Refused("The server refused the login")
+        code == 50 -> WriteResult.Refused("The server doesn't allow that")
+        code == 70 -> WriteResult.Refused("The server doesn't have that")
+        else -> null
+    }
+
+    override val refusalWords: String get() = "The server said no"
 }
 
 /**

@@ -88,25 +88,11 @@ private const val SHOWN_MESSAGE_MAX = 60
  */
 internal fun writeResultOf(e: Exception): WriteResult {
     if (e is RefusedWrite) return WriteResult.Refused(e.message ?: CANT_DO_THAT)
-    if (e is SubsonicException) {
-        // A portal's or a proxy's page: the server itself was never asked.
-        if (e.notJson) return WriteResult.Unreachable(UNREACHABLE)
-        if (e.endpointMissing) return WriteResult.Refused(CANT_DO_THAT)
-        when (e.code) {
-            40, 41, 44 -> return WriteResult.Refused("The server refused the login")
-            50 -> return WriteResult.Refused("The server doesn't allow that")
-            70 -> return WriteResult.Refused("The server doesn't have that")
-        }
-    }
+    if (e is ServerException) e.writeResult()?.let { return it }
     if (e is java.io.IOException || e is kotlinx.serialization.SerializationException) {
         return WriteResult.Unreachable(UNREACHABLE)
     }
-    val status = when (e) {
-        is SubsonicException -> e.status
-        is PlexException -> e.status
-        is JellyfinException -> e.status
-        else -> null
-    }
+    val status = (e as? ServerException)?.status
     return when (status) {
         // Cloudflare's own codes for an origin that isn't answering behind it.
         in 520..529 -> WriteResult.Unreachable("Your server isn't responding ($status)")
@@ -116,7 +102,7 @@ internal fun writeResultOf(e: Exception): WriteResult {
         in 400..499 -> WriteResult.Refused("The server said $status")
         else -> WriteResult.Refused(
             e.message?.takeIf { it.isNotBlank() && it.length < SHOWN_MESSAGE_MAX }
-                ?: if (e is SubsonicException) "The server said no" else "Couldn't save",
+                ?: (e as? ServerException)?.refusalWords ?: "Couldn't save",
         )
     }
 }

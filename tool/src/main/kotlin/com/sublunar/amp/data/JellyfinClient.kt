@@ -1025,4 +1025,4 @@ internal fun JellyfinItem.toTrack(): Track = Track(
 )
 
 /** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */
-class JellyfinException(message: String, val status: Int? = null) : Exception(message)
+class JellyfinException(message: String, status: Int? = null) : ServerException(message, status)

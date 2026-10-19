@@ -143,11 +143,7 @@ class Reachability(
  * than it is the server.
  */
 internal fun answeredBy(e: Exception): Boolean {
-    val status = when (e) {
-        is SubsonicException -> e.status
-        is PlexException -> e.status
-        is JellyfinException -> e.status
-        else -> return e !is kotlinx.serialization.SerializationException
-    }
+    if (e !is ServerException) return e !is kotlinx.serialization.SerializationException
+    val status = e.status
     return status == null || status !in 500..599
 }

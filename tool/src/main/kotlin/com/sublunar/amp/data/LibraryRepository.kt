@@ -2623,12 +2623,7 @@ internal fun syncErrorMessage(e: Exception): String {
     // it. This used to scrape any three-digit number out of the message —
     // and a timeout's message names the URL it was fetching, whose
     // `Container-Size=500` read as "the server had an error (500)".
-    val code = when (e) {
-        is SubsonicException -> e.status
-        is PlexException -> e.status
-        is JellyfinException -> e.status
-        else -> null
-    }
+    val code = (e as? ServerException)?.status
     if (code == null && e is java.io.IOException) return "Couldn't reach the server"
     return when {
         code == null -> e.message?.takeIf { it.length < 60 } ?: "Couldn't reach the server"
