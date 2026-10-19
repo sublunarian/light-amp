@@ -7,18 +7,24 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * Each kind of source keeps to its own folder.
+ * Each kind of source keeps to its own folder, and so does each family of
+ * outputs the phone offers itself.
  *
  * Nothing outside source/<kind>/ names com.sublunar.amp.source.<kind>, in an
  * import or written out in full. The registry may, to import each kind's
  * provider and nothing else of it, and so may the files in ALLOWED, each
- * saying why and what removes it. Kotlin's `internal` is module-wide and Amp
- * is one module, so this test is the fence. It reads the sources as text, as
- * Light's plugin does, and skips the same comment lines.
+ * saying why and what removes it. EXTRA_FENCES puts other folders behind the
+ * same fence, each with its own registry: DLNA's, which only Outputs may
+ * import its family from. Kotlin's `internal` is module-wide and Amp is one
+ * module, so this test is the fence. It reads the sources as text, as Light's
+ * plugin does, and skips the same comment lines.
  *
  * Nor does a file outside a kind's folder name that kind's SourceKind, beyond
  * KIND_ALLOWED. Testing a source's kind needs no import, so the fence can't
  * see it, and a branch per kind is what the providers replaced.
+ *
+ * And a folder in KEPT_APART names nothing of the package it is kept from:
+ * a speaker plays the address it is handed, whichever kind of source made it.
  */
 class SourceBoundaryTest {
 
@@ -33,6 +39,12 @@ class SourceBoundaryTest {
     fun `nothing outside a kind's folder names its SourceKind`() {
         val found = kindViolations(mainTree(), KIND_ALLOWED)
         if (found.isNotEmpty()) fail(kindReport(found))
+    }
+
+    @Test
+    fun `a folder kept apart from a package never names it`() {
+        val found = apartViolations(mainTree())
+        assertEquals(emptyList(), found.map { "${it.path}:${it.line} names ${it.fence}: ${it.code}" })
     }
 
     @Test
@@ -61,14 +73,13 @@ class SourceBoundaryTest {
     }
 
     @Test
-    fun `every protocol folder has its provider in the registry`() {
+    fun `every fenced folder is listed in its registry`() {
         val files = mainTree()
-        val registry = files.single { it.path == REGISTRY }.text
-        val unlisted = fences(files).filter { it.registered }.filterNot { fence ->
-            Regex("^import\\s+" + Regex.escape(fence.pkg) + "\\.\\w+Provider\\s*\$", RegexOption.MULTILINE)
-                .containsMatchIn(registry)
+        val unlisted = fences(files).filterNot { fence ->
+            val registry = files.single { it.path == fence.registry }.text
+            Regex("^" + fence.entryImport.pattern + "\\s*\$", RegexOption.MULTILINE).containsMatchIn(registry)
         }
-        assertEquals(emptyList(), unlisted.map { "${it.folder} has no provider imported in $REGISTRY" })
+        assertEquals(emptyList(), unlisted.map { "${it.folder} has no ${it.entry} imported in ${it.registry}" })
     }
 
     @Test
@@ -99,13 +110,28 @@ class SourceBoundaryTest {
                 ),
             ),
             KtFile("ui/Misfiled.kt", lines("package com.sublunar.amp.source.plex")),
+            KtFile(
+                OUTPUTS,
+                lines(
+                    "package com.sublunar.amp.playback.output",
+                    "",
+                    "import com.sublunar.amp.playback.output.dlna.DlnaFamily",
+                    "import com.sublunar.amp.playback.output.dlna.DlnaCast",
+                ),
+            ),
+            KtFile(
+                "ui/screens/Speakers.kt",
+                lines("package com.sublunar.amp.ui.screens", "", "import com.sublunar.amp.playback.output.dlna.DlnaFamily"),
+            ),
         )
         val caught = listOf(
             "data/Bar.kt:3",
+            "playback/output/Outputs.kt:4",
             "source/Providers.kt:4",
             "source/jellyfin/JellyfinClient.kt:3",
             "ui/Misfiled.kt:1",
             "ui/screens/Foo.kt:4",
+            "ui/screens/Speakers.kt:3",
         )
         assertEquals(caught, violations(files, emptyList()).map { "${it.path}:${it.line}" }.sorted())
 
@@ -133,6 +159,25 @@ class SourceBoundaryTest {
             kindViolations(kinds, listOf(Allowance("ui/screens/Foo.kt", "plex", "a test")))
                 .map { "${it.path}:${it.line}" }.sorted(),
         )
+
+        val apart = listOf(
+            KtFile(
+                "playback/output/dlna/DlnaOutput.kt",
+                lines(
+                    "package com.sublunar.amp.playback.output.dlna",
+                    "",
+                    "import com.sublunar.amp.data.Track",
+                    "import com.sublunar.amp.source.Providers",
+                    "val c = com.sublunar.amp.source.plex.PlexClient(\"\")",
+                    "// Unlike com.sublunar.amp.source.plex, which steers its players itself",
+                ),
+            ),
+            KtFile("data/Track.kt", lines("package com.sublunar.amp.data", "", "import com.sublunar.amp.source.Providers")),
+        )
+        assertEquals(
+            listOf("playback/output/dlna/DlnaOutput.kt:4", "playback/output/dlna/DlnaOutput.kt:5"),
+            apartViolations(apart).map { "${it.path}:${it.line}" },
+        )
     }
 
     @Test
@@ -149,6 +194,19 @@ class SourceBoundaryTest {
                     "",
                     "import com.sublunar.amp.source.local.LocalProvider",
                     "import com.sublunar.amp.source.plex.PlexProvider",
+                ),
+            ),
+            KtFile(
+                OUTPUTS,
+                lines("package com.sublunar.amp.playback.output", "", "import com.sublunar.amp.playback.output.dlna.DlnaFamily"),
+            ),
+            KtFile(
+                "playback/output/dlna/DlnaOutput.kt",
+                lines(
+                    "package com.sublunar.amp.playback.output.dlna",
+                    "",
+                    "import com.sublunar.amp.playback.output.OutputHost",
+                    "import com.sublunar.amp.data.Track",
                 ),
             ),
             KtFile(
@@ -175,7 +233,23 @@ class SourceBoundaryTest {
     /** A Kotlin file, by its path below com/sublunar/amp. */
     private data class KtFile(val path: String, val text: String)
 
-    private data class Fence(val name: String, val folder: String, val pkg: String, val registered: Boolean)
+    /**
+     * A folder only its own files may name, but for [registry], which may
+     * import its one [entry] from it: a kind's provider, a family of outputs.
+     */
+    private data class Fence(
+        val name: String,
+        val folder: String,
+        val pkg: String,
+        val registry: String,
+        val entry: String,
+        val isKind: Boolean,
+    ) {
+        val entryImport get() = Regex("import\\s+" + Regex.escape(pkg) + "\\.\\w+" + entry)
+
+        /** Whether [crossing] is the registry importing the entry: the one way in. */
+        fun admits(crossing: Crossing) = crossing.path == registry && entryImport.matches(crossing.code)
+    }
 
     private data class Crossing(val path: String, val line: Int, val fence: String, val code: String)
 
@@ -183,12 +257,27 @@ class SourceBoundaryTest {
         fun covers(crossing: Crossing) = crossing.path == path && crossing.fence == fence
     }
 
+    /** A folder, and a package nothing in it may name, with why. */
+    private class Apart(val folder: String, val pkg: String, val why: String)
+
     private companion object {
         const val ROOT_PACKAGE = "com.sublunar.amp"
         const val REGISTRY = "source/Providers.kt"
+        const val OUTPUTS = "playback/output/Outputs.kt"
 
-        /** Fences outside source/. Step 3 adds Fence("dlna", "playback/output/dlna/", "com.sublunar.amp.playback.output.dlna", registered = false). */
-        val EXTRA_FENCES: List<Fence> = emptyList()
+        /** Fences outside source/, each with its own registry. */
+        val EXTRA_FENCES: List<Fence> = listOf(
+            Fence("dlna", "playback/output/dlna/", "$ROOT_PACKAGE.playback.output.dlna", OUTPUTS, "Family", isKind = false),
+        )
+
+        /** Folders that may not name a package at all, each with why. */
+        val KEPT_APART: List<Apart> = listOf(
+            Apart(
+                "playback/output/dlna/",
+                "$ROOT_PACKAGE.source",
+                "a speaker plays the address it is handed, whichever kind of source made it",
+            ),
+        )
 
         /** Files outside a protocol's folder that may name its package, each with why and what removes it. */
         val ALLOWED: List<Allowance> = listOf(
@@ -201,6 +290,11 @@ class SourceBoundaryTest {
                 "ui/screens/OutputScreen.kt",
                 "plex",
                 "lists Plex players as outputs; goes behind the Output contract (step 3)",
+            ),
+            Allowance(
+                "ui/screens/OutputScreen.kt",
+                "dlna",
+                "lists DLNA speakers by their family; goes when the page lists every family without naming one (step 3d)",
             ),
         )
 
@@ -259,7 +353,8 @@ class SourceBoundaryTest {
                 .map { it[1] }
                 .distinct()
                 .sorted()
-                .map { Fence(it, "source/$it/", "$ROOT_PACKAGE.source.$it", registered = true) } + EXTRA_FENCES
+                .map { Fence(it, "source/$it/", "$ROOT_PACKAGE.source.$it", REGISTRY, "Provider", isKind = true) } +
+                EXTRA_FENCES
 
         /** Each line Light's plugin reads as code, by number and trimmed: all but the comment lines it skips. */
         fun codeLines(file: KtFile): List<Pair<Int, String>> =
@@ -279,23 +374,33 @@ class SourceBoundaryTest {
             }
         }
 
-        /** Lines naming a fence's package: an import, a wildcard, an alias, a name written out in full, a package line. */
+        /** A line naming [pkg]: an import, a wildcard, an alias, a name written out in full, a package line. */
+        fun naming(pkg: String) = Regex("(?<![\\w.])" + Regex.escape(pkg) + "(?!\\w)")
+
+        /** Lines naming a fence's package from outside its folder. */
         fun crossings(files: List<KtFile>, fences: List<Fence>): List<Crossing> =
-            crossings(files, fences) { Regex("(?<![\\w.])" + Regex.escape(it.pkg) + "(?!\\w)") }
+            crossings(files, fences) { naming(it.pkg) }
 
         /** Lines naming a kind's SourceKind constant, for each fence that is a kind of source. */
         fun kindCrossings(files: List<KtFile>, fences: List<Fence>): List<Crossing> =
-            crossings(files, fences.filter { it.registered }) { Regex("(?<!\\w)SourceKind\\." + it.name.uppercase() + "(?!\\w)") }
+            crossings(files, fences.filter { it.isKind }) { Regex("(?<!\\w)SourceKind\\." + it.name.uppercase() + "(?!\\w)") }
 
         fun violations(files: List<KtFile>, allowed: List<Allowance>): List<Crossing> {
             val fences = fences(files)
-            val providerImports = fences.filter { it.registered }.associate {
-                it.name to Regex("import\\s+" + Regex.escape(it.pkg) + "\\.\\w+Provider")
-            }
             return crossings(files, fences)
-                .filterNot { c -> c.path == REGISTRY && providerImports[c.fence]?.matches(c.code) == true }
+                .filterNot { c -> fences.any { it.name == c.fence && it.admits(c) } }
                 .filterNot { c -> allowed.any { it.covers(c) } }
         }
+
+        /** Lines in a KEPT_APART folder naming the package it is kept from. */
+        fun apartViolations(files: List<KtFile>): List<Crossing> =
+            KEPT_APART.flatMap { rule ->
+                val names = naming(rule.pkg)
+                files.filter { it.path.startsWith(rule.folder) }.flatMap { file ->
+                    codeLines(file).filter { (_, code) -> names.containsMatchIn(code) }
+                        .map { (number, code) -> Crossing(file.path, number, rule.pkg, code) }
+                }
+            }
 
         fun kindViolations(files: List<KtFile>, allowed: List<Allowance>): List<Crossing> =
             kindCrossings(files, fences(files)).filterNot { c -> allowed.any { it.covers(c) } }
@@ -309,15 +414,15 @@ class SourceBoundaryTest {
         fun report(found: List<Crossing>, fences: List<Fence>): String {
             val reached = fences.filter { fence -> found.any { it.fence == fence.name } }
             val only = reached.joinToString("\n") { fence ->
-                "Only ${fence.folder} may name ${fence.pkg}" +
-                    if (fence.registered) ", and $REGISTRY may import its provider." else "."
+                "Only ${fence.folder} may name ${fence.pkg}, and ${fence.registry} may import its ${fence.entry.lowercase()}."
             }
             return "Protocol folders are fenced, and ${found.size} " +
                 (if (found.size == 1) "line reaches" else "lines reach") + " into one from outside:\n\n" +
                 listing(found) + "\n\n" + only + "\n" +
-                "Reach a protocol through Providers, move what two protocols share up to\n" +
-                "com.sublunar.amp.source, or, for a known leftover, add an Allowance to\n" +
-                "SourceBoundaryTest.ALLOWED saying why it is there and what removes it."
+                "Reach a protocol through its registry, move what two protocols share up to\n" +
+                "com.sublunar.amp.source or com.sublunar.amp.playback.output, or, for a known\n" +
+                "leftover, add an Allowance to SourceBoundaryTest.ALLOWED saying why it is\n" +
+                "there and what removes it."
         }
 
         fun kindReport(found: List<Crossing>): String =

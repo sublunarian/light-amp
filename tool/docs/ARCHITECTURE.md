@@ -22,7 +22,9 @@ source/                one folder per kind of library, and what they share
 data/                  the app's own models, settings, storage, downloads, the network wall
   db/                  Room: one database file per source
 
-playback/              the player, the queue, casting (DLNA in DlnaCast.kt)
+playback/              the player and the queue: this phone's own playback
+  output/              the slot every control talks to while the sound is elsewhere
+    dlna/              DLNA speakers: discovery, the SOAP calls, the cast
 art/                   artwork fetching, decoding and caching
 ui/components/         the shared kit — rows, headers, scroll furniture
 ui/screens/            one file per screen, plus the tabbed shell
@@ -81,12 +83,15 @@ that is the only way the app reaches them. Their track ids name the file
 (`PhoneFiles`, in `data/`), because playback, covers and downloads have to tell
 a phone file from a server's track whichever source is being browsed.
 
-**`PlaybackController`** owns the player, the queue, position and duration, and
-the cast session. DLNA and Plex Companion casting each sit behind their own
-banner comment. DLNA itself — discovery, the SOAP calls — is `DlnaCast`, beside
-it in `playback/`, Amp's own code rather than an SDK patch. Plex Companion's
+**`PlaybackController`** owns the player, the queue, position and duration.
+While the sound is somewhere else, every control goes to the current **output**
+instead (`playback/output/Output.kt`); none means this phone. An `Output` steers
+one far end and keeps the controller's state true through `OutputHost`, so the
+screens read the same flows whoever is playing. DLNA is one, in
+`playback/output/dlna` — discovery, the SOAP calls (`DlnaCast`) and the cast —
+listed in `Outputs`, Amp's own code rather than an SDK patch. Plex Companion's
 discovery and listener live in `source/plex/companion`, and its calls are on
-`PlexClient`; the cast session itself is still here for now.
+`PlexClient`; its cast session is still in the controller for now.
 
 **`ui/screens`** is one file per screen. `LibraryShell` is the tabbed root;
 `BootScreen` hosts it and decides what to show while the library loads.

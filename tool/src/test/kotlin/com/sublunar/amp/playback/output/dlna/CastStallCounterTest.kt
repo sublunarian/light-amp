@@ -1,4 +1,4 @@
-package com.sublunar.amp.playback
+package com.sublunar.amp.playback.output.dlna
 
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

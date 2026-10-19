@@ -1,4 +1,4 @@
-package com.sublunar.amp.playback
+package com.sublunar.amp.playback.output.dlna
 
 /**
  * How long a cast renderer has gone without being seen to play.

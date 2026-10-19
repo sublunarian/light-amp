@@ -228,8 +228,9 @@ cannot reach a submitted build.
 
 DLNA casting was never something the sandbox blocked: it only uses `java.net`
 and coroutines, which the plugin allows, just like Amp's own Plex discovery. It
-now lives in `tool/.../playback/DlnaCast.kt` and ships in store builds. Its
-network switch, `DlnaCast.allowsNetwork`, is still wired to `LinkRules.mayUseLan`.
+now lives in `tool/.../playback/output/dlna/DlnaCast.kt` and ships in store
+builds. Its network switch, `DlnaCast.allowsNetwork`, is still wired to
+`LinkRules.mayUseLan`, by `DlnaFamily.install`.
 
 
 ## Seeing them as a diff

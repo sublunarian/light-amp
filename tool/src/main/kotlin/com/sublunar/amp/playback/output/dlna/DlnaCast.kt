@@ -1,4 +1,4 @@
-package com.sublunar.amp.playback
+package com.sublunar.amp.playback.output.dlna
 
 import java.io.IOException
 import java.net.DatagramPacket

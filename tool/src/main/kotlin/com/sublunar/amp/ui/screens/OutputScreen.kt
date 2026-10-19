@@ -40,8 +40,9 @@ import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.sublunar.amp.source.plex.PlexPlayer
-import com.sublunar.amp.playback.DlnaRenderer
 import com.sublunar.amp.playback.PlaybackController
+import com.sublunar.amp.playback.output.OutputTarget
+import com.sublunar.amp.playback.output.dlna.DlnaFamily
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
@@ -55,7 +56,7 @@ import kotlin.math.roundToInt
  * The volume fader drives the phone's own media volume. Speaker-vs-Bluetooth
  * routing is LightOS's job (a tool has no access to the audio-routing APIs), so
  * that part of the list is informational. Network speakers found over DLNA *can*
- * be switched to (see `DlnaCast`), and so can other Plex players (an Apple TV's
+ * be switched to (see `DlnaFamily`), and so can other Plex players (an Apple TV's
  * Plex app, say) when the active source is Plex, over Plex's own Companion
  * protocol.
  */
@@ -68,10 +69,10 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
     @Composable
     override fun Content() {
         val volume by App.playback.volume.collectAsState()
-        val casting by App.playback.castRenderer.collectAsState()
+        val active by App.playback.active.collectAsState()
         val plexCasting by App.playback.plexPlayer.collectAsState()
         val plexVolume by App.playback.plexVolume.collectAsState()
-        var renderers by remember { mutableStateOf<List<DlnaRenderer>>(emptyList()) }
+        var renderers by remember { mutableStateOf<List<OutputTarget>>(emptyList()) }
         var plexPlayers by remember { mutableStateOf<List<PlexPlayer>>(emptyList()) }
         var scanning by remember { mutableStateOf(true) }
 
@@ -83,7 +84,7 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
         LaunchedEffect(scanToken) {
             scanning = true
             plexPlayers = App.playback.findPlexPlayers()
-            renderers = App.playback.findCastDevices()
+            renderers = App.playback.find(DlnaFamily)
             scanning = false
         }
 
@@ -125,11 +126,8 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
                         OutputRow(
                             AppIcons.Smartphone,
                             "This device",
-                            selected = casting == null && plexCasting == null,
-                        ) {
-                            if (casting != null) App.playback.stopCasting()
-                            if (plexCasting != null) App.playback.stopPlexCasting()
-                        }
+                            selected = active == null && plexCasting == null,
+                        ) { App.playback.playHere() }
                     }
                     item {
                         OutputRow(AppIcons.Bluetooth, "Bluetooth", selected = false, enabled = false)
@@ -137,15 +135,16 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
 
                     item { SectionLabel(if (scanning) "Network — searching…" else "Network") }
                     items(renderers, key = { it.id }) { renderer ->
+                        val selected = active?.family === DlnaFamily && active?.target?.id == renderer.id
                         OutputRow(
                             icon = AppIcons.Cast,
                             label = renderer.name,
-                            selected = casting?.id == renderer.id,
+                            selected = selected,
                         ) {
-                            if (casting?.id == renderer.id) {
-                                App.playback.stopCasting()
+                            if (selected) {
+                                App.playback.playHere()
                             } else {
-                                App.playback.castTo(renderer)
+                                App.playback.castTo(DlnaFamily, renderer)
                             }
                         }
                     }

@@ -86,10 +86,10 @@ minutes, where the spike held on indefinitely.
 ### Casting — not a gap (since 15 Oct 2026)
 
 - **Need:** play to a speaker on the network.
-- **Now:** `DlnaCast` in the tool — SSDP discovery and SOAP control written by
-  hand. It only needs `java.net`, which the sandbox allows, so it ships in store
-  builds. It used to sit in the SDK as a spike on the mistaken belief that a tool
-  couldn't do this.
+- **Now:** `DlnaCast` in the tool (`playback/output/dlna/`) — SSDP discovery
+  and SOAP control written by hand. It only needs `java.net`, which the sandbox
+  allows, so it ships in store builds. It used to sit in the SDK as a spike on
+  the mistaken belief that a tool couldn't do this.
 
 ### Allow-listed libraries in the store build
 

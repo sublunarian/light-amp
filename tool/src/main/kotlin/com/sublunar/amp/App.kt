@@ -43,9 +43,9 @@ import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.db.LibraryDatabase
 import com.sublunar.amp.data.db.libraryDatabaseName
-import com.sublunar.amp.playback.DlnaCast
 import com.sublunar.amp.playback.LateUnbindGuard
 import com.sublunar.amp.playback.PlaybackController
+import com.sublunar.amp.playback.output.Outputs
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.LightWork
@@ -613,10 +613,10 @@ object App {
             // own URLs, which the SDK patch below still stands in front of.
             streamProxy.start(scope)
             NetworkGate.isMetered = { Connectivity.network.value.let { !it.isConnected || it.isMetered } }
-            // DLNA is a Wi-Fi feature, full stop: no search, no cast, no probe
-            // and no control call anywhere else. Asked of the system each time
-            // — a cast is a handful of calls a second, not a stream of bytes.
-            DlnaCast.allowsNetwork = { rulesNow().mayUseLan }
+            // Speakers on the network are reached on a stack of their own,
+            // outside the wall above, so each family of outputs is held to
+            // the link's rules here — see Outputs.
+            Outputs.install(::rulesNow)
             LightAudioNetworkPolicy.allowsNetwork = ::networkAllowed
             artwork = ArtworkLoader(
                 context.filesDir,
