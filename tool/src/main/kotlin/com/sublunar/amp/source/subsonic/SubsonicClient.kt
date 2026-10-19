@@ -91,6 +91,8 @@ class SubsonicException(
      * the server answered for it in Subsonic's own words.
      */
     val envelope: Boolean = false,
+    /** The login was turned away without a Subsonic code to say so — see [bandcampTurnsLoginAway]. */
+    val loginRefused: Boolean = false,
     cause: Throwable? = null,
 ) : ServerException(message, status, cause) {
     /**
@@ -118,11 +120,23 @@ class SubsonicException(
     override val refusalWords: String get() = "The server said no"
 
     /** 40 is the wrong login, 41 a login that can't use tokens, 44 an API key the server won't take. */
-    override val refusedLogin: Boolean get() = code == 40 || code == 41 || code == 44
+    override val refusedLogin: Boolean get() = loginRefused || code == 40 || code == 41 || code == 44
 
     /** A page where JSON should be is never Subsonic's: see [notJson]. */
     override val fromServer: Boolean get() = !notJson
 }
+
+/**
+ * Whether a failed request is Bandcamp turning the login away.
+ *
+ * It says so with a bare 500 and nothing in it — no Subsonic error, no page —
+ * which from any other server is an error of its own, so only Bandcamp's
+ * address reads it this way. Its ping doesn't check the login at all, so this
+ * is the only place a password changed on Bandcamp's site shows. The sign-in
+ * form reads the same answer the same way when the source is saved.
+ */
+internal fun bandcampTurnsLoginAway(address: String, status: Int, page: Boolean, body: String?): Boolean =
+    status == 500 && !page && body != null && body.isBlank() && isBandcampAddress(address)
 
 /**
  * Navidrome / Subsonic API client. Ported from the React Native `navidrome.ts`.
@@ -265,10 +279,13 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
             // server (a gateway, an auth portal) — not the server's own 500,
             // which is how Bandcamp says "not this login".
             val page = response.contentType()?.match(ContentType.Text.Html) == true
+            val status = response.status.value
+            val body = if (status == 500 && !page) response.bodyAsText() else null
             throw SubsonicException(
-                "Server returned HTTP ${response.status.value}.",
-                response.status.value,
+                "Server returned HTTP $status.",
+                status,
                 notJson = page,
+                loginRefused = bandcampTurnsLoginAway(config.baseUrl, status, page, body),
             )
         }
         val text = response.bodyAsText()

@@ -145,6 +145,7 @@ class Reachability(
 internal fun answeredBy(e: Exception): Boolean {
     if (e !is ServerException) return e !is kotlinx.serialization.SerializationException
     if (!e.fromServer) return false
+    if (e.refusedLogin) return true
     val status = e.status
     return status == null || status !in 500..599
 }
