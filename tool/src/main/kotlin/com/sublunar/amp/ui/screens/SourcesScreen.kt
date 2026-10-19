@@ -20,6 +20,7 @@ import com.sublunar.amp.data.SyncState
 import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
+import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.Providers
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ListScreen
@@ -457,9 +458,9 @@ class SourceDetailScreen(
 
         // Re-checked on every sync, because granting access is what the user
         // goes off to do and coming back is when it should have changed.
-        var access by remember { mutableStateOf(LocalLibrary.Access.GRANTED) }
+        var access by remember { mutableStateOf(PhoneAccess.GRANTED) }
         LaunchedEffect(sync) { access = LocalLibrary.access() }
-        val canRead = access == LocalLibrary.Access.GRANTED
+        val canRead = access == PhoneAccess.GRANTED
         val audioPermission = rememberPermissionRequestLauncher(READ_MEDIA_AUDIO)
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Source") {
@@ -472,7 +473,7 @@ class SourceDetailScreen(
                     item {
                         TextRow(
                             title = "Allow Music Access",
-                            subtitle = if (access == LocalLibrary.Access.BLOCKED_BY_LIGHTOS) {
+                            subtitle = if (access == PhoneAccess.BLOCKED_BY_LIGHTOS) {
                                 "LightOS is blocking it for this tool"
                             } else {
                                 "Needed to read this phone's music folder"

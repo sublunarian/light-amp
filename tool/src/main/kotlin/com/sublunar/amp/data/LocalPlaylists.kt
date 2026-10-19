@@ -1,6 +1,7 @@
 package com.sublunar.amp.data
 
 import android.util.Log
+import com.sublunar.amp.source.PhonePlaylists
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,7 +22,7 @@ import kotlinx.coroutines.withContext
  *
  * Everything here touches the disk, so it all runs on [Dispatchers.IO].
  */
-object LocalPlaylists {
+object LocalPlaylists : PhonePlaylists {
 
     /** Marks a playlist id as a file on this phone. */
     private const val ID_PREFIX = "m3u:"
@@ -52,7 +53,7 @@ object LocalPlaylists {
         return (cleaned.ifBlank { "Playlist" }) + EXTENSION
     }
 
-    suspend fun list(): List<Playlist> = withContext(Dispatchers.IO) {
+    override suspend fun list(): List<Playlist> = withContext(Dispatchers.IO) {
         val files = folder().listFiles()?.filter {
             it.isFile && it.name.endsWith(EXTENSION, ignoreCase = true)
         }.orEmpty()
@@ -71,12 +72,12 @@ object LocalPlaylists {
         }
     }
 
-    suspend fun trackIds(id: String): List<String> = withContext(Dispatchers.IO) {
+    override suspend fun trackIds(id: String): List<String> = withContext(Dispatchers.IO) {
         readIds(fileOf(id) ?: return@withContext emptyList())
     }
 
     /** Returns the new playlist's id, or null if it couldn't be written. */
-    suspend fun create(name: String, trackIds: List<String>): String? =
+    override suspend fun create(name: String, trackIds: List<String>): String? =
         withContext(Dispatchers.IO) {
             val dir = folder()
             if (!dir.isDirectory && !dir.mkdirs()) {
@@ -99,7 +100,7 @@ object LocalPlaylists {
      * Whether the playlist has the name now. False when another playlist
      * already has it: the name is the file, and taking it would replace that one.
      */
-    suspend fun rename(id: String, name: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun rename(id: String, name: String): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
         if (!file.isFile) return@withContext false
         val target = File(file.parentFile, fileNameFor(name))
@@ -109,14 +110,14 @@ object LocalPlaylists {
     }
 
     /** Whether the playlist is gone — one already gone, by another app or over adb, included. */
-    suspend fun delete(id: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun delete(id: String): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
         if (!file.exists()) return@withContext true
         file.delete().also { if (!it) Log.w(TAG, "couldn't delete ${file.name}") }
     }
 
     /** Whether the song reached the file. */
-    suspend fun add(id: String, trackId: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun add(id: String, trackId: String): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
         if (!file.isFile) return@withContext false
         // Appending duplicates is allowed on purpose: a playlist is an ordered
@@ -125,7 +126,7 @@ object LocalPlaylists {
     }
 
     /** Whether the edit reached the file — callers take it back off the screen if it didn't. */
-    suspend fun removeAt(id: String, at: Map<Int, String>): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun removeAt(id: String, at: Map<Int, String>): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
         val ids = readIds(file)
         // See [MusicServer.removeFromPlaylistAt]: each position has to hold the song expected.
@@ -134,7 +135,7 @@ object LocalPlaylists {
     }
 
     /** Whether the edit reached the file — see [removeAt]. */
-    suspend fun reorder(id: String, orderedIds: List<String>): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun reorder(id: String, orderedIds: List<String>): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
         writeIds(file, orderedIds)
     }

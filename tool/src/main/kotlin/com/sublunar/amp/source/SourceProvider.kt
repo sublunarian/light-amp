@@ -42,6 +42,9 @@ interface SourceProvider {
      * whatever happens here, and nothing waits on a server that may be gone.
      */
     suspend fun signOut(source: MusicSource) {}
+
+    /** Music that is files on this phone — see [PhoneLibrary]. Null for every kind with a server. */
+    val phoneLibrary: PhoneLibrary? get() = null
 }
 
 /** What a kind of source can do — read through the matching `supports…` on MusicSource, which is what the screens ask. */

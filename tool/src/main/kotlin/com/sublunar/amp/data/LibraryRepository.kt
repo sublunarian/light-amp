@@ -10,6 +10,9 @@ import com.sublunar.amp.data.db.TrackEntity
 import com.sublunar.amp.data.db.toAlbum
 import com.sublunar.amp.data.db.toEntity
 import com.sublunar.amp.data.db.toTrack
+import com.sublunar.amp.source.PhoneLibrary
+import com.sublunar.amp.source.PhonePlaylists
+import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.plex.plexClientIdentifier
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -758,21 +761,22 @@ class LibraryRepository(
      * play the parts of them that are downloaded.
      */
     /**
-     * Whether playlists live on this phone rather than on a server.
+     * The playlists, when they live on this phone rather than on a server.
      *
-     * The local source has no server to ask, exactly as with the library scan —
-     * see [runLocalScan]. Playlists are files in the music folder instead; see
-     * [LocalPlaylists].
+     * Music on the phone has no server to ask, exactly as with the library
+     * scan — see [runLocalScan]. Its playlists are files in the music folder
+     * instead; see [PhonePlaylists].
      */
-    private suspend fun playlistsAreLocal(): Boolean =
-        settings.activeSource.first()?.kind == SourceKind.LOCAL
+    private suspend fun phonePlaylists(): PhonePlaylists? =
+        settings.activeSource.first()?.phoneLibrary?.playlists
 
     suspend fun refreshPlaylists() {
         val sourceId = settings.activeSource.first()?.id ?: return
-        if (playlistsAreLocal()) {
+        val phone = phonePlaylists()
+        if (phone != null) {
             // Read straight off the disk every time: the files are the truth,
             // and another app (or an adb push) may have changed them.
-            _playlists.value = LocalPlaylists.list()
+            _playlists.value = phone.list()
             return
         }
         if (!metadataAllowed()) return
@@ -839,8 +843,9 @@ class LibraryRepository(
     /** The songs, and whether they're the playlist entire rather than what could be recovered. */
     private suspend fun fetchPlaylistTracks(id: String): PlaylistView {
         awaitPlaylistWrites()
-        if (playlistsAreLocal()) {
-            val ids = LocalPlaylists.trackIds(id)
+        val phone = phonePlaylists()
+        if (phone != null) {
+            val ids = phone.trackIds(id)
             val tracks = getTracksByIds(ids)
             return PlaylistView(tracks, tracks.size == ids.size)
         }
@@ -916,7 +921,7 @@ class LibraryRepository(
     }
 
     private suspend fun primePlaylistOnce(id: String) {
-        if (playlistsAreLocal() || serverClient.value == null) {
+        if (phonePlaylists() != null || serverClient.value == null) {
             playlistTracks(id)
             return
         }
@@ -941,7 +946,7 @@ class LibraryRepository(
         // and all it buys is download badges and the download top-up. On a
         // metered link outside Make it Hurt nothing can be downloaded anyway,
         // so it waits for Wi-Fi. Opening a playlist still fetches that one.
-        if (!bulkAllowed() && !playlistsAreLocal()) return@coroutineScope
+        if (!bulkAllowed() && phonePlaylists() == null) return@coroutineScope
         val gate = Semaphore(SYNC_CONCURRENCY)
         ids.filterNot { it in _playlistTrackIds.value }
             .map { id ->
@@ -973,8 +978,9 @@ class LibraryRepository(
      * and answer how it went, for a caller with more to do after.
      */
     suspend fun createPlaylist(name: String, trackIds: List<String>): WriteResult = playlistMutex.withLock {
-        val result = if (playlistsAreLocal()) {
-            fileWrite(LocalPlaylists.create(name.trim(), trackIds) != null)
+        val phone = phonePlaylists()
+        val result = if (phone != null) {
+            fileWrite(phone.create(name.trim(), trackIds) != null)
         } else {
             serverWrite { it.createPlaylist(name.trim(), trackIds) }
         }
@@ -983,8 +989,9 @@ class LibraryRepository(
     }
 
     suspend fun renamePlaylist(id: String, name: String): WriteResult = playlistWrite {
-        val result = if (playlistsAreLocal()) {
-            fileWrite(LocalPlaylists.rename(id, name.trim()))
+        val phone = phonePlaylists()
+        val result = if (phone != null) {
+            fileWrite(phone.rename(id, name.trim()))
         } else {
             serverWrite { it.renamePlaylist(id, name.trim()) }
         }
@@ -993,8 +1000,9 @@ class LibraryRepository(
     }
 
     suspend fun deletePlaylist(id: String): WriteResult = playlistWrite {
-        val result = if (playlistsAreLocal()) {
-            fileWrite(LocalPlaylists.delete(id))
+        val phone = phonePlaylists()
+        val result = if (phone != null) {
+            fileWrite(phone.delete(id))
         } else {
             serverWrite { it.deletePlaylist(id) }
         }
@@ -1008,8 +1016,9 @@ class LibraryRepository(
      * contract hold across calls, not just within a single caller's loop.
      */
     suspend fun addToPlaylist(id: String, trackId: String): WriteResult = playlistWrite {
-        val result = if (playlistsAreLocal()) {
-            fileWrite(LocalPlaylists.add(id, trackId))
+        val phone = phonePlaylists()
+        val result = if (phone != null) {
+            fileWrite(phone.add(id, trackId))
         } else {
             serverWrite { it.addToPlaylist(id, trackId) }
         }
@@ -1047,8 +1056,9 @@ class LibraryRepository(
      * a false.
      */
     suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean = playlistWrite {
-        if (playlistsAreLocal()) {
-            LocalPlaylists.removeAt(id, at)
+        val phone = phonePlaylists()
+        if (phone != null) {
+            phone.removeAt(id, at)
         } else {
             // The client's own answer, not merely "it didn't throw": some of them
             // catch their transport errors internally, so isSuccess here would be
@@ -1061,8 +1071,9 @@ class LibraryRepository(
 
     /** Whether the new order landed — see [removeFromPlaylistAt]. */
     suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = playlistWrite {
-        if (playlistsAreLocal()) {
-            LocalPlaylists.reorder(id, orderedSongIds)
+        val phone = phonePlaylists()
+        if (phone != null) {
+            phone.reorder(id, orderedSongIds)
         } else {
             // See removeFromPlaylistAt: the client's answer, not the absence of a throw.
             runCatching { serverClient.value?.reorderPlaylist(id, orderedSongIds) ?: false }
@@ -1188,8 +1199,9 @@ class LibraryRepository(
         // its whole run.
         val dao = daos.value ?: return releaseSyncClaim()
         // The phone's own music has no server to ask; it is read off the disk.
-        if (source?.kind == SourceKind.LOCAL) {
-            runLocalScan(dao, source.id)
+        val phone = source?.phoneLibrary
+        if (source != null && phone != null) {
+            runLocalScan(dao, source.id, phone)
             return
         }
         // Wi-Fi Only off Wi-Fi means no network — and a sync is hundreds of
@@ -1565,15 +1577,15 @@ class LibraryRepository(
         }.noteOom("sync: server features")
     }
 
-    private suspend fun runLocalScan(dao: LibraryDao, sourceId: String) {
+    private suspend fun runLocalScan(dao: LibraryDao, sourceId: String, phone: PhoneLibrary) {
         _syncState.value = _syncState.value.copy(
             syncing = true,
             error = null,
             phase = "Reading this phone",
         )
         try {
-            val access = LocalLibrary.access()
-            if (access != LocalLibrary.Access.GRANTED) {
+            val access = phone.access()
+            if (access != PhoneAccess.GRANTED) {
                 _syncState.value = SyncState(
                     syncing = false,
                     // Blocked is not "not yet allowed": the prompt the other
@@ -1581,13 +1593,13 @@ class LibraryRepository(
                     // row that sends you round that loop is worse than one
                     // that says where the wall is.
                     error = when (access) {
-                        LocalLibrary.Access.BLOCKED_BY_LIGHTOS -> "LightOS is blocking this tool's music access"
+                        PhoneAccess.BLOCKED_BY_LIGHTOS -> "LightOS is blocking this tool's music access"
                         else -> "Allow music access to read this phone"
                     },
                 )
                 return
             }
-            val scan = LocalLibrary.scan { count ->
+            val scan = phone.scan { count ->
                 _syncState.value = _syncState.value.copy(phase = "$count tracks")
             }
             val coversBefore = coverIdsOrNull(dao)

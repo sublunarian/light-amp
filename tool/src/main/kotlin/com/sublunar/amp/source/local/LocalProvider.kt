@@ -1,5 +1,7 @@
 package com.sublunar.amp.source.local
 
+import com.sublunar.amp.data.LocalLibrary
+import com.sublunar.amp.data.LocalPlaylists
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.ServerFeatures
@@ -9,6 +11,10 @@ import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
 import com.sublunar.amp.source.ConnectionRow
+import com.sublunar.amp.source.PhoneAccess
+import com.sublunar.amp.source.PhoneLibrary
+import com.sublunar.amp.source.PhonePlaylists
+import com.sublunar.amp.source.PhoneScan
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
 import com.sublunar.amp.source.SourceUi
@@ -48,6 +54,23 @@ object LocalProvider : SourceProvider {
     override fun createClient(source: MusicSource): MusicServer? = null
 
     override val ui: SourceUi get() = LocalUi
+
+    // A getter: LocalLibrary asks LightOS about access, and loading this
+    // provider must never get as far as that.
+    override val phoneLibrary: PhoneLibrary get() = LocalPhoneLibrary
+}
+
+/** The phone's music folder and its playlists — see [LocalLibrary] and [LocalPlaylists]. */
+internal object LocalPhoneLibrary : PhoneLibrary {
+    override val folderLabel: String get() = LocalLibrary.FOLDER
+
+    override val permission: String get() = LocalLibrary.PERMISSION
+
+    override suspend fun access(): PhoneAccess = LocalLibrary.access()
+
+    override suspend fun scan(onProgress: (Int) -> Unit): PhoneScan = LocalLibrary.scan(onProgress)
+
+    override val playlists: PhonePlaylists get() = LocalPlaylists
 }
 
 private object LocalUi : SourceUi {

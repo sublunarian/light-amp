@@ -1,6 +1,8 @@
 package com.sublunar.amp.data
 
 import android.media.MediaMetadataRetriever
+import com.sublunar.amp.source.PhoneAccess
+import com.sublunar.amp.source.PhoneScan
 import com.thelightphone.sdk.checkPermission
 import com.thelightphone.sdk.hasRuntimePermission
 import com.thelightphone.sdk.shared.LightServiceMethod
@@ -97,13 +99,8 @@ object LocalLibrary {
     /** How deep to walk. Deep enough for Artist/Album/Disc, shallow enough to end. */
     private const val MAX_DEPTH = 6
 
-    data class Scan(val tracks: List<Track>, val albums: List<Album>)
-
     /** The permission that makes any of this readable — see lighttool.toml. */
     const val PERMISSION = "android.permission.READ_MEDIA_AUDIO"
-
-    /** What stands between the app and the music folder, if anything. */
-    enum class Access { GRANTED, NOT_GRANTED, BLOCKED_BY_LIGHTOS }
 
     /**
      * Whether the app may actually read the music folder — and if not, why.
@@ -123,21 +120,21 @@ object LocalLibrary {
      * and sent to a prompt that had nothing to change. Both answers are logged,
      * because a report from such a phone needs them side by side.
      */
-    suspend fun access(): Access {
+    suspend fun access(): PhoneAccess {
         val held = hasRuntimePermission(PERMISSION)
         val lightOs = checkPermission(PERMISSION).asKotlinResult
             .map { it.permissionResult }
             .getOrNull()
         Log.i(TAG, "Music access: grant=${held ?: "unknown"} lightos=${lightOs ?: "no answer"}")
         return when {
-            held == true -> Access.GRANTED
-            held == null && lightOs == LightServiceMethod.GetPermission.Result.Granted -> Access.GRANTED
-            lightOs == LightServiceMethod.GetPermission.Result.BlockedByServer -> Access.BLOCKED_BY_LIGHTOS
-            else -> Access.NOT_GRANTED
+            held == true -> PhoneAccess.GRANTED
+            held == null && lightOs == LightServiceMethod.GetPermission.Result.Granted -> PhoneAccess.GRANTED
+            lightOs == LightServiceMethod.GetPermission.Result.BlockedByServer -> PhoneAccess.BLOCKED_BY_LIGHTOS
+            else -> PhoneAccess.NOT_GRANTED
         }
     }
 
-    suspend fun permitted(): Boolean = access() == Access.GRANTED
+    suspend fun permitted(): Boolean = access() == PhoneAccess.GRANTED
 
     private fun roots(): List<File> =
         ROOTS.map(::File).filter { it.isDirectory }.distinctBy { it.canonicalPath }
@@ -149,7 +146,7 @@ object LocalLibrary {
      * is a few thousand retriever opens, and the user may well walk away from the
      * page that started it.
      */
-    suspend fun scan(onProgress: (Int) -> Unit = {}): Scan = withContext(Dispatchers.IO) {
+    suspend fun scan(onProgress: (Int) -> Unit = {}): PhoneScan = withContext(Dispatchers.IO) {
         // Made once access is granted, so there is somewhere obvious to copy
         // music into rather than a folder the user has to know to create.
         ensureFolder()
@@ -171,7 +168,7 @@ object LocalLibrary {
         } finally {
             runCatching { retriever.release() }
         }
-        Scan(tracks, albumsFrom(tracks))
+        PhoneScan(tracks, albumsFrom(tracks))
     }
 
     private fun collect(dir: File, depth: Int, into: MutableList<File>) {

@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.source.PhoneLibrary
 import com.sublunar.amp.source.Providers
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
@@ -190,6 +191,12 @@ data class MusicSource(
     val provider: SourceProvider get() = Providers.of(kind)
 
     private val capabilities: SourceCapabilities get() = provider.capabilities(features)
+
+    /** The phone's own music, when this source is files on this phone rather than a server. */
+    val phoneLibrary: PhoneLibrary? get() = provider.phoneLibrary
+
+    /** Whether there is a server behind this source — everything but the phone's own music. */
+    val hasServer: Boolean get() = phoneLibrary == null
 
     /**
      * The formats this source can actually serve, the same list its client
