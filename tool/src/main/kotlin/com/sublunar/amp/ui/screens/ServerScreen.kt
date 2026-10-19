@@ -386,7 +386,7 @@ private sealed interface SaveOutcome {
 }
 
 /** What the folders call said about the account, once the ping has settled the address. */
-private enum class LoginVerdict { ACCEPTED, REFUSED, UNCHECKABLE, UNREACHED }
+internal enum class LoginVerdict { ACCEPTED, REFUSED, UNCHECKABLE, UNREACHED }
 
 /**
  * Whether a failed folders call is the account being refused or something
@@ -400,7 +400,7 @@ private enum class LoginVerdict { ACCEPTED, REFUSED, UNCHECKABLE, UNREACHED }
  * a web page where JSON should be — is the network or something in front of
  * the server, and says nothing about the password.
  */
-private fun loginVerdict(error: Throwable?): LoginVerdict {
+internal fun loginVerdict(error: Throwable?): LoginVerdict {
     if (error == null) return LoginVerdict.ACCEPTED
     val server = generateSequence(error) { it.cause }.take(8)
         .filterIsInstance<SubsonicException>().firstOrNull()
@@ -423,7 +423,7 @@ private fun loginVerdict(error: Throwable?): LoginVerdict {
  * sentence that claims only what is known: the address is fine and the login
  * is what was refused. Naming the password outright would be a guess.
  */
-private fun refusedLogin(error: Throwable): String {
+internal fun refusedLogin(error: Throwable): String {
     val server = generateSequence(error) { it.cause }.take(8)
         .filterIsInstance<SubsonicException>().firstOrNull()
     val said = server?.takeIf { it.code != null }?.message
@@ -444,7 +444,7 @@ private fun refusedLogin(error: Throwable): String {
  * Causes are walked because Ktor wraps: the interesting exception is rarely the
  * outermost one.
  */
-private fun explain(error: Throwable?): String {
+internal fun explain(error: Throwable?): String {
     if (error == null) return "Couldn't connect."
     val chain = generateSequence(error) { it.cause }.take(8).toList()
     // Checked before the pass-through below: the client wraps an answer that
