@@ -43,6 +43,7 @@ import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.db.LibraryDatabase
+import com.sublunar.amp.data.db.libraryDatabaseName
 import com.sublunar.amp.playback.DlnaCast
 import com.sublunar.amp.playback.LateUnbindGuard
 import com.sublunar.amp.playback.PlaybackController
@@ -164,14 +165,7 @@ object App {
      */
     private fun databaseFor(source: MusicSource): LibraryDatabase = synchronized(databases) {
         databases.getOrPut(source.id) {
-            // The first server keeps the original file name, so an install from
-            // before sources existed finds its cache rather than syncing afresh.
-            val name = if (source.id == AppSettings.LEGACY_SOURCE_ID) {
-                DB_NAME
-            } else {
-                "$DB_NAME-${source.id}"
-            }
-            lightContext.buildDatabase(LibraryDatabase::class.java, name)
+            lightContext.buildDatabase(LibraryDatabase::class.java, libraryDatabaseName(source.id))
         }
     }
 
@@ -1617,6 +1611,4 @@ object App {
     }
 
     private const val PLAYLIST_PRIME_CONCURRENCY = 6
-
-    private const val DB_NAME = "amp-library.db"
 }

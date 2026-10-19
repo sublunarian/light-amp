@@ -15,6 +15,7 @@ import androidx.room.Transaction
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
 import com.sublunar.amp.data.Album
+import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.forEachTrackPage
 import kotlinx.coroutines.flow.Flow
@@ -575,6 +576,17 @@ interface LibraryDao {
 abstract class LibraryDatabase : RoomDatabase() {
     abstract fun libraryDao(): LibraryDao
 }
+
+private const val LIBRARY_DB_NAME = "amp-library.db"
+
+/**
+ * The Room file a source's library lives in.
+ *
+ * The first server keeps the original file name, so an install from before
+ * sources existed finds its cache rather than syncing afresh.
+ */
+internal fun libraryDatabaseName(sourceId: String): String =
+    if (sourceId == AppSettings.LEGACY_SOURCE_ID) LIBRARY_DB_NAME else "$LIBRARY_DB_NAME-$sourceId"
 
 // --- entity <-> domain ------------------------------------------------------
 
