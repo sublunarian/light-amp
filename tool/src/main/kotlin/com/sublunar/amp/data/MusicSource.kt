@@ -1,5 +1,8 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.source.Providers
+import com.sublunar.amp.source.SourceCapabilities
+import com.sublunar.amp.source.SourceProvider
 import kotlinx.serialization.Serializable
 
 /** A fresh source id: never reused, and it names the source's database file. */
@@ -178,18 +181,24 @@ data class MusicSource(
     val features: ServerFeatures? = null,
 ) {
     /**
-     * The formats this source can actually serve, asked of the client that talks
-     * to it — see [MusicServer.streamFormats], where each server answers for
-     * itself. Read straight off the class rather than from a live client so the
-     * settings screens can offer the right choices for a source that isn't the
-     * one connected. The phone's own music is never transcoded at all.
+     * What this kind of source is and can do — see [SourceProvider].
+     *
+     * A getter, and so is everything read through it: a property with a backing
+     * field would be stored with the source, and would change what two records
+     * being equal means.
      */
-    val streamFormats: List<StreamFormat> get() = when (kind) {
-        SourceKind.SUBSONIC -> SubsonicClient.STREAM_FORMATS
-        SourceKind.PLEX -> PlexClient.STREAM_FORMATS
-        SourceKind.JELLYFIN -> JellyfinClient.STREAM_FORMATS
-        SourceKind.LOCAL -> emptyList()
-    }
+    val provider: SourceProvider get() = Providers.of(kind)
+
+    private val capabilities: SourceCapabilities get() = provider.capabilities(features)
+
+    /**
+     * The formats this source can actually serve, the same list its client
+     * gives — see [MusicServer.streamFormats], where each server answers for
+     * itself. Read from the provider rather than from a live client so the
+     * settings screens can offer the right choices for a source that isn't the
+     * one connected.
+     */
+    val streamFormats: List<StreamFormat> get() = provider.streamFormats
 
     /**
      * Falls back to the original file, never to something lossier: a source
@@ -309,47 +318,27 @@ data class MusicSource(
             null
         }
 
-    // What this kind of source can actually do. Read by the UI so a feature that
-    // can't work is absent rather than present and broken: a heart on a local
-    // file would write a like nothing can store and nothing can restore.
-    /**
-     * Plex has star ratings but no separate favourite, so nothing for a heart
-     * to sync to; Jellyfin has the favourite but not the stars. The two servers
-     * are missing opposite halves of the same idea.
-     */
-    val supportsLikes: Boolean get() = kind == SourceKind.SUBSONIC || kind == SourceKind.JELLYFIN
+    // What this kind of source can actually do, as its provider answers it.
+    // Read by the UI so a feature that can't work is absent rather than present
+    // and broken: a heart on a local file would write a like nothing can store
+    // and nothing can restore.
+    /** A heart that syncs: a favourite of the server's own, which not every kind of server has. */
+    val supportsLikes: Boolean get() = capabilities.likes
 
-    /**
-     * Subsonic's own `setRating`, which not every server that speaks Subsonic
-     * has — asked of this one rather than assumed of the protocol.
-     */
-    val supportsRatings: Boolean get() = when (kind) {
-        SourceKind.SUBSONIC -> implements(ServerFeatures.SET_RATING)
-        SourceKind.PLEX -> true
-        else -> false
-    }
+    /** Star ratings — on a Subsonic server, only where it turned out to have `setRating`. */
+    val supportsRatings: Boolean get() = capabilities.ratings
 
     /**
      * A radio seeded by one song — see [MusicServer.getSimilarSongs]. Every
      * server has one: Subsonic's `getSimilarSongs`, Plex's stations, Jellyfin's
      * instant mix. The phone's own files have no one to ask.
      */
-    val supportsRadio: Boolean get() = when (kind) {
-        SourceKind.LOCAL -> false
-        SourceKind.SUBSONIC -> implements(ServerFeatures.SIMILAR_SONGS)
-        else -> true
-    }
+    val supportsRadio: Boolean get() = capabilities.radio
     /** The phone keeps its own, as m3u8 files — see [LocalPlaylists]. */
     val supportsPlaylists: Boolean get() = true
 
-    /**
-     * Whether a playlist can be started empty and filled later.
-     *
-     * Plex creates a playlist *from* something and has no call for an empty one,
-     * which is why PlexAmp makes you pick the songs first. So "New Playlist" on
-     * its own isn't offered there — filing songs into a new playlist still is.
-     */
-    val supportsEmptyPlaylists: Boolean get() = kind != SourceKind.PLEX
+    /** Whether a playlist can be started empty and filled later — not on Plex. */
+    val supportsEmptyPlaylists: Boolean get() = capabilities.emptyPlaylists
 
 
     /**
@@ -358,7 +347,7 @@ data class MusicSource(
      * Whether this source *has* downloads, which it may still have where new
      * ones aren't allowed — see [mayDownload].
      */
-    val supportsDownloads: Boolean get() = kind != SourceKind.LOCAL
+    val supportsDownloads: Boolean get() = capabilities.downloads
 
     /**
      * Whether the server won't let this account keep copies — see
@@ -367,7 +356,7 @@ data class MusicSource(
      * be overruling the person who runs the server. What is already on the
      * phone stays, and plays.
      */
-    val downloadsRefused: Boolean get() = !implements(ServerFeatures.KEEP_COPIES)
+    val downloadsRefused: Boolean get() = !features.allows(ServerFeatures.KEEP_COPIES)
 
     /** Whether a new download may be started here — the Download rows show only where it may. */
     val mayDownload: Boolean get() = supportsDownloads && !downloadsRefused
@@ -381,10 +370,7 @@ data class MusicSource(
      * one of the transcoded qualities, so the quality is what narrows rather
      * than downloading itself.
      */
-    val supportsOriginalDownload: Boolean get() = when (kind) {
-        SourceKind.SUBSONIC -> implements(ServerFeatures.DOWNLOAD)
-        else -> true
-    }
+    val supportsOriginalDownload: Boolean get() = capabilities.originalDownload
 
     /**
      * Whether the server can be asked to go and look for new files.
@@ -394,14 +380,7 @@ data class MusicSource(
      * library stale, which is worth saying; one without the call at all keeps
      * its library current by itself and has nothing to refuse.
      */
-    val supportsServerScan: Boolean get() = when (kind) {
-        SourceKind.SUBSONIC -> implements(ServerFeatures.SCAN_STATUS)
-        SourceKind.LOCAL -> false
-        else -> true
-    }
-
-    /** What this source knows it cannot do; unasked reads as "everything". */
-    private fun implements(endpoint: String): Boolean = features?.has(endpoint) ?: true
+    val supportsServerScan: Boolean get() = capabilities.serverScan
 
     /**
      * The qualities a download here can be kept in: what can be streamed, less
@@ -414,7 +393,7 @@ data class MusicSource(
      * Separate libraries to browse: Subsonic's music folders and Plex's library
      * sections are the same idea. Local music is one folder by definition.
      */
-    val supportsLibraries: Boolean get() = kind != SourceKind.LOCAL
+    val supportsLibraries: Boolean get() = capabilities.libraries
 
     companion object {
         /** The id the phone's own music always has — there can only be one. */

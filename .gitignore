@@ -5,6 +5,8 @@ build/
 !**/src/test/**/build/
 local.properties
 local/
+!**/src/main/**/local/
+!**/src/test/**/local/
 
 ### IntelliJ IDEA ###
 .idea/

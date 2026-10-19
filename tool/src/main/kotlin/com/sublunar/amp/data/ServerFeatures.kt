@@ -83,3 +83,6 @@ data class ServerFeatures(
         val ALL = listOf(SCAN_STATUS, SET_RATING, SIMILAR_SONGS, DOWNLOAD)
     }
 }
+
+/** Whether a server may have [endpoint]: only a recorded "missing" says no, and never asked reads as everything. */
+fun ServerFeatures?.allows(endpoint: String): Boolean = this?.has(endpoint) ?: true
