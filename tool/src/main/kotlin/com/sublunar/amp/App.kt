@@ -1011,10 +1011,14 @@ object App {
                 //
                 // Room answers from disk while the client is still being made
                 // from a DataStore read on another coroutine, so the cache
-                // usually wins that race. A local source never has a client and
-                // must not be waited for.
+                // usually wins that race. A source that can never have a client
+                // must not be waited for: the phone's own music, and a server
+                // source missing its address or its token, which held the
+                // queue back for good. Asked of the pool the source switch
+                // takes its client from, so the answer is that same client
+                // rather than a second one.
                 val active = settings.activeSource.filter { it != null }.first()
-                if (active?.hasServer != false) {
+                if (active != null && clientFor(active) != null) {
                     serverClient.filter { it != null }.first()
                 }
                 // Waited for last and not kept: the restore waits on more
