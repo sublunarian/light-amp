@@ -75,6 +75,20 @@ interface SourceProvider {
      * that keeps only the one address it was given.
      */
     suspend fun relocate(source: MusicSource): MusicSource? = null
+
+    /**
+     * [source]'s addresses as its server's directory lists them now, best
+     * first — null where there is no directory to ask, it couldn't be asked,
+     * or it doesn't list this server. Asked, at most once a minute, when the
+     * address in use stops answering — see SourceRoute.
+     */
+    suspend fun advertisedAddresses(source: MusicSource): List<String>? = null
+
+    /**
+     * The first of [uris], in their order, at which [source]'s server answers —
+     * null where none does, and for every kind that keeps only the one address.
+     */
+    suspend fun firstAnswering(uris: List<String>, source: MusicSource): String? = null
 }
 
 /** What a kind of source can do — read through the matching `supports…` on MusicSource, which is what the screens ask. */

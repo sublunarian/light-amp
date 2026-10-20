@@ -34,6 +34,12 @@ class Reachability(
     private val client: () -> MusicServer?,
     /** Whether the rules allow speaking to the server at all — see LinkRules. */
     private val mayAsk: () -> Boolean,
+    /**
+     * The server's other addresses, where it has any — see [SourceRoute]. A miss is tried
+     * against them before it counts, and an answer is followed by a look at
+     * the ones ranked above the address in use.
+     */
+    private val route: SourceRoute? = null,
 ) {
     private val _reachable = MutableStateFlow(true)
     val reachable: StateFlow<Boolean> = _reachable
@@ -87,7 +93,20 @@ class Reachability(
                 // Null: the rules forbid asking (Wi-Fi Only on cellular, or no
                 // link). Not an answer about the server — leave what is known
                 // alone; the next network change asks again.
-                if (verdict == null || verdict) return@launch
+                if (verdict == null) return@launch
+                if (verdict) {
+                    // Answering, but maybe on the public address it moved to
+                    // while away. A check follows every network change, which
+                    // is the moment the LAN one can have come back.
+                    try {
+                        route?.upgrade()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        log("moving back failed: ${e::class.simpleName}: ${e.message}")
+                    }
+                    return@launch
+                }
                 val wait = RETRY_MS.getOrNull(attempt++)
                     ?: run {
                         log("gave up after $attempt pings; waiting for a network change or a press")
@@ -118,7 +137,7 @@ class Reachability(
         val server = client() ?: return null.also { log("no client to ask") }
         val askedAtMs = System.nanoTime() / 1_000_000
         var why = "answered"
-        val answered: Boolean? = try {
+        var answered: Boolean? = try {
             // Only *this* timeout is an answer ("never came back"). A caller
             // that stops waiting sooner cancels this coroutine with a timeout
             // exception of its own, and that must pass straight through: caught
@@ -143,6 +162,20 @@ class Reachability(
             answeredBy(e)
         }
         log("ping → ${answered ?: "no verdict"} in ${System.nanoTime() / 1_000_000 - askedAtMs}ms ($why)")
+        // Silent at this address isn't silent at every address: a LAN one
+        // never answers on cellular. Another that answered is the server
+        // answering — the source is saved onto it, which rebuilds the client.
+        if (answered == false && route != null) {
+            val moved = try {
+                route.recover()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log("rerouting failed: ${e::class.simpleName}: ${e.message}")
+                false
+            }
+            if (moved) answered = true
+        }
         when (answered) {
             true -> {
                 misses = 0
