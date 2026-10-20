@@ -82,6 +82,7 @@ import com.sublunar.amp.data.LogFile
 import com.sublunar.amp.data.Trace
 import kotlinx.coroutines.flow.onEach
 import com.sublunar.amp.data.Reachability
+import com.sublunar.amp.data.SourceRoute
 import com.sublunar.amp.data.StreamProxy
 import kotlinx.coroutines.withTimeoutOrNull
 import com.sublunar.amp.art.ArtworkNeed
@@ -409,7 +410,18 @@ object App {
      * out by asking rather than by waiting for a sync to say so.
      */
     val reachability: Reachability by lazy {
-        Reachability(scope, client = { serverClient.value }, mayAsk = { rules.value.mayTalkToServer })
+        Reachability(
+            scope,
+            client = { serverClient.value },
+            mayAsk = { rules.value.mayTalkToServer },
+            route = SourceRoute(
+                source = { settings.activeSource.first() },
+                advertised = { s -> s.provider.advertisedAddresses(s) },
+                firstAnswering = { uris, s -> s.provider.firstAnswering(uris, s) },
+                save = { s -> settings.saveSource(s) },
+                onLan = { rules.value.let { it.connected && it.wifi } },
+            ),
+        )
     }
     val serverReachable: StateFlow<Boolean> get() = reachability.reachable
 

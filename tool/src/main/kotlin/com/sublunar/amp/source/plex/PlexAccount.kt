@@ -111,6 +111,17 @@ object PlexAccount {
         return firstAnswering(ordered.map { it.uri }, resource.accessToken ?: token, clientIdentifier)
     }
 
+    /**
+     * One server's addresses as plex.tv lists them now, best first — null when
+     * plex.tv couldn't be asked or doesn't list it. See [PlexRoute], which
+     * asks this instead of a sync when the address in use stops answering.
+     */
+    suspend fun advertised(machineIdentifier: String, token: String, clientIdentifier: String): List<String>? =
+        resources(token, clientIdentifier)
+            .firstOrNull { it.clientIdentifier == machineIdentifier }
+            ?.let(::candidates)
+            ?.takeIf { it.isNotEmpty() }
+
     /** The first of [uris] that answers, for re-resolving a stored source. */
     suspend fun firstReachable(uris: List<String>, token: String, clientIdentifier: String): String? =
         firstAnswering(uris, token, clientIdentifier)
