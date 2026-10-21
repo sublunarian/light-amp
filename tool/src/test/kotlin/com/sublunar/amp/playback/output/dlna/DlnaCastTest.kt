@@ -2,6 +2,7 @@ package com.sublunar.amp.playback.output.dlna
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -200,5 +201,59 @@ class DlnaCastTest {
         assertNull(DlnaCast.sniffContainer(ByteArray(12), 12))
         // A truncated read must not index past what was actually read.
         assertNull(DlnaCast.sniffContainer("fL".map { it.code.toByte() }.toByteArray().copyOf(12), 2))
+    }
+
+    @Test
+    fun `a soap fault's upnp error is read for the log`() {
+        val fault = """
+            <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+              <s:Body>
+                <s:Fault>
+                  <faultcode>s:Client</faultcode>
+                  <faultstring>UPnPError</faultstring>
+                  <detail>
+                    <UPnPError xmlns="urn:schemas-upnp-org:control-1-0">
+                      <errorCode>701</errorCode>
+                      <errorDescription>Transition not available</errorDescription>
+                    </UPnPError>
+                  </detail>
+                </s:Fault>
+              </s:Body>
+            </s:Envelope>
+        """.trimIndent()
+        assertEquals("UPnP 701 Transition not available", DlnaCast.upnpError(fault))
+        assertEquals("UPnP 714", DlnaCast.upnpError("<errorCode> 714 </errorCode>"))
+        // A refusal with no fault in it, or no body at all, has nothing to add.
+        assertNull(DlnaCast.upnpError("<html>Internal error</html>"))
+        assertNull(DlnaCast.upnpError(null))
+    }
+
+    @Test
+    fun `a stream address reported back is the same one however it was escaped`() {
+        val sent = "http://nas:4533/rest/stream.view?u=me&t=abc&s=salt&id=42&format=mp3"
+        // As TrackURI arrives once tagValue has undone the envelope's own
+        // escaping, from a renderer that escaped it once more, and padded.
+        assertTrue(DlnaCast.sameUri(sent, sent))
+        assertTrue(DlnaCast.sameUri(" " + sent.replace("&", "&amp;") + "\n", sent))
+        assertTrue(DlnaCast.sameUri(sent.replace("&", "&amp;amp;"), sent))
+        // Another song, or nothing at all, is not the same.
+        assertFalse(DlnaCast.sameUri(sent.replace("id=42", "id=43"), sent))
+        assertFalse(DlnaCast.sameUri(null, sent))
+        assertFalse(DlnaCast.sameUri(sent, null))
+    }
+
+    @Test
+    fun `a stream address in the log keeps the song and drops the credentials`() {
+        val subsonic = "http://nas:4533/rest/stream.view?u=me&t=abc&s=salt&v=1.16.1&c=amp&f=json" +
+            "&id=42&format=mp3&maxBitRate=320&timeOffset=60"
+        assertEquals(
+            "http://nas:4533/rest/stream.view?id=42&format=mp3&maxBitRate=320&timeOffset=60",
+            DlnaCast.loggable(subsonic),
+        )
+        assertEquals(
+            "http://plex:32400/library/parts/42/1700000000/file.flac",
+            DlnaCast.loggable("http://plex:32400/library/parts/42/1700000000/file.flac?download=0&X-Plex-Token=tok"),
+        )
+        assertEquals("nothing", DlnaCast.loggable(null))
     }
 }

@@ -87,6 +87,16 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     private var castNextUrl: String? = null
 
     /**
+     * The address last offered as the next track, whether or not the
+     * renderer's reply said it was taken — see [queueNextOnRenderer]. A reply
+     * lost on its way back is not a renderer that refused.
+     */
+    private var castNextOffered: String? = null
+
+    /** The last address the renderer reported that was neither its track nor the one offered after it — logged once each. */
+    private var strangeUri: String? = null
+
+    /**
      * The queue index the renderer's next slot has been armed for — or offered
      * and refused.
      *
@@ -333,7 +343,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             // seek has nothing left to be measured against.
             if (host.index.value != seekedIndex || castCurrentUrl != url) return@launch
             val info = DlnaCast.position(renderer) ?: return@launch
-            if (info.trackUri != null && info.trackUri != url) return@launch
+            if (info.trackUri != null && !DlnaCast.sameUri(info.trackUri, url)) return@launch
             if (DlnaCast.state(renderer) == DlnaState.STOPPED) return@launch
             if (info.positionMs >= wanted - CAST_SEEK_TOLERANCE_MS) return@launch
             android.util.Log.i("AmpCast", "seek missed: at ${info.positionMs} wanted $wanted → server")
@@ -434,6 +444,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         // SetAVTransportURI leaves the next slot empty, and it stays that way
         // until this track is nearly over — see armNextIfDue.
         castNextUrl = null
+        castNextOffered = null
         castNextArmedFor = null
         return true
     }
@@ -489,7 +500,11 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      *
      * Records the URL under [castNextUrl] so the poller can recognise the
      * hand-off when it happens: the renderer switches on its own, and the only
-     * evidence is that GetPositionInfo starts reporting the other URI.
+     * evidence is that GetPositionInfo starts reporting the other URI. Under
+     * [castNextOffered] too, before the reply: a renderer can take the address
+     * and lose the answer — straight after a seek, say — and recorded only on
+     * a reply, a hand-off it then made went unseen, the clock frozen on the
+     * last track for as long as the new one played.
      *
      * Call through [armNextIfDue] rather than directly — handing a renderer the
      * next stream too early is what this whole path had to be rebuilt around.
@@ -519,6 +534,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         if (url == castNextUrl) return
         castNextArmedFor = after
         castNextUrl = null
+        castNextOffered = url
         val queued = DlnaCast.setNext(
             renderer = renderer,
             url = url,
@@ -528,8 +544,13 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             durationMs = track.durationMs,
             mimeType = mime,
         )
+        // AmpCast: temporary — chasing a hand-off the poll never followed
+        // (2026-10-20). With the failed call's own line from DlnaCast, this
+        // says whether the renderer was told and whether it answered.
+        android.util.Log.i("AmpCast", "next idx=$after offered: ${if (queued) "taken" else "no answer"}")
         // Renderers that don't implement it fault; the stop-and-restart path then
-        // carries the queue as it did before.
+        // carries the queue as it did before. An offer it never answered is
+        // still looked for — see castNextOffered.
         if (queued) castNextUrl = url
     }
 
@@ -608,18 +629,21 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             val position = DlnaCast.position(renderer)
             val state = DlnaCast.state(renderer)
             if (position != null) {
+                val reported = position.trackUri
                 // The renderer crossed into the track we queued: follow it here
                 // rather than driving it, so nothing interrupts the audio.
                 // Repeat-one queues the track that's already playing, so a URI
                 // match on its own proves nothing — it has to be a *different*
-                // URI from the one we started.
-                val moved = castNextUrl != null &&
-                    castNextUrl != castCurrentUrl &&
-                    position.trackUri == castNextUrl
+                // URI from the one we started. Offered counts as much as
+                // confirmed — see castNextOffered.
+                val next = castNextUrl ?: castNextOffered
+                val moved = next != null &&
+                    !DlnaCast.sameUri(next, castCurrentUrl) &&
+                    DlnaCast.sameUri(reported, next)
                 if (moved) {
                     dropSeekChecks()
                     nextIndex()?.let { host.showIndex(it) }
-                    castCurrentUrl = castNextUrl
+                    castCurrentUrl = next
                     // The queued track was handed over whole, from its start.
                     castOffsetMs = 0L
                     castStartedAtMs = 0L
@@ -632,6 +656,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                     // The slot the renderer just consumed is empty again, and is
                     // left that way until this track is nearly over.
                     castNextUrl = null
+                    castNextOffered = null
                     castNextArmedFor = null
                     stall.reset()
                     // The renderer has *taken* the queued track but not started
@@ -670,7 +695,12 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 // ours put the finished track's time on the new track's bar:
                 // eighteen minutes into a thirty-seven second song, when the
                 // offset we had seeked to was added on top.
-                val ours = position.trackUri == null || position.trackUri == castCurrentUrl
+                val ours = reported == null || DlnaCast.sameUri(reported, castCurrentUrl)
+                if (!ours && reported != strangeUri) {
+                    // AmpCast: temporary — see queueNextOnRenderer.
+                    strangeUri = reported
+                    android.util.Log.i("AmpCast", "renderer reports ${DlnaCast.loggable(reported)}, neither its track nor the next")
+                }
                 if (ours) {
                     // Until this track has settled, only a reading near where
                     // it was started is believed: a renderer reports the new

@@ -426,16 +426,68 @@ object DlnaCast {
                 setRequestProperty("SOAPACTION", "\"$serviceType#$action\"")
             }
             connection.outputStream.use { it.write(envelope.toByteArray()) }
-            val ok = connection.responseCode in 200..299
+            val status = connection.responseCode
+            val ok = status in 200..299
             val body = (if (ok) connection.inputStream else connection.errorStream)
                 ?.use { it.readBytes().decodeToString() }
             connection.disconnect()
+            // One line per call that failed, with the renderer's own reason
+            // where it gave one. They used to vanish here, and a hand-off the
+            // renderer had taken looked the same as one it refused.
+            if (!ok) android.util.Log.i(LOG_TAG, "$action failed: HTTP $status${upnpError(body)?.let { ", $it" }.orEmpty()}")
             if (ok) body.orEmpty() else null
-        } catch (_: IOException) {
+        } catch (e: IOException) {
+            android.util.Log.i(LOG_TAG, "$action failed: $e")
             null
-        } catch (_: IllegalStateException) {
+        } catch (e: IllegalStateException) {
+            android.util.Log.i(LOG_TAG, "$action failed: $e")
             null
         }
+    }
+
+    /**
+     * The UPnP error in a SOAP fault, as "UPnP 701 Transition not available",
+     * or null where the body carries none. The code is the reason: 701 is a
+     * state that can't take the action, 714 a format refused, 402 arguments
+     * it didn't like.
+     */
+    internal fun upnpError(body: String?): String? {
+        val code = body?.let { tagValue(it, "errorCode") }?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val description = tagValue(body, "errorDescription")?.trim().orEmpty()
+        return if (description.isEmpty()) "UPnP $code" else "UPnP $code $description"
+    }
+
+    /**
+     * Whether two stream addresses are the same one, as a renderer reports an
+     * address back: trimmed, and with the XML escaping undone however many
+     * times it was applied — a renderer may hand it back escaped once more
+     * than it went in. A URL holds no entities of its own, so undoing them
+     * never makes two different addresses equal.
+     */
+    internal fun sameUri(a: String?, b: String?): Boolean =
+        a != null && b != null && uriForm(a) == uriForm(b)
+
+    private fun uriForm(uri: String): String {
+        var form = uri.trim()
+        repeat(UNESCAPE_ROUNDS) {
+            val undone = unescape(form)
+            if (undone == form) return form
+            form = undone
+        }
+        return form
+    }
+
+    /**
+     * [uri] for a log line: where it points and which song, never the
+     * credentials riding in its query — a Subsonic token, a Plex one.
+     */
+    internal fun loggable(uri: String?): String {
+        if (uri == null) return "nothing"
+        val form = uriForm(uri)
+        val kept = form.substringAfter('?', "").split('&')
+            .filter { param -> LOGGED_PARAMS.any { param.startsWith("$it=") } }
+        val path = form.substringBefore('?')
+        return if (kept.isEmpty()) path else path + "?" + kept.joinToString("&")
     }
 
     private fun httpGet(url: String): String? = if (!allowsNetwork()) null else try {
@@ -458,6 +510,15 @@ object DlnaCast {
 
     private val SERVICE_BLOCK = Regex("<service>.*?</service>", RegexOption.DOT_MATCHES_ALL)
     private const val RECEIVE_SLICE_MS = 400
+
+    /** The tag a failed call is logged under: the cast's own. */
+    private const val LOG_TAG = "AmpCast"
+
+    /** More escaping than any renderer has been seen to add. */
+    private const val UNESCAPE_ROUNDS = 3
+
+    /** The parts of a stream address a log line keeps: which song, in what, from where. */
+    private val LOGGED_PARAMS = listOf("id", "format", "maxBitRate", "timeOffset", "path")
 
     /** Value of an SSDP/HTTP response header, case-insensitively. */
     internal fun headerValue(response: String, name: String): String? =
