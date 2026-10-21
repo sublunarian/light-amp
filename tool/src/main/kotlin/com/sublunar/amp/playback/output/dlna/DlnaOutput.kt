@@ -8,6 +8,7 @@ import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.PREVIOUS_RESTARTS_AFTER_MS
+import com.sublunar.amp.playback.output.Refound
 import com.sublunar.amp.playback.output.VolumeControl
 import android.os.SystemClock
 import kotlin.coroutines.coroutineContext
@@ -164,34 +165,146 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     /**
      * Stop steering the renderer, for [why]: told to stop — and waited for,
      * briefly, when the app is being left — or, with the link gone, simply
-     * forgotten, since there is nobody to hear it.
+     * let go of, since there is nobody to hear it. What it was given is kept
+     * then, to know it by when the link is back — see [findAgain].
      */
     override fun disconnect(target: OutputTarget, why: Disconnect) {
         val renderer = (target as DlnaTarget).renderer
         castJob?.cancel()
         castJob = null
         dropSeekChecks()
-        if (why == Disconnect.Leaving) {
-            // A renderer keeps playing whatever URI it was handed, so leaving without
-            // telling it to stop strands audio on the speaker while the app shows
-            // "This device". Bounded so teardown can't hang on an unreachable device.
-            // A muted start cut short gives the sound back here as well as in
-            // its own ending, which may not run before the process goes.
-            runBlocking {
-                withTimeoutOrNull(CAST_STOP_TIMEOUT_MS) {
-                    DlnaCast.stop(renderer)
-                    undoHush(renderer)
+        castSeekPending = -1L
+        when (why) {
+            Disconnect.LinkLost -> lostAtIndex = host.index.value
+            Disconnect.Leaving -> {
+                forgetCast()
+                // A renderer keeps playing whatever URI it was handed, so leaving
+                // without telling it to stop strands audio on the speaker while
+                // the app shows "This device". Bounded so teardown can't hang on
+                // an unreachable device. A muted start cut short gives the sound
+                // back here as well as in its own ending, which may not run
+                // before the process goes.
+                runBlocking {
+                    withTimeoutOrNull(CAST_STOP_TIMEOUT_MS) {
+                        DlnaCast.stop(renderer)
+                        undoHush(renderer)
+                    }
                 }
             }
-            return
+            else -> {
+                forgetCast()
+                host.scope.launch { DlnaCast.stop(renderer) }
+            }
         }
-        if (why == Disconnect.Stopped) {
-            host.scope.launch { DlnaCast.stop(renderer) }
-            return
-        }
+    }
+
+    /** Nothing of the queue is on the renderer any more, or nothing on it is followed from here. */
+    private fun forgetCast() {
+        castCurrentUrl = null
+        castNextUrl = null
+        castNextOffered = null
+        castNextArmedFor = null
         castOffsetMs = 0L
         castSeekPending = -1L
-        if (why != Disconnect.LinkLost) host.scope.launch { DlnaCast.stop(renderer) }
+    }
+
+    /** The queue index the renderer was on when the link took it away — see [findAgain]. */
+    private var lostAtIndex = -1
+
+    /** The address [findAgain] found the renderer playing, for [rejoin] to follow. */
+    private var refoundOn: String? = null
+
+    /**
+     * The renderer the link took away, found again: on the network under the
+     * same id, with what it is doing read and nothing sent to it. Still on the
+     * track it was given, or on the one offered after it, it is this queue's,
+     * wherever it has got to. Stopped, it holds nothing to resume, and is
+     * taken back idle. Playing anything else, it is someone else's now, and
+     * left alone.
+     */
+    override suspend fun findAgain(target: OutputTarget): Refound? {
+        val gone = (target as DlnaTarget).renderer
+        val renderer = rediscover(gone.id) ?: return null
+        val current = castCurrentUrl
+        val next = castNextUrl ?: castNextOffered
+        repeat(REFOUND_READS) { attempt ->
+            if (attempt > 0) delay(CAST_POLL_MS)
+            val position = DlnaCast.position(renderer)
+            val state = DlnaCast.state(renderer)
+            if (position == null || state == DlnaState.UNKNOWN) return@repeat
+            val uri = position.trackUri
+            android.util.Log.i("AmpCast", "${renderer.name} found again: $state on ${DlnaCast.loggable(uri)}")
+            val found = DlnaTarget(renderer)
+            val playing = state != DlnaState.PAUSED
+            return when {
+                state == DlnaState.STOPPED -> Refound(found)
+                current != null && DlnaCast.sameUri(uri, current) -> {
+                    refoundOn = current
+                    Refound(found, lostAtIndex, position.positionMs + castOffsetMs, playing)
+                }
+                next != null && DlnaCast.sameUri(uri, next) -> {
+                    refoundOn = next
+                    // The slot it was offered for, or — once a queue edit had
+                    // the slot reconsidered — the one after the lost track.
+                    val after = castNextArmedFor
+                        ?: nextCastIndex(lostAtIndex, host.queue.value.size, host.repeatMode.value)
+                        ?: -1
+                    Refound(found, after, position.positionMs, playing)
+                }
+                else -> null
+            }
+        }
+        return null
+    }
+
+    /**
+     * [id] on the network again, freshly described — a renderer that went
+     * away may come back at another address or port. A few rounds: just after
+     * a link comes up, the first search can go unanswered.
+     */
+    private suspend fun rediscover(id: String): DlnaRenderer? {
+        repeat(REDISCOVER_ROUNDS) { round ->
+            if (round > 0) delay(REDISCOVER_PAUSE_MS)
+            DlnaCast.discover().firstOrNull { it.id == id }?.let { return it }
+            android.util.Log.i("AmpCast", "search ${round + 1} of $REDISCOVER_ROUNDS: not there")
+        }
+        return null
+    }
+
+    override fun rejoin(found: Refound) {
+        val renderer = (found.target as DlnaTarget).renderer
+        val on = refoundOn
+        refoundOn = null
+        castJob?.cancel()
+        dropSeekChecks()
+        val following = found.index >= 0 && on != null
+        // Holding nothing to resume, or playing this queue — see waitingForPlay.
+        waitingForPlay = !following
+        if (!following) {
+            forgetCast()
+        } else if (on != castCurrentUrl) {
+            // It crossed into the track offered after it while nobody watched,
+            // and that one was handed over whole.
+            castCurrentUrl = on
+            castOffsetMs = 0L
+            castNextUrl = null
+            castNextOffered = null
+            castNextArmedFor = null
+        }
+        castStartedAtMs = found.positionMs
+        castSeekPending = -1L
+        castJob = host.scope.launch {
+            undoHush(renderer)
+            // The fader is the renderer's again, as when a cast begins.
+            DlnaCast.volume(renderer)?.let {
+                host.showVolume(it)
+                withContext(Dispatchers.Main.immediate) { host.setPhoneVolume(it) }
+            }
+            if (!following) return@launch
+            host.announceNowPlaying()
+            // It was playing all along: a stop from here on is the end of the track.
+            pollRenderer(renderer, playedBefore = true)
+        }
     }
 
     override fun play() {
@@ -1028,11 +1141,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             // see waitingForPlay. The controller winds back to the top, as it
             // does for the phone.
             waitingForPlay = true
-            castCurrentUrl = null
-            castNextUrl = null
-            castNextOffered = null
-            castNextArmedFor = null
-            castOffsetMs = 0L
+            forgetCast()
             host.queueFinished(this)
             return false
         }
@@ -1100,5 +1209,12 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
         /** The renderer's clock counts whole seconds, and lands on the second it was sent to. */
         const val MUTED_ARRIVAL_SLACK_MS = 2_000L
+
+        /** Searches for a renderer the link took away, once it is back, and the wait between them. */
+        const val REDISCOVER_ROUNDS = 4
+        const val REDISCOVER_PAUSE_MS = 3_000L
+
+        /** How many tries a renderer found again gets to say what it is doing. */
+        const val REFOUND_READS = 3
     }
 }

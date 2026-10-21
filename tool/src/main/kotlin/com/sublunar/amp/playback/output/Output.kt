@@ -108,7 +108,35 @@ interface Output : OutputControls {
      * as steering on the way out.
      */
     fun disconnect(target: OutputTarget, why: Disconnect)
+
+    /**
+     * The link is back after [Disconnect.LinkLost] took [target] away: find
+     * it again and say what it is doing, sending it nothing that would
+     * interrupt it. Off Main, and bounded by the caller. Null when it isn't to
+     * be found, or is busy with something that isn't this queue's.
+     */
+    suspend fun findAgain(target: OutputTarget): Refound? = null
+
+    /**
+     * Steer what [findAgain] found, as it found it: its clock followed where
+     * it is playing this queue, a press of play awaited where it holds
+     * nothing. On Main, already the output that has the sound again.
+     */
+    fun rejoin(found: Refound) {}
 }
+
+/**
+ * What an output found of a target it lost with the link — see
+ * [Output.findAgain]. [index] is the queue position it is playing, or -1
+ * when it holds nothing of this queue's that plays; [positionMs] is where in
+ * that track, and [playing] whether it is playing rather than paused.
+ */
+class Refound(
+    val target: OutputTarget,
+    val index: Int = -1,
+    val positionMs: Long = 0L,
+    val playing: Boolean = false,
+)
 
 /**
  * A kind of output: speakers on the network, Plex players. Listed by whoever
@@ -295,7 +323,11 @@ enum class Disconnect {
     /** Another output takes over. */
     Switch,
 
-    /** The link stopped allowing the local network, so nothing can be said to it. */
+    /**
+     * The link stopped allowing the local network, so nothing can be said to
+     * it. What the output knew of it is kept, for [Output.findAgain] once the
+     * link is back.
+     */
     LinkLost,
 
     /** Playback stopped and the queue emptied — a source switch. */

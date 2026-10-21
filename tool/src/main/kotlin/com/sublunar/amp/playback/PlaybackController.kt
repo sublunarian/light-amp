@@ -29,6 +29,7 @@ import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.Outputs
 import com.sublunar.amp.playback.output.PREVIOUS_RESTARTS_AFTER_MS
 import com.sublunar.amp.playback.output.QueueEdit
+import com.sublunar.amp.playback.output.Refound
 import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.db.LibraryDao
@@ -1302,16 +1303,24 @@ class PlaybackController(
                 }
                 reresolveQueue()
                 val out = remote
-                if (!rules.mayUseLan && out != null && out.needsLan) {
-                    // Off Wi-Fi the speaker is out of reach: the cast is over
-                    // here, whatever the speaker goes on doing at home. Nothing
-                    // is sent to say so — there is nobody to hear it — and
-                    // nothing starts playing on the phone: leaving the house
-                    // is not a press of play.
-                    android.util.Log.i(out.logTag, "Wi-Fi gone — cast dropped")
-                    withContext(Dispatchers.Main.immediate) {
-                        if (remote?.needsLan == true) dropOutput(Disconnect.LinkLost)
+                if (!rules.mayUseLan) {
+                    // Whatever search for a lost speaker was on waits for the
+                    // network to come back again — see rejoinLost.
+                    rejoinJob?.cancel()
+                    if (out != null && out.needsLan) {
+                        // Off Wi-Fi the speaker is out of reach: the cast is
+                        // let go here, whatever the speaker goes on doing at
+                        // home, and shown paused where it was. Nothing is sent
+                        // to say so — there is nobody to hear it — and nothing
+                        // starts playing on the phone: leaving the house is not
+                        // a press of play. With Wi-Fi back it is taken back.
+                        android.util.Log.i(out.logTag, "Wi-Fi gone — cast let go, to be taken back")
+                        withContext(Dispatchers.Main.immediate) {
+                            if (remote?.needsLan == true) dropOutput(Disconnect.LinkLost)
+                        }
                     }
+                } else if (lost != null) {
+                    rejoinLost()
                 }
                 if (rules.mayStream) {
                     cueIfParked()
@@ -1540,7 +1549,8 @@ class PlaybackController(
         settleRestartCopy()
         // Whatever the sound went to stops being steered from here: a speaker
         // is told to stop, a Plex player is left playing — see each output's
-        // disconnect.
+        // disconnect. One the link took away is not taken back after leaving.
+        forgetLost()
         dropOutput(Disconnect.Leaving)
         // One last snapshot before the player goes: an orderly exit should not
         // lose the few seconds since the last tick. The session is closed out in
@@ -2199,6 +2209,8 @@ class PlaybackController(
     /** Stop playback and empty the queue. */
     fun stop() {
         supersedeStart()
+        // A speaker the link took away belonged to the queue going now.
+        forgetLost()
         // The session that is open ends here, at the point playback reached —
         // under the id it was announced as, whatever has moved since.
         val stopping = _queue.value.getOrNull(_index.value)
@@ -2660,6 +2672,7 @@ class PlaybackController(
         // and playback must not be taken off this device for it.
         if (next.needsLan && !App.rulesNow().mayUseLan) return false
         if (!next.canSteer()) return false
+        forgetLost()
         settleRestartCopy()
         supersedeStart()
         // A far end that reports its own playback does so as a session of its
@@ -2678,14 +2691,20 @@ class PlaybackController(
     }
 
     /** Bring the sound back to this phone, from wherever the output had reached. */
-    fun playHere() = dropOutput(Disconnect.HandBack)
+    fun playHere() {
+        // This device, chosen: an output the link took away is not to be
+        // taken back when it returns.
+        forgetLost()
+        dropOutput(Disconnect.HandBack)
+    }
 
     /**
      * Stop sending the sound to whatever has it, for [why]: the output is
      * told as its family needs — see Output.disconnect. Then, unless
      * playback stopped or the app is being left, the fader goes back to the
-     * phone's own level, and a hand-back picks the queue up here from where
-     * the output had reached.
+     * phone's own level, and the queue is picked up here from where the
+     * output had reached: playing on a hand-back if it was playing, paused
+     * otherwise — see [takeOverHere].
      */
     private fun dropOutput(why: Disconnect) {
         val at = _positionMs.value
@@ -2698,36 +2717,170 @@ class PlaybackController(
         val out = a.output
         out.disconnect(a.target, why)
         if (why == Disconnect.Stopped || why == Disconnect.Leaving) return
-        val p = player ?: return
-        _volume.value = p.deviceVolume.value
-        if (why != Disconnect.HandBack) return
-        // One rule for every output: the phone carries on as the far end was,
-        // playing if it was playing and paused if it was paused. A speaker
-        // used to start the phone whatever it had been doing.
-        val play = wasPlaying
-        // The queue moved on while the output had it — a renderer's poll
-        // walks _index as tracks finish there, and a Plex player's reports
-        // move it too — but this player sat paused on whatever it held when
-        // casting began. Seeking it in place picked the cast's position inside
-        // the *old* track: coming back landed where you were before casting,
-        // not where the speaker left off. Index and position go in one seek;
-        // see LightAudioPlayer. Rebuilt at that index and position in one call
-        // rather than seeked: a paused player has no duration yet for an item
-        // it never opened, so any plain seek into it clamps to 0 — which is
-        // why the right song came back from the top. Same reason restoreState
-        // and the stream fallback rebuild instead of seeking — and a stream
-        // the player can't seek at all goes through the server; see
-        // rebuildQueueAt, which is where the second restart-from-the-top came
-        // from. The handle is read on Main, as in stop().
+        // Kept, to be taken back when the link is — see rejoinLost.
+        if (why == Disconnect.LinkLost) {
+            lost = Lost(
+                active = a,
+                session = playbackSession.value,
+                sourceId = App.source.value.id,
+                index = _index.value,
+                positionMs = at,
+                atMs = android.os.SystemClock.elapsedRealtime(),
+            )
+        }
+        player?.let { _volume.value = it.deviceVolume.value }
+        when (why) {
+            // One rule for every output: the phone carries on as the far end
+            // was, playing if it was playing and paused if it was paused. A
+            // speaker used to start the phone whatever it had been doing.
+            Disconnect.HandBack -> takeOverHere(out.logTag, "hand-back", at, play = wasPlaying)
+            // Shown paused where the speaker was, rather than "playing" over a
+            // phone that sits silent on the song the cast began with — where
+            // no press of play or pause did anything.
+            Disconnect.LinkLost -> takeOverHere(out.logTag, "Wi-Fi gone", at, play = false)
+            else -> Unit
+        }
+    }
+
+    /**
+     * The sound is this phone's again, from where the output had got to: the
+     * queue rebuilt here at its track and [at], playing if [play], otherwise
+     * paused — and shown paused at once, with nothing starting. [why] is for
+     * the log.
+     *
+     * The queue moved on while the output had it — a renderer's poll walks
+     * _index as tracks finish there, and a Plex player's reports move it too
+     * — but this player sat paused on whatever it held when casting began.
+     * Seeking it in place picked the cast's position inside the *old* track:
+     * coming back landed where you were before casting, not where the speaker
+     * left off. Index and position go in one seek; see LightAudioPlayer.
+     * Rebuilt at that index and position in one call rather than seeked: a
+     * paused player has no duration yet for an item it never opened, so any
+     * plain seek into it clamps to 0 — which is why the right song came back
+     * from the top. Same reason restoreState and the stream fallback rebuild
+     * instead of seeking — and a stream the player can't seek at all goes
+     * through the server; see rebuildQueueAt, which is where the second
+     * restart-from-the-top came from. The handle is read on Main, as in
+     * stop(): this can be reached from a poll on Default, and a new activity
+     * may have taken the player over in between.
+     */
+    private fun takeOverHere(logTag: String, why: String, at: Long, play: Boolean) {
+        if (!play) {
+            _isPlaying.value = false
+            _buffering.value = false
+        }
         scope.launch(Dispatchers.Main.immediate) {
             val cur = player ?: return@launch
             val tracks = _queue.value
             if (tracks.isEmpty()) return@launch
             val index = _index.value.coerceIn(0, tracks.lastIndex)
-            android.util.Log.i(out.logTag, "hand-back idx=$index at=$at playing=$wasPlaying")
+            android.util.Log.i(logTag, "$why: on the phone at idx=$index at=$at ${if (play) "playing" else "paused"}")
             rebuildQueueAt(cur, tracks, index, at)
             if (play) cur.play() else cur.pause()
         }
+    }
+
+    /**
+     * An output the link took away, and where the phone stood when it went —
+     * see [rejoinLost]. The speaker plays on at home, and when Wi-Fi is back
+     * it is taken back, unless the phone has moved on since.
+     */
+    private class Lost(
+        val active: ActiveOutput,
+        val session: String,
+        val sourceId: String,
+        val index: Int,
+        val positionMs: Long,
+        val atMs: Long,
+    )
+
+    @Volatile
+    private var lost: Lost? = null
+
+    /** The search for [lost], while one runs. */
+    @Volatile
+    private var rejoinJob: Job? = null
+
+    /** Whatever the link took away is not to be taken back: another choice was made here. */
+    private fun forgetLost() {
+        lost = null
+        rejoinJob?.cancel()
+    }
+
+    /**
+     * Wi-Fi is back and an output it took away is remembered: look for it,
+     * and take it back as it is. Still playing this queue, its track and clock
+     * are followed, with nothing sent that would interrupt it. Stopped, it is
+     * selected again, paused. Only while nothing has happened here that
+     * taking it back would undo — see [movedOn] — and only for a while: given
+     * up quietly after [LOST_OUTPUT_KEPT_MS], when it can't be found, or when
+     * it is busy with someone else's sound.
+     */
+    private fun rejoinLost() {
+        val gone = lost ?: return
+        if (rejoinJob?.isActive == true) return
+        val out = gone.active.output
+        val name = gone.active.target.name
+        rejoinJob = scope.launch {
+            if (android.os.SystemClock.elapsedRealtime() - gone.atMs > LOST_OUTPUT_KEPT_MS) {
+                android.util.Log.i(out.logTag, "Wi-Fi back, but $name went too long ago — left")
+                if (lost === gone) lost = null
+                return@launch
+            }
+            android.util.Log.i(out.logTag, "Wi-Fi back — looking for $name")
+            // Bounded. A link that goes again meanwhile cancels this and keeps
+            // the memory, for the next time it comes back.
+            val found = withTimeoutOrNull(REJOIN_SEARCH_MS) { out.findAgain(gone.active.target) }
+            withContext(Dispatchers.Main.immediate) {
+                if (lost !== gone) return@withContext
+                lost = null
+                when {
+                    found == null -> android.util.Log.i(out.logTag, "$name not found, or playing something else — left")
+                    movedOn(gone) -> android.util.Log.i(out.logTag, "moved on here since — $name left")
+                    else -> rejoin(gone, found)
+                }
+            }
+        }
+    }
+
+    /**
+     * Whether anything has happened on the phone since [gone] was lost that
+     * taking it back would undo: another output chosen, another source or
+     * queue, another song or place in it, or the phone making sound. Main only.
+     */
+    private fun movedOn(gone: Lost): Boolean =
+        _active.value != null ||
+            App.source.value.id != gone.sourceId ||
+            playbackSession.value != gone.session ||
+            _index.value != gone.index ||
+            kotlin.math.abs(_positionMs.value - gone.positionMs) > REJOIN_POSITION_SLACK_MS ||
+            _isPlaying.value || _buffering.value || player?.playWhenReady == true
+
+    /** Make [gone]'s output the one with the sound again, as [found] says it is. Main only. */
+    private fun rejoin(gone: Lost, found: Refound) {
+        val out = gone.active.output
+        android.util.Log.i(
+            out.logTag,
+            "took ${found.target.name} back " +
+                if (found.index >= 0) "at idx=${found.index} ${if (found.playing) "playing" else "paused"}" else "holding nothing — paused",
+        )
+        settleRestartCopy()
+        supersedeStart()
+        player?.pause()
+        // The phone's own wait for the network was about the phone's player,
+        // and the sound is elsewhere again. A hand-back rebuilds that player.
+        _waitingFor.value = null
+        _active.value = ActiveOutput(gone.active.family, found.target, out)
+        // Playing or not before the song, so the change of song is announced
+        // as what it is — see followCurrentSong.
+        _isPlaying.value = found.index in _queue.value.indices && found.playing
+        if (found.index in _queue.value.indices) {
+            _index.value = found.index
+            _positionMs.value = found.positionMs
+            _queue.value[found.index].durationMs.takeIf { it > 0L }?.let { _durationMs.value = it }
+        }
+        out.rejoin(found)
+        if (_isPlaying.value) reportTimeline(TimelineState.PLAYING)
     }
 
     /** What every output is given of this controller — see [OutputHost]. */
@@ -2814,19 +2967,8 @@ class PlaybackController(
             val a = _active.value ?: return
             if (a.output !== output || a.target !== target) return
             if (!_active.compareAndSet(a, null)) return
-            _isPlaying.value = false
-            val p = player ?: return
-            _volume.value = p.deviceVolume.value
-            // Reached from a poll on Default, so the handle is read again
-            // once on Main: a new activity may have taken the player over in
-            // between, and the one it replaced is released and throws.
-            scope.launch(Dispatchers.Main.immediate) {
-                val cur = player ?: return@launch
-                val tracks = _queue.value
-                if (tracks.isEmpty()) return@launch
-                rebuildQueueAt(cur, tracks, _index.value.coerceIn(0, tracks.lastIndex), _positionMs.value)
-                cur.pause()
-            }
+            player?.let { _volume.value = it.deviceVolume.value }
+            takeOverHere(output.logTag, "stopped there", _positionMs.value, play = false)
         }
     }
 
@@ -3557,6 +3699,18 @@ class PlaybackController(
 
         /** Settling time before an output hears that what plays next has changed. */
         private const val UPCOMING_DEBOUNCE_MS = 400L
+
+        /**
+         * How long an output the link took away is kept to be taken back — a
+         * walk out of range and back, not an afternoon out. See rejoinLost.
+         */
+        private const val LOST_OUTPUT_KEPT_MS = 10 * 60 * 1000L
+
+        /** How long the search for it may take once the link is back. */
+        private const val REJOIN_SEARCH_MS = 30_000L
+
+        /** How far the phone's place may have drifted since, and still be where the output was lost. */
+        private const val REJOIN_POSITION_SLACK_MS = 3_000L
 
         /** How often the queue snapshot is written while playing. */
         /** How long a restore waits to learn what is downloaded before deciding. */
