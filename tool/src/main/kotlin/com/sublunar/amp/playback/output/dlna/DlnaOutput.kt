@@ -200,12 +200,12 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     override fun seekTo(ms: Long) {
         val renderer = steered() ?: return
         dropSeekChecks()
-        // The last moments of a track are not worth a seek. Seeking means
-        // pushing the stream again, probing it and seeking it — seconds —
-        // after which the renderer stops almost at once, and a stop before
-        // any poll had seen it playing read as a track that never started:
-        // a six-second wait, then the track again from the top. Dragging to
-        // the end means the next track, and that is what Next does.
+        // Only the very end is the next track: a target in the last second, or
+        // past it, leaves nothing to hear. Anything before that is played, the
+        // last seconds too. A stop straight after the seek reads as the track
+        // ending, not as one that never started — see pollRenderer's
+        // playedBefore — and the next track is armed at once, so they hand
+        // over the way any track's last seconds do.
         val total = host.durationMs.value
         if (total > 0L && total - ms <= CAST_SEEK_END_SLACK_MS) {
             android.util.Log.i("AmpCast", "seek $ms of $total is the end → next")
@@ -221,7 +221,13 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         // this is the end of it, not a failure to start.
         castJob?.cancel()
         castJob = host.scope.launch {
-            if (seekCast(renderer, ms)) pollRenderer(renderer, playedBefore = true)
+            if (seekCast(renderer, ms)) {
+                // Not left to the poll's first round, a second or more away:
+                // a seek into the last few seconds would have run out by then,
+                // with nothing handed over to follow it.
+                armNextIfDue(renderer)
+                pollRenderer(renderer, playedBefore = true)
+            }
         }
     }
 
@@ -1011,8 +1017,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         /** Long enough for a renderer that can seek to have done so. */
         const val CAST_SEEK_VERIFY_MS = 4_000L
 
-        /** A cast seek this close to the end is the next track, not a seek. */
-        const val CAST_SEEK_END_SLACK_MS = 3_000L
+        /** A cast seek this close to the end, or past it, is the next track: nothing is left to hear. */
+        const val CAST_SEEK_END_SLACK_MS = 1_000L
         const val CAST_SEEK_TOLERANCE_MS = 15_000L
 
         /** How far a just-started track's first readings may stray from its start before being disbelieved. */
