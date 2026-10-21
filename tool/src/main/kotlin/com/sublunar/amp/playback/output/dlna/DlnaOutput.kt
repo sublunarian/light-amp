@@ -1119,8 +1119,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 startPolls++
                 android.util.Log.i(
                     "AmpCast",
-                    "start poll $startPolls idx=${host.index.value}: $state on " +
-                        "${DlnaCast.loggable(position?.trackUri)} at ${position?.positionMs}",
+                    "start poll $startPolls idx=${host.index.value}: $state (${DlnaCast.lastTransportStatus}) on " +
+                        "${DlnaCast.loggable(position?.trackUri)} at ${position?.positionMs}, " +
+                        "holds ${DlnaCast.loggable(DlnaCast.mediaUri(renderer))}",
                 )
             }
             // This reading is of the track we pushed or followed.
@@ -1295,6 +1296,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                         waitingForPlay = true
                         host.showPosition(heardMs)
                         host.showPaused()
+                        // Put in again from there, stopped, so its own play and
+                        // a resume from here both go on from where it stopped.
+                        if (cueAt(renderer, heardMs)) waitingForPlay = false
                     }
                 }
                 (settled || played) && stall.stopped >= STOPPED_POLLS_TO_ADVANCE -> {
@@ -1342,6 +1346,48 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             // one without the stream going stale before it is wanted.
             armNextIfDue(renderer)
         }
+    }
+
+    /**
+     * Point [renderer] at the current track from [atMs], stopped: what a play
+     * from its own remote, or a resume from here, then starts from.
+     *
+     * The Denon's remote pauses by stopping, and its play opens the track's
+     * address again from the start of what that address holds: for a stream
+     * the server began at a seek, the old seek point rather than where it
+     * stopped. So the stream goes in again from there — seeked by the renderer
+     * where it can seek this stream before playing, otherwise begun there by
+     * the server. False when nothing was put in, and a play here pushes the
+     * track again — see waitingForPlay.
+     */
+    private suspend fun cueAt(renderer: DlnaRenderer, atMs: Long): Boolean {
+        val track = host.queue.value.getOrNull(host.index.value) ?: return false
+        val (format, mime) = castFormatFor(renderer, track)
+        val seekKey = "${track.id}|${format.id}"
+        val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
+        val byRenderer = seekable == true && seeksBeforePlay[renderer.id] != false
+        val offset = if (byRenderer) 0L else atMs / 1000 * 1000
+        val url = host.streamUrl(
+            track,
+            format,
+            estimateContentLength = false,
+            timeOffsetSeconds = (offset / 1000).toInt(),
+            sessionId = host.ownStreamSession(track.id),
+        ) ?: return false
+        if (!DlnaCast.setUri(renderer, url, track.title, track.artist, track.album, track.durationMs, mime)) return false
+        // Held now, whatever happens next: its readings are this track's, and
+        // a play from its own remote is followed from wherever it starts.
+        castCurrentUrl = url
+        castOffsetMs = offset
+        castSeekPending = -1L
+        val there = !byRenderer || DlnaCast.seek(renderer, atMs)
+        castStartedAtMs = if (byRenderer && there) atMs else offset
+        android.util.Log.i(
+            "AmpCast",
+            "cued idx=${host.index.value} at $atMs " +
+                "${if (!byRenderer) "from the server" else if (there) "seeked" else "but not seeked"}, stopped",
+        )
+        return there
     }
 
     /** Move to the next queue entry on the renderer; false when the queue ends. */
