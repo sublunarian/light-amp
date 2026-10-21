@@ -547,13 +547,34 @@ class PlaybackController(
     private var bindJob: Job? = null
 
     /**
-     * A finished queue goes back to its first track and stays stopped.
+     * The queue ran out: back to its first track, at its start, paused. The one
+     * way a queue ends, on this phone and wherever else the sound is — see
+     * [rewindIfQueueFinished] and OutputHost.queueFinished.
      *
      * ExoPlayer leaves a queue that has run out parked on the last song at its
-     * very end, so the next press of play replays that song rather than the
-     * record — and the player sits showing the last track as if it were about to
-     * start. Winding back to the top says what actually happened: this is over,
-     * and here is where it begins again.
+     * very end, and a speaker stops on it, so the next press of play replayed
+     * that song rather than the record — on a speaker under a clock that went
+     * on from its end. Winding back to the top says what actually happened:
+     * this is over, and here is where it begins again.
+     *
+     * The listening is over, so its session is too. Nothing used to say so,
+     * and the last song sat on Plex's dashboard as playing until it timed out.
+     * Said before anything moves: the first song, cued in its place, is a
+     * stream the server may be asked for before it hears this.
+     */
+    private fun queueFinished() {
+        sessions.close()
+        _isPlaying.value = false
+        _buffering.value = false
+        _index.value = 0
+        _positionMs.value = 0L
+        _queue.value.firstOrNull()?.durationMs?.takeIf { it > 0L }?.let { _durationMs.value = it }
+        hasPlayed = false
+    }
+
+    /**
+     * A finished queue on this phone goes back to its first track and stays
+     * stopped — see [queueFinished].
      *
      * Repeat is not this function's business: with TRACK or QUEUE the player
      * loops and never reaches an end to notice.
@@ -597,26 +618,19 @@ class PlaybackController(
         // runs on Default: ExoPlayer's looper is Main and it throws rather than
         // tolerating anything else — every other player call in this class
         // places itself for that reason, and this one didn't, so reaching the
-        // end of the last track killed the app. The rest is set here rather
-        // than inside, so a second emission arriving before that block runs
-        // can't queue a second rewind behind it.
-        //
-        // The listening is over, so its session is too. Nothing used to say
-        // so, and the last song sat on Plex's dashboard as playing until it
-        // timed out. Said before the player moves: the first song, cued in its
-        // place, is a stream the server may be asked for before it hears this.
-        sessions.close()
+        // end of the last track killed the app. The state is set out here
+        // rather than inside, so a second emission arriving before that block
+        // runs can't queue a second rewind behind it — and before it, so the
+        // session is closed before the player moves.
+        queueFinished()
         scope.launch(Dispatchers.Main.immediate) {
             // Released while this was on its way: a gone handle throws. One
             // that replaced it steers the same service, which still has to be
-            // told what the state below already says.
+            // told what the state already says.
             val cur = player ?: return@launch
             cur.pause()
             cur.seekToDefaultPosition(0)
         }
-        _index.value = 0
-        _positionMs.value = 0L
-        hasPlayed = false
     }
 
     /**
@@ -2773,8 +2787,9 @@ class PlaybackController(
             this@PlaybackController.announceNowPlaying()
         }
 
-        override fun listeningEnded() {
-            sessions.close()
+        override fun queueFinished(output: Output) {
+            if (steering(output) == null) return
+            this@PlaybackController.queueFinished()
         }
 
         override fun setPhoneVolume(level: Float) {

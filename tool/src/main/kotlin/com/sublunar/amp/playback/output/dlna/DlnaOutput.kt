@@ -99,6 +99,15 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     private var strangeUri: String? = null
 
     /**
+     * The renderer holds nothing to resume: the queue ran out there. Play
+     * starts the queue's track where the clock stands — a bare resume played
+     * the last song again, under a clock that went on from its end — and a
+     * seek only moves the clock until then, as it does on a paused phone.
+     */
+    @Volatile
+    private var waitingForPlay = false
+
+    /**
      * The queue index the renderer's next slot has been armed for — or offered
      * and refused.
      *
@@ -189,6 +198,13 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     override fun play() {
         val renderer = steered() ?: return
+        if (waitingForPlay) {
+            castJob?.cancel()
+            castJob = host.scope.launch {
+                if (startCastTrack(renderer, host.positionMs.value)) pollRenderer(renderer)
+            }
+            return
+        }
         host.scope.launch { DlnaCast.resume(renderer) }
     }
 
@@ -200,6 +216,11 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     override fun seekTo(ms: Long) {
         val renderer = steered() ?: return
         dropSeekChecks()
+        if (waitingForPlay) {
+            // Nothing to seek in — see waitingForPlay. Play starts there.
+            host.showPosition(ms.coerceIn(0L, host.durationMs.value.takeIf { it > 0L } ?: Long.MAX_VALUE))
+            return
+        }
         // Only the very end is the next track: a target in the last second, or
         // past it, leaves nothing to hear. Anything before that is played, the
         // last seconds too. A stop straight after the seek reads as the track
@@ -464,6 +485,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             )
         }
         if (!started) return false
+        waitingForPlay = false
         android.util.Log.i("AmpCast", "pushed idx=${host.index.value} wanted=$wanted offset=$offset ${format.id}")
         host.showPlaying(true)
         host.showDuration(track.durationMs)
@@ -1003,9 +1025,17 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             RepeatMode.OFF -> host.index.value + 1
         }
         if (next !in host.queue.value.indices) {
-            host.showPlaying(false)
-            // The speaker ran out of queue: the listening is over.
-            host.listeningEnded()
+            android.util.Log.i("AmpCast", "queue finished")
+            // Stopped at the end of the last song, with nothing to resume —
+            // see waitingForPlay. The controller winds back to the top, as it
+            // does for the phone.
+            waitingForPlay = true
+            castCurrentUrl = null
+            castNextUrl = null
+            castNextOffered = null
+            castNextArmedFor = null
+            castOffsetMs = 0L
+            host.queueFinished(this)
             return false
         }
         host.showIndex(next)

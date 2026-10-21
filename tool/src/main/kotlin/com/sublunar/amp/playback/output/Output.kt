@@ -229,8 +229,13 @@ interface OutputHost {
     /** The song at the index has started: the server hears so, as it does for the phone's own player. */
     fun announceNowPlaying()
 
-    /** The far end ran out of queue: the listening is over. */
-    fun listeningEnded()
+    /**
+     * [output]'s far end ran out of queue: back to the first track, at its
+     * start, paused — what the phone's own player does at the end of a queue.
+     * The output stays the one with the sound, and plays from there at the
+     * next press of play.
+     */
+    fun queueFinished(output: Output)
 
     /** Move the phone's own media volume. Main only: it is the player's call. */
     fun setPhoneVolume(level: Float)
