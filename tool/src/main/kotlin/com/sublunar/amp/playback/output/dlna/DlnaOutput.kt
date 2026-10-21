@@ -71,7 +71,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     private var castJob: Job? = null
 
     // "rendererId|format" -> stream format actually sent + its MIME type.
-    private val castFormats = mutableMapOf<String, Pair<StreamFormat, String>>()
+    // Concurrent: a source switch clears it from wherever stop was called,
+    // while a cast job on its way out may still be writing it.
+    private val castFormats = java.util.concurrent.ConcurrentHashMap<String, Pair<StreamFormat, String>>()
 
     /**
      * Whether a track's stream can be seeked, keyed by track and format.
@@ -80,8 +82,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      * transcode for a flac original and the untouched file for an mp3 one, and
      * only the second of those can be seeked. Only settled answers are kept, so
      * a probe that failed is asked again rather than remembered as a no.
+     * Concurrent, as [castFormats] is.
      */
-    private val castSeekable = mutableMapOf<String, Boolean>()
+    private val castSeekable = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
     /** What the renderer is playing, and what it has been given to play next. */
     private var castCurrentUrl: String? = null
@@ -196,6 +199,25 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 host.scope.launch { DlnaCast.stop(renderer) }
             }
         }
+    }
+
+    /**
+     * The queue went — a source switch — and the renderer stays the output:
+     * stopped, with nothing of the old queue kept, down to how the server
+     * being left delivers its formats, which the next one may answer in
+     * another container. The next queue plays on it.
+     */
+    override fun stopPlayback() {
+        val renderer = steered() ?: return
+        castJob?.cancel()
+        castJob = null
+        dropSeekChecks()
+        forgetCast()
+        waitingForPlay = true
+        castFormats.clear()
+        castSeekable.clear()
+        android.util.Log.i("AmpCast", "queue gone — ${renderer.name} stopped, still the output")
+        host.scope.launch { DlnaCast.stop(renderer) }
     }
 
     /** Nothing of the queue is on the renderer any more, or nothing on it is followed from here. */

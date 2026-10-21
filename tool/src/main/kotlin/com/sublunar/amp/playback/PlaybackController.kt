@@ -2206,8 +2206,16 @@ class PlaybackController(
         scope.launch(Dispatchers.Main) { armIfRemainder() }
     }
 
-    /** Stop playback and empty the queue. */
-    fun stop() {
+    /**
+     * Stop playback and empty the queue.
+     *
+     * A speaker the phone offers stays the output, quiet, and the next queue
+     * plays on it: switching sources is a choice of music, not of where it
+     * plays. A source's own players go with their source, and so does any
+     * output when [keepOutput] is false — what follows has no server to give
+     * a speaker an address from.
+     */
+    fun stop(keepOutput: Boolean = true) {
         supersedeStart()
         // A speaker the link took away belonged to the queue going now.
         forgetLost()
@@ -2217,7 +2225,13 @@ class PlaybackController(
         sessions.close(stopping?.id, _positionMs.value, _durationMs.value)
         // Whatever the sound went to is told to stop, and the queue it was
         // given goes with this one.
-        dropOutput(Disconnect.Stopped)
+        val kept = _active.value?.takeIf { keepOutput && it.family in Outputs.phone }
+        if (kept != null) {
+            kept.output.stopPlayback()
+            _isPlaying.value = false
+        } else {
+            dropOutput(Disconnect.Stopped)
+        }
         // The queue goes now, on whatever thread called: these are plain state
         // writes and need no looper, where the player's own calls do.
         //

@@ -230,6 +230,14 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         host.scope.launch { client?.companionCommand(player, "stop", ++plexCommandId) }
     }
 
+    // Never asked of a source's own output, which goes with its source — see
+    // PlaybackController.stop. Stopping the player is what it would mean.
+    override fun stopPlayback() {
+        val target = steered() ?: return
+        plexQueue = null
+        host.scope.launch { plexClient()?.companionCommand(target, "stop", ++plexCommandId) }
+    }
+
     override fun play() {
         val target = steered() ?: return
         host.scope.launch { plexClient()?.companionCommand(target, "play", ++plexCommandId) }

@@ -1348,7 +1348,12 @@ object App {
         // hour's worth of queue on every switch, and it was cleared because a
         // queued track *didn't* know its source and the worker assumed the
         // browsed one; see Downloader.
-        playback.stop()
+        //
+        // A speaker the sound was going to stays chosen, and plays the new
+        // source's next queue — but only a source with a server can feed one:
+        // a speaker is handed the server's address, and the phone's own files
+        // have none.
+        playback.stop(keepOutput = next.hasServer)
         // A sync for the source being left has nothing to tell us, and its
         // failure would be reported against the new one. Its hold on that
         // source's downloads goes with it.

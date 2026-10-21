@@ -110,6 +110,14 @@ interface Output : OutputControls {
     fun disconnect(target: OutputTarget, why: Disconnect)
 
     /**
+     * Playback stopped and the queue emptied — a source switch — while this
+     * stays the output with the sound: stop the far end and keep nothing of
+     * the old queue. The next queue arrives as [newQueue]. Any thread. Asked
+     * only of an output the phone offers: a source's own goes with its source.
+     */
+    fun stopPlayback()
+
+    /**
      * The link is back after [Disconnect.LinkLost] took [target] away: find
      * it again and say what it is doing, sending it nothing that would
      * interrupt it. Off Main, and bounded by the caller. Null when it isn't to
@@ -330,7 +338,11 @@ enum class Disconnect {
      */
     LinkLost,
 
-    /** Playback stopped and the queue emptied — a source switch. */
+    /**
+     * Playback stopped and the queue emptied — a source switch — and the
+     * output goes with it: a source's own, or any when what follows has no
+     * server to give it an address from. See PlaybackController.stop.
+     */
     Stopped,
 
     /** The app is being left. */
