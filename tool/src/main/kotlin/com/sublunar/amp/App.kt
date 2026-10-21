@@ -671,6 +671,7 @@ object App {
             playback = PlaybackController(
                 settings, serverClient, ::dao, downloads, scope,
                 metadataAllowed = ::metadataAllowed,
+                standInDir = java.io.File(context.filesDir, "stand-in"),
             )
 
             // A finished sync is proof the server is there. (Its end tops up the

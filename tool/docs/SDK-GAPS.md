@@ -113,6 +113,31 @@ minutes, where the spike held on indefinitely.
   allows, so it ships in store builds. It used to sit in the SDK as a spike on
   the mistaken belief that a tool couldn't do this.
 
+### The media session while casting
+
+- **Need:** whatever reads the media session sees and steers the speaker
+  while Amp casts: a launcher's playback controls, Bluetooth buttons, and
+  LightOS if it ever shows them.
+- **The gap:** the session belongs to the SDK's player, and a tool can't put
+  a remote player behind it. Left alone, the session showed the phone's paused
+  player at 0:00 on the song casting began with, and its buttons went to that
+  player. With that player paused, media3 also dropped the foreground service:
+  Android froze Amp ten seconds after it left the screen, and the speaker
+  played out its song and stopped.
+- **Now:** while an output has the sound, the phone's player plays a silent
+  stand-in (`playback/StandIn.kt`). It is one silent MP3, named and timed like
+  the output's song and kept at its position and play state. A press that
+  reaches it goes to the output. Playing, it keeps the service in the
+  foreground, so the speaker is steered with Amp off screen.
+- **Costs:** the phone's audio path runs, playing silence, for as long as a
+  cast plays. A pause the phone makes on its own (a call, headphones unplugged,
+  another app) pauses the speaker too. The volume keys still can't reach the
+  speaker when Amp isn't in front.
+- **Would fix it:** a way to hand the session a remote player, which is
+  media3's own route for casting: a player with `PLAYBACK_TYPE_REMOTE`,
+  swapped in with `MediaSession.setPlayer`.
+- **Requested upstream:** drafted, not posted.
+
 ### Allow-listed libraries in the store build
 
 - **Need:** a dependency on the plugin's allow-list builds in Light's store

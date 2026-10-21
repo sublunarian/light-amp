@@ -13,7 +13,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -85,10 +84,15 @@ internal class StandIn(
         // A switch from one output to another: already standing in.
         if (active) return
         active = true
-        // Collected at once, so the output's state is known before the first
-        // song's silence goes in.
-        following = scope.launch(Dispatchers.Main.immediate) {
-            launch { combine(queue, index) { q, i -> q.getOrNull(i) }.filterNotNull().collect(::onTrack) }
+        // Read now, so the first song's silence goes in where the output is.
+        outputPos = positionMs.value
+        outputAt = SystemClock.elapsedRealtime()
+        outputPlaying = isPlaying.value
+        // Posted rather than immediate: a new queue and its index are set one
+        // after the other, and an immediate collector would stand in, for a
+        // moment, for the old index in the new queue.
+        following = scope.launch(Dispatchers.Main) {
+            launch { combine(queue, index) { q, i -> q.getOrNull(i) }.collect(::onTrack) }
             launch { isPlaying.collect(::onPlaying) }
             launch { positionMs.collect(::onPosition) }
         }
@@ -137,10 +141,27 @@ internal class StandIn(
 
     private fun current(): Track? = queue.value.getOrNull(index.value)
 
-    private fun onTrack(track: Track) {
+    private fun onTrack(track: Track?) {
         val p = held ?: return
+        if (track == null) {
+            clear(p)
+            return
+        }
         if (track.id == wantedId) return
         put(p, track)
+    }
+
+    /**
+     * Nothing to stand in for — the queue went, a source switch keeping the
+     * speaker for the next one: the player is emptied, as a stopped phone's is.
+     */
+    private fun clear(p: LightAudioPlayer) {
+        if (wantedId == null && trackId == null) return
+        generation++
+        trackId = null
+        wantedId = null
+        p.setMediaQueue(emptyList())
+        android.util.Log.i(TAG, "nothing to stand in for")
     }
 
     private fun onPlaying(playing: Boolean) {
@@ -200,7 +221,7 @@ internal class StandIn(
 
     private fun watch(p: LightAudioPlayer) {
         watching?.cancel()
-        watching = scope.launch(Dispatchers.Main.immediate) {
+        watching = scope.launch(Dispatchers.Main) {
             combine(p.isPlaying, p.positionMs) { playing, pos -> playing to pos }.collect { (playing, pos) ->
                 if (held !== p || trackId == null) return@collect
                 val now = SystemClock.elapsedRealtime()
