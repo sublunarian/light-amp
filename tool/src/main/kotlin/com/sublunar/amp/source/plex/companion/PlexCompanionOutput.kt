@@ -439,7 +439,8 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
      * is a loop.
      */
     private fun adoptPlexTimeline(t: PlexPlayerTimeline) {
-        host.showPlaying(t.state == "playing")
+        // Paused is the player's own say. Buffering is a start still going.
+        if (t.state == "paused") host.showPaused() else host.showPlaying(t.state == "playing")
         host.showPosition(t.timeMs)
         if (t.durationMs > 0) host.showDuration(t.durationMs)
         judgePlexVolume(t.volume, t.controllable)

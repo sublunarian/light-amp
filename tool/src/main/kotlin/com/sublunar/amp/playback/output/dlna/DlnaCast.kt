@@ -481,18 +481,34 @@ object DlnaCast {
             val body = (if (ok) connection.inputStream else connection.errorStream)
                 ?.use { it.readBytes().decodeToString() }
             connection.disconnect()
-            // One line per call that failed, with the renderer's own reason
+            // A line for a call that failed, with the renderer's own reason
             // where it gave one. They used to vanish here, and a hand-off the
             // renderer had taken looked the same as one it refused.
-            if (!ok) android.util.Log.i(LOG_TAG, "$action failed: HTTP $status${upnpError(body)?.let { ", $it" }.orEmpty()}")
+            if (ok) {
+                failing.remove("$action $controlUrl")
+            } else {
+                noteFailure(action, controlUrl, "HTTP $status${upnpError(body)?.let { ", $it" }.orEmpty()}")
+            }
             if (ok) body.orEmpty() else null
         } catch (e: IOException) {
-            android.util.Log.i(LOG_TAG, "$action failed: $e")
+            noteFailure(action, controlUrl, e.toString())
             null
         } catch (e: IllegalStateException) {
-            android.util.Log.i(LOG_TAG, "$action failed: $e")
+            noteFailure(action, controlUrl, e.toString())
             null
         }
+    }
+
+    /**
+     * The calls whose last try failed, by action and renderer. A renderer
+     * gone from the network fails its poll every second, and a line for
+     * each would roll the log the device tests are read from.
+     */
+    private val failing = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** Log [action]'s failure once, until it next succeeds. */
+    private fun noteFailure(action: String, controlUrl: String, why: String) {
+        if (failing.add("$action $controlUrl")) android.util.Log.i(LOG_TAG, "$action failed: $why")
     }
 
     /**

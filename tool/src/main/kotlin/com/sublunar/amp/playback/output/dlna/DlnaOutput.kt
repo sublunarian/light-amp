@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
@@ -118,6 +119,13 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      * be asked again every second for the whole lead window.
      */
     private var castNextArmedFor: Int? = null
+
+    /**
+     * The track the offered next address is for, by id. A queue edited since
+     * may have moved it or taken it out, and the slot it was offered for then
+     * names some other song — see [offeredNextIndex].
+     */
+    private var castNextTrackId: String? = null
 
     /**
      * Bumped by every seek, every push and every change of track, so the
@@ -236,6 +244,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         castCurrentUrl = null
         castNextUrl = null
         castNextOffered = null
+        castNextTrackId = null
         castNextArmedFor = null
         castOffsetMs = 0L
         castSeekPending = -1L
@@ -258,6 +267,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     override suspend fun findAgain(target: OutputTarget): Refound? {
         val gone = (target as DlnaTarget).renderer
         val renderer = rediscover(gone.id) ?: return null
+        // Reachable again: a muted start the link cut off gives its sound back
+        // now, whether or not the speaker is followed from here.
+        undoHush(renderer)
         val current = castCurrentUrl
         val next = castNextUrl ?: castNextOffered
         repeat(REFOUND_READS) { attempt ->
@@ -276,12 +288,11 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                     Refound(found, lostAtIndex, position.positionMs + castOffsetMs, playing)
                 }
                 next != null && DlnaCast.sameUri(uri, next) -> {
+                    // Wherever that song sits now: an edit while the link was
+                    // down can have moved it, or taken it out, and then the
+                    // speaker is playing something the queue no longer has.
+                    val after = offeredNextIndex() ?: return null
                     refoundOn = next
-                    // The slot it was offered for, or — once a queue edit had
-                    // the slot reconsidered — the one after the lost track.
-                    val after = castNextArmedFor
-                        ?: nextCastIndex(lostAtIndex, host.queue.value.size, host.repeatMode.value)
-                        ?: -1
                     Refound(found, after, position.positionMs, playing)
                 }
                 else -> null
@@ -322,6 +333,12 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             castOffsetMs = 0L
             castNextUrl = null
             castNextOffered = null
+            castNextTrackId = null
+            castNextArmedFor = null
+        } else {
+            // Still on its own song. What it holds after it was armed for the
+            // queue as it stood when the link went, and is offered again for
+            // the queue as it is now, once due.
             castNextArmedFor = null
         }
         castStartedAtMs = found.positionMs
@@ -342,6 +359,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     override fun play() {
         val renderer = steered() ?: return
+        pressed(playing = true)
         if (waitingForPlay) {
             castJob?.cancel()
             castJob = host.scope.launch {
@@ -354,7 +372,35 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     override fun pause() {
         val renderer = steered() ?: return
+        pressed(playing = false)
         host.scope.launch { DlnaCast.pause(renderer) }
+    }
+
+    /**
+     * A play or pause pressed here, and when. Until the renderer has acted
+     * on it, a poll still reading the old state is the old state, not news:
+     * read as news, it showed playing again for a second after a pause, and
+     * told the server so.
+     */
+    @Volatile
+    private var pressedPlaying: Boolean? = null
+
+    @Volatile
+    private var pressedAt = 0L
+
+    private fun pressed(playing: Boolean) {
+        pressedAt = SystemClock.elapsedRealtime()
+        pressedPlaying = playing
+    }
+
+    /** Whether a reading of [playing] is only the renderer not having caught up with a press yet. */
+    private fun behindPress(playing: Boolean): Boolean {
+        val pressed = pressedPlaying ?: return false
+        if (pressed == playing || SystemClock.elapsedRealtime() - pressedAt > PRESS_SETTLE_MS) {
+            pressedPlaying = null
+            return false
+        }
+        return true
     }
 
     override fun seekTo(ms: Long) {
@@ -529,20 +575,27 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             if (info.trackUri != null && !DlnaCast.sameUri(info.trackUri, url)) return@launch
             if (DlnaCast.state(renderer) == DlnaState.STOPPED) return@launch
             if (info.positionMs >= wanted - CAST_SEEK_TOLERANCE_MS) return@launch
-            // A seek taken before play and then not acted on: the renderer
-            // started from the top. It starts muted from here on, and this
-            // track again that way — the stream itself seeks fine, and a server
-            // that isn't transcoding it would ignore an offset.
-            val muted = url == seekedBeforePlay && seeksBeforePlay[renderer.id] != false
-            if (muted) seeksBeforePlay[renderer.id] = false
-            android.util.Log.i(
-                "AmpCast",
-                "seek missed: at ${info.positionMs} wanted $wanted → ${if (muted) "muted start" else "server"}",
-            )
-            castJob?.cancel()
-            castJob = host.scope.launch {
-                if (startOrStop(renderer, wanted, askServer = !muted)) {
-                    pollRenderer(renderer, playedBefore = true)
+            // Asked again on Main, where seeks and skips swap the cast job: the
+            // two reads can take seconds, and a previous pressed meanwhile
+            // must not have its job cancelled and the old position pushed back.
+            withContext(Dispatchers.Main.immediate) {
+                if (generation != seekGeneration || steered()?.id != renderer.id) return@withContext
+                if (host.index.value != seekedIndex || castCurrentUrl != url) return@withContext
+                // A seek taken before play and then not acted on: the renderer
+                // started from the top. It starts muted from here on, and this
+                // track again that way — the stream itself seeks fine, and a
+                // server that isn't transcoding it would ignore an offset.
+                val muted = url == seekedBeforePlay && seeksBeforePlay[renderer.id] != false
+                if (muted) seeksBeforePlay[renderer.id] = false
+                android.util.Log.i(
+                    "AmpCast",
+                    "seek missed: at ${info.positionMs} wanted $wanted → ${if (muted) "muted start" else "server"}",
+                )
+                castJob?.cancel()
+                castJob = host.scope.launch {
+                    if (startOrStop(renderer, wanted, askServer = !muted)) {
+                        pollRenderer(renderer, playedBefore = true)
+                    }
                 }
             }
         }
@@ -629,6 +682,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             )
         }
         if (!started) return false
+        // A start cancelled while its unmute was out still comes back PLAYING —
+        // the unmute is never cut short. The rest belongs to whatever replaced it.
+        coroutineContext.ensureActive()
         waitingForPlay = false
         android.util.Log.i("AmpCast", "pushed idx=${host.index.value} wanted=$wanted offset=$offset ${format.id}")
         host.showPlaying(true)
@@ -646,6 +702,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         // until this track is nearly over — see armNextIfDue.
         castNextUrl = null
         castNextOffered = null
+        castNextTrackId = null
         castNextArmedFor = null
         return true
     }
@@ -703,7 +760,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             seeksBeforePlay[renderer.id] = false
             android.util.Log.i("AmpCast", "seek before play refused → muted starts on ${renderer.name}")
         }
-        val hush = hush(renderer)
+        // Seen through even by a start cancelled meanwhile: the renderer is
+        // muted whether or not the answer is waited for.
+        val hush = withContext(NonCancellable) { hush(renderer) }
         if (hush == null) {
             android.util.Log.i("AmpCast", "nothing to mute ${renderer.name} with → play, then seek")
             if (!DlnaCast.resume(renderer)) return Start.FAILED
@@ -774,13 +833,12 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     }
 
     /**
-     * The renderer a muted start has silenced, by id, and how — until its
+     * The renderers a muted start has silenced, by id, and how — until their
      * sound is given back. Given back by the start itself, whatever ends it,
      * and where that couldn't be sent — the link went — at the next chance: a
-     * poll, a connect, the app being left.
+     * poll, a connect, the speaker found again, the app being left.
      */
-    @Volatile
-    private var hushed: Pair<String, Hush>? = null
+    private val hushed = java.util.concurrent.ConcurrentHashMap<String, Hush>()
 
     /** The level the fader asked for during a muted start, which a lowered volume goes back to instead of the old one. */
     @Volatile
@@ -789,17 +847,22 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     /** Silence [renderer] for a muted start — its mute, else its volume — or null when it has neither. */
     private suspend fun hush(renderer: DlnaRenderer): Hush? {
         faderMoved = null
+        // Silenced by an earlier start that couldn't give it back: ours, not
+        // its owner's, and still to be undone.
+        hushed[renderer.id]?.let { return it }
         if (DlnaCast.muted(renderer) == true) return Hush.Silent
-        val hush = if (DlnaCast.setMute(renderer, true)) {
-            Hush.Muted
-        } else {
-            val level = DlnaCast.rawVolume(renderer) ?: return null
-            if (level == 0) return Hush.Silent
-            if (!DlnaCast.setRawVolume(renderer, 0)) return null
-            Hush.Lowered(level)
-        }
-        hushed = renderer.id to hush
-        return hush
+        // Written down before each call goes out. One that is cut off still
+        // silences the renderer, and only this record gives the sound back.
+        hushed[renderer.id] = Hush.Muted
+        if (DlnaCast.setMute(renderer, true)) return Hush.Muted
+        hushed.remove(renderer.id)
+        val level = DlnaCast.rawVolume(renderer) ?: return null
+        if (level == 0) return Hush.Silent
+        val lowered = Hush.Lowered(level)
+        hushed[renderer.id] = lowered
+        if (DlnaCast.setRawVolume(renderer, 0)) return lowered
+        hushed.remove(renderer.id)
+        return null
     }
 
     /** Give back the sound [hush] took from [renderer]. Kept in [hushed] for the next chance when it can't be sent. */
@@ -813,17 +876,17 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             )
         }
         if (undone) {
-            if (hushed?.second === hush) hushed = null
+            hushed.remove(renderer.id, hush)
             return
         }
-        hushed = renderer.id to hush
+        hushed[renderer.id] = hush
         android.util.Log.i("AmpCast", "couldn't give ${renderer.name} its sound back — again at the next chance")
     }
 
     /** Give [renderer] back any sound a muted start still holds. */
     private suspend fun undoHush(renderer: DlnaRenderer) {
-        val (id, hush) = hushed ?: return
-        if (id == renderer.id) unhush(renderer, hush)
+        val hush = hushed[renderer.id] ?: return
+        unhush(renderer, hush)
     }
 
     /**
@@ -890,8 +953,16 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val after = nextIndex()
         val track = after?.let { host.queue.value.getOrNull(it) }
         if (after == null || track == null) {
+            val offered = castNextUrl ?: castNextOffered
             castNextUrl = null
+            castNextOffered = null
+            castNextTrackId = null
             castNextArmedFor = null
+            // Offered before the queue lost its next — repeat switched off on
+            // the last song, say. Left in the renderer, it would cross into it
+            // under the old song's name. A renderer without the call faults,
+            // and plays to the end and stops, as it would have anyway.
+            if (offered != null) DlnaCast.clearNext(renderer)
             return
         }
         // Offered once per track. Asking again neither opens a new stream nor
@@ -912,6 +983,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         castNextArmedFor = after
         castNextUrl = null
         castNextOffered = url
+        castNextTrackId = track.id
         val queued = DlnaCast.setNext(
             renderer = renderer,
             url = url,
@@ -933,6 +1005,18 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     /** The index the queue would move to next, or null at the end of it. */
     private fun nextIndex(): Int? = nextCastIndex(host.index.value, host.queue.value.size, host.repeatMode.value)
+
+    /**
+     * Where the track offered as next sits in the queue now: the slot it was
+     * offered for while that still holds it, else wherever an edit moved it.
+     * Null when it was never offered, or the queue no longer has it.
+     */
+    private fun offeredNextIndex(): Int? {
+        val id = castNextTrackId ?: return null
+        val queue = host.queue.value
+        castNextArmedFor?.takeIf { queue.getOrNull(it)?.id == id }?.let { return it }
+        return queue.indexOfFirst { it.id == id }.takeIf { it >= 0 }
+    }
 
     /**
      * Format to cast in: the user's chosen streaming quality, honoured as long as
@@ -1020,7 +1104,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                     DlnaCast.sameUri(reported, next)
                 if (moved) {
                     dropSeekChecks()
-                    nextIndex()?.let { host.showIndex(it) }
+                    (offeredNextIndex() ?: nextIndex())?.let { host.showIndex(it) }
                     castCurrentUrl = next
                     // The queued track was handed over whole, from its start.
                     castOffsetMs = 0L
@@ -1035,6 +1119,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                     // left that way until this track is nearly over.
                     castNextUrl = null
                     castNextOffered = null
+                    castNextTrackId = null
                     castNextArmedFor = null
                     stall.reset()
                     // The renderer has *taken* the queued track but not started
@@ -1127,9 +1212,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             when (state) {
                 DlnaState.PLAYING -> {
                     settled = true
-                    host.showPlaying(true)
+                    if (!behindPress(playing = true)) host.showPlaying(true)
                 }
-                DlnaState.PAUSED -> host.showPlaying(false)
+                DlnaState.PAUSED -> if (!behindPress(playing = false)) host.showPaused()
                 else -> Unit
             }
             when {
@@ -1216,6 +1301,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         const val CAST_START_WINDOW_MS = 15_000L
 
         const val CAST_POLL_MS = 1_000L
+
+        /** How long a renderer gets to act on a play or pause before what it reports counts again. */
+        const val PRESS_SETTLE_MS = 3_000L
 
         /** Consecutive STOPPED readings that mean the track really ended. */
         const val STOPPED_POLLS_TO_ADVANCE = 2

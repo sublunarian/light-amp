@@ -224,6 +224,14 @@ interface OutputHost {
 
     // What the far end says it is doing. From any thread.
     fun showPlaying(playing: Boolean)
+
+    /**
+     * Paused at the far end — its own remote, a player's own button — and
+     * not waiting on anything, so nothing is starting any more. Apart from
+     * [showPlaying] because a player that is buffering isn't playing either,
+     * and that one still is starting.
+     */
+    fun showPaused()
     fun showPosition(ms: Long)
     fun showDuration(ms: Long)
     fun showIndex(index: Int)

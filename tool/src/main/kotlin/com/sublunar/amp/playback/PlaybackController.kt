@@ -341,6 +341,10 @@ class PlaybackController(
      * queue with nothing playable left in it, parks.
      */
     private val _waitingFor = MutableStateFlow<String?>(null)
+
+    /** What the phone was waiting for when it began casting, and on which song — see castTo. */
+    @Volatile
+    private var waitBeforeCast: Pair<String, Int>? = null
     val waitingFor: StateFlow<String?> = _waitingFor
     private val parked: Boolean get() = _waitingFor.value != null
 
@@ -2749,7 +2753,9 @@ class PlaybackController(
         player?.pause()
         // The phone's own wait for the network was about the phone's player,
         // and would stand in the place "Buffering…" is said. A hand-back
-        // rebuilds that player and finds out again.
+        // rebuilds that player and finds out again. Kept for a cast that
+        // never gets going — see dropped.
+        waitBeforeCast = _waitingFor.value?.let { it to _index.value }
         _waitingFor.value = null
         _active.value = ActiveOutput(family, target, next)
         // A start, wherever there is something to start — a speaker chosen
@@ -2973,7 +2979,21 @@ class PlaybackController(
             _active.value?.takeIf { it.output === output }?.target
 
         override fun showPlaying(playing: Boolean) {
+            val resumed = playing && !_isPlaying.value
             _isPlaying.value = playing
+            // Resumed by the far end's own remote: the server hears it, as it
+            // would a play pressed here. A press here set _isPlaying before
+            // asking, and reported for itself.
+            if (resumed) reportTimeline(TimelineState.PLAYING)
+        }
+
+        override fun showPaused() {
+            val was = _isPlaying.value || _buffering.value
+            _isPlaying.value = false
+            _buffering.value = false
+            // Not pressed here, so not reported yet: the server would go on
+            // showing it playing.
+            if (was) reportTimeline(TimelineState.PAUSED)
         }
 
         // The far end's clock moving is its sound, as the phone's own is —
@@ -3042,15 +3062,25 @@ class PlaybackController(
             if (!_active.compareAndSet(a, null)) return
             // Paused where the cast began, and shown so — nothing is starting
             // any more — with the fader the phone's again.
+            val was = _isPlaying.value || _buffering.value
             _isPlaying.value = false
             _buffering.value = false
             player?.let { _volume.value = it.deviceVolume.value }
+            // A far end that reports itself had its own session; this one was
+            // the phone's, and the server would go on showing it playing.
+            if (was && !a.output.reportsItself) reportTimeline(TimelineState.PAUSED)
+            // Nothing played there, so whatever the phone was waiting for
+            // before the cast still holds, on the same song.
+            waitBeforeCast?.let { (why, at) -> if (_index.value == at) _waitingFor.value = why }
+            waitBeforeCast = null
         }
 
         override fun couldNotPlay(output: Output) {
             if (steering(output) == null) return
+            val was = _isPlaying.value || _buffering.value
             _isPlaying.value = false
             _buffering.value = false
+            if (was) reportTimeline(TimelineState.PAUSED)
         }
 
         override fun endedOnItsOwn(output: Output, target: OutputTarget) {
