@@ -275,10 +275,17 @@ interface OutputHost {
 
     /**
      * [output] gave up on [target] before anything played there: let go of it,
-     * and nothing else. The phone sits paused where the cast began. Only if
-     * [target] is still the one being steered — a newer cast is left alone.
+     * and nothing else. The phone sits paused where the cast began, and is
+     * shown so. Only if [target] is still the one being steered — a newer
+     * cast is left alone.
      */
     fun dropped(output: Output, target: OutputTarget)
+
+    /**
+     * [output] couldn't start what it was asked to play: shown paused, with
+     * nothing starting. It stays the output, and a press of play asks again.
+     */
+    fun couldNotPlay(output: Output)
 
     /**
      * The far end stopped on its own — stop pressed on the TV, its app quit:

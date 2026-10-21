@@ -161,7 +161,18 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 host.showVolume(it)
                 withContext(Dispatchers.Main.immediate) { host.setPhoneVolume(it) }
             }
-            if (startCastTrack(renderer, fromMs)) pollRenderer(renderer)
+            when {
+                startCastTrack(renderer, fromMs) -> pollRenderer(renderer)
+                // Nothing queued yet: chosen, it waits for the queue.
+                host.queue.value.getOrNull(host.index.value) == null -> Unit
+                // Nothing played there, and the phone sits paused where the
+                // cast began — it says so, rather than naming a speaker that
+                // stays silent.
+                else -> {
+                    android.util.Log.i("AmpCast", "couldn't start on ${renderer.name} → back to the phone")
+                    host.dropped(this@DlnaOutput, target)
+                }
+            }
         }
     }
 
@@ -334,7 +345,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         if (waitingForPlay) {
             castJob?.cancel()
             castJob = host.scope.launch {
-                if (startCastTrack(renderer, host.positionMs.value)) pollRenderer(renderer)
+                if (startOrStop(renderer, host.positionMs.value)) pollRenderer(renderer)
             }
             return
         }
@@ -408,7 +419,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         host.showPosition(0)
         castJob?.cancel()
         castJob = host.scope.launch {
-            if (startCastTrack(renderer)) pollRenderer(renderer)
+            if (startOrStop(renderer)) pollRenderer(renderer)
         }
     }
 
@@ -435,7 +446,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         dropSeekChecks()
         castJob?.cancel()
         castJob = host.scope.launch {
-            if (startCastTrack(renderer)) pollRenderer(renderer)
+            if (startOrStop(renderer)) pollRenderer(renderer)
         }
     }
 
@@ -480,7 +491,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 android.util.Log.i("AmpCast", "in-place seek refused → push")
             }
         }
-        return startCastTrack(renderer, wanted)
+        return startOrStop(renderer, wanted)
     }
 
     /**
@@ -530,7 +541,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             )
             castJob?.cancel()
             castJob = host.scope.launch {
-                if (startCastTrack(renderer, wanted, askServer = !muted)) {
+                if (startOrStop(renderer, wanted, askServer = !muted)) {
                     pollRenderer(renderer, playedBefore = true)
                 }
             }
@@ -637,6 +648,27 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         castNextOffered = null
         castNextArmedFor = null
         return true
+    }
+
+    /**
+     * [startCastTrack], and when it couldn't start the track: the renderer is
+     * told to stop — what it may still be playing is no longer the song the
+     * screen names — and the controller hears so, showing it paused there with
+     * nothing starting. A press of play asks again — see [waitingForPlay].
+     */
+    private suspend fun startOrStop(
+        renderer: DlnaRenderer,
+        seekToMs: Long = 0L,
+        askServer: Boolean = false,
+    ): Boolean {
+        if (startCastTrack(renderer, seekToMs, askServer)) return true
+        if (steered()?.id != renderer.id) return false
+        android.util.Log.i("AmpCast", "couldn't start idx=${host.index.value} → paused")
+        forgetCast()
+        waitingForPlay = true
+        DlnaCast.stop(renderer)
+        host.couldNotPlay(this)
+        return false
     }
 
     /** How a start at a position went — see [playFrom]. */
@@ -1129,7 +1161,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                     startedIndex = host.index.value
                     stall.reset()
                     restartAfter = STALLED_POLLS_TO_RESTART
-                    if (!startCastTrack(renderer)) return
+                    if (!startOrStop(renderer)) return
                 }
                 // Asked again and it still won't play: something is wrong with
                 // this track rather than with the hand-off, and sitting in
@@ -1169,7 +1201,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         }
         host.showIndex(next)
         android.util.Log.i("AmpCast", "advance → idx=$next")
-        return startCastTrack(renderer)
+        return startOrStop(renderer)
     }
 
     private companion object {

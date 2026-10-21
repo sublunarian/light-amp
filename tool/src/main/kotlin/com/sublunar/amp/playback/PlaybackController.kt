@@ -414,6 +414,20 @@ class PlaybackController(
         if (_buffering.value) bufferingSinceMs = android.os.SystemClock.elapsedRealtime()
     }
 
+    /**
+     * The output with the sound was asked to start, seek or change track:
+     * the same "Buffering…" as a start on the phone, until the far end's
+     * clock is seen to move — [noteProgress], fed by what it reports — or a
+     * pause, a failure or the limit ends it. Every far end fetches a stream,
+     * so there is no file to tell apart. Its first reading after this is the
+     * one the clock is measured from.
+     */
+    private fun startingElsewhere() {
+        bufferingProbe = null
+        bufferingSinceMs = android.os.SystemClock.elapsedRealtime()
+        _buffering.value = true
+    }
+
     /** When the start now buffering began, so its limit counts from then — see [bind]. */
     private var bufferingSinceMs = 0L
 
@@ -1678,7 +1692,16 @@ class PlaybackController(
         remote?.let { out ->
             val wasPlaying = _isPlaying.value
             _isPlaying.value = !wasPlaying
-            if (wasPlaying) out.pause() else out.play()
+            if (wasPlaying) {
+                supersedeStart()
+                out.pause()
+            } else {
+                // A resume is the far end carrying on with a stream it has
+                // open. Where nothing has played yet — the queue ran out
+                // there, or it holds nothing — play is a start, and says so.
+                if (!hasPlayed) startingElsewhere()
+                out.play()
+            }
             reportTimeline(if (wasPlaying) TimelineState.PAUSED else TimelineState.PLAYING)
             return
         }
@@ -1710,6 +1733,8 @@ class PlaybackController(
     fun play() {
         remote?.let { out ->
             _isPlaying.value = true
+            // A start rather than a resume — see togglePlayPause.
+            if (!hasPlayed) startingElsewhere()
             out.play()
             reportTimeline(TimelineState.PLAYING)
             return
@@ -1952,6 +1977,7 @@ class PlaybackController(
     fun pause() {
         remote?.let { out ->
             _isPlaying.value = false
+            supersedeStart()
             out.pause()
             reportTimeline(TimelineState.PAUSED)
             return
@@ -1977,6 +2003,9 @@ class PlaybackController(
      */
     fun seekTo(ms: Long) {
         remote?.let { out ->
+            // As bufferAfterSeek has it on the phone: only a seek in a track
+            // that is playing waits for anything.
+            if (_isPlaying.value) startingElsewhere()
             out.seekTo(ms)
             return
         }
@@ -2286,6 +2315,9 @@ class PlaybackController(
 
     fun next() {
         remote?.let { out ->
+            // As on the phone, only a track that is playing is waited for —
+            // and only where there is a next one to go to.
+            if (_isPlaying.value && _index.value + 1 in _queue.value.indices) startingElsewhere()
             out.next()
             return
         }
@@ -2304,6 +2336,10 @@ class PlaybackController(
     /** Restart the current track if we're past the intro, otherwise go to the previous one. */
     fun previous() {
         remote?.let { out ->
+            // Back to the start, or to the track before where there is one —
+            // the rule every output's previous keeps.
+            val moves = _positionMs.value > PREVIOUS_RESTARTS_AFTER_MS || _index.value - 1 in _queue.value.indices
+            if (_isPlaying.value && moves) startingElsewhere()
             out.previous()
             return
         }
@@ -2332,6 +2368,8 @@ class PlaybackController(
     fun jumpTo(index: Int) {
         if (index !in _queue.value.indices) return
         remote?.let { out ->
+            // A row tapped plays, wherever the sound is.
+            startingElsewhere()
             out.jumpTo(index)
             return
         }
@@ -2699,7 +2737,14 @@ class PlaybackController(
         val current = remote
         if (current != null && current !== next) dropOutput(Disconnect.Switch)
         player?.pause()
+        // The phone's own wait for the network was about the phone's player,
+        // and would stand in the place "Buffering…" is said. A hand-back
+        // rebuilds that player and finds out again.
+        _waitingFor.value = null
         _active.value = ActiveOutput(family, target, next)
+        // A start, wherever there is something to start — a speaker chosen
+        // before anything was queued just waits for the queue.
+        if (_queue.value.getOrNull(_index.value) != null) startingElsewhere()
         next.connect(target, fromMs = _positionMs.value)
         return true
     }
@@ -2722,7 +2767,8 @@ class PlaybackController(
      */
     private fun dropOutput(why: Disconnect) {
         val at = _positionMs.value
-        val wasPlaying = _isPlaying.value
+        // A start still under way there counts, as it does on the phone.
+        val wasPlaying = _isPlaying.value || _buffering.value
         val a = _active.value ?: return
         // Let go before telling it, so nothing still running reads it as
         // steering on the way out — the requeue collector would otherwise
@@ -2790,7 +2836,12 @@ class PlaybackController(
             val index = _index.value.coerceIn(0, tracks.lastIndex)
             android.util.Log.i(logTag, "$why: on the phone at idx=$index at=$at ${if (play) "playing" else "paused"}")
             rebuildQueueAt(cur, tracks, index, at)
-            if (play) cur.play() else cur.pause()
+            if (play) {
+                starting(index)
+                cur.play()
+            } else {
+                cur.pause()
+            }
         }
     }
 
@@ -2915,8 +2966,11 @@ class PlaybackController(
             _isPlaying.value = playing
         }
 
+        // The far end's clock moving is its sound, as the phone's own is —
+        // which ends "Buffering…" the same way.
         override fun showPosition(ms: Long) {
             _positionMs.value = ms
+            noteProgress(ms)
         }
 
         override fun showDuration(ms: Long) {
@@ -2974,7 +3028,19 @@ class PlaybackController(
 
         override fun dropped(output: Output, target: OutputTarget) {
             val a = _active.value ?: return
-            if (a.output === output && a.target === target) _active.compareAndSet(a, null)
+            if (a.output !== output || a.target !== target) return
+            if (!_active.compareAndSet(a, null)) return
+            // Paused where the cast began, and shown so — nothing is starting
+            // any more — with the fader the phone's again.
+            _isPlaying.value = false
+            _buffering.value = false
+            player?.let { _volume.value = it.deviceVolume.value }
+        }
+
+        override fun couldNotPlay(output: Output) {
+            if (steering(output) == null) return
+            _isPlaying.value = false
+            _buffering.value = false
         }
 
         override fun endedOnItsOwn(output: Output, target: OutputTarget) {
@@ -3104,6 +3170,7 @@ class PlaybackController(
         // TV. From the top, not the old queue's position.
         remote?.let { out ->
             p.pause()
+            startingElsewhere()
             out.newQueue()
             return
         }
