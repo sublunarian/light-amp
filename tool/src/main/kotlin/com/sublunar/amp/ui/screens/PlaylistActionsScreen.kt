@@ -86,7 +86,7 @@ class PlaylistActionsScreen(
                     TextRow(title = if (confirmDelete) "Tap again to delete" else "Delete Playlist") {
                         if (confirmDelete) {
                             App.scope.launch { App.library.deletePlaylist(playlistId) }
-                            if (fromDetail) popToRoot() else goBack()
+                            if (fromDetail) backToRoot() else goBack()
                         } else {
                             confirmDelete = true
                         }

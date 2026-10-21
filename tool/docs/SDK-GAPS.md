@@ -7,10 +7,10 @@ exists. Checked against SDK 0.2.1 (`3a6b204`, 20 Oct 2026), which is where the
 Data modes below), and 0.2.1 brought single-item queue edits; the rest stand.
 
 Built the way Light's store builder builds it (a pristine SDK, via
-`scripts/store-build-check.sh`), Amp stops at 60 compile errors on 0.2.1
-(checked at `ac9e701`), every one a call into our patches. It was 164 on
-21 Sep. Most used first:
-`playWhenReady`, `popToRoot`, `repeatMode`, `replaceRange`, `playbackGain`,
+`scripts/store-build-check.sh`), Amp stops at 55 compile errors on 0.2.1
+(checked 20 Oct), every one a call into our patches. It was 164 on 21 Sep.
+Most used first:
+`playWhenReady`, `repeatMode`, `replaceRange`, `playbackGain`,
 `deviceVolume`/`setSystemVolume`, `setMediaQueueAt`, `onPlaybackError`,
 `onItemRepeated`, `hasRuntimePermission`, the network policy, the transfer
 service, `isCurrentItemSeekable`, `addItems` and `LightDisplayColor`.
@@ -24,9 +24,8 @@ The gap that started the spikes is gone: Amp declares
 `LightAudioService`. The `LightMediaService` spike was deleted in full.
 What remains ours: two player defaults, `setDeviceVolumeControlEnabled` and
 `setHandleAudioBecomingNoisy`, set once in `SdkExoPlayer.kt` for both players
-since 0.2.1 (`audio-player.patch`), and the session's `sessionActivity`
-(`audio-service.patch`). Nothing on LightOS reads the session activity today,
-so that line could go. One
+since 0.2.1 (`audio-player.patch`). The session's `sessionActivity` was
+dropped on 20 Oct 2026: nothing on LightOS reads it. One
 behavioural trade accepted: the SDK stops a paused, unheld session after 15
 minutes, where the spike held on indefinitely.
 
@@ -334,14 +333,12 @@ follows the green light. Nothing is filed yet; the issues below marked
 | `deviceVolume`, `setSystemVolume` | The Output page's fader on This device. A tool can't reach `AudioManager`. | Ask (drafted); Light may see volume as LightOS's. |
 | `setHandleAudioBecomingNoisy(true)` | One line on the builder. Without it, unplugging headphones leaves music playing out of the speaker. Doing it by hand needs a `BroadcastReceiver`, which the sandbox blocks. | Ask, as a bug report (drafted). |
 | `replaceRange()`, `addItems` | One queue update instead of one per item. Reordering by repeated `moveMediaItem` rebuilds the session queue per move, and a few hundred moves exhausts memory. | Ask for list versions on [#217](https://github.com/lightphone/light-sdk/issues/217), once we've timed a big shuffle on the phone. |
-| `popToRoot()` | A tab bar visible on nested screens has to unwind to the root. Without it, tapping a tab three levels deep only goes back one. | Could drop: `goBack()` in a loop, if it doesn't flash the pages in between. Ask only if it does. |
 | Room migrations | `buildDatabase` exposes no builder, so a tool cannot register a migration. We patched in `fallbackToDestructiveMigration`, which means every schema change wipes the user's cache and download index. | Nothing to ask: [#281](https://github.com/lightphone/light-sdk/pull/281) and [#285](https://github.com/lightphone/light-sdk/pull/285) both add a builder hook. Retire the patch when one merges. |
 | `onPlaybackError` | The fallback logic reads the raw error code and HTTP status (a bad HTTP status proves the server is *there*); 0.2.1's `error` flow carries neither. | Could drop: `StreamProxy` sees every status itself. |
 | `isCurrentItemSeekable` | Whether the stream that arrived can be seeked. Guessing from the requested format is wrong when a server declines to transcode, and it fails silently. | Could drop: `StreamProxy` sees whether the server sent a length. |
 | `onItemRepeated` | The repeat-one wrap of a server-seeked stream, which has to be rebuilt from the song's start. | Could drop: since the restart copy (20 Oct), the player's own repeat is off while a remainder plays, so the wrap this catches may no longer happen. Check once the repeat-one work settles. |
 | `hasRuntimePermission` | LightOS answers music access from its policy, and can say Blocked to a phone that granted it. | Could drop: any audio file visible in `Music/Amp` proves access. |
 | `TextInputKeyboardCallback` | `LightEmbeddedLp3Keyboard` is public and usable on a tool's own screen, but the callback that turns keys into edits is `internal`. We copied ~60 lines of it, including surrogate-aware backspace, to put a keyboard under our search results. | Wait for Light's keyboard push (#45). |
-| Splash icon centring | The loading glyph sits ~88px above centre on a 1240px panel; the artwork is off-centre inside its own viewport. | Could drop: Light's designer owns the splash (#41). |
 
 ## Blocked above the API
 

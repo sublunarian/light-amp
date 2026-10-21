@@ -193,7 +193,7 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
             // the store. Unwound before the write above had landed, that sync
             // read the *previous* library and fetched it again over the one just
             // chosen, which looks exactly like the switch never happened.
-            withContext(Dispatchers.Main) { popToRoot() }
+            withContext(Dispatchers.Main) { backToRoot() }
 
             if (source.id == App.source.value.id && changingLibrary) {
                 App.library.switchLibrary(libraryId)
@@ -323,7 +323,7 @@ private fun SimpleLightScreen<*>.activateAddedSource(sourceId: String) {
         App.settings.setActiveSource(sourceId)
         withContext(Dispatchers.Main) {
             LibraryNav.selectTab(LibraryTab.ALBUMS)
-            popToRoot()
+            backToRoot()
         }
     }
 }

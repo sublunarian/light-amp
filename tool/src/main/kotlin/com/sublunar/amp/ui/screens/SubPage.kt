@@ -25,7 +25,7 @@ import com.thelightphone.sdk.SimpleLightScreen
  */
 fun SimpleLightScreen<*>.openLibrarySearch(withKeyboard: Boolean = false) {
     LibraryNav.openSearch(withKeyboard)
-    popToRoot()
+    backToRoot()
 }
 
 /** True while the simplified layout is the one in use. */
@@ -89,7 +89,7 @@ fun SimpleLightScreen<*>.LibrarySubPage(
                 moreActive = moreActive,
                 onSelect = { tab ->
                     LibraryNav.selectTab(tab)
-                    popToRoot()
+                    backToRoot()
                 },
                 // Nothing to open when this *is* More: the bar stays on that
                 // page now, and a destination that pushes a copy of itself is a
@@ -107,7 +107,7 @@ fun SimpleLightScreen<*>.LibrarySubPage(
                     // The button goes to the top of the library, however deep
                     // this page is; back is what walks up one level at a time.
                     LibraryNav.openLibraryIndex()
-                    popToRoot()
+                    backToRoot()
                 },
             )
         }

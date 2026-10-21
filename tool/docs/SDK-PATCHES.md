@@ -53,7 +53,7 @@ git -C light-sdk branch -r | tr -d ' ' \
   | xargs -I{} git -C light-sdk grep -l "fun replaceRange" {} -- '*/LightAudioPlayer.kt'
 ```
 
-Last counted 2026-10-21 against 0.2.1 (`3a6b204`): eleven members on
+Last counted 2026-10-20 against 0.2.1 (`3a6b204`): eleven members on
 `LightAudioPlayer` (`addItems`, `replaceRange`, `setMediaQueueAt`,
 `repeatMode`, `playWhenReady`, `isCurrentItemSeekable`, `onItemRepeated`,
 `onPlaybackError`, `playbackGain`, `deviceVolume`, `setSystemVolume`), none of
@@ -64,18 +64,14 @@ August count had (`addItemAt`, `removeItem`, `moveItem`, `seekToIndex`).
 
 ## Additions
 
-### 1. `LightScreen.popToRoot()` / `LightActivity.popToRoot()`
+### 1. ~~`LightScreen.popToRoot()` / `LightActivity.popToRoot()`~~ — dropped 20 Oct 2026
 
-Unwind to the initial screen. A tool with a tab bar visible on nested screens
-needs it — `goBack()` only unwinds one level.
-
-Two details matter in the implementation:
-
-- Publish `currentScreen` **once**, after the loop. Assigning it per iteration
-  makes every screen on the way down the current one for a frame, and since it
-  drives composition each gets drawn on its way out — unwinding four screens
-  flashes four pages past the user.
-- Only the visible screen gets `notifyWillHide()`; the rest were never shown.
+Amp unwinds with `goBack()` in a loop instead (`backToRoot` in `Nav.kt`),
+stopping as soon as the library screen is showing, since one more back would
+close Amp. The worry was that each page on the way down gets drawn for a frame,
+and it doesn't: the pops all happen in one main-thread turn, so Compose draws
+only the last one. Tested on the phone with a probe on the SDK's composition:
+every unwind drew its destination and nothing in between.
 
 ### 2. `LightAudioPlayer.onPlaybackError`
 
@@ -137,13 +133,13 @@ shipping any schema change crashes every existing install on launch. Recreating
 the tables is the right default: a tool's Room database is a rebuildable cache of
 server state, not the system of record.
 
-### 6. Splash icon centring
+### 6. ~~Splash icon centring~~ — dropped 20 Oct 2026
 
-`sdk/client/src/main/res/drawable/loading_text_icon.xml` — the "loading…"
-glyphs sit at y≈96 in a 240-unit viewport whose centre is 120, so the word
-renders ~88px above centre on a 1240px panel (measured). The paths are wrapped
-in `<group android:translateY="24.5">`; the paths themselves are untouched, so
-reverting is deleting the group.
+The "loading…" word sits ~88px above centre on the splash, as it does in every
+SDK tool. Light's designer owns the splash (light-sdk #41), and a store build
+couldn't carry the fix anyway, so Amp now looks like the other tools. The patch
+wrapped the paths of `loading_text_icon.xml` in
+`<group android:translateY="24.5">`, if it is ever wanted back.
 
 ---
 
@@ -209,10 +205,11 @@ remove it — in [SDK-GAPS.md](SDK-GAPS.md). In brief:
 ### 11. ~~`audio/LightMediaService.kt`~~ — retired 31 Aug 2026
 
 The background-audio spike is gone: Amp adopted the SDK's official
-`detached-audio` capability. What replaced it in the patch set is
-`audio-service.patch`: a `sessionActivity` on the SDK's own service, which
-belongs with the additions above, not the workarounds. (Its player's
-device-volume and becoming-noisy lines moved to `SdkExoPlayer.kt` with 0.2.1.)
+`detached-audio` capability. What replaced it in the patch set was
+`audio-service.patch`: a `sessionActivity` on the SDK's own service, so that
+tapping a media surface opens the tool. Dropped 20 Oct 2026, because nothing on
+LightOS reads it. (Its player's device-volume and becoming-noisy lines moved to
+`SdkExoPlayer.kt` with 0.2.1.)
 
 ### 12. `transfer/LightTransferService.kt` + manifest
 
@@ -269,8 +266,8 @@ If you are reading an old checkout, the markers are the only truth there.)
 
 ## Before submitting a tool
 
-The workarounds are the thing to remove: delete the `spike-*.patch` files, plus
-the spike-marked hunks of `light-activity.patch`. Each
+The workarounds are the thing to remove: delete the `spike-*.patch` files and
+`light-activity.patch`, which is all spike now. Each
 carries its own revert steps, and this finds every one of them:
 
 ```bash

@@ -74,7 +74,18 @@ class BootViewModel : LightViewModel<Unit>() {
 class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, BootViewModel>(sealed) {
 
     init {
+        root = this
         App.boot(sealed, lightContext)
+    }
+
+    private var showing = false
+
+    override fun willShow() {
+        showing = true
+    }
+
+    override fun willHide() {
+        showing = false
     }
 
     /**
@@ -108,7 +119,16 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
     // Named on the way out: a newer activity may have taken the player over
     // by then, and this back-out must not release it — see App.shutdown.
     override fun onScreenDestroy() {
+        if (root === this) root = null
         App.shutdown(sealed)
+    }
+
+    companion object {
+        /** The newest window's root. An older window closing late can't speak for it. */
+        private var root: BootScreen? = null
+
+        /** Whether the library shell is the screen showing: where [backToRoot] stops. */
+        val isShowing: Boolean get() = root?.showing == true
     }
 
     private fun createPlaylistFlow() {

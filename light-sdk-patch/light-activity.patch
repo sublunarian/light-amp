@@ -1,5 +1,5 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
-index 07f9a40..aa85bef 100644
+index 6709c68..0867d9c 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
 @@ -1,5 +1,6 @@
@@ -9,42 +9,7 @@ index 07f9a40..aa85bef 100644
  import android.content.Context
  import android.os.Bundle
  import android.view.KeyEvent
-@@ -70,6 +71,34 @@ class LightActivity internal constructor() : ComponentActivity() {
-         currentScreen.value = entry
-     }
- 
-+    /**
-+     * SDK PATCH (additive, upstreamable): unwind to the initial screen, keeping
-+     * the same teardown order [goBack] uses for each popped entry. Needed by
-+     * tools whose bottom navigation is visible on nested screens.
-+     *
-+     * [currentScreen] is published **once**, at the end. Assigning it inside the
-+     * loop made every screen on the way down the current one for a frame, and
-+     * since it drives composition each of them was drawn on its way out — so
-+     * unwinding four screens flashed four pages past the user before the root
-+     * appeared, and how many depended on how deep the stack happened to be. They
-+     * are all being destroyed; none of them needs to be shown to do it.
-+     */
-+    internal fun popToRoot() {
-+        if (backStack.size <= 1) {
-+            backStack.lastOrNull()?.screen?.notifyWillShow()
-+            return
-+        }
-+        while (backStack.size > 1) {
-+            val entry = backStack.last()
-+            entry.screen.notifyWillHide()
-+            entry.screen.destroy()
-+            entry.viewModelStoreOwner.viewModelStore.clear()
-+            backStack.removeAt(backStack.lastIndex)
-+        }
-+        currentScreen.value = backStack.last()
-+        backStack.last().screen.notifyWillShow()
-+    }
-+
-     internal fun goBack() {
-         val current = currentScreen.value ?: return
-         val popped = current.screen
-@@ -149,6 +178,13 @@ class LightActivity internal constructor() : ComponentActivity() {
+@@ -149,6 +150,13 @@ class LightActivity internal constructor() : ComponentActivity() {
      private val Int.isSystemKeyCode: Boolean
          get() = (this == KeyEvent.KEYCODE_BACK || this == KeyEvent.KEYCODE_HOME)
  
@@ -58,7 +23,7 @@ index 07f9a40..aa85bef 100644
      override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
          // don't do anything with android keys
          // back button override handled elsewhere and home button won't get dispatched to external tools
-@@ -157,7 +193,7 @@ class LightActivity internal constructor() : ComponentActivity() {
+@@ -157,7 +165,7 @@ class LightActivity internal constructor() : ComponentActivity() {
          } else if (currentScreen.value?.screen?.onKeyDown(keyCode, event) == true) {
              // let the active screen handle the button if it wants to
              true
@@ -67,7 +32,7 @@ index 07f9a40..aa85bef 100644
              // otherwise see if the server wants to use it
              forwardKeyEventToServer(keyCode, event)
              true
-@@ -175,7 +211,7 @@ class LightActivity internal constructor() : ComponentActivity() {
+@@ -175,7 +183,7 @@ class LightActivity internal constructor() : ComponentActivity() {
              super.onKeyMultiple(keyCode, repeatCount, event)
          } else if (currentScreen.value?.screen?.onKeyMultiple(keyCode, repeatCount, event) == true) {
              true
@@ -76,7 +41,7 @@ index 07f9a40..aa85bef 100644
              forwardKeyEventToServer(keyCode, event)
              true
          } else {
-@@ -188,7 +224,7 @@ class LightActivity internal constructor() : ComponentActivity() {
+@@ -188,7 +196,7 @@ class LightActivity internal constructor() : ComponentActivity() {
              super.onKeyUp(keyCode, event)
          } else if (currentScreen.value?.screen?.onKeyUp(keyCode, event) == true) {
              true
@@ -85,7 +50,7 @@ index 07f9a40..aa85bef 100644
              forwardKeyEventToServer(keyCode, event)
              true
          } else {
-@@ -217,11 +253,16 @@ class LightActivity internal constructor() : ComponentActivity() {
+@@ -217,11 +225,16 @@ class LightActivity internal constructor() : ComponentActivity() {
  
      override fun onPause() {
          super.onPause()

@@ -304,10 +304,25 @@ sealed interface Parent {
     }
 }
 
+/**
+ * Back to the library shell, however deep this page is: one back per screen
+ * above it, all in this turn, so only the shell gets drawn. It stops at the
+ * shell, because a back from there closes Amp.
+ */
+fun SimpleLightScreen<*>.backToRoot() {
+    var popped = 0
+    while (!BootScreen.isShowing && popped < MAX_UNWIND) {
+        goBack()
+        popped++
+    }
+}
+
+private const val MAX_UNWIND = 64
+
 /** Put [parent] on the stack, so that whatever is pushed next sits on top of it. */
 private fun SimpleLightScreen<*>.layDown(parent: Parent) {
     if (parent !is Parent.Walk) return
-    popToRoot()
+    backToRoot()
     LibraryNav.selectTab(parent.tab)
     parent.artist?.let { artist -> go { ArtistDetailScreen(it, artist) } }
 }
