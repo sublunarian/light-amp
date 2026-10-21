@@ -691,6 +691,11 @@ class PlaybackController(
             // loop its last few seconds forever, so it is rebuilt from the
             // track's real start. On Main: the player invokes this on its own
             // thread, which is Main by the looper rule.
+            // AmpSeek: temporary — see serverSeek.
+            android.util.Log.i(
+                "AmpSeek",
+                "repeat wrap idx=${_index.value} off=$streamOffsetMs pos=${p.positionMs.value}",
+            )
             if (streamOffsetMs > 0L) seekTo(0)
         }
         p.onPlaybackError = { error ->
@@ -1983,6 +1988,21 @@ class PlaybackController(
             val wasPlaying = p.playWhenReady
             val at = _index.value
             if (at < 0) return@launch
+            // AmpSeek: temporary — chasing the repeat-one wrap of a server-seeked
+            // remainder (2026-10-20). See onItemRepeated.
+            android.util.Log.i(
+                "AmpSeek",
+                "server seek idx=$at to=$target repeat=${p.repeatMode} playing=$wasPlaying",
+            )
+            // Repeat-one is lifted for the swap. Taking the playing item out has
+            // Media3 look for what plays after it, and under repeat-one that is
+            // the same item, which is gone — so it gave up and went to the first
+            // track of the queue, on the phone's side and the service's alike: a
+            // seek in the third song of an album jumped to the first. With it off,
+            // what follows is the replacement, put in just after the item it takes
+            // over from.
+            val repeatOne = p.repeatMode == Player.REPEAT_MODE_ONE
+            if (repeatOne) p.repeatMode = Player.REPEAT_MODE_OFF
             // Replaced in place rather than removed and re-added. Taking the
             // playing item out moves the player's idea of the current index —
             // twice, once each way — and the collector above reads that as a new
@@ -1995,6 +2015,7 @@ class PlaybackController(
             // would land us at the offset twice over. This sets the index the
             // player is already on, so nothing reads it as a track change.
             p.seekToDefaultPosition(at)
+            if (repeatOne) p.repeatMode = Player.REPEAT_MODE_ONE
             if (wasPlaying) p.play()
         }
     }
