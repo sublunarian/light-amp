@@ -348,7 +348,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
             is QueueEdit.Appended ->
                 plexQueueEdit { client, queue -> client.addToPlayQueue(queue, edit.ids, next = false) }
             is QueueEdit.PlayNext ->
-                plexQueueEdit { client, queue -> client.addToPlayQueue(queue, listOf(edit.id), next = true) }
+                plexQueueEdit { client, queue -> client.addToPlayQueue(queue, edit.ids, next = true) }
             // Everything after the playing track goes, then the new set
             // arrives — expressed as edits so the song already playing
             // carries on untouched, which is the whole point of replacing

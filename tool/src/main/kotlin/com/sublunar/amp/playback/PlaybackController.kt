@@ -2336,21 +2336,33 @@ class PlaybackController(
             return
         }
         settleRestartCopy()
+        // Where the next of them goes: straight after the playing track for
+        // the first, then after the one before it, so an album played next
+        // plays in its own order. Each put straight after the playing track,
+        // as it once was, turned the album round.
+        var slot = _index.value + 1
+        val added = mutableListOf<String>()
         for (track in tracks) {
             val from = _queue.value.indexOfFirst { it.id == track.id }
-            val cur = _index.value
             if (from < 0) {
-                val at = (cur + 1).coerceIn(0, _queue.value.size)
+                val at = slot.coerceIn(0, _queue.value.size)
                 _queue.value = _queue.value.toMutableList().apply { add(at, track) }
                 p.addMediaItem(at, track.toAudioItem())
-                remote?.queueEdited(QueueEdit.PlayNext(track.id))
+                added += track.id
+                slot = at + 1
                 continue
             }
-            if (from == cur) continue
+            if (from == _index.value) continue
             // Destinations are read after the removal, so a track pulled from
-            // behind the cursor lands one place earlier than one pushed forward.
-            moveInQueue(from, if (from < cur) cur else cur + 1)
+            // in front of the slot lands one place earlier than one pulled from
+            // behind it.
+            val to = if (from < slot) slot - 1 else slot
+            moveInQueue(from, to)
+            slot = to + 1
         }
+        // One edit for the lot, in order: one each, every one "after the
+        // playing track", turned the album round on an output too.
+        if (added.isNotEmpty()) remote?.queueEdited(QueueEdit.PlayNext(added))
         rearmSoon()
     }
 

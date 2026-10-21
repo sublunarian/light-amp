@@ -270,8 +270,8 @@ sealed interface QueueEdit {
     /** Added at the end. */
     data class Appended(val ids: List<String>) : QueueEdit
 
-    /** Put straight after the playing track. */
-    data class PlayNext(val id: String) : QueueEdit
+    /** Put straight after the playing track, in this order. */
+    data class PlayNext(val ids: List<String>) : QueueEdit
 
     /** Everything after the playing track replaced: [dropped] went, [added] followed it. */
     data class UpcomingReplaced(val dropped: List<String>, val added: List<String>) : QueueEdit
