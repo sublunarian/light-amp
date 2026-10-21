@@ -53,10 +53,12 @@ git -C light-sdk branch -r | tr -d ' ' \
   | xargs -I{} git -C light-sdk grep -l "fun replaceRange" {} -- '*/LightAudioPlayer.kt'
 ```
 
-Last counted 2026-08-30 against `3df3c24` — the 0.1.1 rebase re-placed every
-member onto the rewritten upstream player by hand, so the count below is exact.
-Two members the previous count listed, `pauseAtEndOfMediaItems` and
-`skipSilence`, left the tree with the gapless trial and are gone from the count.
+Last counted 2026-10-21 against 0.2.1 (`3a6b204`): eleven members on
+`LightAudioPlayer` (`addItems`, `replaceRange`, `setMediaQueueAt`,
+`repeatMode`, `playWhenReady`, `isCurrentItemSeekable`, `onItemRepeated`,
+`onPlaybackError`, `playbackGain`, `deviceVolume`, `setSystemVolume`), none of
+them on any upstream branch. 0.2.1's own queue edits replaced four that the
+August count had (`addItemAt`, `removeItem`, `moveItem`, `seekToIndex`).
 
 ---
 
@@ -107,16 +109,17 @@ listener reads as a track change.
 SDK 0.2.1 (light-sdk #127) brought the single-item queue edits, `addMediaItem`,
 `removeMediaItem`, `moveMediaItem`, `replaceMediaItem` and
 `seekToDefaultPosition`, and Amp uses those directly. The members below are
-still missing upstream, all additive. They are grouped here rather than given a section each because they are one thing:
-the player the SDK ships can start a queue and move through it, and a music tool
-also has to *edit* that queue, restore it, and be driven by the phone's own
-controls.
+still missing upstream, all additive. They are grouped here rather than given a
+section each because they are one thing: the player the SDK ships can start a
+queue and move through it, and a music tool also has to edit that queue in bulk,
+restore it, and be driven by the phone's own controls.
 
 | Member | Why a music tool needs it |
 |---|---|
 | `addItems` | Add to Queue and a radio tail in one queue update. One `addMediaItem` per track rebuilds the session queue each time. |
 | `setMediaQueueAt(items, index, positionMs)` | Restoring a saved queue mid-track. The position has to go in at prepare time: `seekTo` clamps to a duration that isn't known yet, so it lands on 0. |
-| `deviceVolume`, `setSystemVolume` | The hardware rocker, which a tool has to service itself while casting — see `PlaybackController.handleVolumeKey`. |
+| `deviceVolume`, `setSystemVolume` | The Output page's fader on This device, and matching the phone's level to a speaker's when a cast starts. A tool can't reach `AudioManager` itself. |
+| `playbackGain` | ReplayGain: tracks play at an even loudness. Shaped like the SDK's own `speed`; on by default in Amp. |
 | `repeatMode` | Repeat off / all / one. |
 | `playWhenReady` | The caller's intent, distinct from `isPlaying`, which is false mid-rebuffer — a seek issued in that window read "paused" and never resumed. |
 | `onItemRepeated` | The repeat-one wrap. The index flow can't carry it (the index doesn't change), and a server-seeked stream needs rebuilding at the track's start or it loops its own tail. |
@@ -144,13 +147,14 @@ reverting is deleting the group.
 
 ---
 
-### 7. `setHandleAudioBecomingNoisy(true)`
+### 7. `setHandleAudioBecomingNoisy(true)` and `setDeviceVolumeControlEnabled(true)`
 
-One line on the `ExoPlayer.Builder` in `SdkExoPlayer.kt`, which builds both players
-since 0.2.1, and the default is wrong for anything that
-plays audio: without it, Bluetooth disconnecting or headphones being unplugged
-leaves playback running out of the phone's speaker. Media3 handles the
-`ACTION_AUDIO_BECOMING_NOISY` broadcast itself once it's set.
+Two lines on the `ExoPlayer.Builder` in `SdkExoPlayer.kt`, which builds both
+players since 0.2.1. The first default is wrong for anything that plays audio:
+without it, Bluetooth disconnecting or headphones being unplugged leaves
+playback running out of the phone's speaker. Media3 handles the
+`ACTION_AUDIO_BECOMING_NOISY` broadcast itself once it's set. The second lets a
+detached controller hear device-volume changes, which keeps the fader in step.
 
 A tool cannot do this for itself — it needs a `BroadcastReceiver`, and
 `android.content` is blocked.
@@ -183,8 +187,8 @@ change. Exposes `LightServiceConnection.applicationContext` (internal) to ask.
 
 A tool's say over whether its players may use the network at all: one
 process-wide predicate, asked by a gating `DataSource` before every remote
-connection the platform player opens and again as it reads. Both player
-players are built on it, through `buildSdkExoPlayer` in `SdkExoPlayer.kt`. Amp wires
+connection the platform player opens and again as it reads. Both players are
+built on it, through `buildSdkExoPlayer` in `SdkExoPlayer.kt`. Amp wires
 it to `App.networkAllowed` at boot, which is how Wi-Fi Only becomes a wall
 rather than a set of courtesy checks: a stream already in the queue used to
 play on over cellular, and the next one along with it. Local files, assets and
@@ -192,8 +196,10 @@ other in-phone sources never ask — nor does a loopback address, which is how
 Amp's own `StreamProxy` serves the player. While that proxy is on, this patch
 is only the net under it: it still stands in front of any server URL handed to
 the player directly (the proxy's self-test failed, or a queue built before it
-came up). It goes when the proxy has proven itself on devices. Revert: drop the gated factory from
-`SdkExoPlayer.kt` and the file; nothing else references it.
+came up). It goes when the proxy has proven itself on devices, or when Amp
+streams through the proxy only, never handing the player a server URL. Revert:
+drop the gated factory from `SdkExoPlayer.kt` and the file; nothing else
+references it.
 
 ## Workarounds
 
@@ -215,9 +221,10 @@ backgrounded.
 
 ### 13. `LightActivity` — volume key pass-through
 
-Lets hardware volume keys reach the system so the media session can route them,
-which is what makes the rocker control a cast renderer rather than a silent
-local player.
+Volume keys a screen doesn't use fall through to Android, which turns media
+volume while something plays, instead of going to LightOS, which turns the
+ringer. While casting, Amp's screens take the keys themselves for the speaker
+(`PlaybackController.handleVolumeKey`), which needs no patch.
 
 ### 14. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
 
@@ -263,7 +270,7 @@ If you are reading an old checkout, the markers are the only truth there.)
 ## Before submitting a tool
 
 The workarounds are the thing to remove: delete the `spike-*.patch` files, plus
-the spike-marked hunks of `audio-player.patch` and `light-activity.patch`. Each
+the spike-marked hunks of `light-activity.patch`. Each
 carries its own revert steps, and this finds every one of them:
 
 ```bash
