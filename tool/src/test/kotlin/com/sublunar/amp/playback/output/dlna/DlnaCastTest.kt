@@ -204,6 +204,18 @@ class DlnaCastTest {
     }
 
     @Test
+    fun `reads whether a renderer is muted, however it spells it`() {
+        // A renderer already muted by its owner is left muted by a muted start,
+        // so a "no answer" must never read as "not muted".
+        assertEquals(true, DlnaCast.parseMute(DlnaCast.tagValue("<CurrentMute>1</CurrentMute>", "CurrentMute")))
+        assertEquals(false, DlnaCast.parseMute("0"))
+        assertEquals(true, DlnaCast.parseMute(" True "))
+        assertEquals(false, DlnaCast.parseMute("false"))
+        assertNull(DlnaCast.parseMute(null))
+        assertNull(DlnaCast.parseMute("NOT_IMPLEMENTED"))
+    }
+
+    @Test
     fun `a soap fault's upnp error is read for the log`() {
         val fault = """
             <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">

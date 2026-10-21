@@ -9,9 +9,11 @@ import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.PREVIOUS_RESTARTS_AFTER_MS
 import com.sublunar.amp.playback.output.VolumeControl
+import android.os.SystemClock
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -140,6 +142,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val renderer = (target as DlnaTarget).renderer
         castJob?.cancel()
         castJob = host.scope.launch {
+            undoHush(renderer)
             // Adopt the renderer's current level so the fader isn't lying — and
             // move the device's own to match, so the first press of the rocker
             // nudges from where the speaker is rather than jumping.
@@ -165,7 +168,14 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             // A renderer keeps playing whatever URI it was handed, so leaving without
             // telling it to stop strands audio on the speaker while the app shows
             // "This device". Bounded so teardown can't hang on an unreachable device.
-            runBlocking { withTimeoutOrNull(CAST_STOP_TIMEOUT_MS) { DlnaCast.stop(renderer) } }
+            // A muted start cut short gives the sound back here as well as in
+            // its own ending, which may not run before the process goes.
+            runBlocking {
+                withTimeoutOrNull(CAST_STOP_TIMEOUT_MS) {
+                    DlnaCast.stop(renderer)
+                    undoHush(renderer)
+                }
+            }
             return
         }
         if (why == Disconnect.Stopped) {
@@ -245,6 +255,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     // The renderer's own level over UPnP RenderingControl, and the phone's
     // nudged to match, so the rocker starts from where the speaker is.
     override fun setVolume(level: Float) {
+        faderMoved = level
         host.showVolume(level)
         val renderer = steered()
         if (renderer != null) {
@@ -255,6 +266,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     override suspend fun followDeviceVolume(level: Float) {
         val renderer = steered() ?: return
+        faderMoved = level
         DlnaCast.setVolume(renderer, level)
     }
 
@@ -346,10 +358,19 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             if (info.trackUri != null && !DlnaCast.sameUri(info.trackUri, url)) return@launch
             if (DlnaCast.state(renderer) == DlnaState.STOPPED) return@launch
             if (info.positionMs >= wanted - CAST_SEEK_TOLERANCE_MS) return@launch
-            android.util.Log.i("AmpCast", "seek missed: at ${info.positionMs} wanted $wanted → server")
+            // A seek taken before play and then not acted on: the renderer
+            // started from the top. It starts muted from here on, and this
+            // track again that way — the stream itself seeks fine, and a server
+            // that isn't transcoding it would ignore an offset.
+            val muted = url == seekedBeforePlay && seeksBeforePlay[renderer.id] != false
+            if (muted) seeksBeforePlay[renderer.id] = false
+            android.util.Log.i(
+                "AmpCast",
+                "seek missed: at ${info.positionMs} wanted $wanted → ${if (muted) "muted start" else "server"}",
+            )
             castJob?.cancel()
             castJob = host.scope.launch {
-                if (startCastTrack(renderer, wanted, askServer = true)) {
+                if (startCastTrack(renderer, wanted, askServer = !muted)) {
                     pollRenderer(renderer, playedBefore = true)
                 }
             }
@@ -357,13 +378,21 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     }
 
     /**
-     * Push the queue's current track to the renderer, optionally seeking in.
+     * Push the queue's current track to the renderer, from [seekToMs] into it.
      *
-     * Seeking is the renderer's job first. It has the stream, and any response
-     * with a length and byte ranges — which includes anything a server hands
-     * over untranscoded — it can seek by itself, instantly and without
-     * re-fetching. Only when it refuses is the seek handed to the server as a
-     * `timeOffset`, and [askServer] says that has already been tried.
+     * Where it starts is settled before the renderer makes a sound. Played
+     * first and seeked after, as it was, a cast that began mid-song played a
+     * moment from the top, went quiet, and played again from the position.
+     *
+     * Seeking is the renderer's job where it can do it. Any response with a
+     * length and byte ranges — anything a server hands over untranscoded — it
+     * can seek by itself, instantly and without re-fetching: such a stream is
+     * loaded, seeked and only then played — see [playFrom]. One the server
+     * won't serve in ranges cannot be seeked by anyone, so it is asked for from
+     * the position, as a `timeOffset`, and [askServer] says that is already
+     * decided. Which one a track's stream is gets measured, per track, before
+     * anything is pushed: the same format is a transcode for one file and the
+     * file itself for another — see DlnaCast.supportsRanges.
      *
      * Inferring it from the format was wrong in the one case that matters:
      * asking for mp3 when the file is already mp3 gets the file untouched, and
@@ -383,7 +412,16 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         // Anything under a second is where the track starts anyway, and a
         // timeOffset of 0 is a re-encode for nothing.
         val wanted = if (seekToMs > 1_000L) seekToMs else 0L
-        val offset = if (askServer) wanted else 0L
+        val offset = when {
+            askServer -> wanted
+            wanted == 0L -> 0L
+            else -> {
+                val seekKey = "${track.id}|${format.id}"
+                val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
+                android.util.Log.i("AmpCast", "seekable=$seekable")
+                if (seekable == false) wanted else 0L
+            }
+        }
         // No estimated length for a renderer. Navidrome derives the estimate from
         // duration x the *cap* bitrate, but its ffmpeg output is ABR and comes in
         // well under: a 100s track declared 3,091,660 bytes and delivered
@@ -400,15 +438,25 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             // first — see OutputHost.ownStreamSession.
             sessionId = host.ownStreamSession(track.id),
         ) ?: return false
-        val started = DlnaCast.play(
-            renderer = renderer,
-            url = url,
-            title = track.title,
-            artist = track.artist,
-            album = track.album,
-            durationMs = track.durationMs,
-            mimeType = mime,
-        )
+        val started = if (offset == 0L && wanted > 0L) {
+            when (playFrom(renderer, track, url, mime, wanted)) {
+                Start.PLAYING -> true
+                Start.FAILED -> false
+                // The renderer won't seek this stream after all: the server's
+                // stream from the position, as for one that can't be seeked.
+                Start.UNSEEKABLE -> return startCastTrack(renderer, wanted, askServer = true)
+            }
+        } else {
+            DlnaCast.play(
+                renderer = renderer,
+                url = url,
+                title = track.title,
+                artist = track.artist,
+                album = track.album,
+                durationMs = track.durationMs,
+                mimeType = mime,
+            )
+        }
         if (!started) return false
         android.util.Log.i("AmpCast", "pushed idx=${host.index.value} wanted=$wanted offset=$offset ${format.id}")
         host.showPlaying(true)
@@ -416,28 +464,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         castOffsetMs = offset
         host.showPosition(wanted)
         castStartedAtMs = wanted
-        if (offset == 0L && wanted > 0L) {
-            // A stream the server won't serve in ranges cannot be seeked by
-            // anyone, so asking the renderer buys nothing but the four seconds
-            // it takes to notice — which the listener spends hearing the wrong
-            // part of the track. Ask the stream instead, and when it says no,
-            // go straight to the server. Measured per track, because the same
-            // format is a transcode for one file and the file itself for
-            // another; see DlnaCast.supportsRanges.
-            val seekKey = "${track.id}|${format.id}"
-            val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
-            android.util.Log.i("AmpCast", "seekable=$seekable")
-            if (seekable == false) {
-                return startCastTrack(renderer, wanted, askServer = true)
-            }
-            // Whether it then went there is checked a moment later — see
-            // verifyCastSeek.
-            if (!DlnaCast.seek(renderer, wanted)) {
-                android.util.Log.i("AmpCast", "renderer refused seek → server")
-                return startCastTrack(renderer, wanted, askServer = true)
-            }
-            verifyCastSeek(renderer, wanted, url)
-        }
+        // Whether it really went there is checked a moment later — see
+        // verifyCastSeek.
+        if (offset == 0L && wanted > 0L) verifyCastSeek(renderer, wanted, url)
         host.announceNowPlaying()
         castCurrentUrl = url
         castSeekPending = -1L
@@ -447,6 +476,161 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         castNextOffered = null
         castNextArmedFor = null
         return true
+    }
+
+    /** How a start at a position went — see [playFrom]. */
+    private enum class Start { PLAYING, UNSEEKABLE, FAILED }
+
+    /**
+     * Start [url] at [wantedMs] with nothing of it heard from anywhere else.
+     *
+     * Loaded, seeked while still stopped, then played: the renderer's first
+     * sound is the position. A renderer that won't take a seek before it plays
+     * is muted instead — played, seeked, and heard only once its clock says it
+     * got there, or a few seconds have gone. One with nothing to mute it with
+     * is the last case left, and takes the old order and its moment from the
+     * top.
+     */
+    private suspend fun playFrom(
+        renderer: DlnaRenderer,
+        track: Track,
+        url: String,
+        mime: String,
+        wantedMs: Long,
+    ): Start {
+        seekedBeforePlay = null
+        if (!DlnaCast.setUri(renderer, url, track.title, track.artist, track.album, track.durationMs, mime)) {
+            return Start.FAILED
+        }
+        if (seeksBeforePlay[renderer.id] != false) {
+            if (DlnaCast.seek(renderer, wantedMs)) {
+                seekedBeforePlay = url
+                return if (DlnaCast.resume(renderer)) Start.PLAYING else Start.FAILED
+            }
+            seeksBeforePlay[renderer.id] = false
+            android.util.Log.i("AmpCast", "seek before play refused → muted starts on ${renderer.name}")
+        }
+        val hush = hush(renderer)
+        if (hush == null) {
+            android.util.Log.i("AmpCast", "nothing to mute ${renderer.name} with → play, then seek")
+            if (!DlnaCast.resume(renderer)) return Start.FAILED
+            if (DlnaCast.seek(renderer, wantedMs)) return Start.PLAYING
+            android.util.Log.i("AmpCast", "renderer refused seek → server")
+            return Start.UNSEEKABLE
+        }
+        try {
+            if (!DlnaCast.resume(renderer)) return Start.FAILED
+            if (!seekOncePlaying(renderer, wantedMs)) {
+                android.util.Log.i("AmpCast", "renderer refused seek → server")
+                // Stopped while it still can't be heard: the server's stream
+                // takes over from the position.
+                DlnaCast.stop(renderer)
+                return Start.UNSEEKABLE
+            }
+            val there = clockReaches(renderer, wantedMs)
+            android.util.Log.i("AmpCast", "muted start ${if (there) "reached $wantedMs" else "not seen there yet"} → sound")
+            return Start.PLAYING
+        } finally {
+            // However this ends — a refusal, a failure, a skip cancelling it —
+            // the renderer is never left silent by a start.
+            withContext(NonCancellable) { unhush(renderer, hush) }
+        }
+    }
+
+    /** Seek [renderer] once it takes one — a renderer still opening a stream may refuse. False if it never does in a few seconds. */
+    private suspend fun seekOncePlaying(renderer: DlnaRenderer, wantedMs: Long): Boolean {
+        val until = SystemClock.elapsedRealtime() + MUTED_SEEK_WINDOW_MS
+        while (true) {
+            if (DlnaCast.seek(renderer, wantedMs)) return true
+            if (SystemClock.elapsedRealtime() >= until) return false
+            delay(MUTED_STEP_MS)
+        }
+    }
+
+    /** Whether [renderer]'s clock reaches [wantedMs] within a few seconds: how long a muted start stays muted. */
+    private suspend fun clockReaches(renderer: DlnaRenderer, wantedMs: Long): Boolean {
+        val until = SystemClock.elapsedRealtime() + MUTED_LISTEN_MS
+        while (SystemClock.elapsedRealtime() < until) {
+            delay(MUTED_STEP_MS)
+            val at = DlnaCast.position(renderer)?.positionMs ?: continue
+            if (at >= wantedMs - MUTED_ARRIVAL_SLACK_MS && at <= wantedMs + CAST_START_WINDOW_MS) return true
+        }
+        return false
+    }
+
+    /**
+     * Whether a seek before play lands on a renderer, by its id: unknown until
+     * tried, and false once one refused it, or took it and played from the
+     * top anyway — see [playFrom] and [verifyCastSeek].
+     */
+    private val seeksBeforePlay = mutableMapOf<String, Boolean>()
+
+    /** The stream last started by a seek before play, which [verifyCastSeek] judges that way of starting by. */
+    private var seekedBeforePlay: String? = null
+
+    /** What a muted start did to a renderer's sound, to be undone. */
+    private sealed interface Hush {
+        /** Muted already, by whoever did it: left as it is. */
+        data object Silent : Hush
+
+        /** Muted here, with the renderer's own switch. */
+        data object Muted : Hush
+
+        /** No switch to use: the volume taken to 0 from [level], the renderer's own 0–100. */
+        class Lowered(val level: Int) : Hush
+    }
+
+    /**
+     * The renderer a muted start has silenced, by id, and how — until its
+     * sound is given back. Given back by the start itself, whatever ends it,
+     * and where that couldn't be sent — the link went — at the next chance: a
+     * poll, a connect, the app being left.
+     */
+    @Volatile
+    private var hushed: Pair<String, Hush>? = null
+
+    /** The level the fader asked for during a muted start, which a lowered volume goes back to instead of the old one. */
+    @Volatile
+    private var faderMoved: Float? = null
+
+    /** Silence [renderer] for a muted start — its mute, else its volume — or null when it has neither. */
+    private suspend fun hush(renderer: DlnaRenderer): Hush? {
+        faderMoved = null
+        if (DlnaCast.muted(renderer) == true) return Hush.Silent
+        val hush = if (DlnaCast.setMute(renderer, true)) {
+            Hush.Muted
+        } else {
+            val level = DlnaCast.rawVolume(renderer) ?: return null
+            if (level == 0) return Hush.Silent
+            if (!DlnaCast.setRawVolume(renderer, 0)) return null
+            Hush.Lowered(level)
+        }
+        hushed = renderer.id to hush
+        return hush
+    }
+
+    /** Give back the sound [hush] took from [renderer]. Kept in [hushed] for the next chance when it can't be sent. */
+    private suspend fun unhush(renderer: DlnaRenderer, hush: Hush) {
+        val undone = when (hush) {
+            Hush.Silent -> true
+            Hush.Muted -> DlnaCast.setMute(renderer, false)
+            is Hush.Lowered -> DlnaCast.setRawVolume(
+                renderer,
+                faderMoved?.let { DlnaCast.fractionToVolume(it) } ?: hush.level,
+            )
+        }
+        if (undone) {
+            if (hushed?.second === hush) hushed = null
+            return
+        }
+        hushed = renderer.id to hush
+        android.util.Log.i("AmpCast", "couldn't give ${renderer.name} its sound back — again at the next chance")
+    }
+
+    /** Give [renderer] back any sound a muted start still holds. */
+    private suspend fun undoHush(renderer: DlnaRenderer) {
+        val (id, hush) = hushed ?: return
+        if (id == renderer.id) unhush(renderer, hush)
     }
 
     /**
@@ -626,6 +810,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val stall = CastStallCounter()
         while (coroutineContext.isActive && steered()?.id == renderer.id) {
             delay(CAST_POLL_MS)
+            undoHush(renderer)
             val position = DlnaCast.position(renderer)
             val state = DlnaCast.state(renderer)
             if (position != null) {
@@ -869,5 +1054,17 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
         /** How long leaving waits for the renderer to take its stop — see disconnect. */
         const val CAST_STOP_TIMEOUT_MS = 1_500L
+
+        /** How long a muted start keeps offering its seek to a renderer still opening the stream. */
+        const val MUTED_SEEK_WINDOW_MS = 3_000L
+
+        /** How long a muted start waits to see the clock at its position before it is heard anyway. */
+        const val MUTED_LISTEN_MS = 4_000L
+
+        /** Between one ask and the next during a muted start. */
+        const val MUTED_STEP_MS = 300L
+
+        /** The renderer's clock counts whole seconds, and lands on the second it was sent to. */
+        const val MUTED_ARRIVAL_SLACK_MS = 2_000L
     }
 }

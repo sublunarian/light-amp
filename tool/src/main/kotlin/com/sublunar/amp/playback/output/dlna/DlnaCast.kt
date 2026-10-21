@@ -162,18 +162,30 @@ object DlnaCast {
         album: String,
         durationMs: Long,
         mimeType: String = "audio/mpeg",
+    ): Boolean = setUri(renderer, url, title, artist, album, durationMs, mimeType) && resume(renderer)
+
+    /**
+     * Point the renderer at [url] without playing it. It holds the stream,
+     * stopped, until [resume] — so a seek can go in before the first sound.
+     */
+    suspend fun setUri(
+        renderer: DlnaRenderer,
+        url: String,
+        title: String,
+        artist: String,
+        album: String,
+        durationMs: Long,
+        mimeType: String = "audio/mpeg",
     ): Boolean {
         val didl = didlMetadata(url, title, artist, album, durationMs, mimeType)
-        val set = soap(
+        return soap(
             renderer, "SetAVTransportURI",
             """
             <InstanceID>0</InstanceID>
             <CurrentURI>${escape(url)}</CurrentURI>
             <CurrentURIMetaData>${escape(didl)}</CurrentURIMetaData>
             """.trimIndent(),
-        )
-        if (set == null) return false
-        return resume(renderer)
+        ) != null
     }
 
     /**
@@ -341,24 +353,62 @@ object DlnaCast {
      * Volume lives on a *different* UPnP service from transport, so this needs the
      * device's RenderingControl endpoint; devices without one report false.
      */
-    suspend fun setVolume(renderer: DlnaRenderer, fraction: Float): Boolean {
-        val url = renderer.renderingControlUrl ?: return false
-        return soapTo(
-            url, RENDERING_CONTROL, "SetVolume",
-            "<InstanceID>0</InstanceID><Channel>Master</Channel>" +
-                "<DesiredVolume>${fractionToVolume(fraction)}</DesiredVolume>",
-        ) != null
-    }
+    suspend fun setVolume(renderer: DlnaRenderer, fraction: Float): Boolean =
+        setRawVolume(renderer, fractionToVolume(fraction))
 
     /** The renderer's current volume as a 0..1 fader position, or null. */
-    suspend fun volume(renderer: DlnaRenderer): Float? {
+    suspend fun volume(renderer: DlnaRenderer): Float? = rawVolume(renderer)?.let(::volumeToFraction)
+
+    /**
+     * The renderer's own 0–100 volume, or null — for putting back exactly
+     * what was there, which a round trip through the fader's window can't.
+     */
+    suspend fun rawVolume(renderer: DlnaRenderer): Int? {
         val url = renderer.renderingControlUrl ?: return null
         val response = soapTo(
             url, RENDERING_CONTROL, "GetVolume",
             "<InstanceID>0</InstanceID><Channel>Master</Channel>",
         ) ?: return null
-        val level = tagValue(response, "CurrentVolume")?.trim()?.toIntOrNull() ?: return null
-        return volumeToFraction(level)
+        return tagValue(response, "CurrentVolume")?.trim()?.toIntOrNull()
+    }
+
+    /** Set the renderer's own 0–100 volume, as [rawVolume] reads it. */
+    suspend fun setRawVolume(renderer: DlnaRenderer, level: Int): Boolean {
+        val url = renderer.renderingControlUrl ?: return false
+        return soapTo(
+            url, RENDERING_CONTROL, "SetVolume",
+            "<InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>$level</DesiredVolume>",
+        ) != null
+    }
+
+    /**
+     * Mute or unmute the renderer with its own switch, which leaves its volume
+     * where it is. False when it has no RenderingControl, or refused.
+     */
+    suspend fun setMute(renderer: DlnaRenderer, muted: Boolean): Boolean {
+        val url = renderer.renderingControlUrl ?: return false
+        return soapTo(
+            url, RENDERING_CONTROL, "SetMute",
+            "<InstanceID>0</InstanceID><Channel>Master</Channel>" +
+                "<DesiredMute>${if (muted) 1 else 0}</DesiredMute>",
+        ) != null
+    }
+
+    /** Whether the renderer is muted, or null when it won't say. */
+    suspend fun muted(renderer: DlnaRenderer): Boolean? {
+        val url = renderer.renderingControlUrl ?: return null
+        val response = soapTo(
+            url, RENDERING_CONTROL, "GetMute",
+            "<InstanceID>0</InstanceID><Channel>Master</Channel>",
+        ) ?: return null
+        return parseMute(tagValue(response, "CurrentMute"))
+    }
+
+    /** GetMute's answer: UPnP's boolean is 1 or 0, and some renderers spell it out. */
+    internal fun parseMute(value: String?): Boolean? = when (value?.trim()?.lowercase()) {
+        "1", "true", "yes" -> true
+        "0", "false", "no" -> false
+        else -> null
     }
 
     /** Fader position to DLNA volume, capped at [VOLUME_CEILING]. */
