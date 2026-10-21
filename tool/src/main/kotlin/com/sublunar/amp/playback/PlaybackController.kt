@@ -987,11 +987,19 @@ class PlaybackController(
                 // is the whole track, which is how the two are told apart. The
                 // file is a real file with a seek table, so the player can
                 // finish the job itself.
-                if (streamOffsetMs > 0L &&
+                //
+                // Not the restart copy, which is the whole song on purpose and
+                // starts at its beginning: the remainder's offset is over the
+                // moment it begins — see restartCopyAt. Read as an ignored
+                // offset, it sent the copy to the seek point, and repeat-one
+                // played the tail a second time.
+                val intoCopy = restartCopyAt >= 0 && p.currentMediaItemIndex.value == restartCopyAt
+                val offset = if (intoCopy) 0L else streamOffsetMs
+                if (offset > 0L &&
                     known > 0L &&
                     reported >= known - IGNORED_OFFSET_SLACK_MS
                 ) {
-                    val target = streamOffsetMs
+                    val target = offset
                     streamOffsetMs = 0L
                     // Whichever handle holds the service by then: the offset
                     // has already gone from the readouts, so the seek can't be.
@@ -1007,7 +1015,7 @@ class PlaybackController(
                     reported <= 0L -> known
                     // A server-seeked stream is a shorter file starting at 0:00,
                     // so its own duration is the remainder, not the track's.
-                    streamOffsetMs > 0 -> known.takeIf { it > 0L } ?: (reported + streamOffsetMs)
+                    offset > 0 -> known.takeIf { it > 0L } ?: (reported + offset)
                     // A downloaded file's length is the server's to state, not
                     // the player's to guess. Plex transcodes mp3 as a stream, so
                     // what lands on disk has no Xing header and ExoPlayer falls
@@ -2139,8 +2147,10 @@ class PlaybackController(
 
     /** Main only. The remainder ended into the copy: the copy takes its slot, and repeat-one is the player's again. */
     private fun finishRestart(p: LightAudioPlayer, copy: Int) {
-        restartCopyAt = -1
+        // The offset first: a collector that finds the copy no longer marked
+        // must already find no offset to apply to it.
         streamOffsetMs = 0L
+        restartCopyAt = -1
         offsetItemTrackId = null
         _positionMs.value = 0L
         _queue.value.getOrNull(_index.value)?.durationMs?.takeIf { it > 0L }?.let { _durationMs.value = it }
