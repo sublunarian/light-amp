@@ -2649,6 +2649,10 @@ class PlaybackController(
             KeyEvent.KEYCODE_VOLUME_DOWN -> -VOLUME_KEY_STEP
             else -> return false
         }
+        // AmpKeys: temporary — whether a volume key reaches Amp at all while
+        // casting, or a button mapper in front of it takes the key first
+        // (2026-10-20).
+        android.util.Log.i("AmpKeys", "volume key $keyCode while casting to ${_active.value?.let { "${it.family.id}:${it.target.name}" }}")
         setVolume(_volume.value + step)
         return true
     }
