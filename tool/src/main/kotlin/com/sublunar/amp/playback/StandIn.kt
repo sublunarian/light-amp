@@ -148,6 +148,12 @@ internal class StandIn(
             return
         }
         if (track.id == wantedId) return
+        // Another song, which starts at its beginning. Its silence put in at
+        // the old one's place stood there until the output's next report.
+        if (wantedId != null) {
+            outputPos = 0L
+            outputAt = SystemClock.elapsedRealtime()
+        }
         put(p, track)
     }
 

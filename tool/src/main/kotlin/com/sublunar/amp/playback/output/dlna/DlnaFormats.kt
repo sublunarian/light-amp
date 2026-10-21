@@ -32,6 +32,16 @@ internal fun sinkAccepts(sink: Set<String>, mime: String): Boolean {
     return sink.any { it.substringBefore(';').trim() in aliases }
 }
 
+/**
+ * Whether a renderer that stopped after playing stopped part-way through: last
+ * heard [heardMs] into the track, more than [nearEndMs] short of [totalMs].
+ * Then it was stopped — the Denon's remote pauses that way — rather than come
+ * to the end of the song. A length nobody knows can't say, and is the end, as
+ * it always was.
+ */
+internal fun stoppedPartWay(heardMs: Long, totalMs: Long, nearEndMs: Long = 10_000L): Boolean =
+    totalMs > 0L && heardMs >= 0L && totalMs - heardMs > nearEndMs
+
 /** The index the queue would move to after [index], or null at the end of it. */
 internal fun nextCastIndex(index: Int, size: Int, repeat: RepeatMode): Int? {
     if (size == 0) return null

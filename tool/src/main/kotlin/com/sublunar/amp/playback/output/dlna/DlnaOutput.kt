@@ -69,6 +69,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      */
     private var castSeekPending = -1L
 
+    /** When [castSeekPending] was sent — a wait for it is given up after [CAST_SEEK_WAIT_MS]. */
+    private var castSeekPendingAt = 0L
+
     private var castJob: Job? = null
 
     // "rendererId|format" -> stream format actually sent + its MIME type.
@@ -278,10 +281,22 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             val state = DlnaCast.state(renderer)
             if (position == null || state == DlnaState.UNKNOWN) return@repeat
             val uri = position.trackUri
-            android.util.Log.i("AmpCast", "${renderer.name} found again: $state on ${DlnaCast.loggable(uri)}")
+            android.util.Log.i(
+                "AmpCast",
+                "${renderer.name} found again: $state on ${DlnaCast.loggable(uri)} at ${position.positionMs}",
+            )
             val found = DlnaTarget(renderer)
             val playing = state != DlnaState.PAUSED
             return when {
+                // Stopped there, on its own song — the remote's pause is a stop
+                // on the Denon — and still saying where: shown paused at that
+                // place. A renderer that clears its clock on a stop says 0, and
+                // the phone's own place stands.
+                state == DlnaState.STOPPED &&
+                    current != null &&
+                    DlnaCast.sameUri(uri, current) &&
+                    position.positionMs > 0L ->
+                    Refound(found, lostAtIndex, position.positionMs + castOffsetMs, playing = false)
                 state == DlnaState.STOPPED -> Refound(found)
                 current != null && DlnaCast.sameUri(uri, current) -> {
                     refoundOn = current
@@ -531,6 +546,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                     host.showPosition(wanted)
                     castStartedAtMs = wanted
                     castSeekPending = wanted
+                    castSeekPendingAt = SystemClock.elapsedRealtime()
                     if (wanted > 0L) verifyCastSeek(renderer, wanted, url)
                     return true
                 }
@@ -1085,11 +1101,30 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         // Two in a row is: the stream really has ended. Readings that went
         // unanswered are counted separately — see CastStallCounter.
         val stall = CastStallCounter()
+        // Where the track was last heard playing, for telling a stop part-way
+        // through from its end — see stoppedPartWay.
+        var heardMs = -1L
+        // Stopped part-way and shown paused there, until it plays again.
+        var stoppedThere = false
+        // AmpCast: temporary — the first polls after a start, chasing a renderer
+        // that kept the old song's address for twenty seconds after being
+        // handed a new one, after a source switch (2026-10-20).
+        var startPolls = 0
         while (coroutineContext.isActive && steered()?.id == renderer.id) {
             delay(CAST_POLL_MS)
             undoHush(renderer)
             val position = DlnaCast.position(renderer)
             val state = DlnaCast.state(renderer)
+            if (!settled && startPolls < START_POLLS_LOGGED) {
+                startPolls++
+                android.util.Log.i(
+                    "AmpCast",
+                    "start poll $startPolls idx=${host.index.value}: $state on " +
+                        "${DlnaCast.loggable(position?.trackUri)} at ${position?.positionMs}",
+                )
+            }
+            // This reading is of the track we pushed or followed.
+            var oursNow = false
             if (position != null) {
                 val reported = position.trackUri
                 // The renderer crossed into the track we queued: follow it here
@@ -1133,6 +1168,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                     // is nothing here worth reading.
                     settled = false
                     played = false
+                    heardMs = -1L
+                    stoppedThere = false
                     // Seeded with the reading we just saw, not cleared: cleared,
                     // the next identical stale reading looks like a change and
                     // re-arms the very flag this is putting down.
@@ -1159,6 +1196,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 // eighteen minutes into a thirty-seven second song, when the
                 // offset we had seeked to was added on top.
                 val ours = reported == null || DlnaCast.sameUri(reported, castCurrentUrl)
+                oursNow = ours
                 if (!ours && reported != strangeUri) {
                     // AmpCast: temporary — see queueNextOnRenderer.
                     strangeUri = reported
@@ -1179,12 +1217,25 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                         // bar jumping back to where it was and forward again.
                         // Nothing is believed until a reading near the target;
                         // if none ever comes, the seek's own check re-pushes.
+                        //
+                        // Not for ever. A seek into the last seconds under
+                        // repeat-one wrapped back to 0:00 before any reading
+                        // came, no reading was ever near the target, and the
+                        // clock and "Buffering…" stood still until another
+                        // song was started.
                         if (kotlin.math.abs(reading - pending) <= CAST_START_WINDOW_MS) {
                             castSeekPending = -1L
                             host.showPosition(reading)
+                            if (state != DlnaState.STOPPED) heardMs = reading
+                        } else if (SystemClock.elapsedRealtime() - castSeekPendingAt > CAST_SEEK_WAIT_MS) {
+                            android.util.Log.i("AmpCast", "seek to $pending never seen — following the renderer at $reading")
+                            castSeekPending = -1L
+                            host.showPosition(reading)
+                            if (state != DlnaState.STOPPED) heardMs = reading
                         }
                     } else if (settled || kotlin.math.abs(reading - castStartedAtMs) <= CAST_START_WINDOW_MS) {
                         host.showPosition(reading)
+                        if (state != DlnaState.STOPPED) heardMs = reading
                     }
                     // The renderer only knows about the piece of the track it was
                     // given, so a stream that started part-way in reports a short
@@ -1212,7 +1263,17 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             when (state) {
                 DlnaState.PLAYING -> {
                     settled = true
+                    if (oursNow && stoppedThere) {
+                        // Played again from its own remote: followed from
+                        // wherever it plays, nothing left to push from here.
+                        stoppedThere = false
+                        waitingForPlay = false
+                    }
                     if (!behindPress(playing = true)) host.showPlaying(true)
+                    // Sound, by its own say, once any seek has landed: the
+                    // start is over now, not a second or two later when its
+                    // clock is seen to move.
+                    if (oursNow && castSeekPending < 0L) host.showSounding()
                 }
                 DlnaState.PAUSED -> if (!behindPress(playing = false)) host.showPaused()
                 else -> Unit
@@ -1221,11 +1282,27 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 // Played, then stopped: the track ended. Move on. Only readings
                 // the renderer actually gave us count here — going quiet must
                 // never cost a track that was playing perfectly well.
+                // Stopped part-way through instead: the Denon's own remote
+                // pauses that way. Read as the track's end, it skipped to the
+                // next song. Shown paused where it was heard last; a play here
+                // pushes the track again from there — see waitingForPlay — and
+                // one on its remote is followed.
+                (settled || played) && stall.stopped >= STOPPED_POLLS_TO_ADVANCE &&
+                    (stoppedThere || stoppedPartWay(heardMs, host.durationMs.value)) -> {
+                    if (!stoppedThere) {
+                        android.util.Log.i("AmpCast", "stopped at $heardMs of ${host.durationMs.value} → paused there")
+                        stoppedThere = true
+                        waitingForPlay = true
+                        host.showPosition(heardMs)
+                        host.showPaused()
+                    }
+                }
                 (settled || played) && stall.stopped >= STOPPED_POLLS_TO_ADVANCE -> {
                     android.util.Log.i("AmpCast", "ended idx=${host.index.value} → advance")
                     if (!advanceCast(renderer)) return
                     settled = false
                     played = false
+                    heardMs = -1L
                     stall.reset()
                     startedIndex = -1
                     restartAfter = STALLED_POLLS_TO_RESTART
@@ -1292,6 +1369,15 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     private companion object {
         /** Long enough for a renderer that can seek to have done so. */
         const val CAST_SEEK_VERIFY_MS = 4_000L
+
+        /**
+         * How long a seek in place is waited for before the renderer's clock is
+         * believed again, wherever it is — see pollRenderer.
+         */
+        const val CAST_SEEK_WAIT_MS = 5_000L
+
+        /** AmpCast: temporary — how many polls after a start are logged. */
+        const val START_POLLS_LOGGED = 12
 
         /** A cast seek this close to the end, or past it, is the next track: nothing is left to hear. */
         const val CAST_SEEK_END_SLACK_MS = 1_000L

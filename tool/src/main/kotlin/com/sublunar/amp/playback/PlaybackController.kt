@@ -344,6 +344,10 @@ class PlaybackController(
      */
     private val _waitingFor = MutableStateFlow<String?>(null)
 
+    /** When an output last reported where it is — see [carriedOn]. */
+    @Volatile
+    private var positionReportedAtMs = 0L
+
     /** What the phone was waiting for when it began casting, and on which song — see castTo. */
     @Volatile
     private var waitBeforeCast: Pair<String, Int>? = null
@@ -2846,9 +2850,17 @@ class PlaybackController(
      * otherwise — see [takeOverHere].
      */
     private fun dropOutput(why: Disconnect) {
-        val at = _positionMs.value
         // A start still under way there counts, as it does on the phone.
         val wasPlaying = _isPlaying.value || _buffering.value
+        // Where the far end has got to by now, not at its last report a second
+        // or so ago: coming back, the phone picked up a little before where the
+        // speaker was.
+        val at = carriedOn(
+            reportedMs = _positionMs.value,
+            sinceReportMs = android.os.SystemClock.elapsedRealtime() - positionReportedAtMs,
+            playing = isCasting && _isPlaying.value && !_buffering.value,
+            durationMs = _durationMs.value,
+        )
         val a = _active.value ?: return
         // Let go before telling it, so nothing still running reads it as
         // steering on the way out — the requeue collector would otherwise
@@ -3057,6 +3069,13 @@ class PlaybackController(
             if (resumed) reportTimeline(TimelineState.PLAYING)
         }
 
+        override fun showSounding() {
+            if (!_buffering.value) return
+            bufferingProbe = null
+            _isPlaying.value = true
+            heardSound()
+        }
+
         override fun showPaused() {
             val was = _isPlaying.value || _buffering.value
             _isPlaying.value = false
@@ -3070,6 +3089,7 @@ class PlaybackController(
         // which ends "Buffering…" the same way.
         override fun showPosition(ms: Long) {
             _positionMs.value = ms
+            positionReportedAtMs = android.os.SystemClock.elapsedRealtime()
             noteProgress(ms)
         }
 
@@ -3955,6 +3975,24 @@ class PlaybackController(
          */
         private const val MAX_SAVED_QUEUE = 100
     }
+}
+
+/**
+ * Where a far end that reported [reportedMs] has got to [sinceReportMs] later:
+ * carried on while [playing], as its song is, by at most [capMs] — one that
+ * stopped reporting isn't carried into the next song — and never past
+ * [durationMs] where that is known.
+ */
+internal fun carriedOn(
+    reportedMs: Long,
+    sinceReportMs: Long,
+    playing: Boolean,
+    durationMs: Long,
+    capMs: Long = 2_000L,
+): Long {
+    if (!playing) return reportedMs
+    val at = reportedMs + sinceReportMs.coerceIn(0L, capMs)
+    return if (durationMs > 0L) at.coerceAtMost(durationMs) else at
 }
 
 /**

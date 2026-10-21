@@ -232,6 +232,13 @@ interface OutputHost {
      * and that one still is starting.
      */
     fun showPaused()
+
+    /**
+     * The far end is making sound — its own report that it is playing what it
+     * was given: a start under way has started. Apart from [showPlaying],
+     * which a start says of itself before a note has played.
+     */
+    fun showSounding()
     fun showPosition(ms: Long)
     fun showDuration(ms: Long)
     fun showIndex(index: Int)

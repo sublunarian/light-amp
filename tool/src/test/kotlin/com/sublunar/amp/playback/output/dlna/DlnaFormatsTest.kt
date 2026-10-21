@@ -66,4 +66,21 @@ class DlnaFormatsTest {
     fun `an empty queue has no next track whatever the mode`() {
         for (mode in RepeatMode.entries) assertNull(nextCastIndex(0, 0, mode))
     }
+
+    @Test
+    fun `a stop a minute into a song is a pause there, not its end`() {
+        assertTrue(stoppedPartWay(heardMs = 77_000L, totalMs = 163_000L))
+    }
+
+    @Test
+    fun `a stop in the last seconds is the song ending`() {
+        assertFalse(stoppedPartWay(heardMs = 160_000L, totalMs = 163_000L))
+        assertFalse(stoppedPartWay(heardMs = 163_000L, totalMs = 163_000L))
+    }
+
+    @Test
+    fun `without a length, or never heard, a stop is the end as before`() {
+        assertFalse(stoppedPartWay(heardMs = 77_000L, totalMs = 0L))
+        assertFalse(stoppedPartWay(heardMs = -1L, totalMs = 163_000L))
+    }
 }
