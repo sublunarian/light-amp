@@ -2,10 +2,9 @@
 
 Amp ships today, but parts of it are built around the SDK because there is no
 supported route. Each item below is a workaround we would delete the day an API
-exists. Checked against `upstream/main` at `311aa2d` (SDK 0.2.0 and three
-merges after it, 8 Oct 2026), which is where the `light-sdk` submodule is
-pinned. 0.2.0 closed one gap, plain `http://` (see Data modes below); the
-rest stand.
+exists. Checked against SDK 0.2.1 (`3a6b204`, 20 Oct 2026), which is where the
+`light-sdk` submodule is pinned. 0.2.0 closed one gap, plain `http://` (see
+Data modes below), and 0.2.1 brought single-item queue edits; the rest stand.
 
 ## Workarounds we would drop
 
@@ -281,20 +280,19 @@ what the workaround costs. **These are requests, not blockers.**
 ## Smaller additions
 
 Already written as patches; see [SDK-PATCHES.md](SDK-PATCHES.md), which is the
-authority. None were upstream as of `3df3c24` (0.1.1).
+authority. None of these is upstream as of 0.2.1 (`3a6b204`).
 
-**Plan (2026-09-03, not yet done):** offer these upstream as **one PR** rather
-than nine issues — they are written and working, so the PR is the ask. The
-exception is **Room migrations**, which should go in on its own and as a *bug*:
-without a migration path every schema change wipes the user's library cache and
-download index, which is data loss rather than a missing convenience.
+**Plan (changed 2026-10-19):** light-sdk's CONTRIBUTING closes PRs without an
+issue Light has okayed, so each ask goes in as a small issue first, and a PR
+follows the green light. Room migrations need no ask of ours: light-sdk #281
+and #285 both add a builder hook.
 
 | Gap | Why |
 |---|---|
 | `popToRoot()` | A tab bar visible on nested screens has to unwind to the root. Without it, tapping a tab three levels deep only goes back one. |
 | `onPlaybackError` | Media3 reports failures; the SDK swallowed them. A player that cannot report a failure cannot fall back to a downloaded copy. 0.1.1 grew an `error: StateFlow<LightAudioError?>` — real progress, but it maps the exception away and the fallback logic reads the raw `errorCode` (a bad HTTP status proves the server is *there*). The callback stays until the flow carries the code. |
 | Room migrations | `buildDatabase` exposes no builder, so a tool cannot register a migration. We patched in `fallbackToDestructiveMigration`, which means every schema change wipes the user's cache and download index. |
-| `replaceRange()` | Reordering by repeated `moveItem` rebuilds the session queue per move; a few hundred moves exhausts memory. |
+| `replaceRange()` | Reordering by repeated `moveMediaItem` rebuilds the session queue per move; a few hundred moves exhausts memory. |
 | `isCurrentItemSeekable` | Whether the stream that arrived can be seeked. Guessing from the requested format is wrong when a server declines to transcode, and it fails silently. |
 | `setHandleAudioBecomingNoisy(true)` | One line on the builder. Without it, unplugging headphones leaves music playing out of the speaker. Doing it by hand needs a `BroadcastReceiver`, which the sandbox blocks. |
 | Playback state | The player exposes position, duration and `isPlaying`, but not the state behind them. A tool cannot tell a finished queue from a pause, so we infer it from position against duration. 0.1.1 added `availability` (connection lifecycle) and the `error` flow, but `STATE_ENDED` is still not surfaced. |

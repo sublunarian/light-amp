@@ -39,7 +39,7 @@ import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioPlayerAvailability
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightAudioPlayback
-import com.thelightphone.sdk.audio.LightAudioUsage
+import com.thelightphone.sdk.audio.LightPlayerSpec
 import com.thelightphone.sdk.audio.LightMediaMetadata
 import com.thelightphone.sdk.audio.NO_MEDIA_ITEM
 import kotlinx.coroutines.CompletableDeferred
@@ -569,7 +569,7 @@ class PlaybackController(
             // told what the state below already says.
             val cur = player ?: return@launch
             cur.pause()
-            cur.seekToIndex(0)
+            cur.seekToDefaultPosition(0)
         }
         _index.value = 0
         _positionMs.value = 0L
@@ -644,7 +644,7 @@ class PlaybackController(
         old.onItemRepeated = null
         old.release()
         val p = try {
-            audio.newPlayer(LightAudioUsage.Music, LightAudioPlayback.Detached)
+            audio.newPlayer(LightPlayerSpec(playback = LightAudioPlayback.Detached))
         } catch (e: Throwable) {
             // Thrown on, as a first bind's failure is: the activity doesn't
             // start without its player. What is left behind is no handle,
@@ -1094,7 +1094,7 @@ class PlaybackController(
                         // A handle that replaced this one steers the same
                         // queue, where the stub still is.
                         val cur = player ?: return@launch
-                        cur.replaceRange(stubIdx, stubIdx + 1, listOf(original.toAudioItem()))
+                        cur.replaceMediaItem(stubIdx, original.toAudioItem())
                     }
                 }
             }
@@ -1126,7 +1126,7 @@ class PlaybackController(
         val carriedPositionMs = _positionMs.value
         // Detached: playback lives in the SDK's own service, so it survives the
         // screen going off — and the activity going away — officially.
-        val p = audio.newPlayer(LightAudioUsage.Music, LightAudioPlayback.Detached)
+        val p = audio.newPlayer(LightPlayerSpec(playback = LightAudioPlayback.Detached))
         p.playbackGain = appliedGain
         player = p
         handleOwner = audio
@@ -1982,18 +1982,19 @@ class PlaybackController(
             // and left the replacement stream parked.
             val wasPlaying = p.playWhenReady
             val at = _index.value
+            if (at < 0) return@launch
             // Replaced in place rather than removed and re-added. Taking the
             // playing item out moves the player's idea of the current index —
             // twice, once each way — and the collector above reads that as a new
             // track and clears streamOffsetMs. The clock then counts up from zero
             // while the audio plays from where it was asked to.
-            p.replaceRange(at, at + 1, listOf(item))
+            p.replaceMediaItem(at, item)
             // The replacement is a stream that already starts at the target, so
             // it has to play from its own beginning: Media3 keeps the old
             // position when the item it replaces looks like the same one, which
             // would land us at the offset twice over. This sets the index the
             // player is already on, so nothing reads it as a track change.
-            p.seekToIndex(at)
+            p.seekToDefaultPosition(at)
             if (wasPlaying) p.play()
         }
     }
@@ -2058,8 +2059,6 @@ class PlaybackController(
             cur.setMediaQueue(emptyList())
         }
     }
-    fun skipForward() = player?.skipForward()
-    fun skipBack() = player?.skipBack()
 
     fun next() {
         remote?.let { out ->
@@ -2118,7 +2117,7 @@ class PlaybackController(
             return
         }
         pickedIndex = index
-        p.seekToIndex(index)
+        p.seekToDefaultPosition(index)
         _index.value = index
         if (cannotStreamNow(index)) {
             blockedAtCurrent()
@@ -2163,7 +2162,7 @@ class PlaybackController(
             if (from < 0) {
                 val at = (cur + 1).coerceIn(0, _queue.value.size)
                 _queue.value = _queue.value.toMutableList().apply { add(at, track) }
-                p.addItemAt(at, track.toAudioItem())
+                p.addMediaItem(at, track.toAudioItem())
                 remote?.queueEdited(QueueEdit.PlayNext(track.id))
                 continue
             }
@@ -2180,8 +2179,8 @@ class PlaybackController(
      * For a radio started from the song already playing: the song carries on
      * untouched and the radio becomes what follows, in place of whatever was
      * queued. The queue's name changes with its contents — see [queueName].
-     * Upcoming items are dropped back to front so each removal can't shift the
-     * ones still to go, as [removeFromQueue] does.
+     * One range replace rather than an edit per track: each edit is a queue
+     * update that rebuilds the session queue, and a long queue has hundreds.
      */
     fun replaceUpcoming(tracks: List<Track>, name: String? = null) {
         val p = player ?: return
@@ -2192,9 +2191,8 @@ class PlaybackController(
             return
         }
         val droppedIds = q.drop(cur + 1).map { it.id }
-        for (i in q.lastIndex downTo cur + 1) p.removeItem(i)
+        p.replaceRange(cur + 1, q.size, tracks.map { it.toAudioItem() })
         _queue.value = q.take(cur + 1) + tracks
-        if (tracks.isNotEmpty()) p.addItems(tracks.map { it.toAudioItem() })
         _queueName.value = name
         remote?.queueEdited(QueueEdit.UpcomingReplaced(droppedIds, tracks.map { it.id }))
     }
@@ -2206,7 +2204,7 @@ class PlaybackController(
         if (index !in q.indices) return
         val playingId = q.getOrNull(_index.value)?.id
         val goneId = q[index].id
-        p.removeItem(index)
+        p.removeMediaItem(index)
         val newQueue = q.toMutableList().apply { removeAt(index) }
         _queue.value = newQueue
         _index.value = indexAfterEdit(newQueue, playingId)
@@ -2229,7 +2227,7 @@ class PlaybackController(
         val targets = q.indices.filter { q[it].id in ids }
         if (targets.isEmpty()) return
         val playingId = q.getOrNull(_index.value)?.id
-        targets.sortedDescending().forEach { p.removeItem(it) }
+        targets.sortedDescending().forEach { p.removeMediaItem(it) }
         val gone = targets.toSet()
         val goneIds = targets.map { q[it].id }
         val newQueue = q.filterIndexed { i, _ -> i !in gone }
@@ -2245,7 +2243,7 @@ class PlaybackController(
         if (from !in q.indices || to !in q.indices || from == to) return
         val playingId = q.getOrNull(_index.value)?.id
         val movedId = q[from].id
-        p.moveItem(from, to)
+        p.moveMediaItem(from, to)
         val newQueue = q.toMutableList().apply { add(to, removeAt(from)) }
         _queue.value = newQueue
         _index.value = indexAfterEdit(newQueue, playingId)
@@ -2277,7 +2275,7 @@ class PlaybackController(
         newQueue.forEachIndexed { target, track ->
             val current = working.indexOfFirst { it === track }
             if (current != target) {
-                p.moveItem(current, target)
+                p.moveMediaItem(current, target)
                 working.add(target, working.removeAt(current))
             }
         }

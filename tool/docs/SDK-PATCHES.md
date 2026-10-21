@@ -88,12 +88,13 @@ server never answered", which are different situations. Treating both as
 
 SDK 0.1.1 added an `error: StateFlow<LightAudioError?>` of its own — the right
 idea, but it maps the exception into a type without the raw `errorCode`. This
-callback stays until the flow carries the code, then folds into it.
+callback stays until the flow carries the code, then folds into it. 0.2.1 adds
+the failed item's id to the error, but still not the code or the cause.
 
 ### 3. `LightAudioPlayer.replaceRange(fromIndex, toIndex, items)`
 
 Swap a range of the queue in one operation, leaving an item outside the range
-playing. Reordering by repeated `moveItem` is a timeline update per move, and a
+playing. Reordering by repeated `moveMediaItem` is a timeline update per move, and a
 few hundred of those with a media session attached rebuilds the legacy queue —
 artwork and all — each time, until the process runs out of memory.
 
@@ -103,17 +104,17 @@ listener reads as a track change.
 
 ### 4. The rest of `LightAudioPlayer`
 
-Eleven more members, all additive, none present on any upstream branch. They
-are grouped here rather than given a section each because they are one thing:
+SDK 0.2.1 (light-sdk #127) brought the single-item queue edits, `addMediaItem`,
+`removeMediaItem`, `moveMediaItem`, `replaceMediaItem` and
+`seekToDefaultPosition`, and Amp uses those directly. The members below are
+still missing upstream, all additive. They are grouped here rather than given a section each because they are one thing:
 the player the SDK ships can start a queue and move through it, and a music tool
 also has to *edit* that queue, restore it, and be driven by the phone's own
 controls.
 
 | Member | Why a music tool needs it |
 |---|---|
-| `addItems`, `addItemAt` | Play Next and Add to Queue. Rebuilding the queue to append to it loses the playing item's position. |
-| `removeItem`, `moveItem` | The queue editor — remove a track, drag one up. |
-| `seekToIndex` | Tapping a row in the queue. |
+| `addItems` | Add to Queue and a radio tail in one queue update. One `addMediaItem` per track rebuilds the session queue each time. |
 | `setMediaQueueAt(items, index, positionMs)` | Restoring a saved queue mid-track. The position has to go in at prepare time: `seekTo` clamps to a duration that isn't known yet, so it lands on 0. |
 | `deviceVolume`, `setSystemVolume` | The hardware rocker, which a tool has to service itself while casting — see `PlaybackController.handleVolumeKey`. |
 | `repeatMode` | Repeat off / all / one. |
@@ -145,7 +146,8 @@ reverting is deleting the group.
 
 ### 7. `setHandleAudioBecomingNoisy(true)`
 
-One line on the `ExoPlayer.Builder`, and the default is wrong for anything that
+One line on the `ExoPlayer.Builder` in `SdkExoPlayer.kt`, which builds both players
+since 0.2.1, and the default is wrong for anything that
 plays audio: without it, Bluetooth disconnecting or headphones being unplugged
 leaves playback running out of the phone's speaker. Media3 handles the
 `ACTION_AUDIO_BECOMING_NOISY` broadcast itself once it's set.
@@ -182,7 +184,7 @@ change. Exposes `LightServiceConnection.applicationContext` (internal) to ask.
 A tool's say over whether its players may use the network at all: one
 process-wide predicate, asked by a gating `DataSource` before every remote
 connection the platform player opens and again as it reads. Both player
-builders (`LightAudioPlayer`, `LightAudioService`) are built on it. Amp wires
+players are built on it, through `buildSdkExoPlayer` in `SdkExoPlayer.kt`. Amp wires
 it to `App.networkAllowed` at boot, which is how Wi-Fi Only becomes a wall
 rather than a set of courtesy checks: a stream already in the queue used to
 play on over cellular, and the next one along with it. Local files, assets and
@@ -190,8 +192,8 @@ other in-phone sources never ask — nor does a loopback address, which is how
 Amp's own `StreamProxy` serves the player. While that proxy is on, this patch
 is only the net under it: it still stands in front of any server URL handed to
 the player directly (the proxy's self-test failed, or a queue built before it
-came up). It goes when the proxy has proven itself on devices. Revert: drop the two `setMediaSourceFactory`
-lines and the file; nothing else references it.
+came up). It goes when the proxy has proven itself on devices. Revert: drop the gated factory from
+`SdkExoPlayer.kt` and the file; nothing else references it.
 
 ## Workarounds
 
@@ -202,9 +204,9 @@ remove it — in [SDK-GAPS.md](SDK-GAPS.md). In brief:
 
 The background-audio spike is gone: Amp adopted the SDK's official
 `detached-audio` capability. What replaced it in the patch set is
-`audio-service.patch` — three *additive* lines on the SDK's own service
-(device-volume control and becoming-noisy on its player, a `sessionActivity`
-on its session), which belong with the additions above, not the workarounds.
+`audio-service.patch`: a `sessionActivity` on the SDK's own service, which
+belongs with the additions above, not the workarounds. (Its player's
+device-volume and becoming-noisy lines moved to `SdkExoPlayer.kt` with 0.2.1.)
 
 ### 12. `transfer/LightTransferService.kt` + manifest
 
