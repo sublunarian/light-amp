@@ -51,8 +51,9 @@ data class ServerFeatures(
          * put. 1: ratings, radio, original download. 2: the scan call too.
          * 3: an answer that isn't JSON (a proxy's page) no longer counts as
          * missing — so anything recorded under 2 is asked again cleanly.
+         * 4: whether the server takes playback reports — see [REPORT_PLAYBACK].
          */
-        const val GENERATION = 3
+        const val GENERATION = 4
 
         /** Ratings: `setRating`. */
         const val SET_RATING = "setRating"
@@ -79,10 +80,33 @@ data class ServerFeatures(
          */
         const val KEEP_COPIES = "keepCopies"
 
+        /**
+         * Telling the server where playback is as it changes — playing,
+         * paused, a seek, stopped — so its now-playing follows the phone
+         * rather than assuming a song plays from start to finish:
+         * `reportPlayback`. Not Subsonic's own call. A server offers it by
+         * listing OpenSubsonic's `playbackReport` extension, so that list is
+         * the question put, and only a listing says yes — see [promises].
+         */
+        const val REPORT_PLAYBACK = "reportPlayback"
+
+        /** The OpenSubsonic extension a server names when it takes [REPORT_PLAYBACK]. */
+        const val PLAYBACK_REPORT_EXTENSION = "playbackReport"
+
         /** Everything a first asking covers. */
-        val ALL = listOf(SCAN_STATUS, SET_RATING, SIMILAR_SONGS, DOWNLOAD)
+        val ALL = listOf(SCAN_STATUS, SET_RATING, SIMILAR_SONGS, DOWNLOAD, REPORT_PLAYBACK)
     }
 }
 
 /** Whether a server may have [endpoint]: only a recorded "missing" says no, and never asked reads as everything. */
 fun ServerFeatures?.allows(endpoint: String): Boolean = this?.has(endpoint) ?: true
+
+/**
+ * Whether a server has said it has [endpoint] — for a call it offers only by
+ * naming it, as an OpenSubsonic extension is. The opposite default to
+ * [allows]: never asked, an answer from an older set of questions, or an
+ * asking left unfinished all read as no, so a server that never said so is
+ * spoken to as it always was.
+ */
+fun ServerFeatures?.promises(endpoint: String): Boolean =
+    this != null && generation >= ServerFeatures.GENERATION && has(endpoint)

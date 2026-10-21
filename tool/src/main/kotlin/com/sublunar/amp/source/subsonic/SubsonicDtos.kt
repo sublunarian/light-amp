@@ -2,6 +2,9 @@ package com.sublunar.amp.source.subsonic
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
@@ -37,7 +40,19 @@ data class SubsonicBody(
     val similarSongs: SimilarSongsDto? = null,
     val scanStatus: ScanStatusDto? = null,
     val playQueue: PlayQueueDto? = null,
-)
+    /**
+     * getOpenSubsonicExtensions: what a server offers beyond Subsonic's own
+     * calls. Kept as it came, because only the names are read, and a shape
+     * nobody expected must not cost the rest of the reply.
+     */
+    val openSubsonicExtensions: JsonElement? = null,
+) {
+    /** The names [openSubsonicExtensions] lists, whatever else each entry carries. */
+    val extensionNames: List<String>
+        get() = (openSubsonicExtensions as? JsonArray).orEmpty().mapNotNull { entry ->
+            ((entry as? JsonObject)?.get("name") as? JsonPrimitive)?.content
+        }
+}
 
 /**
  * getPlayQueue: what this account was last playing, on whichever client saved it.

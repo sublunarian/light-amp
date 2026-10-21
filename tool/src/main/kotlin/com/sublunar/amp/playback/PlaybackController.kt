@@ -2007,6 +2007,7 @@ class PlaybackController(
             // that is playing waits for anything.
             if (_isPlaying.value) startingElsewhere()
             out.seekTo(ms)
+            reportSeek(ms)
             return
         }
         val p = player ?: return
@@ -2017,9 +2018,11 @@ class PlaybackController(
             bufferAfterSeek(p)
             // Trust it, then check — see [verifyNativeSeek].
             if (track != null) verifyNativeSeek(p, track, ms)
+            reportSeek(ms)
             return
         }
         serverSeek(p, track, ms)
+        reportSeek(ms)
     }
 
     /**
@@ -2338,9 +2341,12 @@ class PlaybackController(
         remote?.let { out ->
             // Back to the start, or to the track before where there is one —
             // the rule every output's previous keeps.
-            val moves = _positionMs.value > PREVIOUS_RESTARTS_AFTER_MS || _index.value - 1 in _queue.value.indices
+            val restarts = _positionMs.value > PREVIOUS_RESTARTS_AFTER_MS
+            val moves = restarts || _index.value - 1 in _queue.value.indices
             if (_isPlaying.value && moves) startingElsewhere()
             out.previous()
+            // Back to the start is a seek to it, and said as one.
+            if (restarts) reportSeek(0L)
             return
         }
         settleRestartCopy()
@@ -3366,7 +3372,7 @@ class PlaybackController(
      * heartbeat just means the dashboard is stale until the next one, not a
      * broken stream.
      */
-    private fun reportTimeline(state: TimelineState) {
+    private fun reportTimeline(state: TimelineState, positionMs: Long = _positionMs.value) {
         // A Companion player reports its own timeline to the server — that is
         // its scrobble, and this phone adding another would double every play.
         if (remote?.reportsItself == true) return
@@ -3374,8 +3380,24 @@ class PlaybackController(
         // Nothing playing on the server's behalf to report on.
         if (PhoneFiles.isPhoneFile(track.id)) return
         sessions.report(
-            TimelineReport(sessionIdFor(track.id), track.id, state, _positionMs.value, _durationMs.value),
+            TimelineReport(sessionIdFor(track.id), track.id, state, positionMs, _durationMs.value),
         )
+    }
+
+    /**
+     * A seek moved the place in the song, on this phone or wherever the sound
+     * is: the server hears the new one at once, rather than at the next
+     * heartbeat ten seconds on — where the server keeps the place, as
+     * Navidrome's playback reports do, a jump ahead would otherwise read as
+     * that much listened. Only for a session already open: a seek in a queue
+     * that is cued and has never played opens none.
+     */
+    private fun reportSeek(ms: Long) {
+        if (sessions.openSession == null) return
+        val live = _isPlaying.value || _buffering.value
+        // Within the song: Plex refuses a time past its length.
+        val at = ms.coerceIn(0L, _durationMs.value.takeIf { it > 0L } ?: Long.MAX_VALUE)
+        reportTimeline(if (live) TimelineState.PLAYING else TimelineState.PAUSED, positionMs = at)
     }
 
     /**

@@ -33,6 +33,7 @@ import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SongChanges
 import com.sublunar.amp.data.Starred
 import com.sublunar.amp.data.StreamFormat
+import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.UNREACHABLE
 import com.sublunar.amp.data.WriteResult
@@ -139,11 +140,40 @@ internal fun bandcampTurnsLoginAway(address: String, status: Int, page: Boolean,
     status == 500 && !page && body != null && body.isBlank() && isBandcampAddress(address)
 
 /**
+ * What `reportPlayback` is sent for one report — see SubsonicClient.reportTimeline.
+ * Never a play of its own: Amp submits each play itself, once enough of it
+ * was heard (PlaybackController.maybeSubmitPlay), so every report asks the
+ * server not to count one, or each song would be counted twice.
+ */
+internal fun reportPlaybackParams(songId: String, state: TimelineState, positionMs: Long): List<Pair<String, String>> =
+    listOf(
+        "mediaId" to songId,
+        "mediaType" to "song",
+        "positionMs" to positionMs.coerceAtLeast(0L).toString(),
+        "state" to when (state) {
+            TimelineState.PLAYING -> "playing"
+            TimelineState.PAUSED -> "paused"
+            TimelineState.STOPPED -> "stopped"
+            TimelineState.BUFFERING -> "starting"
+        },
+        "playbackRate" to "1.0",
+        "ignoreScrobble" to "true",
+    )
+
+/**
  * Navidrome / Subsonic API client. Ported from the React Native `navidrome.ts`.
  * Authenticates with the Subsonic token scheme (md5(password + salt)) and
  * returns domain models. Coroutine cancellation propagates to the HTTP call.
  */
-class SubsonicClient(val config: SubsonicConfig) : MusicServer {
+class SubsonicClient(
+    val config: SubsonicConfig,
+    /**
+     * Whether this server listed `playbackReport`, and so is told where
+     * playback is — see ServerFeatures.REPORT_PLAYBACK. Off for every server
+     * that never said so, which then hears nothing new.
+     */
+    internal val reportsPlayback: Boolean = false,
+) : MusicServer {
 
     private val http = NetworkGate.httpClient {
         expectSuccess = false
@@ -400,8 +430,28 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         ServerFeatures.SET_RATING -> answers(endpoint, listOf("id" to PROBE_ID, "rating" to "1"))
         ServerFeatures.SIMILAR_SONGS -> sampleTrackId?.let { answers(endpoint, listOf("id" to it, "count" to "1")) }
         ServerFeatures.DOWNLOAD -> sampleTrackId?.let { implementsDownload(it) }
+        ServerFeatures.REPORT_PLAYBACK -> listsExtension(ServerFeatures.PLAYBACK_REPORT_EXTENSION)
         else -> true
     }
+
+    /**
+     * Whether the server names [extension] in its OpenSubsonic list — the way
+     * a server offers a call that isn't Subsonic's own. Yes only when it is
+     * listed. No when the list leaves it out, or the server has no list at
+     * all: no such call, or a refusal in Subsonic's own words, which is what a
+     * server from before OpenSubsonic answers a call it doesn't know. Anything
+     * else is no evidence, as in [answers].
+     */
+    private suspend fun listsExtension(extension: String): Boolean? =
+        try {
+            extension in request("getOpenSubsonicExtensions", via = quick).extensionNames
+        } catch (e: SubsonicException) {
+            when {
+                e.envelope && e.code != null -> false
+                e.endpointMissing -> false
+                else -> null
+            }
+        }
 
     /**
      * What one probe proved. Any Subsonic envelope — success or `status:
@@ -662,6 +712,24 @@ class SubsonicClient(val config: SubsonicConfig) : MusicServer {
         val params = mutableListOf("id" to songId, "submission" to submission.toString())
         atMs?.let { params.add("time" to it.toString()) }
         request("scrobble", params)
+    }
+
+    /**
+     * Where playback is, for a server that listed `playbackReport`: its
+     * now-playing follows a pause, a seek and a stop as they happen, rather
+     * than a song it assumes plays from start to finish. Subsonic has no
+     * session, so [sessionId] is unused, and the length is the server's own.
+     * Every other server hears nothing, as before.
+     */
+    override suspend fun reportTimeline(
+        sessionId: String,
+        songId: String,
+        state: TimelineState,
+        positionMs: Long,
+        durationMs: Long,
+    ) {
+        if (!reportsPlayback) return
+        request("reportPlayback", reportPlaybackParams(songId, state, positionMs))
     }
 
     /**

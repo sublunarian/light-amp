@@ -6,6 +6,7 @@ import com.sublunar.amp.data.ServerFeatures
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.allows
+import com.sublunar.amp.data.promises
 import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
@@ -42,8 +43,12 @@ object SubsonicProvider : SourceProvider {
         libraries = true,
     )
 
+    // Built again whenever the record changes, its features with it, so a
+    // server found to take playback reports is sent them from then on.
     override fun createClient(source: MusicSource): MusicServer? =
-        source.toSubsonicConfig()?.let { SubsonicClient(it) }
+        source.toSubsonicConfig()?.let {
+            SubsonicClient(it, reportsPlayback = source.features.promises(ServerFeatures.REPORT_PLAYBACK))
+        }
 
     override val ui: SourceUi get() = SubsonicUi
 }
