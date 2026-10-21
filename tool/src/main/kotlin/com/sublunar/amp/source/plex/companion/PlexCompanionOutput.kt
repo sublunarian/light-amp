@@ -49,10 +49,6 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
 
     override val needsLan = false
 
-    // The player's last reported state decides whether sound starts here
-    // or waits.
-    override fun handBackPlays(wasPlaying: Boolean) = wasPlaying
-
     /**
      * Whether the fader can move the player's volume — decided by evidence,
      * not by the player's word.

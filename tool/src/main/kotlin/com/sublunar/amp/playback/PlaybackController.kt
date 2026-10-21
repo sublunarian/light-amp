@@ -2695,7 +2695,10 @@ class PlaybackController(
         val p = player ?: return
         _volume.value = p.deviceVolume.value
         if (why != Disconnect.HandBack) return
-        val play = out.handBackPlays(wasPlaying)
+        // One rule for every output: the phone carries on as the far end was,
+        // playing if it was playing and paused if it was paused. A speaker
+        // used to start the phone whatever it had been doing.
+        val play = wasPlaying
         // The queue moved on while the output had it — a renderer's poll
         // walks _index as tracks finish there, and a Plex player's reports
         // move it too — but this player sat paused on whatever it held when

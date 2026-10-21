@@ -37,9 +37,6 @@ interface OutputControls {
     /** Reached over the local network only: dropped when the link stops allowing that. */
     val needsLan: Boolean
 
-    /** Whether handing back to the phone starts its sound, given whether the far end was playing. */
-    fun handBackPlays(wasPlaying: Boolean): Boolean
-
     /** Play. Playing is already shown, and reported where the phone reports. */
     fun play()
 

@@ -43,8 +43,6 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     override val needsLan = true
 
-    override fun handBackPlays(wasPlaying: Boolean) = true
-
     // The fader drives the renderer's own RenderingControl.
     override val volumeControl: StateFlow<VolumeControl> = MutableStateFlow(VolumeControl.Ours)
 
