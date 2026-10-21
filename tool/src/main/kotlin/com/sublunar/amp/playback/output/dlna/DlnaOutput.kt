@@ -96,8 +96,20 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      */
     private var castNextArmedFor: Int? = null
 
-    /** Bumped per cast seek, so a slow verify can't act on a stale target. */
+    /**
+     * Bumped by every seek, every push and every change of track, so the
+     * check a seek leaves behind can't act on whatever replaced it — see
+     * [verifyCastSeek]. Bumped only by the seeks that left a check, as it
+     * was, a previous pressed a few seconds after a seek let that seek's check
+     * find the track back at 0:00, call it a miss, and push the old position
+     * back from the server.
+     */
     private var seekGeneration = 0
+
+    /** Whatever an earlier seek left to check is moot: a seek, a push or a change of track has replaced it. */
+    private fun dropSeekChecks() {
+        seekGeneration++
+    }
 
     /** The renderer this is steering, or null once it has been let go. */
     private fun steered(): DlnaRenderer? = (host.steering(this) as? DlnaTarget)?.renderer
@@ -138,6 +150,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val renderer = (target as DlnaTarget).renderer
         castJob?.cancel()
         castJob = null
+        dropSeekChecks()
         if (why == Disconnect.Leaving) {
             // A renderer keeps playing whatever URI it was handed, so leaving without
             // telling it to stop strands audio on the speaker while the app shows
@@ -166,6 +179,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     override fun seekTo(ms: Long) {
         val renderer = steered() ?: return
+        dropSeekChecks()
         // The last moments of a track are not worth a seek. Seeking means
         // pushing the stream again, probing it and seeking it — seconds —
         // after which the renderer stops almost at once, and a stop before
@@ -209,6 +223,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     override fun jumpTo(index: Int) {
         val renderer = steered() ?: return
+        dropSeekChecks()
         host.showIndex(index)
         host.showPosition(0)
         castJob?.cancel()
@@ -235,6 +250,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     override fun newQueue() {
         val renderer = steered() ?: return
+        dropSeekChecks()
         castJob?.cancel()
         castJob = host.scope.launch {
             if (startCastTrack(renderer)) pollRenderer(renderer)
@@ -305,7 +321,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val nearEnd = host.durationMs.value > 0 &&
             host.durationMs.value - wanted <= CAST_SEEK_VERIFY_MS + CAST_SEEK_TOLERANCE_MS
         if (nearEnd) return
-        val generation = ++seekGeneration
+        // This seek's own: the seek, or the push it came with, has already
+        // moved the generation on from any check before it.
+        val generation = seekGeneration
         val seekedIndex = host.index.value
         host.scope.launch {
             delay(CAST_SEEK_VERIFY_MS)
@@ -347,6 +365,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         seekToMs: Long = 0L,
         askServer: Boolean = false,
     ): Boolean {
+        dropSeekChecks()
         val track = host.queue.value.getOrNull(host.index.value) ?: return false
         // The server hears of the song from the index having moved, as it does
         // for the phone's own player — see followCurrentSong.
@@ -598,6 +617,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                     castNextUrl != castCurrentUrl &&
                     position.trackUri == castNextUrl
                 if (moved) {
+                    dropSeekChecks()
                     nextIndex()?.let { host.showIndex(it) }
                     castCurrentUrl = castNextUrl
                     // The queued track was handed over whole, from its start.
