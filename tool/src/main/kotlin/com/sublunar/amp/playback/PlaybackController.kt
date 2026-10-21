@@ -301,6 +301,26 @@ class PlaybackController(
     @Volatile
     private var offsetItemTrackId: String? = null
 
+    /**
+     * Where the player holds the whole song, queued straight after a
+     * server-seeked remainder while repeat-one is on — or -1.
+     *
+     * Repeat-one replays the item it is on, and on a remainder that is the
+     * tail from the seek point: rebuilt only once Media3 says it wrapped, a
+     * moment of the wrong part had already played. So under repeat-one the
+     * remainder is followed by the song itself and the player's own repeat is
+     * off: the remainder ends into the song's start, as gapless as any change
+     * of track, and [finishRestart] then drops the remainder and hands repeat
+     * back to the player.
+     *
+     * While set, the player's queue is one item longer than [_queue] — the copy,
+     * just after the playing slot — so anything that addresses the player by
+     * position calls [settleRestartCopy] first. Main only, but read by the
+     * collectors to tell the copy's start from a new track.
+     */
+    @Volatile
+    private var restartCopyAt = -1
+
     /** Latched by [fallBackOffline]; cleared when the server answers again. */
     @Volatile
     private var forceOffline = false
@@ -649,6 +669,7 @@ class PlaybackController(
      * and a restore that saw none would give up for good.
      */
     private fun handOver(old: LightAudioPlayer, audio: LightAudio) {
+        settleRestartCopy()
         android.util.Log.i(
             "AmpLife",
             "new activity: handle moved over " +
@@ -723,6 +744,7 @@ class PlaybackController(
         }
         p.onPlaybackError = { error ->
             _buffering.value = false
+            settleRestartCopy()
             val fromFile = queuedSources.getOrNull(_index.value) is LightAudioSource.FileSource
             val network = error.errorCode in PlaybackException.ERROR_CODE_IO_UNSPECIFIED..
                 PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE
@@ -936,7 +958,10 @@ class PlaybackController(
                     return@collect
                 }
                 if (!isCasting) {
-                    _positionMs.value = it + streamOffsetMs
+                    // Into the restart copy and not yet settled: the copy is the
+                    // song from its start, and the remainder's offset is over.
+                    val intoCopy = restartCopyAt >= 0 && p.currentMediaItemIndex.value == restartCopyAt
+                    _positionMs.value = it + if (intoCopy) 0L else streamOffsetMs
                     noteProgress(it)
                 }
             }
@@ -1020,7 +1045,9 @@ class PlaybackController(
         scope.launch(handle) {
             combine(p.currentMediaItemIndex, _queue, replayGain) { idx, q, on ->
                 if (idx < 0) return@combine null
-                val db = if (on) q.getOrNull(idx)?.gainDb else null
+                // The restart copy is the song in the slot before it.
+                val slot = if (restartCopyAt in 0..idx) idx - 1 else idx
+                val db = if (on) q.getOrNull(slot)?.gainDb else null
                 db?.let { 10.0.pow(it / 20.0).toFloat().coerceAtMost(1f) } ?: 1f
             }.filterNotNull().distinctUntilChanged().collect { factor ->
                 withContext(Dispatchers.Main.immediate) {
@@ -1043,6 +1070,28 @@ class PlaybackController(
                 // parked, deliberately not.
                 if (snapshot) {
                     snapshot = false
+                } else if (restartCopyAt >= 0) {
+                    // The remainder ending into the whole song queued after it
+                    // is the song starting over, not a new track — see
+                    // restartCopyAt. Anywhere else, the queue goes back in step
+                    // first, and a later slot is one less on the screen.
+                    val slot: Int? = withContext(Dispatchers.Main.immediate) {
+                        val copy = restartCopyAt
+                        when {
+                            player !== p || copy < 0 -> idx
+                            idx == copy -> {
+                                finishRestart(p, copy)
+                                null
+                            }
+                            idx == copy - 1 -> idx
+                            else -> {
+                                settleRestartCopy()
+                                if (idx > copy) idx - 1 else idx
+                            }
+                        }
+                    }
+                    if (slot == null) return@collect
+                    if (slot >= 0 && slot != _index.value) landedOn(p, slot, startMs = 0L)
                 } else if (idx >= 0 && idx != _index.value) {
                     landedOn(p, idx, startMs = 0L)
                 }
@@ -1464,6 +1513,9 @@ class PlaybackController(
             android.util.Log.i("AmpLife", "an old screen closed; the current player is left alone")
             return
         }
+        // A backed-out service plays on without anyone to hand repeat-one back
+        // to it, so the copy goes now — see restartCopyAt.
+        settleRestartCopy()
         // Whatever the sound went to stops being steered from here: a speaker
         // is told to stop, a Plex player is left playing — see each output's
         // disconnect.
@@ -1897,6 +1949,7 @@ class PlaybackController(
             return
         }
         val p = player ?: return
+        settleRestartCopy()
         val track = _queue.value.getOrNull(_index.value)
         if (track == null || !needsServerSeek(track)) {
             p.seekTo(ms)
@@ -2006,6 +2059,8 @@ class PlaybackController(
         scope.launch(Dispatchers.Main.immediate) {
             // Released while the URL was being built: a gone handle throws.
             if (player !== p) return@launch
+            // The slot is about to be addressed by position — see restartCopyAt.
+            settleRestartCopy()
             // Intent, not the instantaneous state: isPlaying is false during a
             // rebuffer, and a seek issued in that window read it as "paused"
             // and left the replacement stream parked.
@@ -2039,10 +2094,82 @@ class PlaybackController(
             // would land us at the offset twice over. This sets the index the
             // player is already on, so nothing reads it as a track change.
             p.seekToDefaultPosition(at)
-            if (repeatOne) p.repeatMode = Player.REPEAT_MODE_ONE
+            // A remainder under repeat-one has the whole song queued after it,
+            // and the player's repeat stays off for it — see restartCopyAt.
+            if (repeatOne && target > 0L) {
+                armRestartCopy(p, at, track)
+            } else if (repeatOne) {
+                p.repeatMode = Player.REPEAT_MODE_ONE
+            }
             if (wasPlaying) p.play()
             bufferAfterSeek(p)
         }
+    }
+
+    /** Main only. Queue the whole song after the remainder at [at], with the player's repeat off — see [restartCopyAt]. */
+    private fun armRestartCopy(p: LightAudioPlayer, at: Int, track: Track) {
+        p.repeatMode = Player.REPEAT_MODE_OFF
+        p.addMediaItem(at + 1, track.toAudioItem())
+        restartCopyAt = at + 1
+        // AmpSeek: temporary — see serverSeek.
+        android.util.Log.i("AmpSeek", "restart copy queued after idx=$at")
+    }
+
+    /**
+     * Main only. The player's queue back in step with the screen's: the copy
+     * goes — unless the remainder has already ended into it, and then the
+     * remainder goes and the copy is the song from here on.
+     */
+    private fun settleRestartCopy() {
+        val copy = restartCopyAt
+        if (copy < 0) return
+        val p = player
+        if (p == null) {
+            restartCopyAt = -1
+            return
+        }
+        if (p.currentMediaItemIndex.value == copy) {
+            finishRestart(p, copy)
+            return
+        }
+        restartCopyAt = -1
+        p.removeMediaItem(copy)
+        if (_repeatMode.value == RepeatMode.TRACK) p.repeatMode = Player.REPEAT_MODE_ONE
+    }
+
+    /** Main only. The remainder ended into the copy: the copy takes its slot, and repeat-one is the player's again. */
+    private fun finishRestart(p: LightAudioPlayer, copy: Int) {
+        restartCopyAt = -1
+        streamOffsetMs = 0L
+        offsetItemTrackId = null
+        _positionMs.value = 0L
+        _queue.value.getOrNull(_index.value)?.durationMs?.takeIf { it > 0L }?.let { _durationMs.value = it }
+        p.removeMediaItem(copy - 1)
+        if (_repeatMode.value == RepeatMode.TRACK) p.repeatMode = Player.REPEAT_MODE_ONE
+        // AmpSeek: temporary — see serverSeek.
+        android.util.Log.i("AmpSeek", "restart copy took over at idx=${_index.value}")
+        bufferAfterSeek(p)
+    }
+
+    /**
+     * Main only. Repeat-one over a remainder with no copy behind it yet — after
+     * an edit put the queue back in step, or repeat-one switched on after the
+     * seek — gets one: see [restartCopyAt].
+     */
+    private fun armIfRemainder() {
+        if (restartCopyAt >= 0 || isCasting || parked) return
+        if (_repeatMode.value != RepeatMode.TRACK) return
+        val p = player ?: return
+        val at = _index.value
+        val track = _queue.value.getOrNull(at) ?: return
+        if (streamOffsetMs <= 0L || offsetItemTrackId != track.id) return
+        if (p.currentMediaItemIndex.value != at) return
+        armRestartCopy(p, at, track)
+    }
+
+    /** [armIfRemainder] once what is running on Main has finished, so a run of edits doesn't arm in the middle of itself. */
+    private fun rearmSoon() {
+        scope.launch(Dispatchers.Main) { armIfRemainder() }
     }
 
     /** Stop playback and empty the queue. */
@@ -2093,6 +2220,7 @@ class PlaybackController(
         // source's queue under an empty one on the screen.
         scope.launch(Dispatchers.Main.immediate) {
             val cur = player ?: return@launch
+            settleRestartCopy()
             // Paused first. A stop alone leaves the player wanting to play,
             // and through the SDK's media controller it then never reports
             // that it stopped: its "playing" stays true, so the next song's
@@ -2111,6 +2239,7 @@ class PlaybackController(
             out.next()
             return
         }
+        settleRestartCopy()
         if (parked) {
             stepWhileWaiting(+1)
             return
@@ -2128,6 +2257,7 @@ class PlaybackController(
             out.previous()
             return
         }
+        settleRestartCopy()
         if (parked) {
             stepWhileWaiting(if (_positionMs.value > PREVIOUS_RESTARTS_AFTER_MS) 0 else -1)
             return
@@ -2156,6 +2286,7 @@ class PlaybackController(
             return
         }
         val p = player ?: return
+        settleRestartCopy()
         if (parked) {
             // A parked player is in its error state: a seek moves the marker
             // and makes no sound. Prepare it on the row that was asked for.
@@ -2182,9 +2313,11 @@ class PlaybackController(
             playQueue(tracks, 0)
             return
         }
+        settleRestartCopy()
         _queue.value = _queue.value + tracks
         p.addItems(tracks.map { it.toAudioItem() })
         remote?.queueEdited(QueueEdit.Appended(tracks.map { it.id }))
+        rearmSoon()
     }
 
     /**
@@ -2202,6 +2335,7 @@ class PlaybackController(
             playQueue(tracks, 0)
             return
         }
+        settleRestartCopy()
         for (track in tracks) {
             val from = _queue.value.indexOfFirst { it.id == track.id }
             val cur = _index.value
@@ -2217,6 +2351,7 @@ class PlaybackController(
             // behind the cursor lands one place earlier than one pushed forward.
             moveInQueue(from, if (from < cur) cur else cur + 1)
         }
+        rearmSoon()
     }
 
     /**
@@ -2230,6 +2365,7 @@ class PlaybackController(
      */
     fun replaceUpcoming(tracks: List<Track>, name: String? = null) {
         val p = player ?: return
+        settleRestartCopy()
         val q = _queue.value
         val cur = _index.value
         if (cur !in q.indices) {
@@ -2241,11 +2377,13 @@ class PlaybackController(
         _queue.value = q.take(cur + 1) + tracks
         _queueName.value = name
         remote?.queueEdited(QueueEdit.UpcomingReplaced(droppedIds, tracks.map { it.id }))
+        rearmSoon()
     }
 
     fun removeFromQueue(index: Int) {
         pickedIndex = -1 // indices are about to move under it
         val p = player ?: return
+        settleRestartCopy()
         val q = _queue.value
         if (index !in q.indices) return
         val playingId = q.getOrNull(_index.value)?.id
@@ -2255,6 +2393,7 @@ class PlaybackController(
         _queue.value = newQueue
         _index.value = indexAfterEdit(newQueue, playingId)
         remote?.queueEdited(QueueEdit.Removed(listOf(goneId)))
+        rearmSoon()
     }
 
     /**
@@ -2268,6 +2407,7 @@ class PlaybackController(
     fun removeFromQueue(ids: Set<String>) {
         pickedIndex = -1 // indices are about to move under it
         val p = player ?: return
+        settleRestartCopy()
         if (ids.isEmpty()) return
         val q = _queue.value
         val targets = q.indices.filter { q[it].id in ids }
@@ -2280,11 +2420,13 @@ class PlaybackController(
         _queue.value = newQueue
         _index.value = indexAfterEdit(newQueue, playingId)
         remote?.queueEdited(QueueEdit.Removed(goneIds))
+        rearmSoon()
     }
 
     fun moveInQueue(from: Int, to: Int) {
         pickedIndex = -1 // indices are about to move under it
         val p = player ?: return
+        settleRestartCopy()
         val q = _queue.value
         if (from !in q.indices || to !in q.indices || from == to) return
         val playingId = q.getOrNull(_index.value)?.id
@@ -2297,6 +2439,7 @@ class PlaybackController(
         // lands at the front.
         val afterId = newQueue.getOrNull(to - 1)?.id
         remote?.queueEdited(QueueEdit.Moved(listOf(movedId), afterId))
+        rearmSoon()
     }
 
     /**
@@ -2307,6 +2450,7 @@ class PlaybackController(
     fun moveGroupInQueue(fromIndices: Set<Int>, insertAt: Int) {
         pickedIndex = -1 // indices are about to move under it
         val p = player ?: return
+        settleRestartCopy()
         if (fromIndices.isEmpty()) return
         val q = _queue.value
         if (fromIndices.any { it !in q.indices }) return
@@ -2331,6 +2475,7 @@ class PlaybackController(
         // nothing when it lands at the front.
         val anchorId = newQueue.getOrNull(landsAt - 1)?.id
         remote?.queueEdited(QueueEdit.Moved(moving.map { it.id }, anchorId))
+        rearmSoon()
     }
 
     /**
@@ -2365,11 +2510,15 @@ class PlaybackController(
 
     fun setRepeat(mode: RepeatMode) {
         _repeatMode.value = mode
+        // A copy queued for repeat-one goes before the mode changes under it,
+        // and repeat-one over a remainder gets one — see restartCopyAt.
+        settleRestartCopy()
         player?.repeatMode = when (mode) {
             RepeatMode.OFF -> Player.REPEAT_MODE_OFF
             RepeatMode.TRACK -> Player.REPEAT_MODE_ONE
             RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
         }
+        if (mode == RepeatMode.TRACK) rearmSoon()
         remote?.repeatChanged(mode)
     }
 
@@ -2423,6 +2572,7 @@ class PlaybackController(
      */
     fun toggleShuffle() {
         pickedIndex = -1 // indices are about to move under it
+        settleRestartCopy()
         val on = !_shuffle.value
         _shuffle.value = on
         val q = _queue.value
@@ -2448,6 +2598,7 @@ class PlaybackController(
         // thread and (with artwork) exhausts the heap.
         player?.replaceRange(head.size, q.size, newTail.map { it.toAudioItem() })
         remote?.queueEdited(QueueEdit.Reordered)
+        rearmSoon()
     }
 
     // --- Where the sound goes ------------------------------------------------
@@ -2467,6 +2618,7 @@ class PlaybackController(
         // No Wi-Fi, no speaker: one found a minute ago is out of reach now,
         // and playback must not be taken off this device for it.
         if (next.needsLan && !App.rulesNow().mayUseLan) return
+        settleRestartCopy()
         supersedeStart()
         if (!next.canSteer()) return
         // A far end that reports its own playback does so as a session of its
@@ -2691,6 +2843,7 @@ class PlaybackController(
                 reresolveQueue()
                 return@launch
             }
+            settleRestartCopy()
             if (current > 0) {
                 p.replaceRange(0, current, tracks.subList(0, current).map { it.toAudioItem() })
             }
@@ -2701,6 +2854,7 @@ class PlaybackController(
                     tracks.subList(current + 1, tracks.size).map { it.toAudioItem() },
                 )
             }
+            rearmSoon()
         }
     }
 
@@ -2709,6 +2863,7 @@ class PlaybackController(
 
     private fun setQueue(tracks: List<Track>, startIndex: Int) {
         val p = player ?: return
+        settleRestartCopy()
         _queue.value = tracks
         // The order shuffle would go back to is the last queue's, not this one's.
         preShuffleOrder = null
@@ -2796,6 +2951,7 @@ class PlaybackController(
      */
     private fun playOriginalElsewhere(p: LightAudioPlayer): Boolean {
         if (isCasting) return false
+        settleRestartCopy()
         val index = p.currentMediaItemIndex.value
         val track = _queue.value.getOrNull(index) ?: return false
         if (queuedSources.getOrNull(index) !is LightAudioSource.UrlSource) return false
@@ -3235,6 +3391,7 @@ class PlaybackController(
      * checked afterwards the way a native seek is.
      */
     private fun rebuildQueueAt(p: LightAudioPlayer, tracks: List<Track>, index: Int, positionMs: Long) {
+        settleRestartCopy()
         val track = tracks[index]
         val at = positionMs.coerceAtLeast(0L)
         queuedSources = tracks.map { it.source() }
@@ -3269,6 +3426,7 @@ class PlaybackController(
             p.setMediaQueueAt(tracks.map { it.toAudioItem() }, index, at)
             if (at > 0L) verifyNativeSeek(p, track, at, awaitStream = true)
         }
+        rearmSoon()
     }
 
     private fun Track.toAudioItem(from: LightAudioSource = source()): LightAudioItem = LightAudioItem(
