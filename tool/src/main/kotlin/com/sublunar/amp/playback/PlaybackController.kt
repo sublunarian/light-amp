@@ -396,6 +396,29 @@ class PlaybackController(
     /** When the start now buffering began, so its limit counts from then — see [bind]. */
     private var bufferingSinceMs = 0L
 
+    /** Bumped per seek, so the check an earlier one left can't say "Buffering…" for this one. */
+    private var seekBufferingGeneration = 0
+
+    /**
+     * A seek that has to fetch before it can play on says so, as a start does:
+     * "Buffering…" where the artist is, until sound comes back — see
+     * [heardSound], which clears it the same way. Only once the wait outlasts
+     * [SEEK_BUFFERING_GRACE_MS], so a seek into what is already buffered doesn't
+     * flash it, and never for a file on the phone, which has nothing to fetch.
+     */
+    private fun bufferAfterSeek(p: LightAudioPlayer) {
+        if (!p.playWhenReady) return
+        if (queuedSources.getOrNull(_index.value) !is LightAudioSource.UrlSource) return
+        val generation = ++seekBufferingGeneration
+        scope.launch(Dispatchers.Main.immediate) {
+            delay(SEEK_BUFFERING_GRACE_MS)
+            if (generation != seekBufferingGeneration || player !== p || isCasting) return@launch
+            if (p.isPlaying.value || !p.playWhenReady) return@launch
+            bufferingSinceMs = android.os.SystemClock.elapsedRealtime()
+            _buffering.value = true
+        }
+    }
+
     /** Bumped by anything that supersedes a pending stream decision — see [withStreamDecision]. */
     private var decisionGeneration = 0
 
@@ -1877,6 +1900,7 @@ class PlaybackController(
         val track = _queue.value.getOrNull(_index.value)
         if (track == null || !needsServerSeek(track)) {
             p.seekTo(ms)
+            bufferAfterSeek(p)
             // Trust it, then check — see [verifyNativeSeek].
             if (track != null) verifyNativeSeek(p, track, ms)
             return
@@ -2017,6 +2041,7 @@ class PlaybackController(
             p.seekToDefaultPosition(at)
             if (repeatOne) p.repeatMode = Player.REPEAT_MODE_ONE
             if (wasPlaying) p.play()
+            bufferAfterSeek(p)
         }
     }
 
@@ -3312,6 +3337,9 @@ class PlaybackController(
 
         /** How far a native seek may land from the target before it counts as a miss. */
         private const val SEEK_TOLERANCE_MS = 5_000L
+
+        /** How long a seek may wait for sound before the screen says it is buffering — see bufferAfterSeek. */
+        private const val SEEK_BUFFERING_GRACE_MS = 300L
 
         /**
          * The most tracks the player is ever given at once, and how many already
