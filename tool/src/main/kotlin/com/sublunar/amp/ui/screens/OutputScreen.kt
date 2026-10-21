@@ -70,6 +70,10 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
     override fun Content() {
         val volume by App.playback.volume.collectAsState()
         val active by App.playback.active.collectAsState()
+        // Speakers on the network are out of reach off Wi-Fi: their rows go,
+        // and the search runs again the moment the network is back.
+        val rules by App.rules.collectAsState()
+        val lanUsable = rules.mayUseLan
         // Keyed by the output, so a switch straight from one to another starts
         // from the new one's answer instead of holding the last one's for a frame.
         val control = active?.volumeControl
@@ -83,11 +87,13 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
         // A source's own players are one HTTP round trip, so they are asked
         // first and appear while the UDP wait is still on — see searchOrder.
         var scanToken by remember { mutableStateOf(0) }
-        LaunchedEffect(scanToken) {
+        LaunchedEffect(scanToken, lanUsable) {
             scanning = true
             for (family in families.searchOrder) found = found + (family.id to App.playback.find(family))
             scanning = false
         }
+        val lanHidden = !lanUsable && families.listOrder.any { App.playback.needsLan(it) }
+        val searchable = families.listOrder.any { lanUsable || !App.playback.needsLan(it) }
 
         // A fader with nothing to move: an Apple TV feeding a receiver reports
         // a volume it doesn't own, takes the command and changes nothing. Once
@@ -133,9 +139,17 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
                         OutputRow(AppIcons.Bluetooth, "Bluetooth", selected = false, enabled = false)
                     }
 
-                    item { SectionLabel(if (scanning) "Network — searching…" else "Network") }
+                    item { SectionLabel(if (scanning && searchable) "Network — searching…" else "Network") }
                     for (family in families.listOrder) {
-                        items(found[family.id].orEmpty(), key = { "${family.id}:${it.id}" }) { target ->
+                        if (!lanUsable && App.playback.needsLan(family)) continue
+                        // What is playing now is listed at once, before any
+                        // search has answered — the page used to open on This
+                        // device alone while a speaker played — and once,
+                        // whatever the search then finds.
+                        val playing = active?.takeIf { it.family === family }?.target
+                        val listed = found[family.id].orEmpty()
+                        val rows = if (playing != null && listed.none { it.id == playing.id }) listOf(playing) + listed else listed
+                        items(rows, key = { "${family.id}:${it.id}" }) { target ->
                             val selected = active?.family === family && active?.target?.id == target.id
                             OutputRow(
                                 icon = AppIcons.Cast,
@@ -144,24 +158,23 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
                             ) {
                                 if (selected) {
                                     App.playback.playHere()
-                                } else {
-                                    App.playback.castTo(family, target)
+                                } else if (!App.playback.castTo(family, target)) {
+                                    // Out of reach after all — the network went,
+                                    // or there is nothing to steer it with. A tap
+                                    // that did nothing at all was the row lying:
+                                    // it goes, and the search runs again.
+                                    found = found + (family.id to listed.filter { it.id != target.id })
+                                    scanToken++
                                 }
                             }
                         }
                     }
-                    if (!scanning && found.values.all { it.isEmpty() }) {
-                        item {
-                            AppText(
-                                "No network speakers found. They need to be on the same Wi-Fi.",
-                                pxSp(LightType.DETAIL_PX),
-                                lineHeight = pxSp(LightType.DETAIL_LINE_PX),
-                                dim = true,
-                                modifier = Modifier.padding(horizontal = px(80), vertical = px(20)),
-                            )
-                        }
+                    if (lanHidden) {
+                        item { OutputNote("Network speakers need Wi-Fi.") }
+                    } else if (!scanning && active == null && found.values.all { it.isEmpty() }) {
+                        item { OutputNote("No network speakers found. They need to be on the same Wi-Fi.") }
                     }
-                    if (!scanning) {
+                    if (!scanning && searchable) {
                         item {
                             OutputRow(AppIcons.Refresh, "Scan again", selected = false) { scanToken++ }
                         }
@@ -220,6 +233,18 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
             }
             AppIcon(AppIcons.VolumeUp, size = px(56))
         }
+    }
+
+    /** A line of plain words under the rows, dimmed as the page's other notes are. */
+    @Composable
+    private fun OutputNote(words: String) {
+        AppText(
+            words,
+            pxSp(LightType.DETAIL_PX),
+            lineHeight = pxSp(LightType.DETAIL_LINE_PX),
+            dim = true,
+            modifier = Modifier.padding(horizontal = px(80), vertical = px(20)),
+        )
     }
 
     @Composable

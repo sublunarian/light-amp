@@ -2645,18 +2645,23 @@ class PlaybackController(
     /** Every [OutputTarget] [family] can play to right now. Does its own waiting off Main. */
     suspend fun find(family: OutputFamily): List<OutputTarget> = outputOf(family).find()
 
+    /** Whether [family] is reached over the local network only, so finds nothing off Wi-Fi. Main only. */
+    fun needsLan(family: OutputFamily): Boolean = outputOf(family).needsLan
+
     /**
      * Move playback to [target]: stop this device and hand the queue over,
-     * at the current track and the position it has reached.
+     * at the current track and the position it has reached. False, with
+     * nothing changed, when it can't be had right now — off Wi-Fi, or with
+     * nothing to steer it with.
      */
-    fun castTo(family: OutputFamily, target: OutputTarget) {
+    fun castTo(family: OutputFamily, target: OutputTarget): Boolean {
         val next = outputOf(family)
         // No Wi-Fi, no speaker: one found a minute ago is out of reach now,
         // and playback must not be taken off this device for it.
-        if (next.needsLan && !App.rulesNow().mayUseLan) return
+        if (next.needsLan && !App.rulesNow().mayUseLan) return false
+        if (!next.canSteer()) return false
         settleRestartCopy()
         supersedeStart()
-        if (!next.canSteer()) return
         // A far end that reports its own playback does so as a session of its
         // own, and this phone's ends. Left open, nothing would report on it
         // again and it would sit on the dashboard beside the player's — two
@@ -2669,6 +2674,7 @@ class PlaybackController(
         player?.pause()
         _active.value = ActiveOutput(family, target, next)
         next.connect(target, fromMs = _positionMs.value)
+        return true
     }
 
     /** Bring the sound back to this phone, from wherever the output had reached. */
