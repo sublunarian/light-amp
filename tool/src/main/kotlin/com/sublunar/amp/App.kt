@@ -1574,7 +1574,7 @@ object App {
             if (library.playlists.value.isEmpty()) runCatching { library.refreshPlaylists() }
             runCatching { library.primePlaylistTrackIds(library.playlists.value.map { it.id }) }
                 .noteOom("playlists of ${source.name}")
-            return library.playlistTrackIds.value.values.flatten().toHashSet()
+            return library.freshPlaylistTrackIds().values.flatten().toHashSet()
         }
         val client = clientFor(source) ?: return emptySet()
         // The list, once. Metadata, so the metadata gate — the same one a

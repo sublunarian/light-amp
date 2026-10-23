@@ -734,14 +734,15 @@ class LibraryRepository(
      * [seedPlaylistTrackIds] when a database opens.
      *
      * [d] is the database the caller started with; after a source switch the
-     * answer belongs to neither the new map nor the new database.
+     * answer belongs to neither the new map nor the new database. [fresh] is
+     * false for a local edit, which changes the copy without re-reading it.
      */
-    private suspend fun storeMembership(d: LibraryDao?, id: String, trackIds: List<String>) {
+    private suspend fun storeMembership(d: LibraryDao?, id: String, trackIds: List<String>, fresh: Boolean = true) {
         if (d == null || daos.value !== d) return
         val unchanged = _playlistTrackIds.value[id] == trackIds
         _playlistTrackIds.update { it + (id to trackIds) }
         // This *is* the replacement the mark was asking for.
-        staleMembership.update { it - id }
+        if (fresh) staleMembership.update { it - id }
         if (unchanged) return
         runCatching {
             d.setPlaylistTracks(id, trackIds.mapIndexed { index, trackId -> PlaylistTrackEntity(id, index, trackId) })
@@ -775,7 +776,7 @@ class LibraryRepository(
      */
     private suspend fun editMembership(d: LibraryDao?, id: String, edit: (List<String>) -> List<String>) {
         val current = _playlistTrackIds.value[id] ?: return
-        storeMembership(d, id, edit(current))
+        storeMembership(d, id, edit(current), fresh = false)
     }
 
     /** Forget one playlist's membership everywhere. */
@@ -810,6 +811,12 @@ class LibraryRepository(
      * for every server playlist and anything reading it there reads nothing.
      */
     val playlistTrackIds: StateFlow<Map<String, List<String>>> = _playlistTrackIds
+
+    /** [playlistTrackIds] without the stored copies still waiting to be re-read: what downloads go by. */
+    fun freshPlaylistTrackIds(): Map<String, List<String>> {
+        val stale = staleMembership.value
+        return _playlistTrackIds.value.filterKeys { it !in stale }
+    }
 
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
 
@@ -916,32 +923,27 @@ class LibraryRepository(
         // Cached below at full membership, then narrowed on the way out: the
         // badge needs to know what the playlist *is*, the page needs to show
         // what it can actually play.
-        // An empty answer is not cached. It means either a genuinely empty
-        // playlist or a fetch that failed — and this path can't tell them apart,
-        // where the one below can. Kept, it would satisfy primePlaylistTrackIds'
-        // "already known" guard for the rest of the session, so one bad moment
-        // would leave that playlist's badge off until the app restarted.
-        if (tracks.isNotEmpty()) {
-            val ids = tracks.map { track -> track.id }
-            // Only a whole read is worth keeping, and a rebuild is not one.
-            //
-            // A rebuild resolves the ids we already hold against the library
-            // table, and getTracksByIds drops every id with no row there — a
-            // track the sync hasn't reached, or one pruned since. So its ids
-            // are a *subset* of the membership it was built from, and writing
-            // them anywhere can only shrink what we know. Stored, that loses
-            // songs for good and leaves the badge asking "are all of them
-            // downloaded?" of a shorter list than the playlist really has.
-            // Held, it does the same for the rest of the session.
-            //
-            // The map is only filled from a rebuild when it holds nothing for
-            // this playlist, where the ids came from the cached list rather
-            // than from the map and are the first thing known about it.
-            if (whole) {
-                storeMembership(d, id, ids)
-            } else if (id !in _playlistTrackIds.value) {
-                _playlistTrackIds.update { it + (id to ids) }
-            }
+        val ids = tracks.map { track -> track.id }
+        // Only a whole read is worth keeping, and a rebuild is not one. A
+        // failed fetch comes back as a rebuild, so a whole empty answer is
+        // the playlist really being empty, and is kept too.
+        //
+        // A rebuild resolves the ids we already hold against the library
+        // table, and getTracksByIds drops every id with no row there — a
+        // track the sync hasn't reached, or one pruned since. So its ids
+        // are a *subset* of the membership it was built from, and writing
+        // them anywhere can only shrink what we know. Stored, that loses
+        // songs for good and leaves the badge asking "are all of them
+        // downloaded?" of a shorter list than the playlist really has.
+        // Held, it does the same for the rest of the session.
+        //
+        // The map is only filled from a rebuild when it holds nothing for
+        // this playlist, where the ids came from the cached list rather
+        // than from the map and are the first thing known about it.
+        if (whole) {
+            storeMembership(d, id, ids)
+        } else if (ids.isNotEmpty() && id !in _playlistTrackIds.value) {
+            _playlistTrackIds.update { it + (id to ids) }
         }
         // A hidden library's songs leave the page too. Marked incomplete when
         // any did, which keeps the playlist from being edited here: an edit
