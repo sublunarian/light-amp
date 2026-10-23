@@ -1,6 +1,6 @@
 # Contributing to Amp
 
-Amp is a music player for the Light Phone III. It is the `tool/` module built
+Amp is a Light Phone III tool that plays music you own. It is the `tool/` module built
 against [lightphone/light-sdk](https://github.com/lightphone/light-sdk), which
 comes in as the `light-sdk` submodule, because that is the shape a LightOS tool
 takes — a Gradle module inside the SDK rather than a project that depends on it.

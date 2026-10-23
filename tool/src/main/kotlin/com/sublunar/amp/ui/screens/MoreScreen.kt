@@ -410,10 +410,9 @@ class AboutScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed)
                     align = TextAlign.Center,
                 )
                 AppText(
-                    "(A)nother (M)usic (P)layer — for the Light Phone III. Streams " +
-                        "and downloads from your own library on a Subsonic server " +
-                        "(Navidrome, Airsonic, Gonic, Bandcamp), Plex or Jellyfin, " +
-                        "and plays files kept on the phone.",
+                    "Plays music you own: files on this phone, your Bandcamp " +
+                        "collection, or your own Plex, Jellyfin, Navidrome or other " +
+                        "Subsonic server.",
                     pxSp(LightType.PARAGRAPH_PX),
                     lineHeight = pxSp(LightType.PARAGRAPH_LINE_PX),
                     dim = true,
