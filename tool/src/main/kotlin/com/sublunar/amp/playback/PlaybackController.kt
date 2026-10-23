@@ -3027,12 +3027,14 @@ class PlaybackController(
 
     /**
      * Wi-Fi is back and an output it took away is remembered: look for it,
-     * and take it back as it is. Still playing this queue, its track and clock
-     * are followed, with nothing sent that would interrupt it. Stopped, it is
-     * selected again, paused. Only while nothing has happened here that
-     * taking it back would undo — see [movedOn] — and only for a while: given
-     * up quietly after [LOST_OUTPUT_KEPT_MS], when it can't be found, or when
-     * it is busy with someone else's sound.
+     * and take it back as an iPhone does. Whatever of this queue's it is still
+     * playing is stopped at once — so the server never has two streams of one
+     * song going, which had the speaker turn the second away — and it is
+     * chosen again, paused where it had got to; a play sends the song afresh.
+     * Chosen again only while nothing has happened here that taking it back
+     * would undo — see [movedOn] — and only for a while: given up quietly
+     * after [LOST_OUTPUT_KEPT_MS], when it can't be found, or when it is busy
+     * with someone else's sound.
      */
     private fun rejoinLost() {
         val gone = lost ?: return
@@ -3054,7 +3056,7 @@ class PlaybackController(
                 lost = null
                 when {
                     found == null -> android.util.Log.i(out.logTag, "$name not found, or playing something else — left")
-                    movedOn(gone) -> android.util.Log.i(out.logTag, "moved on here since — $name left")
+                    movedOn(gone) -> android.util.Log.i(out.logTag, "moved on here since — $name stopped, not taken back")
                     else -> rejoin(gone, found)
                 }
             }
@@ -3074,13 +3076,13 @@ class PlaybackController(
             kotlin.math.abs(_positionMs.value - gone.positionMs) > REJOIN_POSITION_SLACK_MS ||
             _isPlaying.value || _buffering.value || player?.playWhenReady == true
 
-    /** Make [gone]'s output the one with the sound again, as [found] says it is. Main only. */
+    /** Make [gone]'s output the one with the sound again, paused where [found] says it got to. Main only. */
     private fun rejoin(gone: Lost, found: Refound) {
         val out = gone.active.output
         android.util.Log.i(
             out.logTag,
-            "took ${found.target.name} back " +
-                if (found.index >= 0) "at idx=${found.index} ${if (found.playing) "playing" else "paused"}" else "holding nothing — paused",
+            "took ${found.target.name} back, paused " +
+                if (found.index >= 0) "at idx=${found.index} ${found.positionMs}" else "where the phone was",
         )
         settleRestartCopy()
         supersedeStart()
@@ -3089,9 +3091,9 @@ class PlaybackController(
         // and the sound is elsewhere again. A hand-back rebuilds that player.
         _waitingFor.value = null
         _active.value = ActiveOutput(gone.active.family, found.target, out)
-        // Playing or not before the song, so the change of song is announced
-        // as what it is — see followCurrentSong.
-        _isPlaying.value = found.index in _queue.value.indices && found.playing
+        // Before the song, so the change of song is announced as what it is —
+        // see followCurrentSong.
+        _isPlaying.value = false
         if (found.index in _queue.value.indices) {
             _index.value = found.index
             _positionMs.value = found.positionMs
@@ -3099,7 +3101,6 @@ class PlaybackController(
         }
         out.rejoin(found)
         standIn.start(player)
-        if (_isPlaying.value) reportTimeline(TimelineState.PLAYING)
     }
 
     /** What every output is given of this controller — see [OutputHost]. */

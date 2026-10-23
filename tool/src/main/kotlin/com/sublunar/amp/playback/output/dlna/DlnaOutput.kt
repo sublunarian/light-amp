@@ -172,6 +172,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 host.showVolume(it)
                 withContext(Dispatchers.Main.immediate) { host.setPhoneVolume(it) }
             }
+            stopIfBusy(renderer)
             when {
                 startCastTrack(renderer, fromMs) -> pollRenderer(renderer)
                 // Nothing queued yet: chosen, it waits for the queue.
@@ -256,8 +257,6 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     /** The queue index the renderer was on when the link took it away — see [findAgain]. */
     private var lostAtIndex = -1
 
-    /** The address [findAgain] found the renderer playing, for [rejoin] to follow. */
-    private var refoundOn: String? = null
 
     /**
      * The renderer the link took away, found again: on the network under the
@@ -286,31 +285,33 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 "${renderer.name} found again: $state on ${DlnaCast.loggable(uri)} at ${position.positionMs}",
             )
             val found = DlnaTarget(renderer)
-            val playing = state != DlnaState.PAUSED
-            return when {
-                // Stopped there, on its own song — the remote's pause is a stop
-                // on the Denon — and still saying where: shown paused at that
-                // place. A renderer that clears its clock on a stop says 0, and
-                // the phone's own place stands.
-                state == DlnaState.STOPPED &&
-                    current != null &&
-                    DlnaCast.sameUri(uri, current) &&
-                    position.positionMs > 0L ->
-                    Refound(found, lostAtIndex, position.positionMs + castOffsetMs, playing = false)
-                state == DlnaState.STOPPED -> Refound(found)
-                current != null && DlnaCast.sameUri(uri, current) -> {
-                    refoundOn = current
-                    Refound(found, lostAtIndex, position.positionMs + castOffsetMs, playing)
-                }
-                next != null && DlnaCast.sameUri(uri, next) -> {
-                    // Wherever that song sits now: an edit while the link was
-                    // down can have moved it, or taken it out, and then the
-                    // speaker is playing something the queue no longer has.
-                    val after = offeredNextIndex() ?: return null
-                    refoundOn = next
-                    Refound(found, after, position.positionMs, playing)
-                }
-                else -> null
+            val onCurrent = current != null && DlnaCast.sameUri(uri, current)
+            val onNext = !onCurrent && next != null && DlnaCast.sameUri(uri, next)
+            // Someone else's sound: left alone.
+            if (!onCurrent && !onNext && state != DlnaState.STOPPED) return null
+            // Ours, still going at home: stopped there and then — as an iPhone
+            // does with a speaker it finds again — so a play from here starts
+            // the song afresh, and the server is never asked for a second
+            // stream of a song it is still sending, which the speaker then
+            // turned away.
+            if (state != DlnaState.STOPPED) {
+                android.util.Log.i("AmpCast", "${renderer.name} still playing what it was sent → stopped")
+                DlnaCast.stop(renderer)
+            }
+            // Where it got to: on the song offered next if it crossed into it
+            // — wherever an edit moved that one since — else its own. A
+            // renderer that clears its clock on a stop says 0, and then the
+            // phone's own place stands.
+            val index = when {
+                onCurrent -> lostAtIndex
+                onNext -> offeredNextIndex() ?: -1
+                else -> -1
+            }
+            val at = position.positionMs + if (onCurrent) castOffsetMs else 0L
+            return if (index >= 0 && (state != DlnaState.STOPPED || position.positionMs > 0L)) {
+                Refound(found, index, at)
+            } else {
+                Refound(found)
             }
         }
         return null
@@ -332,32 +333,12 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     override fun rejoin(found: Refound) {
         val renderer = (found.target as DlnaTarget).renderer
-        val on = refoundOn
-        refoundOn = null
         castJob?.cancel()
         dropSeekChecks()
-        val following = found.index >= 0 && on != null
-        // Holding nothing to resume, or playing this queue — see waitingForPlay.
-        waitingForPlay = !following
-        if (!following) {
-            forgetCast()
-        } else if (on != castCurrentUrl) {
-            // It crossed into the track offered after it while nobody watched,
-            // and that one was handed over whole.
-            castCurrentUrl = on
-            castOffsetMs = 0L
-            castNextUrl = null
-            castNextOffered = null
-            castNextTrackId = null
-            castNextArmedFor = null
-        } else {
-            // Still on its own song. What it holds after it was armed for the
-            // queue as it stood when the link went, and is offered again for
-            // the queue as it is now, once due.
-            castNextArmedFor = null
-        }
-        castStartedAtMs = found.positionMs
-        castSeekPending = -1L
+        // Stopped, or holding nothing of ours: a play sends the song afresh
+        // from where it had got to — see waitingForPlay.
+        waitingForPlay = true
+        forgetCast()
         castJob = host.scope.launch {
             undoHush(renderer)
             // The fader is the renderer's again, as when a cast begins.
@@ -365,10 +346,25 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 host.showVolume(it)
                 withContext(Dispatchers.Main.immediate) { host.setPhoneVolume(it) }
             }
-            if (!following) return@launch
-            host.announceNowPlaying()
-            // It was playing all along: a stop from here on is the end of the track.
-            pollRenderer(renderer, playedBefore = true)
+        }
+    }
+
+    /**
+     * Stop whatever [renderer] is playing before it is sent anything — this
+     * app's own song, left playing when the app was closed, say. Sent straight
+     * over it, a song it was still playing was turned away: the server was
+     * asked for a second stream of a song it was still sending. Waits,
+     * briefly, for it to say it has stopped.
+     */
+    private suspend fun stopIfBusy(renderer: DlnaRenderer) {
+        val state = DlnaCast.state(renderer)
+        if (state != DlnaState.PLAYING && state != DlnaState.PAUSED && state != DlnaState.TRANSITIONING) return
+        android.util.Log.i("AmpCast", "${renderer.name} busy ($state) → stopped first")
+        DlnaCast.stop(renderer)
+        val until = SystemClock.elapsedRealtime() + CAST_STOP_TIMEOUT_MS * 2
+        while (SystemClock.elapsedRealtime() < until) {
+            delay(MUTED_STEP_MS)
+            if (DlnaCast.state(renderer) == DlnaState.STOPPED) return
         }
     }
 
@@ -1113,10 +1109,11 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         // What the renderer said last time. A position that hasn't moved is not
         // evidence that anything is playing — see below.
         var lastPositionMs = -1L
-        // The queue index we have already tried to start by hand, so a track
-        // that refuses to play is asked once and then passed over rather than
-        // restarted for ever.
+        // The queue index we have tried to start by hand, and how often, so a
+        // track that refuses to play is asked again a couple of times and
+        // then passed over rather than restarted for ever.
         var startedIndex = -1
+        var restartsHere = 0
         // How patient to be with a track that hasn't started. A stream being
         // opened from scratch deserves a few seconds; one the renderer has
         // *already* taken from the queue and stopped on does not — see the
@@ -1357,11 +1354,16 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 // Stopped, not opening anything, three readings running is a
                 // renderer that turned the stream away rather than one still
                 // fetching it — which says TRANSITIONING.
+                // Twice: a song turned away while the stream it replaced was
+                // still closing on the server plays a few seconds on, and was
+                // passed over at the first refusal.
                 !settled && !played &&
                     (stall.notPlaying >= restartAfter || stall.stopped >= TURNED_AWAY_POLLS) &&
-                    startedIndex != host.index.value -> {
+                    (startedIndex != host.index.value || restartsHere < RESTARTS_BEFORE_PASSING_OVER) -> {
                     android.util.Log.i("AmpCast", "never started idx=${host.index.value} → restart")
+                    if (startedIndex != host.index.value) restartsHere = 0
                     startedIndex = host.index.value
+                    restartsHere++
                     stall.reset()
                     restartAfter = STALLED_POLLS_TO_RESTART
                     if (!startOrStop(renderer, host.positionMs.value, fresh = true)) return
@@ -1376,6 +1378,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                     if (!advanceCast(renderer)) return
                     stall.reset()
                     startedIndex = -1
+                    restartsHere = 0
                     restartAfter = STALLED_POLLS_TO_RESTART
                 }
             }
@@ -1533,5 +1536,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
         /** How many tries a renderer found again gets to say what it is doing. */
         const val REFOUND_READS = 3
+
+        /** Fresh restarts of a track the renderer won't start, before it is passed over. */
+        const val RESTARTS_BEFORE_PASSING_OVER = 2
     }
 }
