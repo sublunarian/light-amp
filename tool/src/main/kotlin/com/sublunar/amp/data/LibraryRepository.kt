@@ -824,9 +824,31 @@ class LibraryRepository(
 
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
 
+    /** Whether a chosen library narrows a playlist's songs — see SourceProvider.libraryNarrowsPlaylistSongs. */
+    private val narrowsPlaylistSongs: StateFlow<Boolean> =
+        settings.activeSource
+            .map { it?.provider?.libraryNarrowsPlaylistSongs ?: true }
+            .distinctUntilChanged()
+            .stateIn(scope, SharingStarted.Eagerly, true)
+
+    /** The chosen library's songs, where it narrows the playlist list instead; null where it doesn't. */
+    private val listingLibrary: StateFlow<ListingLibrary?> =
+        combine(allTracks, selectedLibrary, hiddenLibraries, narrowsPlaylistSongs) { inLibrary, library, hidden, songsRule ->
+            val narrows = LibraryView(library, hidden).narrows
+            if (!songsRule && narrows) {
+                ListingLibrary(inViewIds(inLibrary), chosen = library != null)
+            } else {
+                if (!narrows) inViewIds = null
+                null
+            }
+        }.stateIn(scope, SharingStarted.Eagerly, null)
+
+    private class ListingLibrary(val songs: Set<String>, val chosen: Boolean)
+
     /**
      * The playlists as the UI should see them — narrowed offline, as the other
-     * three lists are.
+     * three lists are, and to the chosen library's where the source's own app
+     * lists them that way (see [playlistListed]).
      *
      * A playlist whose membership isn't known stays visible: no server returns
      * songs with the list (see [_playlistTrackIds]), so an empty [Playlist.trackIds]
@@ -835,15 +857,13 @@ class LibraryRepository(
      * than leaving one showing that turns out to have nothing in it.
      */
     val playlists: StateFlow<List<Playlist>> =
-        combine(_playlists, _playlistTrackIds, downloadedTrackIds, offline) {
-                list, membership, downloaded, offlineOnlyNow ->
-            if (!offlineOnlyNow) {
-                list
-            } else {
-                list.filter { playlist ->
-                    val ids = membership[playlist.id] ?: playlist.trackIds
-                    ids.isEmpty() || ids.any { it in downloaded }
-                }
+        combine(_playlists, _playlistTrackIds, downloadedTrackIds, offline, listingLibrary) {
+                list, membership, downloaded, offlineOnlyNow, listing ->
+            list.filter { playlist ->
+                val held = membership[playlist.id]
+                val ids = held ?: playlist.trackIds
+                (listing == null || playlistListed(held, listing.songs, listing.chosen)) &&
+                    (!offlineOnlyNow || ids.isEmpty() || ids.any { it in downloaded })
             }
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
@@ -960,15 +980,19 @@ class LibraryRepository(
     }
 
     /**
-     * Which of [tracks] the chosen library shows, by the Songs tab's rule.
+     * Which of [tracks] a playlist page shows: the chosen library's, by the Songs
+     * tab's rule, where the source's own app narrows a playlist's songs; otherwise
+     * every song but a hidden library's — see SourceProvider.libraryNarrowsPlaylistSongs.
      *
      * Read from the database and the stored choice rather than the lists held
      * in memory, which are still loading when a playlist is opened at launch.
      */
     private suspend fun inLibraryView(d: LibraryDao?, tracks: List<Track>): (Track) -> Boolean {
+        val source = settings.activeSource.first()
+        val songsFollowLibrary = source?.provider?.libraryNarrowsPlaylistSongs ?: true
         val view = LibraryView(
-            libraryId.first(),
-            settings.activeSource.first()?.hiddenLibraryIds?.filterNotNull()?.toSet().orEmpty(),
+            if (songsFollowLibrary) libraryId.first() else null,
+            source?.hiddenLibraryIds?.filterNotNull()?.toSet().orEmpty(),
         )
         if (!view.narrows || d == null) return { true }
         val rows = runCatching {
@@ -977,7 +1001,10 @@ class LibraryRepository(
         val libraryOf = rows.associate { it.id to it.libraryId }
         return { track ->
             val albumId = track.albumId
-            view.showsSong(albumId, albumId != null && albumId in libraryOf, albumId?.let { libraryOf[it] })
+            val placed = albumId != null && albumId in libraryOf
+            // A whole playlist leaves out only a hidden library's songs, and a song not placed yet isn't one.
+            if (songsFollowLibrary) view.showsSong(albumId, placed, albumId?.let { libraryOf[it] })
+            else !placed || view.showsAlbum(libraryOf[albumId])
         }
     }
 
@@ -1114,12 +1141,14 @@ class LibraryRepository(
             _playlistTrackIds,
             downloadedTrackIds,
             allTracks,
-            combine(selectedLibrary, hiddenLibraries) { library, hidden -> LibraryView(library, hidden).narrows },
-        ) { membership, downloaded, inLibrary, narrows ->
-            val shown = if (narrows) {
+            combine(selectedLibrary, hiddenLibraries, narrowsPlaylistSongs) { library, hidden, songsRule ->
+                LibraryView(library, hidden).narrows to songsRule
+            },
+        ) { membership, downloaded, inLibrary, (narrows, songsRule) ->
+            val shown = if (narrows && songsRule) {
                 inViewIds(inLibrary)
             } else {
-                inViewIds = null
+                if (!narrows) inViewIds = null
                 null
             }
             membership.entries.mapNotNullTo(mutableSetOf()) { (playlistId, ids) ->

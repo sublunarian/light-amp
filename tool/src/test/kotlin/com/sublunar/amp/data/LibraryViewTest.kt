@@ -55,6 +55,16 @@ class LibraryViewTest {
     }
 
     @Test
+    fun `where the list follows the library, a playlist is listed by its songs`() {
+        val music = setOf("m1", "m2")
+        assertTrue(playlistListed(listOf("o1", "m2"), music, chosen = true))
+        assertFalse(playlistListed(listOf("o1", "o2"), music, chosen = true))
+        assertTrue(playlistListed(null, music, chosen = true))
+        assertFalse(playlistListed(emptyList(), music, chosen = true))
+        assertTrue(playlistListed(emptyList(), music, chosen = false))
+    }
+
+    @Test
     fun `a reorder must hold exactly the playlist's songs`() {
         assertTrue(isReorderOf(listOf("b", "a", "a"), listOf("a", "b", "a")))
         assertFalse(isReorderOf(listOf("a", "b", "c"), listOf("a", "b", "a")))

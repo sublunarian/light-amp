@@ -7,6 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.sublunar.amp.App
+import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.primaryAlbumArtist
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.ActionList
@@ -68,6 +69,8 @@ class TrackActionsScreen(
     private val onSelect: (() -> Unit)? = null,
     // When set (opened from a playlist detail), adds a "Remove from Playlist" row.
     private val onRemoveFromPlaylist: (() -> Unit)? = null,
+    /** The song as the page that opened this holds it: a playlist can list one the chosen library doesn't. */
+    private val known: Track? = null,
 ) : SimpleLightScreen<Unit>(sealed) {
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
@@ -97,7 +100,7 @@ class TrackActionsScreen(
         val id = if (followCurrent) playing?.id ?: trackId else trackId
         // The library row is preferred over the queue's copy: liked and rating
         // are edited here and the cached row is the one that gets updated.
-        val track = tracks.firstOrNull { it.id == id } ?: playing?.takeIf { it.id == id }
+        val track = tracks.firstOrNull { it.id == id } ?: playing?.takeIf { it.id == id } ?: known?.takeIf { it.id == id }
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val downloaded = id in downloadedIds
         val queue by App.playback.queue.collectAsState()

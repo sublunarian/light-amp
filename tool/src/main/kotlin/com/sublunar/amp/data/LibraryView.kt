@@ -26,6 +26,14 @@ internal data class LibraryView(val selected: String?, val hidden: Set<String>) 
 }
 
 /**
+ * Whether a playlist is listed where the chosen library narrows the list rather
+ * than the songs: it holds a song of that library ([songs]), or its songs aren't
+ * known yet. An empty one is listed only when no library is [chosen].
+ */
+internal fun playlistListed(ids: List<String>?, songs: Set<String>, chosen: Boolean): Boolean =
+    ids == null || ids.any { it in songs } || (ids.isEmpty() && !chosen)
+
+/**
  * Whether a playlist of [ids] gets the download mark: at least one song is
  * shown, and every shown song is downloaded. [shown] is null when every song is.
  */

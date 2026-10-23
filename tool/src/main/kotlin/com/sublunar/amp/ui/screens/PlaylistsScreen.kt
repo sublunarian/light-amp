@@ -306,6 +306,7 @@ class PlaylistDetailScreen(
                                             // Absent, not failing: see the delete icon above.
                                             onRemoveFromPlaylist =
                                                 if (canEdit()) ({ removeSongs(setOf(entry.key)) }) else null,
+                                            known = track,
                                         )
                                     }
                                 }

@@ -48,6 +48,13 @@ interface SourceProvider {
     val phoneLibrary: PhoneLibrary? get() = null
 
     /**
+     * What a chosen library narrows, as this kind's own app does it. True: the songs
+     * inside each playlist, with every playlist listed. False: the playlists listed,
+     * to those holding a song in that library, with every song inside shown.
+     */
+    val libraryNarrowsPlaylistSongs: Boolean get() = true
+
+    /**
      * Somewhere else a source of this kind can play to, besides what the
      * phone offers itself: players its server steers. Empty for most kinds.
      */

@@ -25,6 +25,9 @@ object JellyfinProvider : SourceProvider {
 
     override val streamFormats: List<StreamFormat> get() = JellyfinClient.STREAM_FORMATS
 
+    // Jellyfin's own app lists a library's playlists by their songs and shows each one whole.
+    override val libraryNarrowsPlaylistSongs: Boolean get() = false
+
     /**
      * Closer to Subsonic than Plex is — real favourites, playlists that can be
      * created empty — but with no star ratings: Jellyfin has the favourite and

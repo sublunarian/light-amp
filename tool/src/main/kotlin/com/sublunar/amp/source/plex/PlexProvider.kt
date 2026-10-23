@@ -27,6 +27,9 @@ object PlexProvider : SourceProvider {
 
     override val streamFormats: List<StreamFormat> get() = PlexClient.STREAM_FORMATS
 
+    // Plexamp lists the chosen library's playlists and plays each one whole.
+    override val libraryNarrowsPlaylistSongs: Boolean get() = false
+
     /**
      * Plex has star ratings but no separate favourite, so nothing for a heart
      * to sync to. And it creates a playlist *from* something, with no call for
