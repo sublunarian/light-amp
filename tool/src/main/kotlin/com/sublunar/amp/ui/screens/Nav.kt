@@ -173,6 +173,7 @@ object LibraryNav {
         // the place in it you left — tapping the tab you are already on is what
         // asks for the top, and that is [tapTab]'s job.
         currentTab.value = tab
+        if (App.isReady) App.scope.launch { App.settings.setLastTab(tab.name) }
     }
 }
 

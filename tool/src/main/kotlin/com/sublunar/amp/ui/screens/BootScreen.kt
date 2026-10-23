@@ -178,6 +178,9 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
                 LaunchedEffect(Unit) {
                     if (landed) return@LaunchedEffect
                     landed = true
+                    // Its front page, under the player too: backing out of that lands here.
+                    LibraryTab.entries.firstOrNull { it.name == App.settings.lastTab.first() }
+                        ?.let { LibraryNav.currentTab.value = it }
                     when (App.settings.lastSection.first()) {
                         LastSection.SEARCH -> LibraryNav.openSearch()
                         LastSection.NOW_PLAYING -> {

@@ -443,6 +443,9 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     /** Where the app was when it was last closed — see [LastSection]. */
     val lastSection: Flow<LastSection> = enumFlow(LAST_SECTION, LastSection.LIBRARY)
 
+    /** The library tab last chosen, by name, so a cold start opens on it; empty before any. */
+    val lastTab: Flow<String> = stringFlow(LAST_TAB)
+
     /**
      * Show album lists as a wall of covers instead of a column of titles.
      *
@@ -628,6 +631,8 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setLastSection(value: LastSection) = putString(LAST_SECTION, value.name)
 
+    suspend fun setLastTab(name: String) = putString(LAST_TAB, name)
+
     // --- helpers -------------------------------------------------------------
 
     private fun stringFlow(key: Preferences.Key<String>): Flow<String> =
@@ -690,6 +695,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val ARTWORK = stringPreferencesKey("pref.artworkMode")
         private val LAYOUT_MODE = stringPreferencesKey("pref.layoutMode")
         private val LAST_SECTION = stringPreferencesKey("pref.lastSection")
+        private val LAST_TAB = stringPreferencesKey("pref.lastTab")
         private val SOURCES = stringPreferencesKey("pref.sources")
         private val ACTIVE_SOURCE = stringPreferencesKey("pref.activeSource")
 
