@@ -79,7 +79,13 @@ internal object LocalPhoneLibrary : PhoneLibrary {
 private object LocalUi : SourceUi {
     // Only ever one: it is the phone, and there is only one phone.
     override val addEntries = listOf(
-        AddEntry("Music on This Phone", AddIcon.PHONE, AddAction.AddAtOnce { LocalProvider.newSource() }, singleton = true),
+        AddEntry(
+            "Music on This Phone",
+            AddIcon.PHONE,
+            AddAction.AddAtOnce { LocalProvider.newSource() },
+            singleton = true,
+            selfHosted = false,
+        ),
     )
 
     /** Nothing to connect to: the music is on the phone. */

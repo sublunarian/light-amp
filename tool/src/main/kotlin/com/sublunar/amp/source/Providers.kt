@@ -14,7 +14,7 @@ import com.sublunar.amp.source.subsonic.SubsonicProvider
  * its [SourceKind] entry, which is the name its sources are stored under.
  */
 object Providers {
-    val all: List<SourceProvider> = listOf(SubsonicProvider, PlexProvider, JellyfinProvider, LocalProvider)
+    val all: List<SourceProvider> = listOf(LocalProvider, PlexProvider, JellyfinProvider, SubsonicProvider)
 
     private val byKind = all.associateBy { it.kind }
 
@@ -24,14 +24,15 @@ object Providers {
     /**
      * Every way to add a source, given the ones there are already: the same
      * list on Add Source and on the first-run screen, which once kept a copy
-     * of its own and quietly lacked Plex because nobody updated it.
+     * of its own and quietly lacked Plex because nobody updated it. Least
+     * effort first: what needs no server of your own, then the servers.
      */
     fun addEntries(existing: List<MusicSource>): List<AddEntry> =
         all.flatMap { provider ->
             provider.ui.addEntries.filter { entry ->
                 !entry.singleton || existing.none { it.kind == provider.kind }
             }
-        }
+        }.sortedBy { it.selfHosted }
 
     /** What the kinds cover, where their names alone don't say. */
     val addNotes: List<String> get() = all.mapNotNull { it.ui.addNote }

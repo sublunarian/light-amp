@@ -22,7 +22,7 @@ class ProvidersTest {
     @Test
     fun `the kinds are offered in this order`() {
         assertEquals(
-            listOf(SourceKind.SUBSONIC, SourceKind.PLEX, SourceKind.JELLYFIN, SourceKind.LOCAL),
+            listOf(SourceKind.LOCAL, SourceKind.PLEX, SourceKind.JELLYFIN, SourceKind.SUBSONIC),
             Providers.all.map { it.kind },
         )
     }

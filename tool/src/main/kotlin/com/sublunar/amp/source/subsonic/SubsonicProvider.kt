@@ -54,15 +54,15 @@ object SubsonicProvider : SourceProvider {
 }
 
 private object SubsonicUi : SourceUi {
-    // Bandcamp leads: it is the only one offered that needs nothing
-    // self-hosted, so it is the choice most likely to tell a reader this app
-    // is for them after all. It is a Subsonic server underneath — the choice
-    // only fills in its address and says where its credentials come from.
+    // Bandcamp needs nothing self-hosted, so it is offered with the phone's own
+    // music, ahead of the servers. It is a Subsonic server underneath — the
+    // choice only fills in its address and says where its credentials come from.
     override val addEntries = listOf(
         AddEntry(
             "Bandcamp",
             AddIcon.ADD,
             AddAction.OpenScreen { ServerScreen(it, sourceId = null, adding = true, bandcamp = true) },
+            selfHosted = false,
         ),
         AddEntry("Subsonic Server", AddIcon.ADD, AddAction.OpenScreen { ServerScreen(it, sourceId = null, adding = true) }),
     )

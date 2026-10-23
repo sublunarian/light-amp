@@ -37,6 +37,8 @@ class AddEntry(
     val action: AddAction,
     /** Only ever one: the row goes once a source of this kind exists. */
     val singleton: Boolean = false,
+    /** Needs a server of your own. The ones that don't are offered first. */
+    val selfHosted: Boolean = true,
 )
 
 /** Which icon an add row carries, named here and drawn by the screens. */
