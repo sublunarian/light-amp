@@ -37,11 +37,7 @@ class SyncFailureTest {
         assertTrue(isAuthFailure(jellyfin))
     }
 
-    /**
-     * Subsonic says it in its own error codes, with no status: once read only
-     * from the message, which carries no number, so a wrong password counted
-     * as a server that might be gone and showed whatever words it came in.
-     */
+    /** Subsonic says it in its own error codes, with no status and no number in the message. */
     @Test
     fun `a Subsonic login refusal is the login refused too`() {
         for (code in listOf(40, 41, 44)) {

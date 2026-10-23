@@ -10,17 +10,11 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.Json
 
 /**
- * Where lyrics come from, and which copy wins.
- *
- * Navidrome only returns timed lyrics when the file itself carries them, and this
- * library's files mostly don't — so `getLyricsBySongId` answers with plain text
- * and there is nothing for the karaoke view to highlight. The old React Native
- * app solved this by falling back to lrclib.net for timed lyrics; this is the
- * same strategy, in the same order.
- *
- * Synced always wins, whichever side it comes from. lrclib is only asked when the
- * server didn't already provide timed lyrics, so the common case costs no extra
- * request.
+ * Where lyrics come from — the downloaded copy, the server, lrclib.net, asked in
+ * that order — and which copy wins: the first synced one, else the server's plain
+ * text. A server has timed lyrics only when the file carries them, which most
+ * don't, so lrclib fills in the timing; it is asked only when nothing timed
+ * turned up before it.
  */
 object LyricsRepository {
 
@@ -31,9 +25,8 @@ object LyricsRepository {
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * What a lookup found. [Unavailable] is not [None]: the difference is whether
-     * we know there are no lyrics or only that we couldn't ask, and conflating
-     * them is what makes a track that failed once look permanently wordless.
+     * What a lookup found. [Unavailable] (couldn't ask) is not [None] (there are
+     * none): conflated, a track that failed once looks wordless for good.
      */
     sealed interface Outcome {
         data class Found(val lyrics: Lyrics) : Outcome
@@ -48,9 +41,8 @@ object LyricsRepository {
     private val cache = ConcurrentHashMap<String, Outcome>()
 
     /**
-     * [allowNetwork] is the caller's answer to "may this spend data" — see
-     * App.metadataAllowed. False still returns anything downloaded with the
-     * song; it only stops the two lookups that would go out and ask.
+     * [allowNetwork] is the caller's "may this spend data" (see App.metadataAllowed).
+     * False still returns anything downloaded with the song.
      */
     suspend fun forTrack(
         track: Track,
@@ -59,8 +51,7 @@ object LyricsRepository {
     ): Outcome {
         cache[track.id]?.let { return it }
         val resolved = resolve(track, client, allowNetwork)
-        // Neither of these is a settled answer: one is an outage, the other is
-        // a question never asked. Remembering either would outlive its reason.
+        // An outage and a question never asked are not answers to remember.
         if (resolved != Outcome.Unavailable && resolved != Outcome.NotFetched) {
             cache[track.id] = resolved
         }
@@ -77,9 +68,7 @@ object LyricsRepository {
         val stored = parseStored(cached)
         stored?.let { if (it.synced) return Outcome.Found(it) }
 
-        // Everything past here is bytes. A mode that forbids them must not also
-        // hide the copy already on the phone — having it offline is the entire
-        // point of having downloaded it.
+        // A mode that forbids bytes must not also hide the copy already on the phone.
         if (!allowNetwork) return stored?.let { Outcome.Found(it) } ?: Outcome.NotFetched
 
         val server = runCatching { client?.getLyrics(track.id) }
@@ -90,18 +79,16 @@ object LyricsRepository {
         val fromLrclib = lrclib.getOrNull()
         if (fromLrclib?.synced == true) return Outcome.Found(fromLrclib)
 
-        // Nothing timed anywhere — take whatever plain text turned up, preferring
-        // the server's own copy.
-        val plain = fromServer ?: fromLrclib ?: parseStored(cached)
+        // Nothing timed anywhere: whatever plain text turned up, the server's first.
+        val plain = fromServer ?: fromLrclib ?: stored
         if (plain != null) return Outcome.Found(plain)
 
-        // Both lookups threw (no network, server down): say so rather than
-        // caching a "no lyrics" that would outlive the outage.
+        // A lookup that threw (no network, server down) is not a "no lyrics".
         val asked = server.isSuccess && lrclib.isSuccess
         return if (asked) Outcome.None else Outcome.Unavailable
     }
 
-    /** The `[millis]text` form the downloader writes alongside an audio file. */
+    /** The `[millis]text` form Downloader.fetchLyrics stores with a download. */
     private fun parseStored(raw: String?): Lyrics? {
         if (raw.isNullOrBlank()) return null
         val lines = raw.split('\n').mapNotNull { line ->
@@ -123,8 +110,7 @@ object LyricsRepository {
 
     private suspend fun fetchLrclib(track: Track): Lyrics? {
         if (track.title.isBlank() || track.artist.isBlank()) return null
-        // get-cached is the cheap lookup; get does a full match and is the
-        // fallback, mirroring what lrclib's own clients do.
+        // get-cached is the cheap lookup; get does a full match, as lrclib's own clients do.
         for (endpoint in listOf("get-cached", "get")) {
             val response = http.get("$LRCLIB/$endpoint") {
                 header("User-Agent", USER_AGENT)
@@ -157,11 +143,10 @@ object LyricsRepository {
     /**
      * Parse LRC into timed lines, or null when it carries no usable timestamps.
      *
-     * A line may hold several stamps (a chorus repeated at different times), and
-     * each becomes its own entry. Metadata tags like `[ar:...]` don't match the
-     * time pattern and fall away. Empty-text stamps mark instrumental gaps in LRC;
-     * dropping them leaves the previous line highlighted through the gap, which is
-     * what you want on screen.
+     * A line may hold several stamps (a repeated chorus), each its own entry.
+     * Metadata tags like `[ar:...]` don't match and fall away. Empty-text stamps
+     * (instrumental gaps) are dropped, so the previous line stays highlighted
+     * through the gap.
      */
     fun parseLrc(raw: String): Lyrics? {
         val parsed = mutableListOf<LyricLine>()

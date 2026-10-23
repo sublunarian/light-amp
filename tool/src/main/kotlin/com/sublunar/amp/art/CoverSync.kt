@@ -27,16 +27,14 @@ data class CoverSyncResult(
 /**
  * Fetch the covers a library wants and the disk doesn't have, one at a time.
  *
- * The part of the cover sync that is only decisions — what is missing, when
- * to stop, what never to ask for again — with everything it touches handed
- * in, so it can be run against fakes. ArtworkLoader supplies the real disk
- * and the real server; see [ArtworkLoader.syncCovers] for why it exists.
+ * The decisions of the cover sync — what is missing, when to stop, what never
+ * to ask for again — with the disk and server handed in, so it runs against
+ * fakes. [ArtworkLoader.syncCovers] supplies the real ones and says why it exists.
  *
- * One at a time and in the order given, because this is background work on a
- * link someone may be listening over: it takes one of the loader's four
- * fetch slots, not all of them, and [mayContinue] is asked before every
- * cover so it steps aside for a starting stream and ends the moment the link
- * stops being free.
+ * One at a time, in the order given: this is background work on a link someone
+ * may be listening over, so it takes one of the loader's fetch slots, and
+ * [mayContinue] is asked before every cover to step aside for a starting stream
+ * and stop the moment the link stops being free.
  */
 class CoverSync(
     private val isOnDisk: (String) -> Boolean,
@@ -85,9 +83,8 @@ class CoverSync(
                     total += answer.bytes.size
                     if (total > budgetBytes) {
                         total = makeRoom()
-                        // Nothing left that may be dropped: this library and
-                        // the downloads are, between them, the whole budget.
-                        // Carrying on would only fetch covers to evict covers.
+                        // This library and the downloads are the whole budget:
+                        // carrying on would only fetch covers to evict covers.
                         if (total > budgetBytes) {
                             stopped = "cache full"
                             break
@@ -99,8 +96,7 @@ class CoverSync(
                     knownMissing += id
                 }
                 is CoverFetch.Failed -> {
-                    // A server that has stopped answering is not asked seven
-                    // hundred more times, a timeout each.
+                    // A server that has stopped answering isn't asked for every cover left, a timeout each.
                     if (++failuresInARow >= MAX_FAILURES_IN_A_ROW) {
                         stopped = "server not answering (${answer.why})"
                         break

@@ -5,9 +5,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * The sort key decides both list order and which A–Z bucket a row falls into, so
- * accented names landing in "#" was a single bug in two places. These pin the
- * folding down against the names that actually exposed it.
+ * The sort key decides both list order and which A–Z bucket a row falls into;
+ * these pin the folding against names that need it.
  */
 class LibrarySortTest {
 

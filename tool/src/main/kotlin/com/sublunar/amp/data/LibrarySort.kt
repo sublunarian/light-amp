@@ -4,12 +4,9 @@ import java.text.Normalizer
 import kotlin.random.Random
 
 /**
- * List ordering for the library tabs.
- *
- * Each sort key has a "natural" direction — names read A→Z, dates and play counts
- * read newest/most first — and the persisted `reversed` flag flips it. That way
- * re-tapping the selected option in the sort menu always visibly inverts the
- * list, whichever key it is.
+ * Each sort key's natural direction — names A→Z, dates and play counts newest or
+ * most first. The persisted `reversed` flag flips it, so re-tapping the selected
+ * option always visibly inverts the list.
  */
 val AlbumSort.descendingByNature: Boolean
     get() = when (this) {
@@ -37,18 +34,12 @@ val PlaylistSort.descendingByNature: Boolean
         PlaylistSort.DATE_CREATED, PlaylistSort.RECENTLY_UPDATED -> true
     }
 
-/**
- * Leading articles ignored when sorting names, so "The Beatles" files under B.
- * Matches Navidrome's own `IgnoredArticles` default, keeping the app's ordering
- * consistent with the server's.
- */
+/** Leading articles ignored when sorting names, after Navidrome's `IgnoredArticles`. */
 private val IGNORED_ARTICLES = listOf("the", "el", "la", "los", "las", "le", "les")
 
 /**
- * Latin letters that carry no Unicode decomposition, so NFD can't fold them —
- * a stroked or ligature letter is one codepoint with no combining mark to strip.
- * Without this, "Ólafur" folds fine but "Øystein" or "Æther" would still sort
- * past Z and land in the index's "#" bucket.
+ * Latin letters with no Unicode decomposition (stroked or ligature letters), which
+ * NFD can't fold: without this "Øystein" or "Æther" sorts past Z, into "#".
  */
 private val FOLD_EXTRAS = mapOf(
     'ø' to "o", 'œ' to "oe", 'æ' to "ae", 'ß' to "ss", 'ł' to "l", 'đ' to "d",
@@ -60,18 +51,13 @@ private val COMBINING_MARKS = Regex("\\p{Mn}+")
 
 /**
  * Case-insensitive sort key with accents folded onto their base letter, so
- * "Ólafur Arnalds" files under O and "Éthiopiques" under E rather than sorting
- * past Z. Decomposing to NFD and dropping the combining marks handles the bulk
- * of it; [FOLD_EXTRAS] covers the letters that don't decompose.
- *
- * Non-Latin scripts are deliberately left alone — they have no sensible A–Z
- * home and belong in the "#" bucket.
+ * "Ólafur Arnalds" files under O. NFD plus dropping combining marks does most of
+ * it; [FOLD_EXTRAS] covers the rest. Non-Latin scripts are left alone: they have
+ * no A–Z home and belong in "#".
  */
 fun titleKey(name: String): String {
     val lower = name.trim().lowercase()
-    // Fast path: nothing outside ASCII can need folding, and almost every title is
-    // plain ASCII. Skipping the normaliser and the regex here matters because this
-    // sits under the library sorts.
+    // Almost every title is plain ASCII, and this sits under every library sort.
     if (lower.all { it.code < 0x80 }) return lower
     val decomposed = Normalizer.normalize(lower, Normalizer.Form.NFD)
     val stripped = COMBINING_MARKS.replace(decomposed, "")
@@ -82,12 +68,8 @@ fun titleKey(name: String): String {
 }
 
 /**
- * A sort key that files anything not starting with a letter at the end.
- *
- * Lexicographically, digits and punctuation come *before* letters — so "2112"
- * and "[Led Zeppelin IV]" opened every list, while the A–Z strip puts "#" after
- * Z and a tap on it jumped backwards. This prefixes the bucket, so the list
- * agrees with the strip beside it.
+ * A sort key that files anything not starting with a letter at the end, where
+ * the A–Z strip puts "#" — plain string order would put digits and punctuation first.
  */
 fun nameKey(name: String): String = bucketed(titleKey(name))
 
@@ -111,14 +93,10 @@ fun sortName(name: String): String {
     return lower
 }
 
-
 /**
- * Sort by a key computed **once per element**.
- *
- * `sortedBy { }` evaluates its selector inside the comparator, so an O(n log n)
- * sort calls it hundreds of thousands of times on a library this size. With
- * [titleKey] — Unicode normalisation plus a regex — that was enough to hang the
- * main thread and trip "Amp isn't responding". Decorating first makes it n.
+ * Sort by a key computed **once per element**. `sortedBy { }` runs its selector
+ * inside the comparator, n log n times; with [titleKey] (normalisation plus a
+ * regex) on a large library that hangs the main thread into an ANR.
  */
 private inline fun <T, K : Comparable<K>> List<T>.sortedByKeyOnce(
     selector: (T) -> K,
@@ -135,13 +113,10 @@ private inline fun <T> List<T>.sortedByKeysOnce(
     )
     .map { it.second }
 
-
 /**
- * Descending numeric key, ties broken by a string key — both computed once.
- *
- * The tie-breaker matters more than it looks: sorting by play count or date added
- * leaves most pairs tied (nearly everything has zero plays), so a `thenBy { }`
- * lambda ends up running on almost every comparison rather than rarely.
+ * Descending numeric key, ties broken by a string key — both computed once. Most
+ * pairs tie (nearly everything has zero plays), so a `thenBy { }` would run on
+ * almost every comparison.
  */
 private inline fun <T> List<T>.sortedByDescendingThenKey(
     crossinline primary: (T) -> Long,
@@ -187,10 +162,9 @@ fun sortAlbums(
             primary = { it.rating.toLong() },
             key = { nameKey(it.title) },
         )
-        // Shuffled by a seed that only changes when the library does — or when
-        // the user re-taps Random for a new deal (the nonce). Stable otherwise,
-        // because a fresh shuffle on every recomposition would move rows under
-        // a scrolling finger.
+        // Seeded by the library and the nonce, so it is stable across
+        // recompositions (rows don't move under a scrolling finger) and only a
+        // re-tap of Random deals again.
         AlbumSort.RANDOM -> albums.shuffled(
             Random(
                 albums.size.toLong() * 31 +
@@ -228,8 +202,8 @@ fun sortSongs(tracks: List<Track>, sort: SongSort, reversed: Boolean = false): L
             primary = { it.rating.toLong() },
             key = { nameKey(it.title) },
         )
-        // Songs carry no per-track "added" date of their own; the album they
-        // belong to does, so fall back to album grouping for a stable order.
+        // Songs carry no date added of their own: grouped by album title, then
+        // disc and track, for a stable order.
         SongSort.DATE_ADDED -> tracks
             .map { nameKey(it.album) to it }
             .sortedWith(
@@ -247,8 +221,9 @@ fun sortSongs(tracks: List<Track>, sort: SongSort, reversed: Boolean = false): L
 fun sortArtists(artists: List<Artist>, sort: ArtistSort, reversed: Boolean = false): List<Artist> {
     val ordered = when (sort) {
         ArtistSort.NAME -> artists.sortedByKeyOnce { sortNameKey(it.name) }
-        ArtistSort.MOST_PLAYED -> artists.sortedWith(
-            compareByDescending<Artist> { it.playCount }.thenBy { sortNameKey(it.name) }
+        ArtistSort.MOST_PLAYED -> artists.sortedByDescendingThenKey(
+            primary = { it.playCount.toLong() },
+            key = { sortNameKey(it.name) },
         )
     }
     return if (reversed) ordered.reversed() else ordered

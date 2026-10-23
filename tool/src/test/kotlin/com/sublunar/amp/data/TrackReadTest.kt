@@ -10,10 +10,9 @@ import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 
 /**
- * Reading the library again keeps the songs that didn't change — see TrackRead.
- * Every read used to be a whole new library of objects, so what matters is
- * which objects come back the same, and that the list is still exactly what a
- * plain read of the table in storage order would be.
+ * Reading the library again keeps the songs that didn't change — see TrackRead:
+ * which objects come back the same, and that the list is still exactly a plain
+ * read of the table in storage order.
  */
 class TrackReadTest {
 

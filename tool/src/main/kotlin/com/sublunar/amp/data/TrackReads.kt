@@ -19,15 +19,12 @@ class TrackGeneration(val rowIds: LongArray, val tracks: List<Track>) {
 /**
  * The next read of the tracks table, built row by row against the one before.
  *
- * Every read used to make a new [Track] and new Strings for every row: a whole
- * second library for each song played, liked or synced, alive until everything
- * holding the last list let go of it. A row at the same rowid with the same
- * content is the same song, so it gets the same object back, and a read after
- * a write holds new objects only for the rows that write touched.
+ * A row at the same rowid with the same content gets the previous read's object
+ * back, so a read after a write allocates only for the rows that write touched —
+ * not a whole second library per song played, liked or synced.
  *
- * Rows that are new have their per-album values — what every song of a record
- * repeats — shared with the rows read alongside them, or with the row they
- * replace, so an album's songs hold one String each rather than one per song.
+ * New rows share their per-album values with the rows read alongside them, or
+ * with the row they replace, so an album's songs hold one String each.
  *
  * Rows must arrive in rowid order, as [forEachTrackPage] reads them.
  */
@@ -55,10 +52,7 @@ class TrackRead(private val previous: TrackGeneration, expected: Int) {
         tracks += track
     }
 
-    /**
-     * The read, finished. Nothing changed hands back the previous read itself,
-     * so the list everything downstream holds is the one it already had.
-     */
+    /** The read, finished. Nothing changed hands back the previous read itself, so downstream sees the same list. */
     fun finish(): TrackGeneration {
         val n = tracks.size
         if (n == previous.size && reused == n) return previous
@@ -79,8 +73,7 @@ class TrackRead(private val previous: TrackGeneration, expected: Int) {
     private fun canonical(value: String, before: String?): String =
         strings.getOrPut(value) { before?.takeIf { it == value } ?: value }
 
-    // A year is boxed, and past the small numbers the JVM keeps one box of,
-    // so without this each song carries a box of its own.
+    // A year is boxed, and past the JVM's small-integer cache each song would carry its own box.
     private fun year(row: Track, before: Track?): Int? {
         val year = row.year ?: return null
         return years.getOrPut(year) { if (before != null && before.year == year) before.year else row.year }

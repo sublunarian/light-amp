@@ -22,15 +22,15 @@ data class PendingAction(
     val kind: Kind,
     /** Song id, album id, or artist *name* — artists are keyed by name here. */
     val id: String,
-    /** Stars for [Kind.RATE]; unused otherwise. */
+    /** Stars for [Kind.RATE_SONG] and [Kind.RATE_ALBUM]; unused otherwise. */
     val value: Int = 0,
     // Always written: left out, it would read back as the time it was read.
     @EncodeDefault val atMs: Long = System.currentTimeMillis(),
     /**
-     * The source it was done on. The queue is one for every source, and a like
-     * replayed to a server that never had the song is refused and dropped.
-     * Null for anything queued by a version that didn't record it, which goes
-     * to whichever source is sent to first.
+     * The source it was done on: the queue is shared by every source, and a like
+     * replayed to a server that never had the song is refused and dropped. Null
+     * for anything queued by a build that didn't record it, which goes to
+     * whichever source is sent to first.
      */
     val sourceId: String? = null,
 ) {
@@ -50,24 +50,18 @@ data class PendingAction(
 
 /**
  * Plays, likes and ratings made while the server was out of reach, kept until it
- * comes back.
- *
- * The local database is the immediate truth — a like shows as liked the instant
- * it is tapped, offline or not — and this is the record of what still has to be
- * mirrored outward. Held in preferences rather than a table so adding it needs no
- * schema change, which on this app's destructive-migration setup would cost the
- * user their whole library cache.
+ * comes back. The local database is the immediate truth; this is what still has
+ * to be mirrored outward. Held in preferences, one queue for every source.
  *
  * Order is preserved and a run stops at the first write that went unanswered, so
- * a queue that ends "star, unstar, star" can never be applied out of order and
- * leave the server disagreeing with the phone. A write the server answered no to
- * is dropped and said instead: it would get the same answer every time, and kept,
- * it held everything behind it — plays included — for good.
+ * "star, unstar, star" can never land out of order. A write the server refuses
+ * is dropped and said instead: it would get the same answer every time, and
+ * kept, it would hold everything behind it for good.
  *
- * Read one entry at a time. One this build can't read — a kind a newer build
- * added, a field whose type moved — is never sent and stays as it was stored,
- * where it was, so going back a version neither loses it nor everything else
- * with it. A later like or rating for the same thing still replaces it.
+ * Read one entry at a time. One this build can't read (a kind a newer build
+ * added, a field whose type moved) is never sent and stays as stored, where it
+ * was, so going back a version loses nothing. A later like or rating for the
+ * same thing still replaces it.
  */
 class PendingActions(private val settings: AppSettings) {
 
@@ -75,7 +69,7 @@ class PendingActions(private val settings: AppSettings) {
 
     private val _count = MutableStateFlow(0)
 
-    /** How many actions are waiting — surfaced in Settings. */
+    /** How many actions are waiting. */
     val count: StateFlow<Int> = _count
 
     /** Call once at boot so the count is right before anything is added. */
@@ -84,9 +78,8 @@ class PendingActions(private val settings: AppSettings) {
     }
 
     suspend fun add(action: PendingAction) = lock.withLock {
-        // A rating or a like replaces the last one for the same thing: only the
-        // final state matters, and a long offline session shouldn't send a
-        // hundred requests to arrive at it. Plays are never collapsed.
+        // A like or rating replaces the last one for the same thing: only the
+        // final state matters. Plays are never collapsed.
         val queue = decode(settings.pendingActions()).filterNot { action.replaces(it.about) } + entry(action)
         val trimmed = if (queue.size > MAX_QUEUED) queue.takeLast(MAX_QUEUED) else queue
         settings.setPendingActions(encode(trimmed))
@@ -109,13 +102,9 @@ class PendingActions(private val settings: AppSettings) {
     }
 
     /**
-     * Send everything waiting for [sourceId], oldest first, and return what the
-     * server refused — each reason once per refusal, for the caller to say.
-     *
-     * A refusal is dropped and said; the first with no answer stops the run and
-     * keeps it and the rest — the server is presumably still unreachable, and
-     * draining into a void would lose the lot. Another source's entries are left
-     * where they are, untouched.
+     * Send everything waiting for [sourceId], oldest first — see [replay] — and
+     * return the reasons for what the server refused, for the caller to say.
+     * Another source's entries are left where they are.
      */
     suspend fun flush(
         client: MusicServer,
@@ -144,9 +133,8 @@ class PendingActions(private val settings: AppSettings) {
             PendingAction.Kind.UNSTAR_SONG -> client.unstarSong(action.id)
             PendingAction.Kind.STAR_ALBUM -> client.starAlbum(action.id)
             PendingAction.Kind.UNSTAR_ALBUM -> client.unstarAlbum(action.id)
-            // An artist the server doesn't know by that name is refused rather
-            // than retried forever; the like still stands locally until the
-            // next sync brings back the server's own.
+            // An artist the server doesn't know by that name is refused, not
+            // retried forever; the next sync brings back the server's own likes.
             PendingAction.Kind.STAR_ARTIST ->
                 client.starArtist(artistId(action.id) ?: throw RefusedWrite(NO_SUCH_ARTIST))
             PendingAction.Kind.UNSTAR_ARTIST ->
