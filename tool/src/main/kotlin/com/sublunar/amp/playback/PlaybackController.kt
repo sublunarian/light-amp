@@ -48,7 +48,6 @@ import com.thelightphone.sdk.audio.LightAudioPlayerAvailability
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightMediaMetadata
 import com.thelightphone.sdk.audio.LightPlayerSpec
-import com.thelightphone.sdk.audio.NO_MEDIA_ITEM
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -1264,31 +1263,13 @@ class PlaybackController(
             // Shuffled as positions, the tapped one first, so the window has an
             // order to go back to when shuffle is switched off: its songs as the
             // list had them. Set after setQueue, which clears the last queue's.
-            val rest = IntArray(tracks.size - 1) { if (it < start) it else it + 1 }.apply { shuffle() }
-            val picked = listOf(start) + rest.take(MAX_QUEUE - 1)
+            val picked = shuffledFrom(tracks.size, start)
             setQueue(picked.map { tracks[it] }, 0)
             preShuffleOrder = picked.sorted().map { tracks[it] }
         } else {
             val (window, index) = capped(tracks, start)
             setQueue(window, index)
         }
-    }
-
-    /**
-     * Trim a queue to what the player can hold, centred on the starting track
-     * with a little history behind it. Media3 mirrors the whole timeline into
-     * the legacy MediaSession queue, loading artwork for every entry: eight
-     * thousand tracks ran the process out of memory there, and building that
-     * many stream URLs blocked the tap for seconds.
-     *
-     * A copy either way, never the caller's list or a view of it: a sublist
-     * kept as the queue kept the whole sorted library it came from alive after
-     * the library had moved on.
-     */
-    private fun capped(tracks: List<Track>, startIndex: Int): Pair<List<Track>, Int> {
-        if (tracks.size <= MAX_QUEUE) return tracks.toList() to startIndex
-        val first = (startIndex - QUEUE_LOOKBACK).coerceIn(0, tracks.size - MAX_QUEUE)
-        return tracks.subList(first, first + MAX_QUEUE).toList() to (startIndex - first)
     }
 
     fun togglePlayPause() {
@@ -1842,10 +1823,8 @@ class PlaybackController(
     }
 
     /** [index] as the player will take it: wrapped under repeat-queue, otherwise as given. */
-    private fun wrapped(index: Int): Int {
-        val size = _queue.value.size
-        return if (size > 0 && _repeatMode.value == RepeatMode.QUEUE) ((index % size) + size) % size else index
-    }
+    private fun wrapped(index: Int): Int =
+        wrappedIndex(index, _queue.value.size, repeatQueue = _repeatMode.value == RepeatMode.QUEUE)
 
     /** Move to [target] by hand while parked: a file plays, a stream parks there instead. */
     private fun goWhileParked(target: Int) {
@@ -2526,30 +2505,16 @@ class PlaybackController(
         pickedIndex = -1 // indices are about to move under it
         player ?: return
         settleRestartCopy()
-        if (fromIndices.isEmpty()) return
         val q = _queue.value
-        if (fromIndices.any { it !in q.indices }) return
+        val (newQueue, landsAt) = movedAsBlock(q, fromIndices, insertAt) ?: return
         val playingId = q.getOrNull(_index.value)?.id
-        val moving = q.filterIndexed { i, _ -> i in fromIndices }
-        if (moving.size == q.size) return
-        val remaining = q.filterIndexed { i, _ -> i !in fromIndices }
-        val landsAt = insertAt.coerceIn(0, remaining.size)
-        val newQueue = remaining.toMutableList().apply { addAll(landsAt, moving) }
-        if (newQueue == q) return
-        val working = q.toMutableList()
-        newQueue.forEachIndexed { target, track ->
-            val current = working.indexOfFirst { it === track }
-            if (current != target) {
-                queuePlayer?.moveMediaItem(current, target)
-                working.add(target, working.removeAt(current))
-            }
-        }
+        queuePlayer?.let { held -> stepwiseMoves(q, newQueue).forEach { (from, to) -> held.moveMediaItem(from, to) } }
         _queue.value = newQueue
         _index.value = indexAfterEdit(newQueue, playingId)
         // An output is told what the block's first track now follows: nothing
         // at the front.
-        val anchorId = newQueue.getOrNull(landsAt - 1)?.id
-        remote?.queueEdited(QueueEdit.Moved(moving.map { it.id }, anchorId))
+        val movedIds = newQueue.subList(landsAt, landsAt + fromIndices.size).map { it.id }
+        remote?.queueEdited(QueueEdit.Moved(movedIds, newQueue.getOrNull(landsAt - 1)?.id))
         rearmSoon()
     }
 
@@ -2602,13 +2567,6 @@ class PlaybackController(
         queuePlayer?.replaceRange(head.size, q.size, newTail.map { it.toAudioItem() })
         remote?.queueEdited(QueueEdit.Reordered)
         rearmSoon()
-    }
-
-    /** Sort [tracks] back into the relative order they had in [original]. */
-    private fun restoreOrder(tracks: List<Track>, original: List<Track>): List<Track> {
-        val rank = original.withIndex().associate { (i, t) -> t.id to i }
-        // Tracks queued after shuffling have no pre-shuffle rank; keep them last.
-        return tracks.sortedBy { rank[it.id] ?: Int.MAX_VALUE }
     }
 
     // --- Repeat and volume ---------------------------------------------------
@@ -3472,10 +3430,6 @@ class PlaybackController(
 
         // The queue.
 
-        /** The most tracks the player is given at once, and how many before the start are kept — see capped. */
-        private const val MAX_QUEUE = 500
-        private const val QUEUE_LOOKBACK = 50
-
         /** Settling time before an output hears that what plays next has changed. */
         private const val UPCOMING_DEBOUNCE_MS = 400L
 
@@ -3518,67 +3472,4 @@ class PlaybackController(
          */
         private const val MAX_SAVED_QUEUE = 100
     }
-}
-
-/** The most a far end's last report is carried on: one that stopped reporting isn't carried into the next song. */
-private const val CARRY_ON_CAP_MS = 2_000L
-
-/**
- * Where a far end that reported [reportedMs] has got to [sinceReportMs]
- * later: carried on while [playing], as its song is, by at most
- * [CARRY_ON_CAP_MS], and never past [durationMs] where that is known.
- */
-internal fun carriedOn(
-    reportedMs: Long,
-    sinceReportMs: Long,
-    playing: Boolean,
-    durationMs: Long,
-): Long {
-    if (!playing) return reportedMs
-    val at = reportedMs + sinceReportMs.coerceIn(0L, CARRY_ON_CAP_MS)
-    return if (durationMs > 0L) at.coerceAtMost(durationMs) else at
-}
-
-/**
- * Whether a reopen has to put the queue back into the player — see the
- * re-cue in [PlaybackController.attachHandle]. Only for a handle that
- * connected holding nothing and making no sound, under the very queue and
- * track the controller carried across. Silence is asked for as well as
- * emptiness: a service making sound has a queue, and cueing over it would
- * stop the music the user came back to.
- */
-internal fun needsRecue(
-    carriedOver: Boolean,
-    playerIndex: Int,
-    playerPlaying: Boolean,
-    casting: Boolean,
-    parked: Boolean,
-): Boolean = carriedOver && playerIndex == NO_MEDIA_ITEM && !playerPlaying && !casting && !parked
-
-/**
- * Where in its track a handle that has just connected leaves playback, when
- * the service is on another track than the screen shows — see the landing
- * in [PlaybackController.attachHandle]. Null when there is nothing to land
- * on: the same track, an empty player, a queue just cued back in, a cast
- * (its renderer says where playback is), or a park (the service sits on the
- * failed track, and the screen's marker is the one the user moved).
- *
- * The service's own position, read from the same snapshot as its index.
- * Except on the track a next or previous pressed while the handle connected
- * went to ([pickedIndex]): that press reached the service after the
- * snapshot, so the track starts from the top.
- */
-internal fun connectLanding(
-    playerIndex: Int,
-    playerPositionMs: Long,
-    shownIndex: Int,
-    pickedIndex: Int,
-    recued: Boolean,
-    casting: Boolean,
-    parked: Boolean,
-): Long? = when {
-    recued || casting || parked -> null
-    playerIndex < 0 || playerIndex == shownIndex -> null
-    playerIndex == pickedIndex -> 0L
-    else -> playerPositionMs
 }
