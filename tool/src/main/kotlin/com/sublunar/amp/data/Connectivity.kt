@@ -44,10 +44,17 @@ object Connectivity {
         source = connectivity
         status.value = runCatching { connectivity.currentStatus }
             .getOrDefault(status.value)
+        Trace.i("link", "at bind: ${describe(status.value)}")
         scope.launch {
-            connectivity.observeNetworkStatus().collect { status.value = it }
+            connectivity.observeNetworkStatus().collect {
+                Trace.i("link", "callback: ${describe(it)}")
+                status.value = it
+            }
         }
     }
+
+    private fun describe(s: NetworkStatus): String =
+        if (!s.isConnected) "no link" else "${if (s.isWifi) "Wi-Fi" else "not Wi-Fi"}, ${if (s.isMetered) "metered" else "unmetered"}"
 
     /**
      * [isUnmetered] as of this instant, asked of the system rather than read
@@ -62,6 +69,9 @@ object Connectivity {
      */
     fun isUnmeteredNow(): Boolean {
         val now = source?.let { runCatching { it.currentStatus }.getOrNull() } ?: return isUnmetered()
+        // A poll that finds what the callback never reported is worth knowing
+        // about: it means the gates and the flows disagreed until now.
+        if (now != status.value) Trace.i("link", "poll found a change the callback hadn't: ${describe(status.value)} → ${describe(now)}")
         status.value = now
         return now.isConnected && !now.isMetered
     }
