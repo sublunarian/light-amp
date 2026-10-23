@@ -4,12 +4,10 @@ import android.view.KeyEvent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -43,7 +41,6 @@ import com.sublunar.amp.App
 import com.sublunar.amp.data.PlaylistView
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
-import com.sublunar.amp.ui.components.AppArtwork
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
@@ -51,19 +48,14 @@ import com.sublunar.amp.ui.components.LibraryList
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.PlayAllRow
-import com.sublunar.amp.ui.components.SelectionArtwork
+import com.sublunar.amp.ui.components.ROW_H_PX
+import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.SelectionState
 import com.sublunar.amp.ui.components.Selections
-import com.sublunar.amp.ui.components.rowClickable
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.pxSp
 import com.sublunar.amp.ui.LightType
-import com.sublunar.amp.ui.components.ROW_GAP_PX
-import com.sublunar.amp.ui.components.ROW_SUB_LINE_PX
-import com.sublunar.amp.ui.components.ROW_SUB_PX
-import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
-import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
@@ -230,7 +222,8 @@ class PlaylistDetailScreen(
     private fun TrackList(list: List<PlaylistEntry>, selection: SelectionState) {
         val editing = selection.active
         val drag = rememberDragReorderState<String>()
-        val rowPx = with(LocalDensity.current) { px(160).toPx() }
+        val rowPx = with(LocalDensity.current) { px(ROW_H_PX).toPx() }
+        val downloaded by App.library.downloadedTrackIds.collectAsState()
         val headerCount = if (editing) 0 else 2
         val listState = rememberListAnchor("playlist:$playlistId", headerCount)
         val orderedKeys = remember(list) { list.map { it.key } }
@@ -288,56 +281,50 @@ class PlaylistDetailScreen(
                         onDispose { drag.clear(entry.key) }
                     }
                     Box(Modifier.fillMaxWidth()) {
-                        Row(
+                        TrackRow(
+                            title = track.title,
+                            subtitle = track.artist,
+                            coverArtId = track.coverArtId,
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(px(160))
                                 .onGloballyPositioned { drag.rowCoords[entry.key] = it }
                                 // Real row goes invisible; DragOverlay draws the floating stand-in.
-                                .alpha(if (isDragging) 0f else 1f)
-                                .rowClickable(
-                                    onClick = {
-                                        if (editing) {
-                                            selection.toggle(entry.key)
-                                        } else {
-                                            App.playback.playQueue(list.map { it.track }, index)
-                                            go { NowPlayingScreen(it) }
-                                        }
-                                    },
-                                    onLongClick = {
-                                        if (editing) return@rowClickable
-                                        go {
-                                            TrackActionsScreen(
-                                                it, track.id,
-                                                onSelect = { selection.begin(entry.key) },
-                                                // Absent, not failing: see the delete icon above.
-                                                onRemoveFromPlaylist =
-                                                    if (canEdit()) ({ removeSongs(setOf(entry.key)) }) else null,
-                                            )
-                                        }
-                                    },
-                                ),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            if (editing) {
-                                SelectionArtwork(track.coverArtId, entry.key in selection.selected)
+                                .alpha(if (isDragging) 0f else 1f),
+                            onClick = {
+                                if (editing) {
+                                    selection.toggle(entry.key)
+                                } else {
+                                    App.playback.playQueue(list.map { it.track }, index)
+                                    go { NowPlayingScreen(it) }
+                                }
+                            },
+                            onLongClick = {
+                                if (!editing) {
+                                    go {
+                                        TrackActionsScreen(
+                                            it, track.id,
+                                            onSelect = { selection.begin(entry.key) },
+                                            // Absent, not failing: see the delete icon above.
+                                            onRemoveFromPlaylist =
+                                                if (canEdit()) ({ removeSongs(setOf(entry.key)) }) else null,
+                                        )
+                                    }
+                                }
+                            },
+                            downloaded = track.id in downloaded,
+                            selected = if (editing) entry.key in selection.selected else null,
+                            trailing = if (editing && canEdit()) {
+                                {
+                                    // Drag handle for reordering within the playlist.
+                                    AppIcon(
+                                        AppIcons.Dehaze,
+                                        size = px(51),
+                                        modifier = Modifier.onGloballyPositioned { drag.iconCoords[entry.key] = it },
+                                    )
+                                }
                             } else {
-                                AppArtwork(track.coverArtId, size = px(128))
-                            }
-                            Spacer(Modifier.width(px(ROW_GAP_PX)))
-                            Column(Modifier.weight(1f)) {
-                                AppText(track.title, pxSp(ROW_TITLE_PX), lineHeight = pxSp(ROW_TITLE_LINE_PX), maxLines = 1)
-                                AppText(track.artist, pxSp(ROW_SUB_PX), lineHeight = pxSp(ROW_SUB_LINE_PX), dim = true, maxLines = 1)
-                            }
-                            if (editing && canEdit()) {
-                                // Drag handle for reordering within the playlist.
-                                AppIcon(
-                                    AppIcons.Dehaze,
-                                    size = px(51),
-                                    modifier = Modifier.onGloballyPositioned { drag.iconCoords[entry.key] = it },
-                                )
-                            }
-                        }
+                                null
+                            },
+                        )
                         if (dropTarget?.beforeKey == entry.key) DropIndicatorLine(Modifier.align(Alignment.TopStart))
                     }
                 }
@@ -346,7 +333,7 @@ class PlaylistDetailScreen(
                 }
             }
             if (drag.draggingIndex != null) {
-                DragOverlay(list, drag.draggingKeys, drag.dragStartTops, drag.fingerOffsetY, selection)
+                DragOverlay(list, drag.draggingKeys, drag.dragStartTops, drag.fingerOffsetY, selection, downloaded)
             }
         }
     }
@@ -363,27 +350,24 @@ class PlaylistDetailScreen(
         dragStartTops: Map<String, Float>,
         fingerOffsetY: Float,
         selection: SelectionState,
+        downloaded: Set<String>,
     ) {
         list.forEach { entry ->
             if (entry.key !in draggingKeys) return@forEach
             val top = dragStartTops[entry.key] ?: return@forEach
-            Row(
+            TrackRow(
+                title = entry.track.title,
+                subtitle = entry.track.artist,
+                coverArtId = entry.track.coverArtId,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(px(160))
                     .align(Alignment.TopStart)
                     .graphicsLayer { translationY = top + fingerOffsetY }
                     .padding(start = px(LIST_EDGE_PX), end = px(SCROLLBAR_LANE_PX)),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SelectionArtwork(entry.track.coverArtId, entry.key in selection.selected)
-                Spacer(Modifier.width(px(ROW_GAP_PX)))
-                Column(Modifier.weight(1f)) {
-                    AppText(entry.track.title, pxSp(ROW_TITLE_PX), lineHeight = pxSp(ROW_TITLE_LINE_PX), maxLines = 1)
-                    AppText(entry.track.artist, pxSp(ROW_SUB_PX), lineHeight = pxSp(ROW_SUB_LINE_PX), dim = true, maxLines = 1)
-                }
-                Spacer(Modifier.width(px(51)))
-            }
+                onClick = {},
+                downloaded = entry.track.id in downloaded,
+                selected = entry.key in selection.selected,
+                trailing = { Spacer(Modifier.width(px(51))) },
+            )
         }
     }
 

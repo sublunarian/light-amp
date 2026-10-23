@@ -124,6 +124,8 @@ fun TrackRow(
     downloaded: Boolean = false,
     /** Selection state, or null when the list isn't in multi-select mode — see [SelectionArtwork]. */
     selected: Boolean? = null,
+    /** At the row's end, such as a drag handle. */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val artworkHidden = App.hideArtwork.collectAsState().value
     // Read here rather than inside the branch below: behind an `if` this stops
@@ -172,6 +174,7 @@ fun TrackRow(
                 )
             }
         }
+        trailing?.invoke()
     }
 }
 
