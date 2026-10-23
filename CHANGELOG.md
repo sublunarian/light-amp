@@ -7,18 +7,31 @@
 - Playlists follow the library you pick. On Navidrome a playlist shows that
   library's songs; on Plex and Jellyfin you see the playlists with songs from
   it, as in their own apps. Editing never touches another library's songs.
+- While casting to a speaker, your launcher and Bluetooth buttons control it,
+  even with Amp in the background. A speaker left paused for ten minutes
+  hands playback back to the phone.
 - Amp reopens on the tab you last used, or on Now Playing.
 - Playlist and queue songs line up with every other list, and playlists show
   download marks.
 - Reordering a big Plex or Jellyfin playlist is much faster.
+- Navidrome now sees each play, pause and seek, so its Now Playing stays
+  right.
+- The QR scan for a username and password is offered for Bandcamp only.
+- Built on Light's SDK 0.2.1.
 
 ### Fixed
 
 - Downloaded playlists open with their songs when you're offline (#19, thanks
   @wsturgiss).
-- A song's menu in a playlist could say "Track not found".
+- Many casting fixes: seeking, pausing from the speaker's own remote, Wi-Fi
+  dropping out, and switching speaker or source.
+- Seeking with repeat-one on no longer jumps to the first song, and Play Next
+  keeps an album in order.
+- A refused login on a Subsonic server or Bandcamp now says to sign in again.
 - A Navidrome playlist with missing files is no longer edited from Amp, which
-  could remove the wrong song, plus several other playlist fixes.
+  could remove the wrong song.
+- A song's menu in a playlist could say "Track not found", plus several
+  playlist, sign-in and offline fixes.
 
 ## 0.8.2
 
