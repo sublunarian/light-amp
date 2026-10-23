@@ -36,6 +36,8 @@ import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.serverClock
+import com.sublunar.amp.data.isReorderOf
+import com.sublunar.amp.data.placementMoves
 
 /**
  * A Jellyfin server's music library, behind the same [MusicServer] interface
@@ -795,24 +797,26 @@ class JellyfinClient(
         // the front and leave the rest trailing in an order nobody asked for.
         val all = runCatching { allPlaylistEntries(id) }.getOrNull() ?: return false
         val known = all.filter { it.type == TRACK_TYPE }
-        if (known.size != orderedSongIds.size) return false
+        if (!isReorderOf(orderedSongIds, known.map { it.id })) return false
         // Positions on the server count entries this app doesn't show, and a
         // song held twice can't be told apart from its other copy — a move
         // names an entry by its song since Jellyfin 12, and moves the first.
         // Either way the order that landed wouldn't be the one asked for.
         if (all.size != known.size || known.distinctBy { it.playlistItemId }.size != known.size) return false
-        orderedSongIds.forEachIndexed { target, songId ->
-            val entries = runCatching { playlistEntries(id) }.getOrNull() ?: return false
-            val at = entries.indexOfFirst { it.id == songId }
-            if (at == target) return@forEachIndexed
-            // A wanted track the playlist doesn't have means the caller is
-            // ordering a list that isn't this one; the moves already made stand,
-            // but the answer mustn't claim the wanted order landed.
-            if (at < 0) return false
-            val entryId = entries[at].playlistItemId ?: return false
-            if (!send("POST", "/Playlists/$id/Items/$entryId/Move/$target")) return false
+        val entryOf = known.associate { it.id to (it.playlistItemId ?: return false) }
+        // Worked out from one read: Move takes the index the entry ends up at.
+        val local = known.map { it.id }.toMutableList()
+        val moves = placementMoves(local.toList(), orderedSongIds)
+        for ((songId, after) in moves) {
+            local.remove(songId)
+            val to = if (after == null) 0 else local.indexOf(after) + 1
+            local.add(to, songId)
+            if (!send("POST", "/Playlists/$id/Items/${entryOf.getValue(songId)}/Move/$to")) return false
         }
-        return true
+        if (moves.isEmpty()) return true
+        // Read once more: a song this account can't see can put a move a place off.
+        val landed = runCatching { playlistEntries(id) }.getOrNull() ?: return false
+        return landed.map { it.id } == orderedSongIds
     }
 
     private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")

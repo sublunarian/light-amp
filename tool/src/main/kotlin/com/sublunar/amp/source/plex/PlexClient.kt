@@ -39,6 +39,7 @@ import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.serverClock
+import com.sublunar.amp.data.placementMoves
 
 /**
  * A Plex Media Server's music library, behind the same [MusicServer] interface
@@ -1016,25 +1017,35 @@ class PlexClient(
             }
             queue.removeAt(0)
         }
+        if (orderedEntryIds.size < 2) return true
         val localOrder = entries.map { it.second }.toMutableList()
-        for (i in 1 until orderedEntryIds.size) {
-            val entryId = orderedEntryIds[i]
-            val afterId = orderedEntryIds[i - 1]
-            val afterPos = localOrder.indexOf(afterId)
-            if (localOrder.getOrNull(afterPos + 1) == entryId) continue
-            val moved = sendChecked(
+        var moved = false
+        suspend fun moveAfter(entryId: Long, afterId: Long): Boolean {
+            if (localOrder.getOrNull(localOrder.indexOf(afterId) + 1) == entryId) return true
+            val sent = sendChecked(
                 "/playlists/$id/items/$entryId/move",
                 listOf("after" to afterId.toString()),
                 method = "PUT",
             )
-            if (!moved) {
+            if (!sent) {
                 android.util.Log.w(TAG, "reorderPlaylist($id): move failed partway; playlist left partially reordered, nothing lost")
                 return false
             }
             localOrder.remove(entryId)
             localOrder.add(localOrder.indexOf(afterId) + 1, entryId)
+            moved = true
+            return true
         }
-        return true
+        // A move goes after another entry, so the top is reached in two: the new
+        // first after the old one, then the old one after it.
+        val first = orderedEntryIds.first()
+        val front = localOrder.first()
+        if (first != front && !(moveAfter(first, front) && moveAfter(front, first))) return false
+        for ((entryId, afterId) in placementMoves(localOrder.toList(), orderedEntryIds)) {
+            if (!moveAfter(entryId, afterId ?: return false)) return false
+        }
+        if (!moved) return true
+        return runCatching { playlistEntries(id) }.getOrNull()?.map { it.second } == orderedEntryIds
     }
 
     /** Each entry's `(songId, playlistItemID)`, in playlist order. */
