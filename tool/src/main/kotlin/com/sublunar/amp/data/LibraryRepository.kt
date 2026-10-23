@@ -2369,13 +2369,10 @@ internal fun syncErrorMessage(e: Exception): String {
     val code = (e as? ServerException)?.status
     if ((e as? ServerException)?.refusedLogin == true) return LOGIN_REFUSED
     if (code == null && e is java.io.IOException) return "Couldn't reach the server"
-    return when {
-        code == null -> e.message?.takeIf { it.length < 60 } ?: "Couldn't reach the server"
-        // 52x are Cloudflare's: it answered, the server behind it didn't.
-        code in 520..529 -> "Your server isn't responding ($code)"
-        code in 500..599 -> "The server had an error ($code)"
-        code == 401 || code == 403 -> LOGIN_REFUSED
-        code == 404 -> "That library isn't on the server any more"
+    if (code == null) return e.message?.takeIf { it.length < 60 } ?: "Couldn't reach the server"
+    return serverDownWords(code) ?: when (code) {
+        401, 403 -> LOGIN_REFUSED
+        404 -> "That library isn't on the server any more"
         else -> "The server said $code"
     }
 }
