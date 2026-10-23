@@ -97,11 +97,13 @@ interface Output : OutputControls {
     fun canSteer(): Boolean = true
 
     /**
-     * Start playing at [target], from [fromMs] into the queue's current
-     * track. On Main, with the phone already paused and this already the
-     * output that has the sound.
+     * Take the sound to [target], from [fromMs] into the queue's current
+     * track: playing there if [play] — the phone was playing, or starting —
+     * and otherwise chosen and waiting for a play, as an AirPlay speaker
+     * chosen while paused stays silent. On Main, with the phone already
+     * paused and this already the output that has the sound.
      */
-    fun connect(target: OutputTarget, fromMs: Long)
+    fun connect(target: OutputTarget, fromMs: Long, play: Boolean)
 
     /**
      * Stop steering [target], for [why]. Any thread. The controller has

@@ -153,9 +153,10 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
 
     /**
      * Move playback to the player: push the queue to the server, point the
-     * player at it from [fromMs], and start mirroring its reports.
+     * player at it from [fromMs], and start mirroring its reports. It plays
+     * whatever [play] says: a play queue handed to a Plex player starts it.
      */
-    override fun connect(target: OutputTarget, fromMs: Long) {
+    override fun connect(target: OutputTarget, fromMs: Long, play: Boolean) {
         val player = (target as PlexCompanionTarget).player
         val client = plexClient() ?: run {
             host.dropped(this, target)

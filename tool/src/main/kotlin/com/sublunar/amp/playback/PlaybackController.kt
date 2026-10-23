@@ -2855,6 +2855,9 @@ class PlaybackController(
      */
     fun castTo(family: OutputFamily, target: OutputTarget): Boolean {
         val next = outputOf(family)
+        // Playing, or starting, it goes on there; paused, it stays paused
+        // there — read before anything below pauses the phone.
+        val play = _isPlaying.value || _buffering.value
         // No Wi-Fi, no speaker: one found a minute ago is out of reach now,
         // and playback must not be taken off this device for it.
         if (next.needsLan && !App.rulesNow().mayUseLan) return false
@@ -2883,9 +2886,10 @@ class PlaybackController(
         _active.value = ActiveOutput(family, target, next)
         standIn.start(player)
         // A start, wherever there is something to start — a speaker chosen
-        // before anything was queued just waits for the queue.
-        if (_queue.value.getOrNull(_index.value) != null) startingElsewhere()
-        next.connect(target, fromMs = _positionMs.value)
+        // before anything was queued just waits for the queue, and one chosen
+        // while paused for a play.
+        if (play && _queue.value.getOrNull(_index.value) != null) startingElsewhere()
+        next.connect(target, fromMs = _positionMs.value, play = play)
         return true
     }
 

@@ -160,7 +160,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      * Move playback to the renderer: hand it the current track's stream URL
      * at the position we'd reached, and start polling it for progress.
      */
-    override fun connect(target: OutputTarget, fromMs: Long) {
+    override fun connect(target: OutputTarget, fromMs: Long, play: Boolean) {
         val renderer = (target as DlnaTarget).renderer
         castJob?.cancel()
         castJob = host.scope.launch {
@@ -174,6 +174,12 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             }
             stopIfBusy(renderer)
             when {
+                // Paused here: chosen, and nothing is sent until a play, which
+                // pushes the song from the phone's place — see waitingForPlay.
+                !play && host.queue.value.getOrNull(host.index.value) != null -> {
+                    forgetCast()
+                    waitingForPlay = true
+                }
                 startCastTrack(renderer, fromMs) -> pollRenderer(renderer)
                 // Nothing queued yet: chosen, it waits for the queue.
                 host.queue.value.getOrNull(host.index.value) == null -> Unit
