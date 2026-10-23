@@ -643,6 +643,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         renderer: DlnaRenderer,
         seekToMs: Long = 0L,
         askServer: Boolean = false,
+        fresh: Boolean = false,
     ): Boolean {
         dropSeekChecks()
         val track = host.queue.value.getOrNull(host.index.value) ?: return false
@@ -677,14 +678,14 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             // The renderer fetches for itself, with no door to decide it
             // first — see OutputHost.ownStreamSession.
             sessionId = host.ownStreamSession(track.id),
-        ) ?: return false
+        )?.let { if (fresh) freshAddress(it) else it } ?: return false
         val started = if (offset == 0L && wanted > 0L) {
             when (playFrom(renderer, track, url, mime, wanted)) {
                 Start.PLAYING -> true
                 Start.FAILED -> false
                 // The renderer won't seek this stream after all: the server's
                 // stream from the position, as for one that can't be seeked.
-                Start.UNSEEKABLE -> return startCastTrack(renderer, wanted, askServer = true)
+                Start.UNSEEKABLE -> return startCastTrack(renderer, wanted, askServer = true, fresh = fresh)
             }
         } else {
             DlnaCast.play(
@@ -733,8 +734,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         renderer: DlnaRenderer,
         seekToMs: Long = 0L,
         askServer: Boolean = false,
+        fresh: Boolean = false,
     ): Boolean {
-        if (startCastTrack(renderer, seekToMs, askServer)) return true
+        if (startCastTrack(renderer, seekToMs, askServer, fresh)) return true
         if (steered()?.id != renderer.id) return false
         android.util.Log.i("AmpCast", "couldn't start idx=${host.index.value} → paused")
         forgetCast()
@@ -969,16 +971,10 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val after = nextIndex()
         val track = after?.let { host.queue.value.getOrNull(it) }
         if (after == null || track == null) {
-            val offered = castNextUrl ?: castNextOffered
-            castNextUrl = null
-            castNextOffered = null
-            castNextTrackId = null
-            castNextArmedFor = null
             // Offered before the queue lost its next — repeat switched off on
             // the last song, say. Left in the renderer, it would cross into it
-            // under the old song's name. A renderer without the call faults,
-            // and plays to the end and stops, as it would have anyway.
-            if (offered != null) DlnaCast.clearNext(renderer)
+            // under the old song's name.
+            dropNext(renderer)
             return
         }
         // Offered once per track. Asking again neither opens a new stream nor
@@ -1017,6 +1013,30 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         // carries the queue as it did before. An offer it never answered is
         // still looked for — see castNextOffered.
         if (queued) castNextUrl = url
+    }
+
+    /** Restarts so far, so each one is an address of its own — see [freshAddress]. */
+    private var restarts = 0
+
+    /**
+     * [url] with a throwaway parameter, so a restart is a new address. The
+     * Denon sat stopped on the first Plex song after a source switch through
+     * every resend of it, and played the moment it was handed another song:
+     * an address it already holds is no reason, to it, to fetch again.
+     * Servers pass over a parameter they don't know.
+     */
+    private fun freshAddress(url: String): String =
+        url + (if ('?' in url) "&" else "?") + "ampTry=" + (++restarts)
+
+    /** Forget what was offered as the next track, on the renderer as well. */
+    private suspend fun dropNext(renderer: DlnaRenderer) {
+        val offered = castNextUrl ?: castNextOffered
+        castNextUrl = null
+        castNextOffered = null
+        castNextTrackId = null
+        castNextArmedFor = null
+        // A renderer without the call faults, which changes nothing.
+        if (offered != null) DlnaCast.clearNext(renderer)
     }
 
     /** The index the queue would move to next, or null at the end of it. */
@@ -1283,23 +1303,31 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 // Played, then stopped: the track ended. Move on. Only readings
                 // the renderer actually gave us count here — going quiet must
                 // never cost a track that was playing perfectly well.
+                // Paused there, below: nothing ends, restarts or is handed on
+                // until it plays again. Let run, the stale clock read the cued
+                // track as over, the next song was offered, the renderer took
+                // it, and the restart below started it under a pause.
+                stoppedThere -> Unit
                 // Stopped part-way through instead: the Denon's own remote
                 // pauses that way. Read as the track's end, it skipped to the
                 // next song. Shown paused where it was heard last; a play here
                 // pushes the track again from there — see waitingForPlay — and
                 // one on its remote is followed.
                 (settled || played) && stall.stopped >= STOPPED_POLLS_TO_ADVANCE &&
-                    (stoppedThere || stoppedPartWay(heardMs, host.durationMs.value)) -> {
-                    if (!stoppedThere) {
-                        android.util.Log.i("AmpCast", "stopped at $heardMs of ${host.durationMs.value} → paused there")
-                        stoppedThere = true
-                        waitingForPlay = true
-                        host.showPosition(heardMs)
-                        host.showPaused()
-                        // Put in again from there, stopped, so its own play and
-                        // a resume from here both go on from where it stopped.
-                        if (cueAt(renderer, heardMs)) waitingForPlay = false
-                    }
+                    stoppedPartWay(heardMs, host.durationMs.value) -> {
+                    android.util.Log.i("AmpCast", "stopped at $heardMs of ${host.durationMs.value} → paused there")
+                    stoppedThere = true
+                    waitingForPlay = true
+                    host.showPosition(heardMs)
+                    host.showPaused()
+                    dropNext(renderer)
+                    // Put in again from there, stopped, so its own play and
+                    // a resume from here both go on from where it stopped.
+                    if (cueAt(renderer, heardMs)) waitingForPlay = false
+                    // Until it plays the cued stream it reports the old one's
+                    // clock, which added to the new offset is the stop point
+                    // twice over: only a reading near the cue is believed.
+                    settled = false
                 }
                 (settled || played) && stall.stopped >= STOPPED_POLLS_TO_ADVANCE -> {
                     android.util.Log.i("AmpCast", "ended idx=${host.index.value} → advance")
@@ -1320,14 +1348,17 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 // over it. A renderer that has stopped answering counts too:
                 // nothing is playing either way, and this is the decision that
                 // can afford to be wrong.
+                // Stopped, not opening anything, three readings running is a
+                // renderer that turned the stream away rather than one still
+                // fetching it — which says TRANSITIONING.
                 !settled && !played &&
-                    stall.notPlaying >= restartAfter &&
+                    (stall.notPlaying >= restartAfter || stall.stopped >= TURNED_AWAY_POLLS) &&
                     startedIndex != host.index.value -> {
                     android.util.Log.i("AmpCast", "never started idx=${host.index.value} → restart")
                     startedIndex = host.index.value
                     stall.reset()
                     restartAfter = STALLED_POLLS_TO_RESTART
-                    if (!startOrStop(renderer)) return
+                    if (!startOrStop(renderer, fresh = true)) return
                 }
                 // Asked again and it still won't play: something is wrong with
                 // this track rather than with the hand-off, and sitting in
@@ -1344,7 +1375,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             }
             // Late enough in the track that the renderer can be handed the next
             // one without the stream going stale before it is wanted.
-            armNextIfDue(renderer)
+            if (!stoppedThere) armNextIfDue(renderer)
         }
     }
 
@@ -1421,6 +1452,12 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
          * believed again, wherever it is — see pollRenderer.
          */
         const val CAST_SEEK_WAIT_MS = 5_000L
+
+        /**
+         * Readings of STOPPED in a row, with nothing opening, that say a pushed
+         * track was turned away — see pollRenderer.
+         */
+        const val TURNED_AWAY_POLLS = 3
 
         /** AmpCast: temporary — how many polls after a start are logged. */
         const val START_POLLS_LOGGED = 12
