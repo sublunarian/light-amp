@@ -2,7 +2,6 @@ package com.sublunar.amp.ui.components
 
 import androidx.compose.material.icons.Icons as Material
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
-import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
@@ -11,7 +10,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Cast
@@ -21,17 +19,12 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Dehaze
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.FilterNone
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.HistoryEdu
 import androidx.compose.material.icons.filled.LibraryMusic
-import androidx.compose.material.icons.filled.LocalOffer
-import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
@@ -45,7 +38,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Smartphone
-import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathNode
@@ -134,7 +126,6 @@ class MaterialGlyphsTest {
             Material.Filled.AddCircleOutline to Icons.Filled.AddCircleOutline,
             Material.Filled.Album to Icons.Filled.Album,
             Material.Filled.ArrowDownward to Icons.Filled.ArrowDownward,
-            Material.Filled.ArrowDropDown to Icons.Filled.ArrowDropDown,
             Material.Filled.ArrowUpward to Icons.Filled.ArrowUpward,
             Material.Filled.Bluetooth to Icons.Filled.Bluetooth,
             Material.Filled.Cast to Icons.Filled.Cast,
@@ -144,17 +135,12 @@ class MaterialGlyphsTest {
             Material.Filled.Dehaze to Icons.Filled.Dehaze,
             Material.Filled.DeleteOutline to Icons.Filled.DeleteOutline,
             Material.Filled.Download to Icons.Filled.Download,
-            Material.Filled.DownloadDone to Icons.Filled.DownloadDone,
             Material.Filled.FastForward to Icons.Filled.FastForward,
             Material.Filled.FastRewind to Icons.Filled.FastRewind,
             Material.Filled.Favorite to Icons.Filled.Favorite,
             Material.Filled.FavoriteBorder to Icons.Filled.FavoriteBorder,
             Material.Filled.FilterNone to Icons.Filled.FilterNone,
-            Material.Filled.GraphicEq to Icons.Filled.GraphicEq,
-            Material.Filled.HistoryEdu to Icons.Filled.HistoryEdu,
             Material.Filled.LibraryMusic to Icons.Filled.LibraryMusic,
-            Material.Filled.LocalOffer to Icons.Filled.LocalOffer,
-            Material.Filled.Lyrics to Icons.Filled.Lyrics,
             Material.Filled.Mic to Icons.Filled.Mic,
             Material.Filled.MoreVert to Icons.Filled.MoreVert,
             Material.Filled.MusicNote to Icons.Filled.MusicNote,
@@ -168,10 +154,8 @@ class MaterialGlyphsTest {
             Material.Filled.Settings to Icons.Filled.Settings,
             Material.Filled.Shuffle to Icons.Filled.Shuffle,
             Material.Filled.Smartphone to Icons.Filled.Smartphone,
-            Material.Filled.Speaker to Icons.Filled.Speaker,
             Material.Filled.Whatshot to Icons.Filled.Whatshot,
             Material.AutoMirrored.Filled.FormatListBulleted to Icons.AutoMirrored.Filled.FormatListBulleted,
-            Material.AutoMirrored.Filled.PlaylistPlay to Icons.AutoMirrored.Filled.PlaylistPlay,
             Material.AutoMirrored.Filled.QueueMusic to Icons.AutoMirrored.Filled.QueueMusic,
             Material.AutoMirrored.Filled.Sort to Icons.AutoMirrored.Filled.Sort,
             Material.AutoMirrored.Filled.VolumeDown to Icons.AutoMirrored.Filled.VolumeDown,

@@ -1,7 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import com.sublunar.amp.data.SongSort
 
 fun songSortLabel(sort: SongSort): String = when (sort) {

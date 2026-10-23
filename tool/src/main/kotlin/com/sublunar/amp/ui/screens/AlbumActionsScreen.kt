@@ -18,13 +18,13 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.launch
 
-/** Long-press actions for an album row: play/queue the whole album, jump to artist. */
+/** Long-press actions for an album: play or queue it whole, like, rate, download, go to the artist. */
 class AlbumActionsScreen(
     sealed: SealedLightActivity,
     private val albumId: String,
 ) : SimpleLightScreen<Unit>(sealed) {
 
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 

@@ -4,9 +4,10 @@ import android.view.KeyEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import com.sublunar.amp.App
-import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.ActionList
+import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
@@ -14,19 +15,16 @@ import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.launch
 
 /**
- * The player's "+" sheet: the ways of keeping the track that's playing.
- *
- * Separate from the ••• menu rather than folded into it — that one is about the
- * track (lyrics, artist, album, artwork), while these are the ways of keeping it:
- * liked, in a playlist, rated, or on the device — and, for a queue worth
- * keeping whole, the queue itself as a playlist.
+ * The player's "+" sheet: the ways of keeping the track that's playing (liked, in a
+ * playlist, rated, on the device) and of keeping the queue as a playlist. The •••
+ * menu is about the track itself.
  */
 class AddActionsScreen(
     sealed: SealedLightActivity,
     private val trackId: String,
 ) : SimpleLightScreen<Unit>(sealed) {
 
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
@@ -34,11 +32,13 @@ class AddActionsScreen(
     override fun Content() {
         val source by App.source.collectAsState()
         val tracks by App.library.tracks.collectAsState()
-        // Follows the player: opened from it, it should describe what is playing
-        // rather than what was playing when the button was pressed.
+        // Follows the player: it describes what is playing now, not what was
+        // playing when the button was pressed.
         val playing by App.playback.currentTrack.collectAsState()
         val id = playing?.id ?: trackId
-        val track = tracks.firstOrNull { it.id == id } ?: playing?.takeIf { it.id == id }
+        val track = remember(tracks, playing, id) {
+            tracks.firstOrNull { it.id == id } ?: playing?.takeIf { it.id == id }
+        }
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val downloaded = id in downloadedIds
         val queue by App.playback.queue.collectAsState()
@@ -69,11 +69,9 @@ class AddActionsScreen(
                         )
                     }
                 }
-                // The whole queue, kept. This is how a song radio becomes
-                // something you can come back to — or download — instead of
-                // the app guessing which radios to cache: you hear it, you
-                // decide. The name is offered where the queue has one ("Judith
-                // Radio") and left to you where it is just some songs.
+                // How a song radio becomes something to come back to (or download):
+                // you hear it, you decide. The queue's name ("Judith Radio") is
+                // offered where it has one.
                 if (source.supportsPlaylists && queue.isNotEmpty()) {
                     TextRow(title = "Save Queue as Playlist") {
                         val ids = queue.map { it.id }
@@ -94,11 +92,10 @@ class AddActionsScreen(
                         )
                     }
                 }
-                // Last, and below the rest: keeping a copy is a different kind of
-                // "add" from the three above it, and the destructive half of it
+                // Last: a different kind of keeping, and its destructive half
                 // shouldn't sit where a tap aimed at Like might land.
                 if (!source.supportsDownloads) {
-                    // Nothing to keep a copy of: the file is already on the phone.
+                    // The file is already on the phone.
                 } else if (downloaded) {
                     TextRow(title = "Remove from Downloads") {
                         App.scope.launch { App.downloader.remove(track.id) }

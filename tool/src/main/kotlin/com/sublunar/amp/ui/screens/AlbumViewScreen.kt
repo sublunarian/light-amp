@@ -17,12 +17,8 @@ import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.launch
 
 /**
- * How an album list is laid out: a column of titles, or a wall of covers.
- *
- * Reached from the album list's own title rather than from Settings — it
- * belongs to the list you are looking at, and the header had no room for a
- * fourth button. Only offered while artwork is on, since the grid is nothing
- * but artwork.
+ * How an album list is laid out: a column of titles, or a wall of covers. Opened
+ * from More, and only while artwork is on, since the grid is nothing but artwork.
  */
 class AlbumViewScreen(
     sealed: SealedLightActivity,
@@ -30,7 +26,7 @@ class AlbumViewScreen(
     private val forArtist: Boolean = false,
 ) : SimpleLightScreen<Unit>(sealed) {
 
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
@@ -39,8 +35,7 @@ class AlbumViewScreen(
         val setting = if (forArtist) App.settings.artistAlbumGrid else App.settings.albumGrid
         val grid by setting.collectAsState(initial = false)
 
-        // Named, because the two pickers are otherwise identical and setting one
-        // no longer changes the other.
+        // Named, because the two pickers look identical and are separate settings.
         ListScreen(
             onBack = { goBack() },
             title = "View",
@@ -66,7 +61,7 @@ class AlbumViewScreen(
         App.scope.launch {
             if (forArtist) App.settings.setArtistAlbumGrid(grid) else App.settings.setAlbumGrid(grid)
         }
-        // Reported, so the More that pushed this closes with it — see MoreScreen.
+        // Reported, so the More that pushed this closes with it (see MoreScreen).
         goBack(Unit)
     }
 }

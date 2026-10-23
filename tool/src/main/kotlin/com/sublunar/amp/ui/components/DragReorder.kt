@@ -30,6 +30,9 @@ import kotlin.math.roundToInt
 // Thicker than the Now Playing tab underline so it reads under a finger.
 private const val DROP_LINE_HEIGHT_PX = 9
 
+/** The drag handle at a reorderable row's end, a width the floating copy keeps too. */
+const val DRAG_HANDLE_PX = 51
+
 /**
  * Marks where a dragged row (or group) will land if dropped now. Rows lay it over
  * their own top edge rather than above themselves, so the list doesn't shift by
@@ -46,9 +49,9 @@ fun DropIndicatorLine(modifier: Modifier = Modifier) {
 }
 
 /**
- * Shared engine behind both the Now Playing queue and playlist drag-to-reorder: tracks
- * which row(s) [K] are being dragged, their coordinates, and how far auto-scroll has
- * carried the list. One row can drag a whole group along with it (a multi-selection).
+ * The engine behind drag-to-reorder in the Now Playing queue and on playlists: which
+ * rows [K] are being dragged (one row can drag a whole multi-selection), their
+ * coordinates, and how far auto-scroll has carried the list.
  */
 class DragReorderState<K> {
     var draggingIndex by mutableStateOf<Int?>(null)
@@ -211,11 +214,10 @@ fun <K> Modifier.dragReorderContainer(
                             change.consume()
                         }
                         val target = dragRowTarget(orderedKeys.size, fromIndex, state.dragOffsetY, rowPx, minIndex)
-                        // A tap on the handle, or a drag that came back to the row it
-                        // started on, is not a reorder. Without this the block is still
-                        // gathered: for a non-contiguous selection dropInsertIndex has
-                        // no "leave it alone" answer, so the list would jump and a write
-                        // would go out for a gesture that moved nothing.
+                        // A tap on the handle, or a drag back to its starting row, is not a
+                        // reorder: for a non-contiguous selection dropInsertIndex has no
+                        // "leave it alone" answer, so the block would be gathered and a
+                        // write sent for a gesture that moved nothing.
                         if (target != fromIndex) {
                             val insertAt = dropInsertIndex(orderedKeys.size, fromIndex, movingIndices, target)
                             onDrop(movingIndices, insertAt)

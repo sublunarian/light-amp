@@ -6,12 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 
-/**
- * Multi-select over a track list.
- *
- * Ids rather than rows, so a refresh of the underlying list can't strand a stale
- * copy of a track.
- */
+/** Multi-select over a track list, by id, so a refreshed list can't strand a stale copy of a track. */
 class SelectionState {
 
     var active by mutableStateOf(false)
@@ -43,23 +38,17 @@ class SelectionState {
 }
 
 /**
- * Selection state that outlives the screen's composition.
- *
- * Selection mode is entered from the long-press sheet, which is a screen of its
- * own — and the SDK composes only the top of the back stack, so the list's
- * composition is torn down while that sheet is up. A `remember` would come back
- * empty, losing the very selection the sheet just started. Keeping the state here
- * makes the round trip invisible.
- *
- * Keyed by [owner] ("songs", "playlist:42") so two lists never share one, and
- * dropped when the selection ends so nothing accumulates.
+ * Selection state that outlives the list's composition. Selection mode starts from
+ * the long-press sheet, a screen of its own, and the SDK composes only the top of
+ * the back stack, so a `remember` would come back empty. Keyed by owner
+ * ("songs", "playlist:42") so two lists never share one.
  */
 object Selections {
     private val states = mutableMapOf<String, SelectionState>()
 
     fun of(owner: String): SelectionState = states.getOrPut(owner) { SelectionState() }
 
-    /** Leaving the library for good — no list should come back mid-selection. */
+    /** Leaving the library for good: no list should come back mid-selection. */
     fun clearAll() {
         states.values.forEach { it.clear() }
         states.clear()
@@ -71,13 +60,9 @@ fun rememberSelection(owner: String): SelectionState = remember(owner) { Selecti
 
 /**
  * The header a list wears while selecting: the count replaces the title, X leaves
- * the mode, and "+" takes the now-playing button's place — the two are never both
- * wanted at once, and that corner is the only spot with a full 160px hit target.
- *
- * [onDelete], where the list can be deleted from, lands in the search button's
- * slot: same 80px square, same 120px to the left of "+", so the pair sits exactly
- * where the header's two right-hand controls always sit. Destructive, so it is
- * its own button rather than a line buried in the "+" sheet.
+ * the mode, and "+" takes the now-playing corner. [onDelete], where the list can be
+ * deleted from, takes the search button's slot: destructive, so it is its own
+ * button rather than a line in the "+" sheet.
  */
 @Composable
 fun SelectionHeader(

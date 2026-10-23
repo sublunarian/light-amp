@@ -11,28 +11,26 @@ import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.WriteResult
 import com.sublunar.amp.ui.components.ListScreen
-import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.ScrollableList
+import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** "★★★☆☆" for a rating, so the choice reads at a glance. */
 fun ratingStars(stars: Int): String =
     "★".repeat(stars.coerceIn(0, 5)) + "☆".repeat((5 - stars).coerceIn(0, 5))
 
 /**
- * Pick a 1–5 star rating, or clear it.
- *
- * The rating shows at once and goes to the server after, queued if the server
- * can't be reached, as a like is. The page waits for the answer only to say a
- * refusal: the rating has gone back to what it was, and the page stays open
- * with the reason so another can be picked.
+ * Pick a 1–5 star rating, or clear it. The rating shows at once and goes to the
+ * server after (queued when it can't be reached, as a like is). The page waits only
+ * to report a refusal: the rating is back to what it was, and the page stays open
+ * with the reason.
  */
 class RatingScreen(
     sealed: SealedLightActivity,
@@ -49,7 +47,7 @@ class RatingScreen(
         gone = true
     }
 
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
@@ -72,14 +70,11 @@ class RatingScreen(
                             status = "Saving…"
                             App.scope.launch {
                                 val result = App.library.setRating(id, stars, isAlbum, previous = current)
-                                // Back on Main, and only while this page is still
-                                // the one showing. App.scope is Default, and
-                                // goBack pops whatever is on top: after a slow
-                                // save that the user walked away from, it would
-                                // pop the root and run the app's teardown off the
-                                // main thread, where releasing the player throws.
-                                // A refusal they walked away from is still said,
-                                // wherever they are now.
+                                // Back on Main, and only while this page still shows:
+                                // App.scope is Default, and goBack pops whatever is on
+                                // top, so after a slow save it could pop the root and
+                                // tear down off Main, where releasing the player
+                                // throws. A refusal is still told wherever they are.
                                 withContext(Dispatchers.Main.immediate) {
                                     val refused = result as? WriteResult.Refused
                                     if (gone) {

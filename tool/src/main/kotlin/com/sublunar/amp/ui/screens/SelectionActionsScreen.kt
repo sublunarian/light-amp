@@ -13,22 +13,20 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 
 /**
- * What to do with a multi-selection.
- *
- * Returns true when the caller should leave selection mode — i.e. the action was
- * carried out — and false when the user backed out, so a mis-tap doesn't discard
- * a selection that took a while to build.
+ * What to do with a multi-selection. Returns true when an action was carried out
+ * and the caller should leave selection mode, false when the user backed out, so a
+ * mis-tap doesn't discard a selection that took a while to build.
  */
 class SelectionActionsScreen(
     sealed: SealedLightActivity,
     private val tracks: List<Track>,
     /** Cleared from the queue, where they are all queued already. */
     private val showAddToQueue: Boolean = true,
-    /** Cleared from the queue and the player: storage is a library job. */
+    /** Cleared from the queue: storage is a library job. */
     private val showDownload: Boolean = true,
 ) : SimpleLightScreen<Boolean>(sealed) {
 
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
@@ -41,14 +39,14 @@ class SelectionActionsScreen(
         ListScreen(onBack = { goBack(false) }, title = "$count $noun") {
             ActionList {
                 if (source.supportsPlaylists) {
-                TextRow(title = "Add to Playlist") {
-                    // Unwind only once the picker reports back: calling goBack()
-                    // straight after the push would pop the picker instead.
-                    navigateTo<Unit>(
-                        { AddToPlaylistScreen(it, tracks.map { t -> t.id }) },
-                        resultCallback = { goBack(true) },
-                    )
-                }
+                    TextRow(title = "Add to Playlist") {
+                        // Unwind only once the picker reports back: goBack() straight
+                        // after the push would pop the picker instead.
+                        navigateTo<Unit>(
+                            { AddToPlaylistScreen(it, tracks.map { t -> t.id }) },
+                            resultCallback = { goBack(true) },
+                        )
+                    }
                 }
                 TextRow(title = "Play Next") {
                     App.playback.playNext(tracks)

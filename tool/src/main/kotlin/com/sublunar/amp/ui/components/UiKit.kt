@@ -4,17 +4,12 @@ package com.sublunar.amp.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
-import com.thelightphone.sdk.ui.LightThemeTokens
-import kotlinx.coroutines.withTimeoutOrNull
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,9 +17,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.runtime.collectAsState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,22 +28,24 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
+import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
+import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.lightClickable
-import com.sublunar.amp.art.ArtworkNeed
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 
-// --- Artwork ----------------------------------------------------------------
-
-/** Waits between tries for the cover in front of the user — see [rememberArtwork]. */
+/** Waits between tries for the cover in front of the user, see [rememberArtwork]. */
 private val FOCUSED_RETRY_MS = longArrayOf(3_000L, 8_000L, 20_000L)
 
 @Composable
@@ -56,25 +54,18 @@ fun rememberArtwork(
     sizePx: Int,
     need: ArtworkNeed = ArtworkNeed.BROWSING,
 ): ImageBitmap? {
-    // Gated here rather than at each drawing site: this is the only way into the
-    // artwork cache, so switching covers off also stops fetching and decoding
-    // them, which is most of what they cost.
+    // Gated here, the only way into the artwork cache, so hiding covers also stops
+    // fetching and decoding them.
     val hidden by App.hideArtwork.collectAsState()
-    // Seeded from the memory cache so a cover that has already been decoded is
-    // there on the first frame rather than after one — see ArtworkLoader.peek.
+    // Seeded from the memory cache so a decoded cover is there on the first frame.
     val cached = if (hidden) null else App.artwork.peek(coverArtId, sizePx)
-    // Re-created for each cover rather than held across the change, which is
-    // what left the previous track's sleeve on screen when you skipped: with
-    // produceState, `initialValue` applies only to the first composition and the
-    // held value survives a key change until the producer assigns a new one — so
-    // a cover already in the memory cache, which returns early rather than
-    // loading, never assigned anything and the old bitmap simply stayed.
+    // State keyed on the cover, not held across the change: produceState kept its
+    // value across a key change until the producer assigned one, so a cover served
+    // from the memory cache left the previous track's sleeve on screen.
     var image by remember(coverArtId, sizePx, hidden) { mutableStateOf(cached) }
-    // Whether this cover may be fetched right now is part of the question, so
-    // it is part of the key: an empty answer used to be final until the cover
-    // itself changed, which left the playing sleeve blank for the whole song
-    // after one missed fetch, and a list of placeholders blank after Wi-Fi had
-    // arrived. Read unconditionally — see ARCHITECTURE.md on conditional reads.
+    // Whether the cover may be fetched now is part of the effect's key, so a cover
+    // refused once is asked for again when the rules allow it. Read unconditionally
+    // (ARCHITECTURE.md on conditional reads).
     val rules by App.rules.collectAsState()
     val allowed = when (need) {
         ArtworkNeed.FOCUSED -> rules.mayFetchFocusedArt
@@ -85,9 +76,8 @@ fun rememberArtwork(
         if (hidden || coverArtId.isNullOrBlank()) return@LaunchedEffect
         image = App.artwork.load(coverArtId, sizePx, need)
         // The cover in front of the user is worth asking for again: on poor
-        // reception the first request loses to the song it belongs to. A few
-        // tries, further apart each time, and only while it may be fetched. A
-        // row in a list is not — there are hundreds, and the next scroll asks.
+        // reception the first request loses to its song. A list row isn't, the
+        // next scroll asks.
         if (need == ArtworkNeed.FOCUSED && allowed) {
             for (wait in FOCUSED_RETRY_MS) {
                 if (image != null) break
@@ -99,13 +89,9 @@ fun rememberArtwork(
     return image
 }
 
-// --- Clickable helpers ------------------------------------------------------
-
 /**
- * Haptics for presses: a light tick for taps, the heavier pattern for holds.
- *
- * The LP3 has no press animation — [lightClickable] deliberately draws no
- * indication — so touch feedback is the only confirmation a tap registered.
+ * Haptics for presses: a light tick for taps, the heavier pattern for holds. The LP3
+ * draws no press indication, so this is the only confirmation a tap registered.
  */
 @Composable
 fun rememberTapHaptics(): Pair<() -> Unit, () -> Unit> {
@@ -119,41 +105,29 @@ fun rememberTapHaptics(): Pair<() -> Unit, () -> Unit> {
 }
 
 /**
- * A long press that has to be held for longer than the platform default.
- *
- * Compose's ~500ms is short enough that scrolling a list with a lazy thumb
- * opens a context menu instead, and on the player it means resting a finger on
- * the cover throws you into the full-size page. Both are gestures that should
- * feel deliberate.
+ * A long press held for [LONG_PRESS_MS], longer than the platform's ~500ms, which
+ * let a lazy thumb scrolling a list open a context menu.
  */
 @Composable
-fun Modifier.slowLongPress(
-    onClick: () -> Unit,
-    onLongPress: (() -> Unit)? = null,
-    holdMs: Long = LONG_PRESS_MS,
-): Modifier {
+fun Modifier.slowLongPress(onClick: () -> Unit, onLongPress: () -> Unit): Modifier {
     val (tick, thud) = rememberTapHaptics()
-    if (onLongPress == null) return this.rowClickable(onClick = onClick)
-    // Held rather than keyed on, so the gesture isn't torn down and restarted
-    // every time a row recomposes — which, now that every list row comes
-    // through here, would happen mid-press often enough to matter.
+    // Read through state rather than keyed on, so a recomposing row doesn't
+    // restart the gesture mid-press.
     val click by rememberUpdatedState(onClick)
     val long by rememberUpdatedState(onLongPress)
-    return this.pointerInput(holdMs) {
+    return this.pointerInput(Unit) {
         awaitEachGesture {
             awaitFirstDown()
             val startedAt = System.currentTimeMillis()
-            val up = withTimeoutOrNull(holdMs) { waitForUpOrCancellation() }
+            val up = withTimeoutOrNull(LONG_PRESS_MS) { waitForUpOrCancellation() }
             when {
                 up != null -> {
                     tick()
                     click()
                 }
-                // Null means either the hold outlasted the deadline or the press
-                // was taken away — a scroll claiming the pointer, most often —
-                // and only the clock tells those apart. Reading both as a long
-                // press is what let a flick down a list open a context menu.
-                System.currentTimeMillis() - startedAt >= holdMs -> {
+                // Null means the hold outlasted the deadline or a scroll took the
+                // pointer away. Only the clock tells them apart.
+                System.currentTimeMillis() - startedAt >= LONG_PRESS_MS -> {
                     thud()
                     long()
                     // Swallow the release so it doesn't also read as a tap.
@@ -168,14 +142,11 @@ fun Modifier.slowLongPress(
 const val LONG_PRESS_MS = 900L
 
 /**
- * A row that responds to a tap, and optionally to a long press.
- *
- * Any row that wants a long press goes through [slowLongPress] for it, so every
- * long press in the app is the same length. `combinedClickable` can't be told
- * one: it reads the timeout from the ambient ViewConfiguration, which is
- * Android's own ~400ms, and the composition local that would override it is a
- * blocked import in the SDK sandbox. So rows with a menu behind them held for
- * half as long as the artwork did, which is a gesture meaning two things.
+ * A row that responds to a tap, and optionally to a long press through
+ * [slowLongPress], so every long press in the app is the same length.
+ * `combinedClickable` can't be given a timeout: it reads Android's ~400ms from the
+ * ambient ViewConfiguration, and the local that overrides it is blocked in the SDK
+ * sandbox.
  */
 @Composable
 fun Modifier.rowClickable(
@@ -194,73 +165,45 @@ fun Modifier.rowClickable(
     )
 }
 
-/**
- * Icon/button counterpart to [rowClickable]: the SDK's clickable plus a haptic
- * tick. Used everywhere instead of calling `lightClickable` directly, so every
- * press in the app feels the same.
- */
+/** Icon and button counterpart to [rowClickable]: the SDK's clickable plus a haptic tick. */
 @Composable
-fun Modifier.appClickable(
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-): Modifier {
+fun Modifier.appClickable(onClick: () -> Unit): Modifier {
     val (tick, _) = rememberTapHaptics()
-    return this.lightClickable(enabled = enabled) {
+    return this.lightClickable {
         tick()
         onClick()
     }
 }
 
-// --- Rows -------------------------------------------------------------------
-
 /**
- * A menu row, drawn the way the phone's own menus are.
- *
- * Measured off LightOS's stock tools — the Phone list, Calendar's settings, the
- * SDK-built Weather's: one line for a row that does something, and for a row
- * that names a setting, the name small above its current value large, the
- * value being the information. The stock menus set the line in Heading; tried,
- * and it shouted on a page of rows, so it sits one step down Light's scale at
- * Copy — the size the phone's own lists title in. Text starts [MENU_INSET_PX] in, the two units
- * Light's text-only lists use; the lists with a mark and a cover keep the 72px
- * axis Light's own Music list has ([ROW_LEAD_PX]).
+ * A menu row, drawn the way the phone's own menus are: one line for a row that does
+ * something, and for a setting its name small above its value large. The line is
+ * Copy, one step below the stock menus' Heading, which shouted on a page of rows.
  */
 @Composable
 fun TextRow(
     title: String,
     modifier: Modifier = Modifier,
-    /**
-     * The setting's current value, drawn large under the title — which becomes
-     * its label. For a row that names a setting rather than doing something.
-     */
+    /** A setting's current value, drawn large under the title, which becomes its label. */
     value: String? = null,
     /**
-     * A line under the title saying what the row does, or how it stands.
-     *
-     * One line by default: most are a name or a count, and letting those wrap
-     * would make a list of rows ragged to no purpose. Raised where it is a
-     * sentence explaining what the row does, which is a different job.
+     * A line under the title saying what the row does or how it stands. One line
+     * unless [subtitleLines] says otherwise, so a list of names doesn't go ragged.
      */
     subtitle: String? = null,
     subtitleLines: Int = 1,
-    onLongClick: (() -> Unit)? = null,
-    /** Sits before the text, for a row that needs saying what it opens. */
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     /**
-     * Null for a row that states something rather than opening it — a setting
-     * with only one possible value, which More still shows so the page's
-     * modifiers all read alike. It doesn't take a press, and its main line is
-     * dimmed to say so before the press is tried.
+     * Null for a row that states something rather than opening it (a setting with
+     * only one possible value): it takes no press and its main line is dimmed.
      */
     onClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .let {
-                if (onClick == null) it else it.slowLongPress(onClick, onLongPress = onLongClick)
-            }
+            .let { if (onClick == null) it else it.rowClickable(onClick) }
             .padding(horizontal = px(MENU_INSET_PX), vertical = px(MENU_PAD_PX)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -281,7 +224,7 @@ fun TextRow(
     }
 }
 
-/** A menu row's main line: Light's Copy — Heading read too big, see [TextRow]. */
+/** A menu row's main line, in Light's Copy (see [TextRow]). */
 @Composable
 private fun MenuLine(text: String, dim: Boolean) {
     AppText(
@@ -307,11 +250,7 @@ private fun MenuLabel(text: String, maxLines: Int = 1) {
     )
 }
 
-/**
- * Where a menu row's text starts: two grid units, as on the phone's own
- * text-only lists (the Phone tool, every stock Settings page). The same 80px
- * the corner glyphs and the bar glyphs sit on.
- */
+/** Where a menu row's text starts: two grid units, as on the phone's own text-only lists. */
 const val MENU_INSET_PX = 80
 
 /** Above and below a row's text: with Copy's line, a 136px pitch. */
@@ -321,9 +260,8 @@ private const val MENU_PAD_PX = 32
 private const val MENU_GAP_PX = 40
 
 /**
- * One of Light's centred verbs: a word in capitals, on its own line, that does
- * its thing when tapped. The first-run source list, and the Copy / Paste /
- * Clear a held field offers.
+ * One of Light's centred verbs: a word in capitals on its own line, as on the
+ * first-run source list and the Clear a held field offers.
  */
 @Composable
 fun ChoiceButton(label: String, onClick: () -> Unit) {
@@ -334,9 +272,8 @@ fun ChoiceButton(label: String, onClick: () -> Unit) {
             .padding(vertical = px(40)),
         contentAlignment = Alignment.Center,
     ) {
-        // Light's Button tracking at its Button size — but at the Regular
-        // weight: the style asks for Medium, which the phone lacks, and
-        // AppText would round it up to Bold, which shouts.
+        // Light's Button tracking, but Regular: the style asks for Medium, which
+        // the phone lacks, and AppText would round it up to Bold.
         AppText(
             label,
             pxSp(LightType.COPY_PX),
@@ -346,9 +283,17 @@ fun ChoiceButton(label: String, onClick: () -> Unit) {
     }
 }
 
+/** A short dim line in the middle of a page with nothing else to show yet ("Loading…"). */
 @Composable
-fun EmptyState(text: String, modifier: Modifier = Modifier) {
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+fun CenteredNote(text: String) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        AppText(text, pxSp(LightType.DETAIL_PX), dim = true)
+    }
+}
+
+@Composable
+fun EmptyState(text: String) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         AppText(
             text,
             pxSp(LightType.COPY_PX),
@@ -378,15 +323,12 @@ fun SectionLabel(text: String) {
 private const val SECTION_TOP_PX = 40
 private const val SECTION_BOTTOM_PX = 12
 
-// --- Notices ----------------------------------------------------------------
-
-/** How long a notice stays: long enough to read, not just to register as a flicker. */
+/** How long a notice stays: long enough to read. */
 const val NOTICE_MS = 2500L
 
 /**
- * A word or two dead centre and above everything else — "Couldn't save", and
- * on a second line why. Inset from the screen's edges so a long reason wraps
- * rather than running off them.
+ * A word or two dead centre, above everything else: "Couldn't save", and on a
+ * second line why. Inset so a long reason wraps instead of running off the screen.
  */
 @Composable
 fun BoxScope.NoticePill(text: String) {
@@ -398,8 +340,7 @@ fun BoxScope.NoticePill(text: String) {
             .align(Alignment.Center)
             .padding(horizontal = px(LIST_EDGE_PX))
             .clip(RoundedCornerShape(px(24)))
-            // The page's own background/content pair, so it follows the phone's
-            // theme and its invertColors setting.
+            // The page's own background, so it follows the theme and Invert Colours.
             .background(LightThemeTokens.colors.background)
             .padding(horizontal = px(44), vertical = px(28)),
     )

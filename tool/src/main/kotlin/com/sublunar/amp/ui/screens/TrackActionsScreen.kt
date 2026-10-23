@@ -5,12 +5,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.primaryAlbumArtist
-import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.ActionList
+import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
@@ -20,68 +21,49 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Long-press actions for a track, from a list, the queue or the player. */
 class TrackActionsScreen(
     sealed: SealedLightActivity,
     private val trackId: String,
+    /** Set from the queue: adds "Remove from Queue". */
     private val queueIndex: Int? = null,
     /**
-     * Set when opened from the player: the sheet then describes whatever is
-     * playing *now*, not the track that was playing when it was opened. A song
-     * ending while the menu is up would otherwise leave every row — like, rating,
-     * artwork — acting on the previous one.
+     * Set from the player: the sheet follows whatever is playing now, so a song
+     * ending while it is up doesn't leave every row acting on the previous one.
      */
     private val followCurrent: Boolean = false,
-    // When set (opened from Now Playing), the lyrics row toggles the in-place
-    // overlay on that screen instead of pushing a standalone lyrics screen.
+    /** Set from the player: the lyrics row toggles the player's own overlay. */
     private val onToggleLyrics: (() -> Unit)? = null,
     private val lyricsShowing: Boolean = false,
-    /**
-     * Cleared by the player and the queue, where liking has its own control on
-     * screen and a menu row for it would just be a second way to say the same.
-     */
+    /** Cleared by the player, where liking has its own control on screen. */
     private val showLike: Boolean = true,
-    /**
-     * Cleared by the player and the queue: what is playing is already downloaded
-     * or already streaming, and managing storage is a library job.
-     */
+    /** Cleared by the player and the queue: managing storage is a library job. */
     private val showDownload: Boolean = true,
-    /**
-     * Cleared by the player, where rating and playlists live behind its "+"
-     * button — the same action in two menus on one screen is one too many.
-     */
+    /** Cleared by the player, where rating and playlists live behind its "+" button. */
     private val showRating: Boolean = true,
-    /** Cleared by the player for the same reason as [showRating]. */
+    /** Cleared by the player, as [showRating]. */
     private val showAddToPlaylist: Boolean = true,
-    /** Set by the player; a cover at full width is only about what's playing. */
+    /** Set by the player: a cover at full width is only about what's playing. */
     private val onShowArtwork: (() -> Unit)? = null,
     /**
-     * True when the cover is already filling the screen, which makes that row a
-     * way back out of it.
-     *
-     * Only Controls on Cover can be in that state while this sheet is up — it
-     * stays on the player rather than opening a page of its own, so the menu is
-     * still reachable and has to say which way it goes. The other two layouts
-     * are a separate screen with the menu behind them, and can only ever be
-     * opened from here.
+     * The cover already fills the screen (Controls on Cover, which keeps this sheet
+     * reachable), so the artwork row is the way back out of it.
      */
     private val artworkShowing: Boolean = false,
-    /** Set by lists that support multi-select; starts selection on this track. */
+    /** Set by lists that support multi-select: starts selection on this track. */
     private val onSelect: (() -> Unit)? = null,
-    // When set (opened from a playlist detail), adds a "Remove from Playlist" row.
+    /** Set from a playlist's page: adds "Remove from Playlist". */
     private val onRemoveFromPlaylist: (() -> Unit)? = null,
-    /** The song as the page that opened this holds it: a playlist can list one the chosen library doesn't. */
+    /** The song as the opening page holds it: a playlist can list one the chosen library doesn't. */
     private val known: Track? = null,
 ) : SimpleLightScreen<Unit>(sealed) {
 
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
-    /*
-     * What the radio row is up to, said above the menu. Held on the screen
-     * rather than remembered in the composition, like ServerScreen's status:
-     * the request outlives a recomposition and its answer has to land.
-     */
+    // What the radio row is up to, said above the menu. Held on the screen, not in
+    // the composition: the request outlives a recomposition and its answer must land.
     private var status by mutableStateOf<String?>(null)
     private var tuning by mutableStateOf(false)
 
@@ -99,12 +81,14 @@ class TrackActionsScreen(
         val cached by App.library.cachedTracks.collectAsState()
         val playing by App.playback.currentTrack.collectAsState()
         val id = if (followCurrent) playing?.id ?: trackId else trackId
-        // The library row is preferred over the queue's copy: liked and rating
-        // are edited here and the cached row is the one that gets updated.
-        val track = tracks.firstOrNull { it.id == id }
-            ?: cached.firstOrNull { it.id == id }
-            ?: playing?.takeIf { it.id == id }
-            ?: known?.takeIf { it.id == id }
+        // The library row before the queue's copy: liked and rating are edited
+        // here, and the library row is the one that gets updated.
+        val track = remember(tracks, cached, playing, id) {
+            tracks.firstOrNull { it.id == id }
+                ?: cached.firstOrNull { it.id == id }
+                ?: playing?.takeIf { it.id == id }
+                ?: known?.takeIf { it.id == id }
+        }
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val downloaded = id in downloadedIds
         val queue by App.playback.queue.collectAsState()
@@ -112,8 +96,7 @@ class TrackActionsScreen(
         val inQueue = queueIndexOf >= 0
         // Already the next thing that will play: the row would do nothing.
         val playsNext = queueIndexOf == App.playback.index.collectAsState().value + 1
-        // For the song already playing, liking is on the transport's heart and
-        // queueing it again says nothing — so those rows are dropped.
+        // Queueing the song already playing says nothing, so those rows go.
         val isCurrent = playing?.id == id
 
         ListScreen(onBack = { goBack() }, title = track?.title ?: "Track", subtitle = track?.artist) {
@@ -123,9 +106,8 @@ class TrackActionsScreen(
             }
             ActionList {
                 status?.let { SectionLabel(it) }
-                // First: it is the way into multi-select, so it is the row that
-                // changes what the rest of the app is doing rather than acting
-                // on this one track.
+                // First: it changes what the list is doing rather than acting on
+                // this one track.
                 if (onSelect != null) {
                     TextRow(title = "Select") {
                         onSelect.invoke()
@@ -151,8 +133,7 @@ class TrackActionsScreen(
                             goBack()
                         }
                     }
-                    // Nothing to add when it's already there — the row would
-                    // only ever produce a second copy of the same track.
+                    // Already queued: the row would only add a second copy.
                     if (!inQueue) {
                         TextRow(title = "Add to Queue") {
                             App.playback.addToQueue(listOf(track))
@@ -161,10 +142,9 @@ class TrackActionsScreen(
                     }
                 }
                 // A queue that starts on this song and carries on with what the
-                // server thinks follows. The sheet stays up while it asks: the
-                // wait is a server round trip, and the answer can be "nothing"
-                // — which is said here, rather than a shuffled library played
-                // in its place. See LibraryRepository.radioFrom.
+                // server thinks follows (LibraryRepository.radioFrom). The sheet
+                // stays up while it asks, so "nothing" is said here rather than
+                // something else played in its place.
                 if (source.supportsRadio) {
                     TextRow(title = "Start Song Radio") {
                         if (tuning) return@TextRow
@@ -172,22 +152,20 @@ class TrackActionsScreen(
                         status = "Finding songs…"
                         App.scope.launch {
                             val radio = App.library.radioFrom(track)
-                            // The player's looper is Main — see PlaybackController.
+                            // The player's looper is Main (see PlaybackController).
                             withContext(Dispatchers.Main) {
-                                // Left while it was asking: the radio is
-                                // dropped. Going back or opening the player now
-                                // would act on whatever page is showing instead
-                                // — the library's root, which would close Amp.
+                                // Left while it was asking: the radio is dropped.
+                                // Going back now would act on whatever page shows,
+                                // and on the library's root that closes Amp.
                                 if (gone) return@withContext
                                 tuning = false
                                 if (radio.isEmpty()) {
                                     status = "No radio for this song"
                                 } else if (isCurrent) {
                                     // Seeded by the song already playing: it
-                                    // carries on, and the radio takes the place
-                                    // of whatever was queued after it — not a
-                                    // restart from the top. The radio's first
-                                    // entry is the seed itself, so it is skipped.
+                                    // carries on and the radio replaces what was
+                                    // queued after it. The radio's first entry is
+                                    // the seed itself, so it is skipped.
                                     status = null
                                     App.playback.replaceUpcoming(radio.drop(1), name = "${track.title} Radio")
                                     goBack()
@@ -202,8 +180,7 @@ class TrackActionsScreen(
                 }
                 if (showAddToPlaylist && source.supportsPlaylists) {
                     TextRow(title = "Add to Playlist") {
-                        // Dismiss this sheet too once a playlist is picked, so the
-                        // action doesn't leave its own menu sitting there.
+                        // Dismiss this sheet too once a playlist is picked.
                         navigateTo<Unit>(
                             { AddToPlaylistScreen(it, track.id) },
                             resultCallback = { goBack() },
@@ -223,10 +200,8 @@ class TrackActionsScreen(
                         }
                     }
                 }
-                // Lyrics and the full cover belong to the track you're listening
-                // to: both are things to look at *while* it plays, and only the
-                // player can put them where they make sense. Elsewhere they were
-                // a screen of words about a song that wasn't playing.
+                // Lyrics and the full cover are only offered by the player: they are
+                // things to look at while the track plays.
                 if (onToggleLyrics != null) {
                     TextRow(title = if (lyricsShowing) "Hide Lyrics" else "Show Lyrics") {
                         onToggleLyrics.invoke()
@@ -240,8 +215,7 @@ class TrackActionsScreen(
                         onShowArtwork.invoke()
                     }
                 }
-                // Beside the rating: both say what you think of the track, and
-                // reading "Like" next to "Rating" is how you tell them apart.
+                // Beside the rating: both say what you think of the track.
                 if (showLike && source.supportsLikes) {
                     TextRow(title = if (track.liked) "Unlike" else "Like") {
                         App.scope.launch { App.library.setTrackLiked(track, !track.liked) }
@@ -253,10 +227,9 @@ class TrackActionsScreen(
                         go { RatingScreen(it, track.id, track.title, track.rating, isAlbum = false) }
                     }
                 }
-                // This sheet is opened from anywhere — a list, the queue, the
-                // player — so neither destination has a parent on the stack:
-                // both name the walk that leads to them.
-                // One destination, so the record's first credit — see primaryAlbumArtist.
+                // Opened from anywhere, so neither destination has a parent on the
+                // stack: both name the walk that leads to them. One artist, the
+                // record's first credit (see primaryAlbumArtist).
                 val artist = track.primaryAlbumArtist()
                 if (track.albumId != null) {
                     TextRow(title = "Go to Album") {

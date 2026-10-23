@@ -2,8 +2,8 @@ package com.sublunar.amp.ui.screens
 
 import android.view.KeyEvent
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,14 +24,13 @@ class PlaylistActionsScreen(
     private val playlistId: String,
     private val playlistName: String,
     /**
-     * Opened from the playlist's own page rather than its row in a list.
-     * Delete then has to unwind past that page — going back one level would
-     * land on the page of a playlist that no longer exists.
+     * Opened from the playlist's own page, so Delete unwinds past it rather than
+     * landing on the page of a playlist that no longer exists.
      */
     private val fromDetail: Boolean = false,
 ) : SimpleLightScreen<Unit>(sealed) {
 
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
@@ -46,10 +45,8 @@ class PlaylistActionsScreen(
         val list = tracks ?: emptyList()
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val fullyDownloaded = list.isNotEmpty() && list.all { it.id in downloadedIds }
-        // Plex's smart playlists are real objects on the server, so Delete here
-        // would really delete one — and Plex builds their contents from a
-        // filter, so renaming is the only thing it would even accept. Neither
-        // is offered: see Playlist.readOnly.
+        // A Plex smart playlist is offered neither Delete (it would really delete
+        // it) nor Rename (see Playlist.readOnly).
         val readOnly = App.library.allPlaylists.collectAsState().value
             .firstOrNull { it.id == playlistId }?.readOnly == true
         val kind = if (readOnly) "Smart playlist" else "Playlist"

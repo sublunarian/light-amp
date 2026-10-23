@@ -13,16 +13,14 @@ import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.px
 
 /**
- * Screen chrome using the app's [AppHeader] (back + title, optional 2-line
- * subtitle and right action) followed by the body. Used by the utility screens
- * (search, settings, sort, actions) so they match the rest of the app.
+ * Screen chrome for the utility screens (settings, sort, action sheets): an
+ * [AppHeader] with back and title, then the body.
  */
 @Composable
 fun ListScreen(
     onBack: () -> Unit,
     title: String,
     subtitle: String? = null,
-    rightAction: HeaderAction? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     PlayerTheme {
@@ -30,14 +28,13 @@ fun ListScreen(
             AppHeader(
                 onBack = onBack,
                 title = if (subtitle == null) title else null,
-                // The same two-line card the player wears, so opening a sheet
-                // from it doesn't restate the track at a slightly different size.
+                // With a subtitle, the player's own two-line card, so a sheet
+                // opened from it doesn't restate the track at a different size.
                 titleContent = if (subtitle != null) {
                     { TitleCard(title, subtitle) }
                 } else {
                     null
                 },
-                rightAction = rightAction,
             )
             content()
         }
@@ -46,12 +43,8 @@ fun ListScreen(
 
 /**
  * The body of an action sheet: rows that scroll once there are more than fit.
- *
- * These menus are built from conditionals — a track that is in the queue, on a
- * server with playlists and ratings, and already downloaded shows several rows
- * more than one that isn't — so their height depends on the item. A plain
- * Column clips whatever falls past the bottom of the screen and gives no way to
- * reach it, which on the longest menus hides a real action.
+ * Sheets are built from conditionals, so the longest ones overflow the screen,
+ * and a plain Column would hide the rows past the bottom.
  */
 @Composable
 fun ActionList(content: @Composable ColumnScope.() -> Unit) {
@@ -64,8 +57,7 @@ fun ActionList(content: @Composable ColumnScope.() -> Unit) {
                 .padding(end = px(SCROLLBAR_LANE_PX)),
             content = content,
         )
-        // Same bar as the lists, so a sheet long enough to scroll says so the
-        // way everything else does — see rememberScrollTarget(ScrollState).
+        // The lists' scroll bar, via rememberScrollTarget(ScrollState).
         ListScrollBar(rememberScrollTarget(state))
     }
 }

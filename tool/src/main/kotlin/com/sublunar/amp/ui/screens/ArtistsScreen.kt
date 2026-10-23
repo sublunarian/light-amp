@@ -3,6 +3,7 @@ package com.sublunar.amp.ui.screens
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
@@ -17,39 +18,36 @@ import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
+import com.sublunar.amp.ui.LightType
+import com.sublunar.amp.ui.components.ActionList
+import com.sublunar.amp.ui.components.AlbumGrid
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
-import com.sublunar.amp.ui.components.EmptyState
-import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.AppText
-import com.sublunar.amp.ui.components.TrackRow
+import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.LibraryList
-import com.sublunar.amp.ui.components.AlbumGrid
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.ListScreen
-import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.PlayAllRow
+import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.SplitActionRow
+import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.rememberGridAnchor
 import com.sublunar.amp.ui.components.rememberSelection
-import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.launch
 
+/** An artist's page: their discography, with the ways into their songs on top. */
 class ArtistDetailScreen(
     sealed: SealedLightActivity,
     private val name: String,
 ) : SimpleLightScreen<Unit>(sealed) {
 
     /**
-     * The two ways into this artist's songs.
-     *
-     * All Songs holds its place whether or not the server has popular tracks to
-     * offer — the list is fetched, and a button that slides sideways when the
-     * answer arrives is worse than one that started where it belongs.
+     * The two ways into this artist's songs. All Songs holds its place whether or
+     * not Popular turns up once fetched (see [SplitActionRow]).
      */
     @Composable
     private fun SongShortcuts(hasPopular: Boolean) {
@@ -66,6 +64,7 @@ class ArtistDetailScreen(
             },
         )
     }
+
     @Composable
     override fun Content() {
         val tracks by App.library.tracks.collectAsState()
@@ -73,8 +72,7 @@ class ArtistDetailScreen(
         val artistAlbums = remember(tracks, albums, name) { App.library.albumsForArtist(name) }
         val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
 
-        // Only offer Popular Songs when the server actually returns some (it needs
-        // Last.fm configured on the Navidrome side).
+        // Popular only when the server returns some (Navidrome needs Last.fm set up).
         var hasPopular by remember(name) { mutableStateOf(false) }
         LaunchedEffect(name) {
             hasPopular = App.library.topSongsForArtist(name).isNotEmpty()
@@ -87,8 +85,6 @@ class ArtistDetailScreen(
                 onBack = { goBack() },
                 title = name,
                 fitTitle = true,
-                // List or grid is a row on More now, with the rest of what can
-                // be changed about how this page looks.
                 rightAction = libraryCornerAction(LibraryPage.ARTIST, name),
             )
             if (grid) {
@@ -96,12 +92,10 @@ class ArtistDetailScreen(
                     albums = artistAlbums,
                     onOpen = { album -> openAlbum(album.id, Parent.Here) },
                     onLongPress = { album -> go { AlbumActionsScreen(it, album.id) } },
-                    // One anchor per artist, and one header item — the song
-                    // shortcuts spanning the first row.
+                    // One anchor per artist, and one header item: the song shortcuts,
+                    // spanning the row so they read as a header over the records.
                     state = rememberGridAnchor("artist-albums:$name/grid", headerCount = 1),
                 ) {
-                    // Spans the row, so the two song shortcuts read as a header
-                    // over the records rather than as the first one.
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         SongShortcuts(hasPopular)
                     }
@@ -113,12 +107,9 @@ class ArtistDetailScreen(
                 headerCount = 1,
                 modifier = Modifier.fillMaxSize(),
             ) {
-                // Liking lives on the artist list's long-press, not here: this
-                // page is the discography, and a heart at the top of it was the
-                // one row that wasn't a way into the music.
+                // A discography: liking is on the artist's long-press, shuffling on
+                // the song lists.
                 item { SongShortcuts(hasPopular) }
-                // No Shuffle here: this page is a discography, and shuffling a
-                // whole artist belongs on the song lists (All / Popular) instead.
                 items(artistAlbums, key = { it.id }) { album ->
                     TrackRow(
                         title = album.title,
@@ -135,26 +126,22 @@ class ArtistDetailScreen(
     }
 }
 
-/**
- * Long-press sheet for an artist: the one place an artist is liked.
- *
- * A heart on the artist page competed with the discography for the top of the
- * screen while being the one row there that didn't lead to music; here it is
- * where every other list keeps its per-item actions.
- */
+/** Long-press sheet for an artist, and the one place an artist is liked. */
 class ArtistActionsScreen(
     sealed: SealedLightActivity,
     private val name: String,
 ) : SimpleLightScreen<Unit>(sealed) {
 
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
     @Composable
     override fun Content() {
         val artists by App.library.artists.collectAsState()
-        val liked = artists.firstOrNull { it.name == name }?.liked == true
+        val liked = remember(artists, name) {
+            artists.firstOrNull { it.name == name }?.liked == true
+        }
         val source by App.source.collectAsState()
         val tracks by App.library.tracks.collectAsState()
         val artistTracks = remember(tracks, name) { App.library.tracksForArtist(name) }
@@ -188,10 +175,9 @@ class ArtistActionsScreen(
     }
 }
 
-
 /**
- * An artist's top tracks in popularity order. Deliberately just the top songs —
- * shuffling here shouldn't drop the whole discography into the queue.
+ * An artist's top tracks in popularity order. Just those: shuffling here shouldn't
+ * drop the whole discography into the queue.
  */
 class ArtistTopSongsScreen(
     sealed: SealedLightActivity,
@@ -215,8 +201,19 @@ class ArtistTopSongsScreen(
                     onBack = { goBack() },
                     titleContent = {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            AppText("Popular Songs", pxSp(LightType.FINE_PX), lineHeight = pxSp(LightType.FINE_LINE_PX), maxLines = 1)
-                            AppText(name, pxSp(LightType.DETAIL_PX), lineHeight = pxSp(LightType.DETAIL_LINE_PX), dim = true, maxLines = 1)
+                            AppText(
+                                "Popular Songs",
+                                pxSp(LightType.FINE_PX),
+                                lineHeight = pxSp(LightType.FINE_LINE_PX),
+                                maxLines = 1,
+                            )
+                            AppText(
+                                name,
+                                pxSp(LightType.DETAIL_PX),
+                                lineHeight = pxSp(LightType.DETAIL_LINE_PX),
+                                dim = true,
+                                maxLines = 1,
+                            )
                         }
                     },
                     rightAction = libraryCornerAction(LibraryPage.ARTIST_POPULAR),
@@ -229,8 +226,6 @@ class ArtistTopSongsScreen(
                 else -> LibraryList(
                     anchor = "artist-top:$name",
                     headerCount = if (selection.active) 0 else 1,
-                    // No bar on this one before, and adding one is not this
-                    // change's business.
                     scrollBar = false,
                     modifier = Modifier.fillMaxSize(),
                 ) {
@@ -268,6 +263,7 @@ class ArtistTopSongsScreen(
     }
 }
 
+/** All of an artist's songs. */
 class ArtistSongsScreen(
     sealed: SealedLightActivity,
     private val name: String,
@@ -276,7 +272,6 @@ class ArtistSongsScreen(
     override fun Content() {
         val tracks by App.library.tracks.collectAsState()
         val songs = remember(tracks, name) { App.library.tracksForArtist(name) }
-        val current by App.playback.currentTrack.collectAsState()
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
 
         val selection = rememberSelection("artist-songs:$name")

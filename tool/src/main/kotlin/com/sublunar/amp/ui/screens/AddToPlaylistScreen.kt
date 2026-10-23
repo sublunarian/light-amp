@@ -21,28 +21,25 @@ import kotlinx.coroutines.launch
 
 class AddToPlaylistScreen(
     sealed: SealedLightActivity,
-    /** One or many — a multi-selection adds in list order. */
+    /** One or many: a multi-selection adds in list order. */
     private val trackIds: List<String>,
 ) : SimpleLightScreen<Unit>(sealed) {
 
     constructor(sealed: SealedLightActivity, trackId: String) : this(sealed, listOf(trackId))
 
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
     @Composable
     override fun Content() {
-        // Not the server's own: Plex refuses to add to a smart playlist, so
-        // offering it here would be a row that only ever fails.
+        // Not the read-only ones: Plex refuses to add to a smart playlist.
         val playlists = App.library.allPlaylists.collectAsState().value.filterNot { it.readOnly }
         LaunchedEffect(Unit) { App.library.refreshPlaylists() }
 
         ListScreen(onBack = { goBack() }, title = "Add to Playlist") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                // First, and shown even with no playlists yet: "these songs are a
-                // new playlist" is at least as common a reason to be here as
-                // filing them into an existing one.
+                // First, and shown even with no playlists yet.
                 item { PlayAllRow(AppIcons.Add, "New Playlist") { createAndAdd() } }
                 items(playlists, key = { it.id }) { playlist ->
                     TextRow(title = playlist.name) { addTo(playlist.id) }
@@ -57,11 +54,8 @@ class AddToPlaylistScreen(
             resultCallback = { name ->
                 if (name.isNullOrBlank()) return@navigateTo
                 App.scope.launch {
-                    // The songs are part of the create rather than a second pass:
-                    // a failed create then can't half-succeed, and Plex won't make
-                    // a playlist any other way.
-                    // Through the repository, so a local source writes an m3u8
-                    // and a server source posts to the server.
+                    // The songs are part of the create, not a second pass: a failed
+                    // create can't half-succeed, and Plex makes playlists no other way.
                     App.library.createPlaylist(name, trackIds)
                 }
                 goBack(Unit)
@@ -74,16 +68,14 @@ class AddToPlaylistScreen(
             addSequentially(playlistId)
             App.library.refreshPlaylists()
         }
-        // Unit rather than the default null: the result is how a caller tells
-        // "added" from "backed out".
+        // Unit rather than the default null tells a caller "added" from "backed out".
         goBack(Unit)
     }
 
     /**
-     * Sequential rather than concurrent: updatePlaylist appends, so parallel
-     * calls would race the order. And stopped at the first that fails: the
-     * ones after it would land out of order behind the gap, and why it failed
-     * has already been said.
+     * One at a time, since each call appends and parallel ones would race the order,
+     * and stopped at the first failure (already reported), since the rest would land
+     * out of order behind the gap.
      */
     private suspend fun addSequentially(playlistId: String) {
         for (id in trackIds) if (App.library.addToPlaylist(playlistId, id) != WriteResult.Saved) break

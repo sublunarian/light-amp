@@ -8,7 +8,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
-import com.sublunar.amp.ui.components.ScrollAnchors
 import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.ArtistSort
 import com.sublunar.amp.data.PlaylistSort
@@ -17,6 +16,7 @@ import com.sublunar.amp.data.descendingByNature
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ListScreen
+import com.sublunar.amp.ui.components.ScrollAnchors
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
@@ -34,45 +34,23 @@ private val PLAYLIST_SORT_OPTIONS =
     listOf(PlaylistSort.NAME, PlaylistSort.DATE_CREATED, PlaylistSort.RECENTLY_UPDATED)
 
 /**
- * The page a sort menu belongs to, named under the menu's own heading.
- *
- * The menu says what it is — "Sort by" — and the line under it says what is
- * being sorted, exactly as Filter and View do. It used to take the page's name
- * as its whole title, which read correctly back when the page's own title was
- * the way in. Reached from a More that is already named after the page, that
- * put the same name on two screens in a row and never once said what the menu
- * was for.
- *
- * Carries the narrowing with it, so sorting a filtered list says so.
+ * The page a sort menu belongs to, named under the menu's own "Sort by" heading as
+ * Filter and View do, with its narrowing, so sorting a filtered list says so.
  */
 @Composable
 private fun sortedPage(tab: LibraryTab): String = tabTitle(tab, likedOnly(tab))
 
 /**
- * All, or only the ones you kept.
- *
- * Liked is the only narrowing the app has. It used to be a heart in the sort
- * menu's corner, which said what it was set to only by being filled — and only
- * once you had opened a menu about something else. As a page of two rows it
- * says which one is in effect, and More says so without opening anything.
- */
-/**
- * Narrow a list to one genre, or to one composer.
- *
- * The values offered are the library's own — see LibraryRepository.genres — so
- * every one of them leads somewhere rather than to an empty page, which is what
- * the browsable tag lists this replaced could not promise. "All" comes first and
- * clears the narrowing.
- *
- * Genre and composer are separate settings and combine, so picking a composer
- * leaves a genre already chosen alone.
+ * Narrow a list to one genre, or to one composer. The values are the library's own
+ * (LibraryRepository.genres), so each leads somewhere. "All" clears the narrowing.
+ * Genre and composer are separate settings and combine.
  */
 class TagFilterScreen(
     sealed: SealedLightActivity,
     private val tab: LibraryTab,
     private val byComposer: Boolean,
 ) : SimpleLightScreen<Unit>(sealed) {
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
@@ -117,29 +95,17 @@ class TagFilterScreen(
                 else -> Unit
             }
         }
-        // A narrowed list is the point of the tap, so leave with the answer —
-        // as the sort pickers do. See MoreScreen.change.
+        // A narrowed list is the point of the tap, so leave with the answer, as
+        // the sort pickers do (see MoreScreen.change).
         goBack(Unit)
     }
 }
 
 /**
- * Shared body for every "Sort by" menu.
- *
- * Picking a different option applies it and closes; tapping the already-selected
- * option flips the sort direction — or deals a new shuffle when that option is
- * Random — and also closes, so either way one tap is the whole interaction. The
- * arrow beside the selected option shows which direction is in effect when the
- * menu is reopened; Random gets no arrow, because a shuffle has no direction.
- *
- * The label up top says what the second tap does. The gesture is invisible
- * otherwise — nothing about a selected row suggests it still answers a tap —
- * and it is the same idiom the connection form uses for its own hidden verb
- * ("Tap a field to change it").
- *
- * Closing lands wherever the menu was opened from — the list, for the title
- * tap, or More, which is a panel of modifiers you may well want to set two of
- * before going back to look at the result.
+ * Shared body for every "Sort by" menu. Picking a different option applies it and
+ * closes. Tapping the selected one flips the direction (or deals a new shuffle for
+ * Random) and closes too, and the label up top says so, since nothing else hints at
+ * it. The arrow shows the direction in effect, Random has none.
  */
 @Composable
 private fun <T> SortOptions(
@@ -151,7 +117,7 @@ private fun <T> SortOptions(
     onSelect: (T) -> Unit,
     onFlip: () -> Unit,
     onBack: () -> Unit,
-    /** The page being sorted, named under the heading — see [sortedPage]. */
+    /** The page being sorted, named under the heading (see [sortedPage]). */
     page: String?,
     /** The option that shuffles rather than orders, where the menu has one. */
     isRandom: (T) -> Boolean = { false },
@@ -191,7 +157,7 @@ private fun <T> SortOptions(
 class AlbumsSortScreen(
     sealed: SealedLightActivity,
 ) : SimpleLightScreen<Unit>(sealed) {
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
@@ -199,10 +165,9 @@ class AlbumsSortScreen(
     override fun Content() {
         val current by App.settings.albumSort.collectAsState(initial = AlbumSort.TITLE)
         val reversed by App.settings.albumSortReversed.collectAsState(initial = false)
-        // No Rating where nothing can be rated — the action menus already hide
-        // the star behind supportsRatings, and a sort by all-zeros orders
-        // nothing. Kept while it is the current sort, so a source switch can't
-        // leave the menu with no way to see or leave the order in effect.
+        // No Rating where nothing can be rated (all zeros order nothing), except
+        // while it is the current sort, so a source switch can't hide the order
+        // in effect.
         val supportsRatings = App.source.collectAsState().value.supportsRatings
         SortOptions(
             options = ALBUM_SORT_OPTIONS.filter {
@@ -218,45 +183,38 @@ class AlbumsSortScreen(
                     App.settings.setAlbumSort(option)
                     App.settings.setAlbumSortReversed(false)
                 }
-                // A new order makes the old position meaningless: the index you
-                // were at is a different record now, so the list would open
-                // part-way down at something you never chose. Sorting is a
-                // request to look at the shelf afresh.
-                ScrollAnchors.clear("tab:albums", "albums")
+                // A new order makes the old position meaningless: the list opens
+                // at the top.
+                ScrollAnchors.clear("tab:albums")
                 goBack(Unit)
             },
             onFlip = {
                 App.scope.launch {
                     if (current == AlbumSort.RANDOM) {
-                        // A shuffle has no direction to flip; the second tap
-                        // asks for a new deal. Reversed is cleared too, in case
-                        // an older install flipped Random when that was a thing.
+                        // A shuffle has no direction: the second tap deals again.
+                        // Reversed is cleared too, for a Random flipped before
+                        // it stopped taking a direction.
                         App.settings.bumpShuffleNonce()
                         App.settings.setAlbumSortReversed(false)
                     } else {
                         App.settings.setAlbumSortReversed(!reversed)
                     }
                 }
-                ScrollAnchors.clear("tab:albums", "albums")
+                ScrollAnchors.clear("tab:albums")
                 goBack(Unit)
             },
             onBack = { goBack() },
             page = sortedPage(LibraryTab.ALBUMS),
         )
     }
-
 }
 
-class SongsSortScreen(
-    sealed: SealedLightActivity,
-    /** Set when opened from a page that isn't the tab — see LibraryShell. */
-    private val pageTitle: String? = null,
-) : SimpleLightScreen<Unit>(sealed) {
+class SongsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val current by App.settings.songSort.collectAsState(initial = SongSort.TITLE)
         val reversed by App.settings.songSortReversed.collectAsState(initial = false)
-        // Same gate as the albums menu — see AlbumsSortScreen.
+        // Same gate as the albums menu (see AlbumsSortScreen).
         val supportsRatings = App.source.collectAsState().value.supportsRatings
         SortOptions(
             options = SONG_SORT_OPTIONS.filter {
@@ -271,10 +229,7 @@ class SongsSortScreen(
                     App.settings.setSongSort(option)
                     App.settings.setSongSortReversed(false)
                 }
-                // A new order makes the old position meaningless: the index you
-                // were at is a different record now, so the list would open
-                // part-way down at something you never chose. Sorting is a
-                // request to look at the shelf afresh.
+                // A new order makes the old position meaningless.
                 ScrollAnchors.clear("tab:songs")
                 goBack(Unit)
             },
@@ -284,16 +239,12 @@ class SongsSortScreen(
                 goBack(Unit)
             },
             onBack = { goBack() },
-            page = pageTitle ?: sortedPage(LibraryTab.SONGS),
+            page = sortedPage(LibraryTab.SONGS),
         )
     }
 }
 
-class ArtistsSortScreen(
-    sealed: SealedLightActivity,
-    /** Set when opened from a page that isn't the tab — see LibraryShell. */
-    private val pageTitle: String? = null,
-) : SimpleLightScreen<Unit>(sealed) {
+class ArtistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val current by App.settings.artistSort.collectAsState(initial = ArtistSort.NAME)
@@ -309,10 +260,7 @@ class ArtistsSortScreen(
                     App.settings.setArtistSort(option)
                     App.settings.setArtistSortReversed(false)
                 }
-                // A new order makes the old position meaningless: the index you
-                // were at is a different record now, so the list would open
-                // part-way down at something you never chose. Sorting is a
-                // request to look at the shelf afresh.
+                // A new order makes the old position meaningless.
                 ScrollAnchors.clear("tab:artists")
                 goBack(Unit)
             },
@@ -322,7 +270,7 @@ class ArtistsSortScreen(
                 goBack(Unit)
             },
             onBack = { goBack() },
-            page = pageTitle ?: sortedPage(LibraryTab.ARTISTS),
+            page = sortedPage(LibraryTab.ARTISTS),
         )
     }
 }
@@ -343,10 +291,7 @@ class PlaylistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>
                     App.settings.setPlaylistSort(option)
                     App.settings.setPlaylistSortReversed(false)
                 }
-                // A new order makes the old position meaningless: the index you
-                // were at is a different record now, so the list would open
-                // part-way down at something you never chose. Sorting is a
-                // request to look at the shelf afresh.
+                // A new order makes the old position meaningless.
                 ScrollAnchors.clear("tab:playlists")
                 goBack(Unit)
             },

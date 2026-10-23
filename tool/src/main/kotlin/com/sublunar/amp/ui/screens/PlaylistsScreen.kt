@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -18,25 +17,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import com.sublunar.amp.ui.components.LIST_EDGE_PX
-import com.sublunar.amp.ui.components.NOTICE_MS
-import com.sublunar.amp.ui.components.NoticePill
-import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
-import com.sublunar.amp.ui.components.rememberListAnchor
-import com.sublunar.amp.ui.components.rememberDragReorderState
-import com.sublunar.amp.ui.components.dragReorderContainer
-import com.sublunar.amp.ui.components.dragRowTarget
-import com.sublunar.amp.ui.components.dropInsertIndex
-import com.sublunar.amp.ui.components.placeBlock
-import com.sublunar.amp.ui.components.AutoScroll
-import com.sublunar.amp.ui.components.DropIndicatorLine
 import com.sublunar.amp.App
 import com.sublunar.amp.data.PlaylistView
 import com.sublunar.amp.data.Track
@@ -44,18 +30,29 @@ import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
-import com.sublunar.amp.ui.components.LibraryList
-import com.sublunar.amp.ui.components.AppText
+import com.sublunar.amp.ui.components.AutoScroll
+import com.sublunar.amp.ui.components.CenteredNote
+import com.sublunar.amp.ui.components.DRAG_HANDLE_PX
+import com.sublunar.amp.ui.components.DropIndicatorLine
 import com.sublunar.amp.ui.components.HeaderAction
+import com.sublunar.amp.ui.components.LIST_EDGE_PX
+import com.sublunar.amp.ui.components.LibraryList
+import com.sublunar.amp.ui.components.NOTICE_MS
+import com.sublunar.amp.ui.components.NoticePill
 import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.ROW_H_PX
-import com.sublunar.amp.ui.components.TrackRow
+import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.SelectionState
 import com.sublunar.amp.ui.components.Selections
+import com.sublunar.amp.ui.components.TrackRow
+import com.sublunar.amp.ui.components.dragReorderContainer
+import com.sublunar.amp.ui.components.dragRowTarget
+import com.sublunar.amp.ui.components.dropInsertIndex
+import com.sublunar.amp.ui.components.placeBlock
+import com.sublunar.amp.ui.components.rememberDragReorderState
+import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.components.rememberSelection
-import com.sublunar.amp.ui.pxSp
-import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
@@ -69,49 +66,42 @@ class PlaylistDetailScreen(
     private val playlistName: String,
 ) : SimpleLightScreen<Unit>(sealed) {
 
-    // Held on the screen instance so local edits (remove / reorder) survive the
-    // push/pop of the track-options sheet without a fresh server round-trip.
+    // Held on the screen instance (the SDK disposes the composition under a pushed
+    // sheet), so local edits survive the track-options sheet without a reload.
     private val entries = mutableStateOf<List<PlaylistEntry>?>(null)
 
-    // Up briefly after a write fails -- the list has just gone back to how it was,
-    // and without this that looks like the edit simply never happened.
+    // Up briefly after a write fails: the list has just gone back to how it was,
+    // which otherwise looks like the edit never happened.
     private val saveFailed = mutableStateOf(false)
 
-    // Edits are shown at once and written behind the screen's back, one at a time
-    // in the order they were made -- see [edit]. lastEdit is the tail of that line;
-    // editEpoch moves on when a write fails, which is how the edits queued behind
-    // it learn that the list they were made against is gone.
+    // Edits are written one at a time in the order made (see [edit]). lastEdit is
+    // the tail of that line. editEpoch moves on when a write fails, which tells the
+    // edits queued behind it that the list they were made against is gone.
     private var lastEdit: Job? = null
     @Volatile private var editEpoch = 0
 
-    // Whether [entries] is the server's whole playlist rather than a rebuild -- see
-    // PlaylistView. Removing and reordering both address the server's copy by position,
-    // so neither is offered on a rebuild: the indices would point at other songs entirely.
-    // Rows another library holds are in [entries] too, just not shown, so a playlist
-    // narrowed to one library is still whole. Read at load and not revisited, which is
-    // the same snapshot the list itself is.
+    // Whether [entries] is the server's whole playlist rather than a rebuild (see
+    // PlaylistView). Removing and reordering address the server's copy by position,
+    // so neither is offered on a rebuild. Rows another library holds are in [entries]
+    // too, just not shown, so a playlist narrowed to one library is still whole.
+    // Read at load, the same snapshot as the list.
     private val wholeList = mutableStateOf(true)
 
-    // Whether the library is down to its downloads right now, unlike wholeList kept live:
-    // a playlist opened on Wi-Fi and still open when it drops would otherwise keep
-    // offering edits that can only fail.
+    // Whether the library is down to its downloads, kept live: a playlist left open
+    // when Wi-Fi drops would otherwise keep offering edits that can only fail.
     private val offline = mutableStateOf(false)
 
     /**
-     * Whether this playlist may be edited at all.
-     *
-     * Both halves have to hold. Offline there is nothing to edit *against*: the write
-     * would fail, and under Wi-Fi Only on metered data it shouldn't even be attempted --
-     * a playlist edit is the app touching the network in a mode where the user asked it
-     * not to. And a partial list can't be addressed by position whatever the connection.
+     * Whether this playlist may be edited: online (an edit touches the network, which
+     * offline modes forbid), and whole (a partial list can't be addressed by position).
      */
     private fun canEdit(): Boolean = wholeList.value && !offline.value
 
-    // Duplicate songs can appear in a playlist, so rows use a synthetic key, not track.id.
+    // A playlist can hold a song twice, so rows use a synthetic key, not track.id.
     private var nextEntryKey = 0
     private fun newEntryKey(): String = "e${nextEntryKey++}"
 
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
+    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
@@ -126,15 +116,14 @@ class PlaylistDetailScreen(
                 entries.value = entriesOf(view)
             }
         }
-        // Collected for the life of the screen, not read once: this is the half of
-        // canEdit that can change while the playlist sits open.
+        // Collected for the life of the screen: the half of canEdit that can change
+        // while the playlist sits open.
         LaunchedEffect(Unit) { App.offlineOnly.collect { offline.value = it } }
 
         val selection = rememberSelection("playlist:$playlistId")
 
-        // The stored name, not the one this screen was opened with: the corner
-        // menu can rename the playlist while this page is under it, and the
-        // constructor's copy would keep saying the old name until reopened.
+        // The stored name, not the one this screen was opened with: the corner menu
+        // can rename the playlist while this page is under it.
         val liveName = App.library.allPlaylists.collectAsState().value
             .firstOrNull { it.id == playlistId }?.name ?: playlistName
 
@@ -144,15 +133,12 @@ class PlaylistDetailScreen(
                     if (selection.active) {
                         SelectionHeader(
                             selection = selection,
-                            // No delete offered at all when this isn't the whole
-                            // playlist: an offer that could only ever fail is worse
-                            // than the icon not being there.
+                            // No delete at all where it could only fail.
                             onDelete = if (!canEdit()) null else {
                                 {
                                     removeSongs(selection.selected)
-                                    // Stay in edit mode with an empty selection: pruning a
-                                    // playlist is usually more than one pass, and the X is
-                                    // right there when it isn't.
+                                    // Stay in edit mode, empty: pruning a playlist is
+                                    // usually more than one pass.
                                     selection.begin()
                                 }
                             },
@@ -167,11 +153,8 @@ class PlaylistDetailScreen(
                         AppHeader(
                             onBack = { goBack() },
                             title = liveName,
-                            // The playlist's own menu, not the library's sort: a
-                            // playlist plays in its own order, so the corner that
-                            // offered a dead sort now offers its verbs — play, rename,
-                            // delete. Same menu as a long-press on its row; see the
-                            // album page, which made the same trade.
+                            // The playlist's own menu (a playlist has no order to
+                            // choose), the same as a long-press on its row.
                             rightAction = HeaderAction(
                                 AppIcons.MoreVert,
                                 onLongClick = { go { SettingsScreen(it) } },
@@ -182,28 +165,26 @@ class PlaylistDetailScreen(
                         )
                     }
                     when (val list = entries.value) {
-                        null -> Centered("Loading…")
+                        null -> CenteredNote("Loading…")
                         else -> {
                             val shown = remember(list) { list.filter { it.shown } }
                             when {
                                 shown.isNotEmpty() -> TrackList(shown, selection)
-                                list.isEmpty() || offline.value -> Centered("Empty playlist")
-                                else -> Centered("No songs in this library")
+                                list.isEmpty() || offline.value -> CenteredNote("Empty playlist")
+                                else -> CenteredNote("No songs in this library")
                             }
                         }
                     }
                 }
-                // Dead centre and above the list: the rows themselves have just
-                // gone back to how they were.
                 if (saveFailed.value) NoticePill("Couldn't save")
             }
         }
     }
 
     /**
-     * One playlist row: [key] is a synthetic per-row id (see [entries]); [track] is what
-     * it holds. [shown] is false for a song the chosen library doesn't hold, which stays
-     * in place for the edits to work against but isn't listed.
+     * One playlist row: [key] is a synthetic per-row id, [track] what it holds. [shown]
+     * is false for a song the chosen library doesn't hold, which stays in place for the
+     * edits to work against but isn't listed.
      */
     private data class PlaylistEntry(val key: String, val track: Track, val shown: Boolean = true)
 
@@ -212,12 +193,7 @@ class PlaylistDetailScreen(
 
     private fun shownEntries(): List<PlaylistEntry> = entries.value.orEmpty().filter { it.shown }
 
-    /**
-     * Edit mode is one mode, not two: the grab bars appear and rows become
-     * selectable together. Both are things you do to the playlist rather than
-     * with it, and splitting them would mean two toggles competing for the same
-     * corner of a header that has no spare room.
-     */
+    /** The tracks. Edit mode is one mode: the grab bars appear and rows become selectable together. */
     @Composable
     private fun TrackList(list: List<PlaylistEntry>, selection: SelectionState) {
         val editing = selection.active
@@ -259,7 +235,6 @@ class PlaylistDetailScreen(
         ) {
             LibraryList(
                 anchor = "playlist:$playlistId",
-                headerCount = headerCount,
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
             ) {
@@ -276,7 +251,7 @@ class PlaylistDetailScreen(
                     val track = entry.track
                     val isDragging = entry.key in drag.draggingKeys
                     // Clear coords on dispose: LazyColumn recycles nodes, so a stale
-                    // entry would silently report the next occupant's position.
+                    // entry would report the next occupant's position.
                     DisposableEffect(entry.key) {
                         onDispose { drag.clear(entry.key) }
                     }
@@ -303,7 +278,7 @@ class PlaylistDetailScreen(
                                         TrackActionsScreen(
                                             it, track.id,
                                             onSelect = { selection.begin(entry.key) },
-                                            // Absent, not failing: see the delete icon above.
+                                            // Absent where it could only fail, as the delete icon.
                                             onRemoveFromPlaylist =
                                                 if (canEdit()) ({ removeSongs(setOf(entry.key)) }) else null,
                                             known = track,
@@ -315,10 +290,9 @@ class PlaylistDetailScreen(
                             selected = if (editing) entry.key in selection.selected else null,
                             trailing = if (editing && canEdit()) {
                                 {
-                                    // Drag handle for reordering within the playlist.
                                     AppIcon(
                                         AppIcons.Dehaze,
-                                        size = px(51),
+                                        size = px(DRAG_HANDLE_PX),
                                         modifier = Modifier.onGloballyPositioned { drag.iconCoords[entry.key] = it },
                                     )
                                 }
@@ -367,36 +341,24 @@ class PlaylistDetailScreen(
                 onClick = {},
                 downloaded = entry.track.id in downloaded,
                 selected = entry.key in selection.selected,
-                trailing = { Spacer(Modifier.width(px(51))) },
+                trailing = { Spacer(Modifier.width(px(DRAG_HANDLE_PX))) },
             )
         }
     }
 
     private data class DropTarget(val beforeKey: String?)
 
-    @Composable
-    private fun Centered(text: String) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            AppText(text, pxSp(LightType.DETAIL_PX), dim = true)
-        }
-    }
-
     /**
      * Show an edit now and write it behind the screen's back.
      *
-     * [after] goes on screen at once: a row that snaps back to where it was and
-     * jumps a moment later is a worse answer to a drop than the drop itself, and
-     * on most servers the write is one quick request. [write] then takes its turn
-     * behind every edit made before it, which is what keeps positions honest --
-     * each edit is worked out against the list the edits before it leave, and that
-     * is exactly the list the server holds once they have landed, so an index into
-     * one is an index into the other.
+     * [after] goes on screen at once. [write] waits its turn behind every earlier
+     * edit, which keeps positions honest: each edit is worked out against the list
+     * the edits before it leave, which is the list the server holds once they land.
      *
-     * A write that fails breaks that chain of reasoning for everything queued
-     * behind it, so they are dropped unsent ([editEpoch]) rather than aimed at a
-     * list that never came to be. The screen goes back to the server's own copy
-     * where it can be read -- a Plex edit is many requests and can stop partway --
-     * and otherwise to [entries] as they stood before the edit that failed.
+     * A failed write breaks that chain, so the edits queued behind it are dropped
+     * unsent ([editEpoch]). The screen goes back to the server's own copy where it
+     * can be read (a Plex edit is many requests and can stop partway), otherwise to
+     * [entries] as they were before the failed edit.
      */
     private fun edit(after: List<PlaylistEntry>, write: suspend () -> Boolean) {
         val before = entries.value ?: return
@@ -428,19 +390,17 @@ class PlaylistDetailScreen(
 
     /**
      * Remove rows by their keys, not their songs: a playlist can hold a song twice,
-     * and ticking one of them means that one. The server is told positions in the
-     * whole playlist, shown or not, all of them read against the list as it stands
-     * now -- see [MusicServer.removeFromPlaylistAt].
+     * and ticking one means that one. The server is told positions in the whole
+     * playlist, shown or not (see [MusicServer.removeFromPlaylistAt]).
      */
     private fun removeSongs(keys: Set<String>) {
-        // The indices below are into [entries]; if that isn't the whole playlist they
-        // name different songs on the server. See [canEdit].
+        // Positions into [entries] name other songs unless it is the whole playlist.
         if (!canEdit()) return
         val current = entries.value ?: return
         // Only rows on screen: another library's songs are never the user's to remove here.
         val doomed = current.filter { it.shown && it.key in keys }.mapTo(HashSet()) { it.key }
-        // Each position with the song seen there, so a playlist that has been edited
-        // from somewhere else in the meantime is refused rather than mis-pruned.
+        // Each position with the song seen there, so a playlist edited elsewhere in
+        // the meantime is refused rather than mis-pruned.
         val at = current.indices.filter { current[it].key in doomed }.associateWith { current[it].track.id }
         if (at.isEmpty()) return
         edit(current.filterNot { it.key in doomed }) {
@@ -449,11 +409,8 @@ class PlaylistDetailScreen(
     }
 
     /**
-     * Move the shown rows at [indices] as a block to position [insertAt] among the rest
-     * shown: pull them out in their current relative order, then reinsert them there.
-     * For a lone dragged row this is the familiar single-row reorder; for a multi-row
-     * selection the whole set rides along together, so moving one selected row moves them
-     * all. Rows that aren't shown keep their places — see [placeBlock].
+     * Move the shown rows at [indices], in their order, as a block to [insertAt] among
+     * the rest shown. Rows that aren't shown keep their places (see [placeBlock]).
      */
     private fun reorderGroup(indices: Set<Int>, insertAt: Int) {
         // A partial order would be an instruction to lose everything it omits.
@@ -468,5 +425,4 @@ class PlaylistDetailScreen(
         if (newList == current) return
         edit(newList) { App.library.reorderPlaylist(playlistId, newList.map { it.track.id }) }
     }
-
 }

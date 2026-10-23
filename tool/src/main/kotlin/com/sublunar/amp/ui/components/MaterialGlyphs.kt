@@ -11,22 +11,17 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
 /**
- * The Material icons Amp draws, carried in its own source.
+ * The Material icons Amp draws, vendored from `material-icons-extended`.
  *
- * They came from `androidx.compose.material:material-icons-extended`, which is
- * on Light's allow-list but not in the offline Gradle cache their store builder
- * builds against — that cache holds only what the SDK's own sample tool
- * resolves — so a store build could not resolve it. Only the glyphs Amp uses are
- * here, which is all R8 ever kept of the artifact anyway.
+ * That artifact is on Light's allow-list but missing from the offline Gradle cache
+ * their store builder builds against (it holds only what the SDK's sample tool
+ * resolves), so a store build can't resolve it. Only the glyphs Amp uses are here.
  *
- * The path data is Google's Material Icons (Apache License 2.0), unchanged from
- * material-icons-extended 1.7.8: each vector was read out of the library's own
- * ImageVector and printed back as Kotlin, not redrawn. MaterialGlyphsTest holds
- * every one against the library, so any drift fails the build's tests.
- *
- * The names mirror Material's, so `Icons.Filled.Album` reads the same as it did
- * with the artifact. To add a glyph, list it in MaterialGlyphsTest with `null`
- * for the vendored side; the test then fails with the source to paste here.
+ * The path data is Google's Material Icons (Apache License 2.0), printed out of the
+ * library's own vectors, not redrawn. MaterialGlyphsTest holds every one against the
+ * library. Names mirror Material's (`Icons.Filled.Album`). To add a glyph, list it in
+ * MaterialGlyphsTest with `null` for the vendored side: the test fails with the
+ * source to paste here.
  */
 object Icons {
     object Filled {
@@ -115,15 +110,6 @@ object Icons {
                 lineTo(4.0f, 12.0f)
                 lineToRelative(8.0f, 8.0f)
                 lineToRelative(8.0f, -8.0f)
-                close()
-            }
-        }
-
-        val ArrowDropDown: ImageVector by glyph("Filled.ArrowDropDown") {
-            shape {
-                moveTo(7.0f, 10.0f)
-                lineToRelative(5.0f, 5.0f)
-                lineToRelative(5.0f, -5.0f)
                 close()
             }
         }
@@ -356,25 +342,6 @@ object Icons {
             }
         }
 
-        val DownloadDone: ImageVector by glyph("Filled.DownloadDone") {
-            shape {
-                moveTo(20.13f, 5.41f)
-                lineToRelative(-1.41f, -1.41f)
-                lineToRelative(-9.19f, 9.19f)
-                lineToRelative(-4.25f, -4.24f)
-                lineToRelative(-1.41f, 1.41f)
-                lineToRelative(5.66f, 5.66f)
-                close()
-            }
-            shape {
-                moveTo(5.0f, 18.0f)
-                horizontalLineToRelative(14.0f)
-                verticalLineToRelative(2.0f)
-                horizontalLineToRelative(-14.0f)
-                close()
-            }
-        }
-
         val FastForward: ImageVector by glyph("Filled.FastForward") {
             shape {
                 moveTo(4.0f, 18.0f)
@@ -476,90 +443,6 @@ object Icons {
             }
         }
 
-        val GraphicEq: ImageVector by glyph("Filled.GraphicEq") {
-            shape {
-                moveTo(7.0f, 18.0f)
-                horizontalLineToRelative(2.0f)
-                lineTo(9.0f, 6.0f)
-                lineTo(7.0f, 6.0f)
-                verticalLineToRelative(12.0f)
-                close()
-                moveTo(11.0f, 22.0f)
-                horizontalLineToRelative(2.0f)
-                lineTo(13.0f, 2.0f)
-                horizontalLineToRelative(-2.0f)
-                verticalLineToRelative(20.0f)
-                close()
-                moveTo(3.0f, 14.0f)
-                horizontalLineToRelative(2.0f)
-                verticalLineToRelative(-4.0f)
-                lineTo(3.0f, 10.0f)
-                verticalLineToRelative(4.0f)
-                close()
-                moveTo(15.0f, 18.0f)
-                horizontalLineToRelative(2.0f)
-                lineTo(17.0f, 6.0f)
-                horizontalLineToRelative(-2.0f)
-                verticalLineToRelative(12.0f)
-                close()
-                moveTo(19.0f, 10.0f)
-                verticalLineToRelative(4.0f)
-                horizontalLineToRelative(2.0f)
-                verticalLineToRelative(-4.0f)
-                horizontalLineToRelative(-2.0f)
-                close()
-            }
-        }
-
-        val HistoryEdu: ImageVector by glyph("Filled.HistoryEdu") {
-            shape {
-                moveTo(9.0f, 4.0f)
-                verticalLineToRelative(1.38f)
-                curveToRelative(-0.83f, -0.33f, -1.72f, -0.5f, -2.61f, -0.5f)
-                curveToRelative(-1.79f, 0.0f, -3.58f, 0.68f, -4.95f, 2.05f)
-                lineToRelative(3.33f, 3.33f)
-                horizontalLineToRelative(1.11f)
-                verticalLineToRelative(1.11f)
-                curveToRelative(0.86f, 0.86f, 1.98f, 1.31f, 3.11f, 1.36f)
-                verticalLineTo(15.0f)
-                horizontalLineTo(6.0f)
-                verticalLineToRelative(3.0f)
-                curveToRelative(0.0f, 1.1f, 0.9f, 2.0f, 2.0f, 2.0f)
-                horizontalLineToRelative(10.0f)
-                curveToRelative(1.66f, 0.0f, 3.0f, -1.34f, 3.0f, -3.0f)
-                verticalLineTo(4.0f)
-                horizontalLineTo(9.0f)
-                close()
-                moveTo(7.89f, 10.41f)
-                verticalLineTo(8.26f)
-                horizontalLineTo(5.61f)
-                lineTo(4.57f, 7.22f)
-                curveTo(5.14f, 7.0f, 5.76f, 6.88f, 6.39f, 6.88f)
-                curveToRelative(1.34f, 0.0f, 2.59f, 0.52f, 3.54f, 1.46f)
-                lineToRelative(1.41f, 1.41f)
-                lineToRelative(-0.2f, 0.2f)
-                curveToRelative(-0.51f, 0.51f, -1.19f, 0.8f, -1.92f, 0.8f)
-                curveTo(8.75f, 10.75f, 8.29f, 10.63f, 7.89f, 10.41f)
-                close()
-                moveTo(19.0f, 17.0f)
-                curveToRelative(0.0f, 0.55f, -0.45f, 1.0f, -1.0f, 1.0f)
-                reflectiveCurveToRelative(-1.0f, -0.45f, -1.0f, -1.0f)
-                verticalLineToRelative(-2.0f)
-                horizontalLineToRelative(-6.0f)
-                verticalLineToRelative(-2.59f)
-                curveToRelative(0.57f, -0.23f, 1.1f, -0.57f, 1.56f, -1.03f)
-                lineToRelative(0.2f, -0.2f)
-                lineTo(15.59f, 14.0f)
-                horizontalLineTo(17.0f)
-                verticalLineToRelative(-1.41f)
-                lineToRelative(-6.0f, -5.97f)
-                verticalLineTo(6.0f)
-                horizontalLineToRelative(8.0f)
-                verticalLineTo(17.0f)
-                close()
-            }
-        }
-
         val LibraryMusic: ImageVector by glyph("Filled.LibraryMusic") {
             shape {
                 moveTo(20.0f, 2.0f)
@@ -591,80 +474,6 @@ object Icons {
                 verticalLineToRelative(-2.0f)
                 lineTo(4.0f, 20.0f)
                 lineTo(4.0f, 6.0f)
-                close()
-            }
-        }
-
-        val LocalOffer: ImageVector by glyph("Filled.LocalOffer") {
-            shape {
-                moveTo(21.41f, 11.58f)
-                lineToRelative(-9.0f, -9.0f)
-                curveTo(12.05f, 2.22f, 11.55f, 2.0f, 11.0f, 2.0f)
-                horizontalLineTo(4.0f)
-                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
-                verticalLineToRelative(7.0f)
-                curveToRelative(0.0f, 0.55f, 0.22f, 1.05f, 0.59f, 1.42f)
-                lineToRelative(9.0f, 9.0f)
-                curveToRelative(0.36f, 0.36f, 0.86f, 0.58f, 1.41f, 0.58f)
-                curveToRelative(0.55f, 0.0f, 1.05f, -0.22f, 1.41f, -0.59f)
-                lineToRelative(7.0f, -7.0f)
-                curveToRelative(0.37f, -0.36f, 0.59f, -0.86f, 0.59f, -1.41f)
-                curveToRelative(0.0f, -0.55f, -0.23f, -1.06f, -0.59f, -1.42f)
-                close()
-                moveTo(5.5f, 7.0f)
-                curveTo(4.67f, 7.0f, 4.0f, 6.33f, 4.0f, 5.5f)
-                reflectiveCurveTo(4.67f, 4.0f, 5.5f, 4.0f)
-                reflectiveCurveTo(7.0f, 4.67f, 7.0f, 5.5f)
-                reflectiveCurveTo(6.33f, 7.0f, 5.5f, 7.0f)
-                close()
-            }
-        }
-
-        val Lyrics: ImageVector by glyph("Filled.Lyrics") {
-            shape {
-                moveTo(14.0f, 9.0f)
-                curveToRelative(0.0f, -2.04f, 1.24f, -3.79f, 3.0f, -4.57f)
-                verticalLineTo(4.0f)
-                curveToRelative(0.0f, -1.1f, -0.9f, -2.0f, -2.0f, -2.0f)
-                horizontalLineTo(4.0f)
-                curveTo(2.9f, 2.0f, 2.01f, 2.9f, 2.01f, 4.0f)
-                lineTo(2.0f, 22.0f)
-                lineToRelative(4.0f, -4.0f)
-                horizontalLineToRelative(9.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
-                verticalLineToRelative(-2.42f)
-                curveTo(15.24f, 12.8f, 14.0f, 11.05f, 14.0f, 9.0f)
-                close()
-                moveTo(10.0f, 14.0f)
-                horizontalLineTo(6.0f)
-                verticalLineToRelative(-2.0f)
-                horizontalLineToRelative(4.0f)
-                verticalLineTo(14.0f)
-                close()
-                moveTo(13.0f, 11.0f)
-                horizontalLineTo(6.0f)
-                verticalLineTo(9.0f)
-                horizontalLineToRelative(7.0f)
-                verticalLineTo(11.0f)
-                close()
-                moveTo(13.0f, 8.0f)
-                horizontalLineTo(6.0f)
-                verticalLineTo(6.0f)
-                horizontalLineToRelative(7.0f)
-                verticalLineTo(8.0f)
-                close()
-            }
-            shape {
-                moveTo(20.0f, 6.18f)
-                curveTo(19.69f, 6.07f, 19.35f, 6.0f, 19.0f, 6.0f)
-                curveToRelative(-1.66f, 0.0f, -3.0f, 1.34f, -3.0f, 3.0f)
-                curveToRelative(0.0f, 1.66f, 1.34f, 3.0f, 3.0f, 3.0f)
-                reflectiveCurveToRelative(3.0f, -1.34f, 3.0f, -3.0f)
-                verticalLineTo(3.0f)
-                horizontalLineToRelative(2.0f)
-                verticalLineTo(1.0f)
-                horizontalLineToRelative(-4.0f)
-                verticalLineTo(6.18f)
                 close()
             }
         }
@@ -984,39 +793,6 @@ object Icons {
             }
         }
 
-        val Speaker: ImageVector by glyph("Filled.Speaker") {
-            shape {
-                moveTo(17.0f, 2.0f)
-                lineTo(7.0f, 2.0f)
-                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
-                verticalLineToRelative(16.0f)
-                curveToRelative(0.0f, 1.1f, 0.9f, 1.99f, 2.0f, 1.99f)
-                lineTo(17.0f, 22.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
-                lineTo(19.0f, 4.0f)
-                curveToRelative(0.0f, -1.1f, -0.9f, -2.0f, -2.0f, -2.0f)
-                close()
-                moveTo(12.0f, 4.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, 0.9f, 2.0f, 2.0f)
-                reflectiveCurveToRelative(-0.9f, 2.0f, -2.0f, 2.0f)
-                curveToRelative(-1.11f, 0.0f, -2.0f, -0.9f, -2.0f, -2.0f)
-                reflectiveCurveToRelative(0.89f, -2.0f, 2.0f, -2.0f)
-                close()
-                moveTo(12.0f, 20.0f)
-                curveToRelative(-2.76f, 0.0f, -5.0f, -2.24f, -5.0f, -5.0f)
-                reflectiveCurveToRelative(2.24f, -5.0f, 5.0f, -5.0f)
-                reflectiveCurveToRelative(5.0f, 2.24f, 5.0f, 5.0f)
-                reflectiveCurveToRelative(-2.24f, 5.0f, -5.0f, 5.0f)
-                close()
-                moveTo(12.0f, 12.0f)
-                curveToRelative(-1.66f, 0.0f, -3.0f, 1.34f, -3.0f, 3.0f)
-                reflectiveCurveToRelative(1.34f, 3.0f, 3.0f, 3.0f)
-                reflectiveCurveToRelative(3.0f, -1.34f, 3.0f, -3.0f)
-                reflectiveCurveToRelative(-1.34f, -3.0f, -3.0f, -3.0f)
-                close()
-            }
-        }
-
         val Whatshot: ImageVector by glyph("Filled.Whatshot") {
             shape {
                 moveTo(13.5f, 0.67f)
@@ -1079,36 +855,6 @@ object Icons {
                     horizontalLineToRelative(14.0f)
                     lineTo(21.0f, 5.0f)
                     lineTo(7.0f, 5.0f)
-                    close()
-                }
-            }
-
-            val PlaylistPlay: ImageVector by glyph("AutoMirrored.Filled.PlaylistPlay", autoMirror = true) {
-                shape {
-                    moveTo(3.0f, 10.0f)
-                    horizontalLineToRelative(11.0f)
-                    verticalLineToRelative(2.0f)
-                    horizontalLineToRelative(-11.0f)
-                    close()
-                }
-                shape {
-                    moveTo(3.0f, 6.0f)
-                    horizontalLineToRelative(11.0f)
-                    verticalLineToRelative(2.0f)
-                    horizontalLineToRelative(-11.0f)
-                    close()
-                }
-                shape {
-                    moveTo(3.0f, 14.0f)
-                    horizontalLineToRelative(7.0f)
-                    verticalLineToRelative(2.0f)
-                    horizontalLineToRelative(-7.0f)
-                    close()
-                }
-                shape {
-                    moveTo(16.0f, 13.0f)
-                    lineToRelative(0.0f, 8.0f)
-                    lineToRelative(6.0f, -4.0f)
                     close()
                 }
             }
@@ -1218,10 +964,9 @@ object Icons {
 }
 
 /**
- * Built on first use and kept, as Material's own are. The bounds and path
- * attributes are the ones Material's `materialIcon` and `materialPath` use,
- * restated here because those helpers live in material-icons-core, and nothing
- * the SDK brings in depends on that — material3 1.4 doesn't.
+ * Built on first use and kept, as Material's own are. The bounds and path attributes
+ * restate Material's `materialIcon` and `materialPath`, which live in
+ * material-icons-core, a library nothing the SDK brings in depends on.
  */
 private fun glyph(
     name: String,

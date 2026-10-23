@@ -9,13 +9,9 @@ import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.ui.pxSp
 
 /**
- * The two-line title card the player wears in its header, and anything showing
- * the same track elsewhere.
- *
- * Sizes are in physical pixels and multiples of 3, so they are whole dp as well
- * — 45 over 36 is an album header's 18/14 rounded onto the pixel grid. Shared so
- * a screen that stands in for the player looks like the player rather than
- * approximately like it.
+ * The two-line title card in the player's header, shared so a screen showing the
+ * same track looks exactly like the player. Sizes are physical pixels in multiples
+ * of 3, so they are whole dp as well.
  */
 @Composable
 fun TitleCard(top: String, bottom: String) {

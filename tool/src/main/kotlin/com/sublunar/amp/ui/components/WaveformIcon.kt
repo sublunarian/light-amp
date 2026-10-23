@@ -7,21 +7,15 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.dp
 
 /**
- * LightOS's own waveform — rounded bars of stepped heights.
- *
- * Taken from the SDK's `ic_audio_message_white` drawable, which is the glyph
- * LightOS uses for audio and the one Phono shows for Now Playing. Rebuilt as an
- * [ImageVector] rather than referenced as a drawable so it can be passed
- * anywhere the app's other icons go — `HeaderAction` and friends take vectors —
- * and so it tints with the theme like the rest of them.
+ * LightOS's own waveform (rounded bars of stepped heights), from the SDK's
+ * `ic_audio_message_white` drawable. Rebuilt as an [ImageVector] so it goes
+ * wherever the other icons go (`HeaderAction` takes vectors) and tints with the theme.
  */
 val WaveformSymbol: ImageVector by lazy {
     ImageVector.Builder(
         name = "WaveformSymbol",
-        // One dp to a viewport unit, as the source drawable declares it. At the
-        // Material default of 24 the glyph was pre-scaled by 24/40 and then
-        // scaled back up to whatever box it was drawn in; matching the viewport
-        // leaves one scale between the path coordinates and the pixels.
+        // One dp per viewport unit, as the drawable declares it, so the path is
+        // scaled once (a default of 24 would scale it down and back up).
         defaultWidth = 40.dp,
         defaultHeight = 40.dp,
         viewportWidth = 40f,
