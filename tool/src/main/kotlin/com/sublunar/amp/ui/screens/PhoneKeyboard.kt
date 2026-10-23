@@ -1,9 +1,12 @@
 package com.sublunar.amp.ui.screens
 
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import com.thelightphone.lp3Keyboard.ui.KeyboardOptions
+import com.thelightphone.lp3Keyboard.ui.LayoutOptions
+import com.thelightphone.lp3Keyboard.ui.viewmodel.EnQwertyLp3KeyboardViewModel
 import com.thelightphone.sdk.refreshKeyboardOptions
 import com.thelightphone.sdk.ui.defaultKeyboardOptions
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,32 +19,22 @@ import kotlinx.coroutines.flow.StateFlow
 private var lastKnown: KeyboardOptions? = null
 
 /**
- * The keyboard as the phone has it set — swipe typing, key animation, the
- * voice key — asked of LightOS when a keyboard appears.
+ * The keyboard as the phone has it set (swipe typing, key animation), asked of
+ * LightOS once per keyboard. The SDK's `rememberKeyboardOptions` asks again on
+ * every recomposition, which on the search page is a call per keystroke. No
+ * answer from LightOS leaves the SDK's defaults.
  *
- * The keyboard is a library every tool ships a copy of; the settings for it are
- * the phone's, and only LightOS knows them. Amp used to hand every keyboard the
- * SDK's fixed defaults, so a phone with swipe typing on typed without it here.
- * The SDK's own tools ask through `rememberKeyboardOptions`, which asks again
- * on every recomposition — on the search page that would be a call per
- * keystroke — so this asks once per keyboard and keeps the answer. LightOS not
- * answering, an older build or a hiccup, leaves the defaults in place, which is
- * exactly what the keyboard showed before.
+ * **No emoji anywhere in Amp**: nothing typed here is a message. The keyboard
+ * draws a spacer where the emoji key would be when handed none, so an empty set
+ * is its own no-emoji state.
  *
- * **No emoji, anywhere in Amp.** The phone's emoji set is a messaging
- * preference, and nothing typed here is a message: a search, a server address,
- * a playlist name, a password. The library draws the emoji key only when it is
- * handed some, and puts a spacer in its place otherwise — so an empty set is
- * the keyboard's own no-emoji state, not a layout of ours.
- *
- * **No voice key either, for now.** Keyboard 0.0.19 draws a dictation key when
- * the phone's setting says so, but the library has no dictation behind it yet.
- * The SDK masks it the same way inside `rememberKeyboardOptions`, which Amp
- * doesn't use (see above); `refreshKeyboardOptions` still hands back LightOS's
- * own answer, key and all. Drop this pin when the key does something.
+ * **No voice key either**: the keyboard draws one when the phone's setting says
+ * so, but has no dictation behind it yet. `rememberKeyboardOptions` masks it the
+ * same way, `refreshKeyboardOptions` doesn't. Drop this pin when the key does
+ * something.
  */
 @Composable
-fun rememberPhoneKeyboardOptions(): StateFlow<KeyboardOptions> {
+private fun rememberPhoneKeyboardOptions(): StateFlow<KeyboardOptions> {
     fun pinned(options: KeyboardOptions) = options.copy(
         emojis = emptyList(),
         displayVoice = false,
@@ -54,4 +47,29 @@ fun rememberPhoneKeyboardOptions(): StateFlow<KeyboardOptions> {
         }
     }
     return flow
+}
+
+/**
+ * The LP3 keyboard typing into [state], set up as the phone has it — for the
+ * search page and [TextEntryScreen]. Built once per [state]: [onReturn] and
+ * [onHaptic] are taken from the first composition.
+ */
+@Composable
+internal fun rememberEditingKeyboard(
+    state: TextFieldState,
+    onReturn: () -> Unit,
+    /** The search page passes none: its keys never buzzed. */
+    onHaptic: () -> Unit = {},
+): EnQwertyLp3KeyboardViewModel<Unit> {
+    val options = rememberPhoneKeyboardOptions()
+    // In remember rather than viewModel(): the tool doesn't carry
+    // lifecycle-viewmodel-compose, and the view model lives exactly as long as
+    // the typing does.
+    return remember(state) {
+        EnQwertyLp3KeyboardViewModel<Unit>(
+            EditingKeyboardCallback(state, onReturn, onHaptic),
+            keyboardOptionsFlow = options,
+            optionsForLayout = { LayoutOptions(!it.isRootLayout) },
+        )
+    }
 }

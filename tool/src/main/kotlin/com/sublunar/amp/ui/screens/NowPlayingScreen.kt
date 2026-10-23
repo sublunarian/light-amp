@@ -1,5 +1,7 @@
 package com.sublunar.amp.ui.screens
 
+import android.view.KeyEvent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -7,10 +9,12 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -21,96 +25,90 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import com.sublunar.amp.App
+import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.Connectivity
 import com.sublunar.amp.data.DataMode
+import com.sublunar.amp.data.LastSection
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.LyricsRepository
-import com.sublunar.amp.data.LastSection
+import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.Track
+import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AppArtwork
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
-import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppProgressBar
-import android.view.KeyEvent
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import com.sublunar.amp.ui.components.TextRole
-import com.sublunar.amp.ui.components.rememberArtwork
 import com.sublunar.amp.ui.components.AppText
-import com.sublunar.amp.ui.components.ListScrollBar
-import com.sublunar.amp.ui.components.ROW_TITLE_PX
-import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
-import com.sublunar.amp.ui.components.ROW_ART_PX
+import com.sublunar.amp.ui.components.AutoScroll
+import com.sublunar.amp.ui.components.DropIndicatorLine
+import com.sublunar.amp.ui.components.HEADER_BAR_PX
+import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
+import com.sublunar.amp.ui.components.ListScrollBar
+import com.sublunar.amp.ui.components.ROW_ART_PX
 import com.sublunar.amp.ui.components.ROW_GAP_PX
 import com.sublunar.amp.ui.components.ROW_LEAD_PX
-import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
-import com.sublunar.amp.ui.components.ROW_SUB_PX
 import com.sublunar.amp.ui.components.ROW_SUB_LINE_PX
+import com.sublunar.amp.ui.components.ROW_SUB_PX
+import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
+import com.sublunar.amp.ui.components.ROW_TITLE_PX
+import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.SelectionArtwork
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.SelectionState
-import com.sublunar.amp.ui.components.rememberSelection
+import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.TitleCard
-import com.sublunar.amp.ui.components.HEADER_BAR_PX
-import com.sublunar.amp.ui.components.formatTime
-import com.sublunar.amp.ui.LightType
-import com.sublunar.amp.ui.currentScale
-import com.sublunar.amp.ui.px
-import com.sublunar.amp.ui.pxSp
-import com.sublunar.amp.ui.components.rowClickable
-import com.sublunar.amp.ui.components.slowLongPress
-import com.sublunar.amp.ui.components.rememberDragReorderState
+import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.dragReorderContainer
 import com.sublunar.amp.ui.components.dragRowTarget
 import com.sublunar.amp.ui.components.dropInsertIndex
-import com.sublunar.amp.ui.components.AutoScroll
-import com.sublunar.amp.ui.components.DropIndicatorLine
+import com.sublunar.amp.ui.components.formatTime
+import com.sublunar.amp.ui.components.rememberArtwork
+import com.sublunar.amp.ui.components.rememberDragReorderState
+import com.sublunar.amp.ui.components.rememberSelection
+import com.sublunar.amp.ui.components.rowClickable
+import com.sublunar.amp.ui.components.slowLongPress
+import com.sublunar.amp.ui.currentScale
+import com.sublunar.amp.ui.px
+import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightThemeTokens
-import com.sublunar.amp.ui.components.appClickable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import com.sublunar.amp.data.NetworkGate
-import com.sublunar.amp.data.PhoneFiles
-import com.sublunar.amp.art.ArtworkNeed
 
 /** Where the active synced-lyric line sits in the pane, as a fraction of its height. */
 private const val LYRIC_ANCHOR = 0.38f
@@ -124,63 +122,50 @@ private const val QUEUE_TRAILING_SLOT_PX = 51
 /** Where every other list's covers start: its edge and the download mark's slot. */
 private const val QUEUE_START_PX = LIST_EDGE_PX + ROW_LEAD_PX
 
-enum class NpView { ARTWORK, QUEUE }
+private const val QUEUE_ROW_PX = 160
+
+/** A queue row's key. The same track can be queued twice, so its place is part of it. */
+private fun queueKey(index: Int, track: Track) = "$index-${track.id}"
 
 /**
- * Which pane Now Playing shows, and whether the lyrics overlay is up.
- *
- * Held here rather than on the screen instance so other screens can drive it —
- * the full-width artwork view needs to be able to send the user to the queue —
- * and so it survives navigating away and back.
+ * What Now Playing shows. Held outside the screen so it outlasts navigating away
+ * and back. The screen resets [showQueue] and [coverChrome] on each open.
  */
-object NowPlayingNav {
-    val view = mutableStateOf(NpView.ARTWORK)
+private object NowPlayingNav {
+    /** The queue pane rather than the player. */
+    val showQueue = mutableStateOf(false)
     val lyricsOverlay = mutableStateOf(false)
 
     /**
-     * The cover behind the controls — the Cover Only full-artwork layout.
+     * Cover Only: the cover behind the controls.
      *
-     * Not a screen of its own, deliberately. "The same page with the sleeve
-     * behind it" is only true if it *is* the same page: any second copy of the
-     * header, seek line and transport would have to be kept in step with this
-     * one by hand, and the two earlier attempts at that were both rejected for
-     * drifting out of place. So the player draws itself exactly as it always
-     * does and this only changes what is behind it.
+     * Not a screen of its own: the player draws itself exactly as always and only
+     * what is behind it changes, so there is no second copy of the header, seek
+     * line and transport to keep in step.
      */
     val coverOnly = mutableStateOf(false)
 
     /**
      * Whether the controls are up while the cover fills the screen.
      *
-     * Deliberately *not* persistent, unlike [coverOnly]: opening the player puts
-     * them back. Hiding them is something you do to look at a sleeve for a
-     * moment, not a preference about the page — and a player that opens with no
-     * controls on it reads as a fault, with the tap that recovers them
-     * discoverable only to someone who already knows it is there. Held here
-     * rather than in the screen so that toggling it survives a look at the queue
-     * pane; the screen resets it on each open.
+     * Not kept across opens, unlike [coverOnly]: hiding them is for a moment's
+     * look at a sleeve, and a player that opens with no controls reads as a fault.
      */
     val coverChrome = mutableStateOf(true)
+
+    /** Going full-screen means going to the picture, so the controls step out of its way. */
+    fun setCoverOnly(on: Boolean) {
+        coverOnly.value = on
+        if (on) coverChrome.value = false
+    }
 }
 
-private fun nextView(v: NpView): NpView = when (v) {
-    NpView.ARTWORK -> NpView.QUEUE
-    NpView.QUEUE -> NpView.ARTWORK
-}
-
-class NowPlayingScreen(
-    sealed: SealedLightActivity,
-    /** Set only by callers that deliberately want the queue, e.g. full-screen art. */
-    openOnQueue: Boolean = false,
-) : SimpleLightScreen<Unit>(sealed) {
+class NowPlayingScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
 
     /**
-     * The player is the third of the bar's destinations, so it says so while it
-     * is up and hands the section back on the way out — see [LastSection].
-     *
-     * On the way out rather than leaving it set: what is revealed underneath is
-     * a library page or the results, and only this screen knows the moment it
-     * stops being the one showing.
+     * The player is one of the bar's three destinations, so it records itself
+     * while up and hands the section back on the way out, since only this screen
+     * knows when it stops showing — see [LastSection].
      */
     override fun willShow() {
         LibraryNav.record(LastSection.NOW_PLAYING)
@@ -193,20 +178,11 @@ class NowPlayingScreen(
     }
 
     init {
-        // Opening Now Playing always lands on the playback controls. The view is
-        // remembered across navigation so the queue survives a trip into track
-        // options, but a fresh open should never drop the user in the list.
-        NowPlayingNav.view.value = if (openOnQueue) NpView.QUEUE else NpView.ARTWORK
-        // The cover is deliberately *not* reset with it. Which pane you are on is
-        // a step in a task — you opened the queue to do something, and coming
-        // back to the player later means coming back to the controls. Whether
-        // the sleeve fills the screen is a preference about how the player
-        // looks, and a preference that undoes itself every time you leave the
-        // page is one you have to keep setting.
-        //
-        // The controls start out of the way every time, whichever way you got
-        // here. Cover Only is a page about the picture, and a tap brings them
-        // back — one rule rather than a set of arrivals each with its own.
+        // A fresh open lands on the controls, not the queue: the pane outlasts a
+        // trip into track options, but not leaving the player. Cover Only is kept,
+        // as a preference about how the player looks. The controls start out of
+        // the way however you got here, and a tap brings them back.
+        NowPlayingNav.showQueue.value = false
         NowPlayingNav.coverChrome.value = false
     }
 
@@ -219,7 +195,7 @@ class NowPlayingScreen(
         val track by App.playback.currentTrack.collectAsState()
         val queue by App.playback.queue.collectAsState()
         val index by App.playback.index.collectAsState()
-        val view = NowPlayingNav.view.value
+        val showQueue = NowPlayingNav.showQueue.value
 
         PlayerTheme {
             val current = track
@@ -227,10 +203,7 @@ class NowPlayingScreen(
                 NothingPlaying()
                 return@PlayerTheme
             }
-            when (view) {
-                NpView.ARTWORK -> ArtPlayer(current)
-                NpView.QUEUE -> QueuePlayer(current, queue, index)
-            }
+            if (showQueue) QueuePlayer(queue, index) else ArtPlayer(current)
         }
     }
 
@@ -238,8 +211,7 @@ class NowPlayingScreen(
     @Composable
     private fun NothingPlaying() {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Same button as the player itself, so the way out doesn't move
-            // depending on whether anything happens to be playing.
+            // Same header as the player, so the way out doesn't move.
             AppHeader(
                 onBack = { goBack() },
                 title = "Now Playing",
@@ -251,24 +223,17 @@ class NowPlayingScreen(
     }
 
     @Composable
-    private fun LyricsOverlay(
-        current: Track,
-        scrim: androidx.compose.ui.graphics.Color,
-        modifier: Modifier,
-    ) {
+    private fun LyricsOverlay(current: Track, modifier: Modifier) {
         val karaoke by App.settings.karaokeLyrics.collectAsState(initial = true)
         val position by App.playback.positionMs.collectAsState()
         var outcome by remember(current.id) { mutableStateOf<LyricsRepository.Outcome?>(null) }
         var loading by remember(current.id) { mutableStateOf(true) }
-        // Looking lyrics up is two network calls — the server, then lrclib.net
-        // when the server has none — for something nobody explicitly asked to
-        // download, so Wi-Fi Only doesn't. Words downloaded with the song are
-        // read either way; the decision is passed down rather than applied
-        // here, so the free copy is never withheld along with the paid one.
-        //
-        // The rule itself stays in App.metadataAllowed; collecting what it
-        // depends on is only what makes the answer re-read when the connection
-        // or the mode changes, so turning Wi-Fi on fetches them there and then.
+        // Looking lyrics up is two network calls (the server, then lrclib.net)
+        // for something nobody asked to download, so Wi-Fi Only doesn't. Words
+        // downloaded with the song are read either way: the decision is passed
+        // down, so the free copy is never withheld along with the paid one.
+        // The rule is App.metadataAllowed's. Collecting what it depends on
+        // re-reads it when the link or the mode changes.
         val dataMode by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
         val unmetered by Connectivity.unmetered.collectAsState(initial = false)
         LaunchedEffect(current.id, dataMode, unmetered) {
@@ -285,7 +250,7 @@ class NowPlayingScreen(
         val synced = (lyrics?.synced == true) && karaoke
         val activeIndex = if (synced) indexForTime(lines, position) else -1
 
-        Box(modifier = modifier.fillMaxWidth().background(scrim)) {
+        Box(modifier = modifier.fillMaxWidth()) {
             when {
                 loading -> CenteredText("Loading lyrics…")
                 outcome == LyricsRepository.Outcome.NotFetched ->
@@ -295,9 +260,7 @@ class NowPlayingScreen(
                 lines.isEmpty() -> CenteredText("No lyrics")
                 else -> {
                     val listState = rememberLazyListState()
-                    // Hold the active line ~38% down the pane (matching the old
-                    // app) instead of pinning it to the very top, and pad the
-                    // bottom so the closing lines can still reach that anchor.
+                    // Hold the active line at LYRIC_ANCHOR rather than the top.
                     LaunchedEffect(activeIndex, synced) {
                         if (!synced || activeIndex < 0) return@LaunchedEffect
                         val viewport = listState.layoutInfo.viewportSize.height
@@ -308,9 +271,7 @@ class NowPlayingScreen(
                         )
                     }
                     // Room under the last line for it to reach the anchor: the
-                    // pane's own height less the anchor's share of it. It was a
-                    // share of the screen's height, which is only the pane's on
-                    // the LP3.
+                    // pane's own height less the anchor's share of it.
                     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                         val tailPadding = maxHeight * (1f - LYRIC_ANCHOR)
                         LazyColumn(
@@ -367,23 +328,24 @@ class NowPlayingScreen(
     ) {
         val drag = rememberDragReorderState<String>()
         val artworkHidden by App.hideArtwork.collectAsState()
-        val rowPx = with(LocalDensity.current) { px(160).toPx() }
+        val rowPx = with(LocalDensity.current) { px(QUEUE_ROW_PX).toPx() }
         // Read unconditionally, branch on the result — see ARCHITECTURE.md on
         // conditional composable calls.
         val rules by App.rules.collectAsState()
         val onPhone by App.library.downloadedTrackIds.collectAsState()
         val canStream = rules.mayStream
-        // Only the upcoming portion of the queue (past current) can be dragged into.
+        // Only the upcoming part of the queue, past the current track, can be dragged into.
         val minIndex = index + 1
-        val orderedKeys = remember(queue) { queue.mapIndexed { i, t -> "$i-${t.id}" } }
-        // takeIf on the same condition that gates dragging at all: the track can finish
-        // while a drag is held, and once the playing row is the last one there is no
-        // upcoming range left. dragRowTarget would then be asked to clamp into an empty
-        // range and throw -- and this runs before the pointerInput restart that ends the
-        // drag has had a composition to take effect.
+        val orderedKeys = remember(queue) { queue.mapIndexed(::queueKey) }
+        val indexOfKey = remember(orderedKeys) { orderedKeys.withIndex().associate { (i, key) -> key to i } }
+        // takeIf on the condition that gates dragging at all: the track can end
+        // while a drag is held, and once the playing row is the last there is no
+        // upcoming range left. dragRowTarget would then clamp into an empty range
+        // and throw, before the pointerInput restart that ends the drag has had a
+        // composition to take effect.
         val dropTarget: DropTarget? = drag.draggingIndex?.takeIf { queue.size > minIndex }?.let { from ->
             val target = dragRowTarget(queue.size, from, drag.dragOffsetY, rowPx, minIndex)
-            val movingIndices = drag.draggingKeys.mapNotNull { orderedKeys.indexOf(it).takeIf { i -> i >= 0 } }.toSet()
+            val movingIndices = drag.draggingKeys.mapNotNull { indexOfKey[it] }.toSet()
             remember(queue, from, drag.draggingKeys, target) {
                 val insertAt = dropInsertIndex(queue.size, from, movingIndices, target)
                 val remaining = orderedKeys.filterIndexed { i, _ -> i !in movingIndices }
@@ -391,10 +353,8 @@ class NowPlayingScreen(
             }
         }
 
-        // The playing track stays at the top: what's already gone is the least
-        // interesting part of a queue. Opening the page jumps there outright,
-        // while a track ending animates, so the list is seen to move rather than
-        // appearing to have been somewhere else all along.
+        // The playing track stays at the top. Opening the page jumps there
+        // outright, while a track ending animates, so the list is seen to move.
         var anchored by remember { mutableStateOf(false) }
         LaunchedEffect(index) {
             val target = index.coerceAtLeast(0)
@@ -414,7 +374,7 @@ class NowPlayingScreen(
                     rowPx = rowPx,
                     minIndex = minIndex,
                     groupOf = { hitKey ->
-                        val hitId = queue.getOrNull(orderedKeys.indexOf(hitKey))?.id
+                        val hitId = indexOfKey[hitKey]?.let { queue.getOrNull(it) }?.id
                         if (hitId != null && hitId in selection.selected && selection.count > 1) {
                             orderedKeys.filterIndexed { i, _ -> i >= minIndex && queue[i].id in selection.selected }
                                 .toSet()
@@ -429,14 +389,14 @@ class NowPlayingScreen(
                 state = listState,
                 modifier = Modifier.fillMaxSize().padding(start = px(QUEUE_START_PX), end = px(SCROLLBAR_LANE_PX)),
             ) {
-                itemsIndexed(queue, key = { i, t -> "$i-${t.id}" }) { i, track ->
+                itemsIndexed(queue, key = ::queueKey) { i, track ->
                     val isCurrent = i == index
                     val isPast = i < index
-                    // A row that has to wait for the server stays in the queue
-                    // and says so the way a played row does: stepped back. It
-                    // plays again the moment the rules allow — see LinkRules.
+                    // A row that has to wait for the server stays in the queue,
+                    // stepped back like a played row. It plays again the moment
+                    // the rules allow — see LinkRules.
                     val mustWait = !canStream && track.id !in onPhone && !PhoneFiles.isPhoneFile(track.id)
-                    val rowKey = "$i-${track.id}"
+                    val rowKey = queueKey(i, track)
                     val isDragging = rowKey in drag.draggingKeys
                     // Clear coords on dispose: LazyColumn recycles nodes, so a stale
                     // entry would silently report the next occupant's position.
@@ -447,7 +407,7 @@ class NowPlayingScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(px(160))
+                                .height(px(QUEUE_ROW_PX))
                                 .onGloballyPositioned { drag.rowCoords[rowKey] = it }
                                 // Real row goes invisible; DragOverlay draws the floating stand-in.
                                 .alpha(if (isDragging) 0f else if (isPast || mustWait) 0.5f else 1f)
@@ -463,35 +423,8 @@ class NowPlayingScreen(
                                 ),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            if (selection.active) {
-                                SelectionArtwork(track.coverArtId, track.id in selection.selected, size = px(ROW_ART_PX))
-                                Spacer(Modifier.width(px(ROW_GAP_PX)))
-                            } else if (!artworkHidden) {
-                                AppArtwork(track.coverArtId, size = px(ROW_ART_PX))
-                                Spacer(Modifier.width(px(ROW_GAP_PX)))
-                            }
-                            Column(Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (isCurrent) {
-                                        AppIcon(AppIcons.Waveform, size = px(46))
-                                        Spacer(Modifier.width(px(15)))
-                                    }
-                                    AppText(
-                                        track.title,
-                                        pxSp(ROW_TITLE_PX),
-                                        lineHeight = pxSp(ROW_TITLE_LINE_PX),
-                                        maxLines = 1,
-                                    )
-                                }
-                                AppText(
-                                    track.artist,
-                                    pxSp(ROW_SUB_PX),
-                                    lineHeight = pxSp(ROW_SUB_LINE_PX),
-                                    dim = true,
-                                    maxLines = 1,
-                                )
-                            }
-                            // Drag handle for reordering within the upcoming portion of the queue.
+                            QueueRowContent(track, isCurrent, selection, artworkHidden)
+                            // Drag handle for reordering within the upcoming part of the queue.
                             if (!isPast && !isCurrent) {
                                 AppIcon(
                                     AppIcons.Dehaze,
@@ -510,12 +443,52 @@ class NowPlayingScreen(
                 }
             }
             if (drag.draggingIndex != null) {
-                DragOverlay(queue, drag.draggingKeys, drag.dragStartTops, drag.fingerOffsetY, artworkHidden, selection)
+                // Found by key rather than by walking the queue, in queue order.
+                val dragged = drag.draggingKeys.mapNotNull { indexOfKey[it] }.sorted()
+                DragOverlay(queue, dragged, drag.dragStartTops, drag.fingerOffsetY, artworkHidden, selection)
             }
         }
     }
 
     private data class DropTarget(val beforeKey: String?)
+
+    /** A queue row's cover and lines, shared by the list and the floating copy being dragged. */
+    @Composable
+    private fun RowScope.QueueRowContent(
+        track: Track,
+        isCurrent: Boolean,
+        selection: SelectionState,
+        artworkHidden: Boolean,
+    ) {
+        if (selection.active) {
+            SelectionArtwork(track.coverArtId, track.id in selection.selected, size = px(ROW_ART_PX))
+            Spacer(Modifier.width(px(ROW_GAP_PX)))
+        } else if (!artworkHidden) {
+            AppArtwork(track.coverArtId, size = px(ROW_ART_PX))
+            Spacer(Modifier.width(px(ROW_GAP_PX)))
+        }
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isCurrent) {
+                    AppIcon(AppIcons.Waveform, size = px(46))
+                    Spacer(Modifier.width(px(15)))
+                }
+                AppText(
+                    track.title,
+                    pxSp(ROW_TITLE_PX),
+                    lineHeight = pxSp(ROW_TITLE_LINE_PX),
+                    maxLines = 1,
+                )
+            }
+            AppText(
+                track.artist,
+                pxSp(ROW_SUB_PX),
+                lineHeight = pxSp(ROW_SUB_LINE_PX),
+                dim = true,
+                maxLines = 1,
+            )
+        }
+    }
 
     /**
      * Floating copy of the row(s) being dragged, drawn outside the LazyColumn so it
@@ -525,54 +498,33 @@ class NowPlayingScreen(
     @Composable
     private fun BoxScope.DragOverlay(
         queue: List<Track>,
-        draggingKeys: Set<String>,
+        /** The dragged rows' places in [queue], in queue order. */
+        dragged: List<Int>,
         dragStartTops: Map<String, Float>,
         fingerOffsetY: Float,
         artworkHidden: Boolean,
         selection: SelectionState,
     ) {
-        queue.forEachIndexed { i, track ->
-            val rowKey = "$i-${track.id}"
-            if (rowKey !in draggingKeys) return@forEachIndexed
-            val top = dragStartTops[rowKey] ?: return@forEachIndexed
+        dragged.forEach { i ->
+            val track = queue[i]
+            val top = dragStartTops[queueKey(i, track)] ?: return@forEach
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(px(160))
+                    .height(px(QUEUE_ROW_PX))
                     .align(Alignment.TopStart)
                     .graphicsLayer { translationY = top + fingerOffsetY }
                     .padding(start = px(QUEUE_START_PX), end = px(SCROLLBAR_LANE_PX)),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (selection.active) {
-                    SelectionArtwork(track.coverArtId, track.id in selection.selected, size = px(ROW_ART_PX))
-                    Spacer(Modifier.width(px(ROW_GAP_PX)))
-                } else if (!artworkHidden) {
-                    AppArtwork(track.coverArtId, size = px(ROW_ART_PX))
-                    Spacer(Modifier.width(px(ROW_GAP_PX)))
-                }
-                Column(Modifier.weight(1f)) {
-                    AppText(track.title, pxSp(ROW_TITLE_PX), lineHeight = pxSp(ROW_TITLE_LINE_PX), maxLines = 1)
-                    AppText(
-                        track.artist,
-                        pxSp(ROW_SUB_PX),
-                        lineHeight = pxSp(ROW_SUB_LINE_PX),
-                        dim = true,
-                        maxLines = 1,
-                    )
-                }
+                QueueRowContent(track, isCurrent = false, selection, artworkHidden)
                 Spacer(Modifier.width(px(QUEUE_TRAILING_SLOT_PX)))
             }
         }
     }
 
     @Composable
-    private fun ScrubButton(
-        icon: ImageVector,
-        direction: Int,
-        size: androidx.compose.ui.unit.Dp = px(107),
-        onSkip: () -> Unit,
-    ) {
+    private fun ScrubButton(icon: ImageVector, direction: Int, onSkip: () -> Unit) {
         val scope = rememberCoroutineScope()
         Box(
             // Fills the cell so tap-to-skip and hold-to-scrub get the whole square.
@@ -581,13 +533,13 @@ class NowPlayingScreen(
                     awaitFirstDown()
                     var scrubbing = false
                     val hold = scope.launch {
-                        delay(300)
+                        delay(SCRUB_HOLD_MS)
                         scrubbing = true
                         while (isActive) {
                             val pos = App.playback.positionMs.value
                             val dur = App.playback.durationMs.value
-                            if (dur > 0) App.playback.seekTo((pos + direction * 5000L).coerceIn(0L, dur))
-                            delay(250)
+                            if (dur > 0) App.playback.seekTo((pos + direction * SCRUB_STEP_MS).coerceIn(0L, dur))
+                            delay(SCRUB_REPEAT_MS)
                         }
                     }
                     waitForUpOrCancellation()
@@ -597,57 +549,44 @@ class NowPlayingScreen(
             },
             contentAlignment = Alignment.Center,
         ) {
-            AppIcon(icon, size = size)
+            AppIcon(icon, size = px(SEEK_BOX_PX))
         }
     }
 
-    // --- Player -------------------------------------------------
-
     /**
-     * A black header over full-bleed artwork, with every control floating on the
-     * cover itself.
+     * The player: a header over the cover, with the controls below it.
      *
-     * Below the header nothing is stacked: each element is anchored to the bottom
-     * of the screen at the exact depth the design gives it — seek line 360px up,
-     * clocks 40px under that, transport 240px up, the secondary row 120px up.
-     * Stacking would make every one of those depths a consequence of the ones
-     * above it, and a single font-metric change would move them all.
+     * Below the header nothing is stacked: each control is anchored to the bottom
+     * of the screen at the depth the design gives it (see [Band]), so a font-metric
+     * change above can't move them.
      *
-     * Cover Only is this same page with the sleeve moved out from its panel to
-     * fill everything under the header. Nothing else moves — the controls dim,
-     * gain a wash to be read against, and a tap can put them away.
+     * Cover Only is this same page with the sleeve moved out of its panel to fill
+     * everything under the header. The controls dim, gain a wash to be read
+     * against, and a tap can put them away.
      */
     @Composable
     private fun ArtPlayer(current: Track) {
         val artwork by App.settings.artwork.collectAsState(initial = ArtworkMode.SMALL)
-        // Parked — see PlaybackController.waitingFor. The
-        // credit line carries it: the same words the downloads page uses for
-        // the same wait, in the place the eye already goes for what is up.
+        // Parked (see PlaybackController.waitingFor) or buffering: the credit
+        // line says so, or the screen looks like a paused player and gets
+        // tapped again.
         val waiting by App.playback.waitingFor.collectAsState()
-        // A stream that has been asked for and hasn't sounded yet. Without a
-        // word here the screen is indistinguishable from a paused player, and
-        // gets tapped again.
         val buffering by App.playback.buffering.collectAsState()
         val credit = waiting ?: if (buffering) "Buffering…" else current.artist
-        // The words want the whole panel, so the title goes back to the header
-        // it came from rather than sitting behind them.
+        // With no cover the track takes the panel. Lyrics want the whole panel,
+        // so then the title stays in the header.
         val heroTitle = artwork == ArtworkMode.NONE && !NowPlayingNav.lyricsOverlay.value
         // Either of these leaves nothing to put behind the controls: no cover at
         // all, or the lyrics in its place.
         val coverOnly = NowPlayingNav.coverOnly.value &&
             artwork != ArtworkMode.NONE &&
             !NowPlayingNav.lyricsOverlay.value
-        // Held in NowPlayingNav, not here, so putting the controls away outlasts
-        // a trip to the queue or the library — see NowPlayingNav.coverChrome.
         val chrome = NowPlayingNav.coverChrome.value
 
         Column(modifier = Modifier.fillMaxSize()) {
-            // The same header as every other page — 160px bar, 160px corner
-            // squares that take the tap and the hold, icons on the shared edge
-            // axis — with the track card in the title's place. It used to be
-            // a hand-built copy with the taps hung on the glyphs, which left
-            // this one screen with smaller targets and no hold. Kept on OLED
-            // black explicitly: the stage below may be a full-bleed cover.
+            // The same header as every other page, with the track card in the
+            // title's place. Kept on black explicitly: the stage below may be a
+            // full-bleed cover.
             Box(modifier = Modifier.background(LightThemeTokens.colors.background)) {
                 AppHeader(
                     onBack = { goBack() },
@@ -664,26 +603,17 @@ class NowPlayingScreen(
                 Stage(
                     current,
                     fullBleed = coverOnly,
-                    // A tap puts the controls away and brings them back; the
-                    // long press that opened the cover closes it, which is how
-                    // the other two layouts leave as well. (A plain tap that
-                    // toggled the cover itself was tried and rejected — too
-                    // easy, too rewarding, on a phone meant to be light.)
+                    // A tap puts the controls away and brings them back. The long
+                    // press that opened the cover closes it. A plain tap toggling
+                    // the cover itself was too easy on a phone meant to be light.
                     onTap = { if (coverOnly) NowPlayingNav.coverChrome.value = !chrome },
-                    onLongPress = {
-                        NowPlayingNav.coverOnly.value = !coverOnly
-                        // Going full-screen means going to the picture, so the
-                        // controls step out of its way; a tap brings them back.
-                        if (!coverOnly) NowPlayingNav.coverChrome.value = false
-                    },
+                    onLongPress = { NowPlayingNav.setCoverOnly(!coverOnly) },
                 )
                 if (heroTitle) TitleBlock(current, credit)
                 if (!coverOnly || chrome) {
                     // On the cover everything steps back a little, but by less
-                    // than the secondary row is knocked back on black: there it
-                    // is being separated from the transport above it, here it is
-                    // being kept legible over a picture, and the second job needs
-                    // more of the glyph than the first.
+                    // than the secondary row on black: over a picture it has to
+                    // stay legible — see ON_COVER_ALPHA.
                     val dim = if (coverOnly) ON_COVER_ALPHA else DIM_ALPHA
                     if (coverOnly) ControlScrim()
                     SeekBand(alpha = if (coverOnly) ON_COVER_ALPHA else 1f)
@@ -695,11 +625,9 @@ class NowPlayingScreen(
     }
 
     /**
-     * The wash the controls sit on once the cover is behind them.
-     *
-     * There to stop white-on-white, not to dim the picture: it fades out
-     * entirely a little above the seek line, so the sleeve is untouched over most
-     * of the screen and only the part carrying controls is darkened.
+     * The wash the controls sit on once the cover is behind them: there to stop
+     * white-on-white, not to dim the picture, so it has faded out a little above
+     * the seek line.
      */
     @Composable
     private fun BoxScope.ControlScrim() {
@@ -720,32 +648,23 @@ class NowPlayingScreen(
     }
 
     /**
-     * The queue in the big player's own geometry.
-     *
-     * The controls do not move: seek line, transport and the bottom row stay
-     * exactly where they were, and only what is behind them changes from cover to
-     * list. The header gives its two squares to shuffle and repeat — the queue is
-     * where you set how it will be played — and drops the title card, except
-     * while selecting, when it becomes the count and the two selection controls.
-     * The list shares the seek line's 80px side inset and stops short of the
-     * controls.
+     * The queue: a header naming the page (while selecting, the count and the
+     * selection controls), the list, and shuffle and repeat in a bar at the foot.
      */
     @Composable
-    private fun QueuePlayer(current: Track, queue: List<Track>, index: Int) {
+    private fun QueuePlayer(queue: List<Track>, index: Int) {
         val shuffle by App.playback.shuffle.collectAsState()
         val repeat by App.playback.repeatMode.collectAsState()
         val selection = rememberSelection("queue")
 
-        val background = LightThemeTokens.colors.background
-
-        Box(modifier = Modifier.fillMaxSize().background(background)) {
+        Box(modifier = Modifier.fillMaxSize()) {
             if (selection.active) {
                 SelectionHeader(
                     selection = selection,
                     onDelete = {
                         App.playback.removeFromQueue(selection.selected)
                         // Stay in selection mode with nothing chosen: pruning a
-                        // queue is usually more than one pass, and the X is there.
+                        // queue is usually more than one pass.
                         selection.begin()
                     },
                     onConfirm = {
@@ -753,40 +672,34 @@ class NowPlayingScreen(
                             selection.pick(queue) { it.id },
                             selection,
                             // Everything here is in the queue already, and
-                            // downloads are a library job — see the track menu.
+                            // downloads are a library job.
                             showAddToQueue = false,
                             showDownload = false,
                         )
                     },
                 )
             } else {
-                Box(modifier = Modifier.background(LightThemeTokens.colors.background)) {
-                    AppHeader(
-                        onBack = { NowPlayingNav.view.value = NpView.ARTWORK },
-                        titleContent = {
-                            QueueTitle(
-                                // Not the track — that one is on screen already,
-                                // in the row marked as playing. This says which
-                                // page you are on.
-                                title = "Queue",
-                                // Where in it you are. Only with something
-                                // playing: a queue with nothing current has no
-                                // "of" to answer, and "0 of 12" would be a
-                                // position no row is at.
-                                subtitle = if (index in queue.indices) {
-                                    "${index + 1} of ${queue.size}"
-                                } else {
-                                    null
-                                },
-                            )
-                        },
-                    )
-                }
+                AppHeader(
+                    onBack = { NowPlayingNav.showQueue.value = false },
+                    titleContent = {
+                        QueueTitle(
+                            // The page, not the track: that one is the row marked
+                            // as playing.
+                            title = "Queue",
+                            // Only with something current: "0 of 12" would be a
+                            // position no row is at.
+                            subtitle = if (index in queue.indices) {
+                                "${index + 1} of ${queue.size}"
+                            } else {
+                                null
+                            },
+                        )
+                    },
+                )
             }
             val listState = rememberLazyListState()
             Box(
-                // Between the header and the bar at the foot: whatever the
-                // screen leaves between them, not a height of its own.
+                // Whatever the screen leaves between the header and the bar.
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(top = px(QUEUE_TOP_PX), bottom = px(QUEUE_END_PX)),
@@ -798,13 +711,12 @@ class NowPlayingScreen(
                     Modifier.fillMaxSize(),
                     listState = listState,
                 )
-                // Outside the list's own margins, hard against the screen edge —
-                // inside them it sat on top of the drag handles.
+                // Outside the list's margins, against the screen edge, so it stays
+                // clear of the drag handles.
                 ListScrollBar(listState)
             }
-            // Shuffle and repeat as a bar of their own, on the axis the library's
-            // tabs use: the queue is where you set how it will be played, and the
-            // transport is one tap away on the page this came from.
+            // Shuffle and repeat as a bar of their own: the queue is where you set
+            // how it will be played.
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
@@ -820,25 +732,19 @@ class NowPlayingScreen(
                     ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                HeaderSlot {
-                    HeaderToggle(AppIcons.Shuffle, active = shuffle) { App.playback.toggleShuffle() }
-                }
+                QueueToggle(AppIcons.Shuffle, active = shuffle) { App.playback.toggleShuffle() }
                 Spacer(Modifier.weight(1f))
-                HeaderSlot {
-                    HeaderToggle(
-                        if (repeat == RepeatMode.TRACK) AppIcons.RepeatOne else AppIcons.Repeat,
-                        active = repeat != RepeatMode.OFF,
-                    ) { App.playback.cycleRepeat() }
-                }
+                QueueToggle(
+                    if (repeat == RepeatMode.TRACK) AppIcons.RepeatOne else AppIcons.Repeat,
+                    active = repeat != RepeatMode.OFF,
+                ) { App.playback.cycleRepeat() }
             }
         }
     }
 
     /**
-     * The queue view's page title: its name, and where in it you are.
-     *
-     * A column even with nothing under it, so a title that gains a second line
-     * doesn't shift up as it arrives.
+     * The queue's page title: its name, and where in it you are. A column even with
+     * nothing under it, so the title doesn't shift as a second line arrives.
      */
     @Composable
     private fun QueueTitle(title: String, subtitle: String?) {
@@ -863,26 +769,13 @@ class NowPlayingScreen(
         }
     }
 
-    /** One of the header's two 160px squares. */
-    @Composable
-    private fun HeaderSlot(content: @Composable () -> Unit) {
-        Box(
-            modifier = Modifier.size(px(HEADER_BAR_PX)),
-            contentAlignment = Alignment.Center,
-        ) {
-            content()
-        }
-    }
-
     /**
-     * Shuffle and repeat in the queue header, in the big player's sizes.
-     *
-     * Same rule as the other layouts' toggles: the glyph stays full strength and
-     * the underline carries the state, because dimming it made an available
-     * control look disabled.
+     * Shuffle or repeat at the foot of the queue, in a square the bar's height. The
+     * glyph stays full strength and the underline carries the state: dimming it
+     * made an available control look disabled.
      */
     @Composable
-    private fun HeaderToggle(icon: ImageVector, active: Boolean, onClick: () -> Unit) {
+    private fun QueueToggle(icon: ImageVector, active: Boolean, onClick: () -> Unit) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
@@ -902,13 +795,11 @@ class NowPlayingScreen(
     }
 
     /**
-     * The cover, or the lyrics in its place — 1080 square, edge to edge.
+     * The cover, or the lyrics in its place.
      *
      * [fullBleed] is Cover Only: the sleeve leaves its panel for the whole area
-     * under the header. That area is the screen's width squared, so a square
-     * cover fills it exactly — which is also why the header stays put in this
-     * mode. Take it away and the box is taller than it is wide, and the sleeve
-     * would have to be cropped at the sides to fill it.
+     * under the header. On the LP3 that area is square, so the cover fills it
+     * exactly, which is also why the header stays put in this mode.
      */
     @Composable
     private fun BoxScope.Stage(
@@ -917,21 +808,17 @@ class NowPlayingScreen(
         onTap: () -> Unit,
         onLongPress: () -> Unit,
     ) {
-        // Decoded at the panel's own width, which is what a full-bleed cover fills.
-        // The sleeve of what is playing: fetched wherever the music itself is —
-        // see ArtworkNeed.
+        // Decoded at the panel's own width, which a full-bleed cover fills, and
+        // fetched wherever the music itself is — see ArtworkNeed.
         val image = rememberArtwork(current.coverArtId, currentScale().windowWidthPx, ArtworkNeed.FOCUSED)
 
-        // One panel, one occupant. Lyrics take the cover's place rather than
-        // sitting over it: a wash dark enough to read against had already hidden
-        // most of the sleeve, and the artwork comes straight back on closing.
+        // Lyrics take the cover's place rather than sitting over it: a wash dark
+        // enough to read against hides most of the sleeve anyway.
         val panel = if (fullBleed) {
             Modifier.matchParentSize()
         } else {
-            // Everything above the controls: the screen less the block they
-            // take, rather than a height of its own — so a taller panel gives
-            // the cover more room and a shorter one takes some back, and the
-            // seek line stays at the depth the design puts it either way.
+            // Everything above the controls rather than a height of its own, so
+            // the seek line stays at its depth on any panel.
             Modifier
                 .align(Alignment.TopStart)
                 .fillMaxSize()
@@ -940,16 +827,13 @@ class NowPlayingScreen(
         }
 
         if (NowPlayingNav.lyricsOverlay.value) {
-            LyricsOverlay(current, Color.Transparent, panel)
+            LyricsOverlay(current, panel)
             return
         }
         if (image == null) return
         // The cover square inside the panel: cropping a sleeve to the panel's
-        // shape would be worse than the margins.
-        //
-        // Long-pressing it opens the cover full-screen — the same gesture the
-        // album page uses for the same thing, and the way back is the same press
-        // again rather than hunting for the back arrow.
+        // shape would be worse than the margins. Long-pressing it opens the cover
+        // full-screen, as on the album page, and the same press comes back.
         Box(
             modifier = panel.slowLongPress(onClick = onTap, onLongPress = onLongPress),
             contentAlignment = Alignment.Center,
@@ -958,9 +842,8 @@ class NowPlayingScreen(
                 bitmap = image,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                // Filling rather than squaring off the height: the two are the
-                // same number here, and only this one still holds on a screen
-                // whose header doesn't leave a square behind it.
+                // Filling rather than squaring off the height: the same on the
+                // LP3, and only this one holds where the area isn't square.
                 modifier = if (fullBleed) {
                     Modifier.fillMaxSize()
                 } else {
@@ -970,14 +853,9 @@ class NowPlayingScreen(
         }
     }
 
-
     /**
-     * The track, set where the cover would have been.
-     *
-     * With no artwork the header's small title card is the only thing on a black
-     * screen, and it reads as a caption for nothing. Moving it down into the
-     * cover's own panel and letting it grow makes the track the page's subject,
-     * which is what the cover was doing before.
+     * The track, set where the cover would have been: with no artwork the header's
+     * small title card reads as a caption for nothing.
      */
     @Composable
     private fun BoxScope.TitleBlock(current: Track, credit: String) {
@@ -992,9 +870,7 @@ class NowPlayingScreen(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Artist above the song, album below it, both in the secondary
-                // weight — the credit first, then what you're hearing, then the
-                // record it came off.
+                // Artist above the song, album below it.
                 HeroLine(credit, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
                 HeroLine(current.title, HERO_TITLE_PX, HERO_TITLE_LINE_PX, dim = false)
                 HeroLine(current.album, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
@@ -1074,19 +950,13 @@ class NowPlayingScreen(
         }
     }
 
-    /**
-     * Rewind, play/pause, forward — full white, the only undimmed controls.
-     *
-     * Tried with output and queue at its edges and a bigger cover above, as a
-     * switchable layout; dropped — a busier transport bought little when the
-     * full-screen cover is one hold away.
-     */
+    /** Rewind, play/pause, forward: full white, the only undimmed controls. */
     @Composable
     private fun BoxScope.TransportRow() {
         val isPlaying by App.playback.isPlaying.collectAsState()
         Band(TRANSPORT_UP_PX, TRANSPORT_ROW_PX) {
             Slot(SlotAt.FromStart(SIDE_X_PX)) {
-                ScrubButton(AppIcons.FastRewind, direction = -1, size = px(SEEK_BOX_PX)) {
+                ScrubButton(AppIcons.FastRewind, direction = -1) {
                     App.playback.previous()
                 }
             }
@@ -1097,36 +967,30 @@ class NowPlayingScreen(
                 )
             }
             Slot(SlotAt.FromEnd(SIDE_X_PX)) {
-                ScrubButton(AppIcons.FastForward, direction = 1, size = px(SEEK_BOX_PX)) {
+                ScrubButton(AppIcons.FastForward, direction = 1) {
                     App.playback.next()
                 }
             }
         }
     }
 
-    /**
-     * Add, cast and queue: one shared glyph size, all dimmed together.
-     *
-     * Lyrics used to hold the left slot and now lives in the ••• sheet — it is
-     * something you go and read, not something you reach for mid-track.
-     */
+    /** Add, cast and queue: one shared glyph size, all dimmed together. */
     @Composable
     private fun BoxScope.SecondaryRow(current: Track, alpha: Float) {
         val size = px(SECONDARY_BOX_PX)
         val libraryTracks by App.library.tracks.collectAsState()
-        val liked = libraryTracks.firstOrNull { it.id == current.id }?.liked ?: current.liked
+        val liked = remember(libraryTracks, current) {
+            libraryTracks.firstOrNull { it.id == current.id }?.liked ?: current.liked
+        }
         val source by App.source.collectAsState()
-        // Everything behind "+" is a way of filing the track somewhere. On a
-        // source with nowhere to file it, the button opens an empty sheet — so
-        // it isn't there.
+        // Everything behind "+" is a way of filing the track somewhere, so on a
+        // source with nowhere to file it the button isn't there.
         val canFile = source.supportsLikes || source.supportsPlaylists ||
             source.supportsRatings || source.supportsDownloads
 
         Band(SECONDARY_UP_PX, SECONDARY_ROW_PX) {
-            // "+" rather than a heart: liking is one of several things you might
-            // want to file this track under, and the row has one slot for them.
-            // Ringed once it *is* liked — the same glyph, so the button doesn't
-            // change meaning, with a mark to say the track is already filed.
+            // "+" rather than a heart: liking is one of several ways to file the
+            // track. Ringed once it is liked, so the button keeps its meaning.
             if (canFile) {
                 Slot(SlotAt.FromStart(SIDE_X_PX), onClick = { go { AddActionsScreen(it, current.id) } }) {
                     AppIcon(
@@ -1141,14 +1005,12 @@ class NowPlayingScreen(
             }
             Slot(
                 SlotAt.FromEnd(SIDE_X_PX),
-                onClick = { NowPlayingNav.view.value = nextView(NowPlayingNav.view.value) },
+                onClick = { NowPlayingNav.showQueue.value = !NowPlayingNav.showQueue.value },
             ) {
-                // On the queue, the glyph inverts — black lines in a white tile —
-                // rather than brightening: it is the only one of these three with
-                // a state, and inverting says "you are here" without breaking the
-                // row's shared opacity. The alpha wraps the pair, so tile and
-                // lines fade together and the white never reads as a lit button.
-                val onQueue = NowPlayingNav.view.value == NpView.QUEUE
+                // On the queue the glyph inverts into a white tile rather than
+                // brightening, which would break the row's shared opacity. The
+                // alpha wraps the pair, so tile and lines fade together.
+                val onQueue = NowPlayingNav.showQueue.value
                 Box(
                     modifier = Modifier
                         .alpha(alpha)
@@ -1258,22 +1120,12 @@ class NowPlayingScreen(
                 showDownload = false,
                 showRating = false,
                 showAddToPlaylist = false,
-                // Only worth offering when there is a cover to enlarge; with
-                // artwork off there is nothing to show.
-                //
-                // In Cover Only it stays as the way back out too. A hold on the
-                // cover toggles it either way, but that gesture is invisible —
-                // the menu is where you look when you don't already know it
-                // exists.
+                // Only with a cover to enlarge. In Cover Only it is the way back
+                // out too: the hold on the cover is invisible, the menu isn't.
                 onShowArtwork = if (artworkMode == ArtworkMode.SMALL) {
                     {
-                        // Replaces this sheet rather than stacking on it, so back
-                        // from the artwork lands on the player as intended.
                         goBack()
-                        NowPlayingNav.coverOnly.value = !coverOnly
-                        // Going full-screen means going to the picture, so the
-                        // controls step out of its way; a tap brings them back.
-                        if (!coverOnly) NowPlayingNav.coverChrome.value = false
+                        NowPlayingNav.setCoverOnly(!coverOnly)
                     }
                 } else {
                     null
@@ -1283,7 +1135,7 @@ class NowPlayingScreen(
                 onToggleLyrics = {
                     val show = !NowPlayingNav.lyricsOverlay.value
                     NowPlayingNav.lyricsOverlay.value = show
-                    if (show) NowPlayingNav.view.value = NpView.ARTWORK
+                    if (show) NowPlayingNav.showQueue.value = false
                 },
             )
         }
@@ -1303,29 +1155,16 @@ class NowPlayingScreen(
     }
 }
 
-// --- Big-artwork variant -----------------------------------------------------
+// Geometry, in canvas pixels. Every depth is measured up from the bottom of the
+// screen and every x in from the nearer edge, as the design states them, so a
+// number can be checked against the design with a ruler. Nothing states the
+// screen's own size: another panel gets the same controls at the same depths
+// and a cover sized to the rest.
 
-/**
- * Geometry for the full-width-artwork player, in LP3 physical pixels.
- *
- * Every depth is measured up from the bottom of the screen and every x in from
- * the nearer edge, exactly as the design states them, so a number here can be
- * checked against the design with a ruler rather than by adding up the elements
- * above it. Nothing states the screen's own size: whatever is not a depth or an
- * inset is what the screen leaves, so another panel gets the same controls at
- * the same depths and a cover sized to the rest.
- */
-
-/** The clocks under the seek line, in physical pixels. */
+/** The clocks under the seek line. */
 private const val TIME_PX = 36
 
-/**
- * The block that stands in for the cover when artwork is off.
- *
- * One step up from where it started (72/45): with the whole square to itself and
- * nothing else on the page, the smaller setting read as a caption for a missing
- * picture rather than as the thing the page is about.
- */
+/** The block that stands in for the cover when artwork is off. */
 private const val HERO_TITLE_PX = LightType.HEADING_PX
 private const val HERO_TITLE_LINE_PX = LightType.HEADING_LINE_PX
 private const val HERO_SIDE_PX = LightType.FINE_PX
@@ -1334,8 +1173,7 @@ private const val HERO_SIDE_LINE_PX = LightType.FINE_LINE_PX
 /**
  * What the controls take at the foot of the player; the panel the lyrics and a
  * small cover fill is everything above it. Clears the seek line's band, which
- * starts 400px up, by a little. The queue page has no controls to clear, so it
- * runs deeper — see [QUEUE_END_PX].
+ * starts 400px up, by a little.
  */
 private const val PANEL_END_PX = 420
 
@@ -1343,7 +1181,7 @@ private const val PANEL_END_PX = 420
 private const val QUEUE_TOP_PX = HEADER_BAR_PX
 private const val QUEUE_END_PX = HEADER_BAR_PX
 
-/** The underline that marks a header toggle as on. */
+/** The underline that marks a queue toggle as on. */
 private const val UNDERLINE_GAP_PX = 3
 private const val UNDERLINE_W_PX = 51
 private const val UNDERLINE_H_PX = 3
@@ -1369,26 +1207,24 @@ private const val INSET_PX = 80
 private const val SLOT_W_PX = 200
 
 /**
- * Icon boxes, in physical pixels and every one a multiple of 3 — so each is a
- * whole number of dp as well. A fractional dp puts the glyph's edges between
- * pixels and its strokes go soft, which is exactly what you see on a stem one
- * pixel wide.
- *
- * The ink is smaller than its box: play and pause fill 14/24 of it, the double
- * arrows 12/24, the bottom row's glyphs 18/24. The comments give what a ruler
+ * Icon boxes, every one a multiple of 3px so each is a whole number of dp too:
+ * a fractional dp puts the glyph's edges between pixels and its strokes go soft.
+ * The ink is smaller than its box (play and pause fill 14/24 of it, the double
+ * arrows 12/24, the bottom row's glyphs 18/24). The comments give what a ruler
  * finds on screen.
  */
 private const val PLAY_BOX_PX = 138      // 80px of ink
 private const val SEEK_BOX_PX = 114      // 57px
-private const val SECONDARY_BOX_PX = 54  
-/** The queue header's second line — the card's own second line, which it sits beside. */
+private const val SECONDARY_BOX_PX = 54
+
+/** The queue header's second line, the size of the title card's own. */
 private const val QUEUE_SUBTITLE_PX = 36
 private const val QUEUE_SUBTITLE_LINE_PX = 42
 
 /**
  * Shuffle and repeat at the foot of the queue, sized off the Light music app's
- * own pair rather than off this header's other glyphs — they are the page's only
- * controls, and at header size they read as an afterthought.
+ * own pair: they are the page's only controls, and at header size they read as
+ * an afterthought.
  */
 private const val QUEUE_TOGGLE_ICON_PX = 90
 
@@ -1400,25 +1236,21 @@ private const val QUEUE_TILE_RADIUS_PX = 6
 private const val DIM_ALPHA = 0.45f
 
 /**
- * The same controls once they are standing on a sleeve rather than on black.
- *
- * Well up from the 0.45 these controls carry on black: over a picture they have
- * to hold their own against whatever is behind them, and the wash only does half
- * that job. Judged on the device across several values — the transport stays the
- * only thing at full strength, so the hierarchy survives the higher setting.
+ * The same controls standing on a sleeve rather than on black: over a picture
+ * they have to hold their own, and the wash only does half that job. The
+ * transport stays the only thing at full strength.
  */
 private const val ON_COVER_ALPHA = 0.75f
 
 /**
  * The wash under the controls in Cover Only, and how solid it gets at the very
- * bottom of it.
- *
- * 520px clears the topmost control — the seek line's band starts 400px up — so
- * the gradient has run out before it reaches anything, rather than stopping
- * against an edge you can see.
+ * bottom. 520px clears the seek line's band (400px up), so the gradient has run
+ * out before it reaches anything.
  */
 private const val SCRIM_H_PX = 520
 private const val SCRIM_ALPHA = 0.82f
 
-
-
+/** Scrubbing: how long a hold takes to start it, how often it steps, and how far. */
+private const val SCRUB_HOLD_MS = 300L
+private const val SCRUB_REPEAT_MS = 250L
+private const val SCRUB_STEP_MS = 5_000L

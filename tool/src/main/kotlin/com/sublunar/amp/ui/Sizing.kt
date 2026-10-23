@@ -16,11 +16,8 @@ import kotlin.math.roundToInt
 
 /**
  * The canvas every size in the app is stated on: the LP3's panel, 1080 pixels
- * across — Light's 27-unit grid at 40 pixels a unit.
- *
- * Derived from the SDK's grid rather than written as 1080 so the two stay one
- * thing: `px(40)` is exactly one of the SDK's grid units on every panel, and a
- * change to the grid in the SDK reaches here.
+ * across, which is Light's 27-unit grid at 40 pixels a unit. Derived from the
+ * SDK's grid so `px(40)` is exactly one grid unit on every panel.
  */
 const val CANVAS_PX_PER_UNIT = 40
 const val CANVAS_W_PX = LightGrid.WIDTH * CANVAS_PX_PER_UNIT
@@ -28,33 +25,24 @@ const val CANVAS_W_PX = LightGrid.WIDTH * CANVAS_PX_PER_UNIT
 /**
  * How the canvas maps onto the panel this is drawing on.
  *
- * A design pixel is a fraction of the window's width, not a dp. The sizes in the
- * app were measured on the LP3 in pixels and used to be turned into dp by
- * assuming the LP3's 3× density — which held until someone changed it:
- * Android's "smallest width" setting lowers the density, every dp becomes fewer
- * pixels, and the app shrank on a panel that hadn't. Light's own components
- * size from the screen's width (`gridUnitsAsDp`), so density cancels out and
- * they don't move; this does the same, in the unit the app is already written
- * in.
+ * A design pixel is a fraction of the window's width, not a dp: Android's
+ * "smallest width" setting lowers the density, so sizes in dp would shrink on a
+ * panel that hasn't changed. Light's own components size from the screen's width
+ * (`gridUnitsAsDp`) for the same reason.
  *
- * Each size rounds to a whole pixel of the panel. On the LP3 the factor is
- * exactly 1 and nothing moves; elsewhere a 3px hairline stays a 3px hairline
- * rather than a 2.9px one the renderer smears across four.
+ * Each size rounds to a whole panel pixel, so a 3px hairline stays 3px rather
+ * than a 2.9px one smeared across four. On the LP3 the factor is exactly 1.
  */
 @Immutable
 class Scale(val windowWidthPx: Int, private val density: Float) {
     /** Panel pixels per design pixel: 1 on the LP3, whatever its density is set to. */
-    val factor: Float = windowWidthPx / CANVAS_W_PX.toFloat()
+    private val factor: Float = windowWidthPx / CANVAS_W_PX.toFloat()
 
-    /** A design size as whole pixels of this panel. */
-    fun pxValue(design: Number): Int = (design.toFloat() * factor).roundToInt()
+    private fun pxValue(design: Number): Int = (design.toFloat() * factor).roundToInt()
 
     fun px(design: Number): Dp = (pxValue(design) / density).dp
 
-    /**
-     * Text in the same unit. Stated in sp, as the SDK's own text is, so a system
-     * font scale applies to the app the way it applies to everything else.
-     */
+    /** Text in the same unit, in sp as the SDK's own text is, so the system font scale applies. */
     fun sp(design: Number): TextUnit = (pxValue(design) / density).sp
 }
 
@@ -66,9 +54,8 @@ fun rememberScale(): Scale {
     val density = LocalDensity.current.density
     val window = LocalWindowInfo.current.containerSize.width
     val configured = LocalConfiguration.current.screenWidthDp
-    // The window's own width in pixels once it has one. Before first layout it
-    // reports zero, and the configuration's width stands in — an integer dp, so
-    // up to a pixel short, for one frame.
+    // Before first layout the window reports zero width, and the configuration's
+    // width stands in (an integer dp, so up to a pixel short) for that frame.
     val width = if (window > 0) window else (configured * density).roundToInt()
     return remember(width, density) { Scale(width, density) }
 }
@@ -85,10 +72,9 @@ fun px(design: Number): Dp = currentScale().px(design)
 fun pxSp(design: Number): TextUnit = currentScale().sp(design)
 
 /**
- * Light's type scale on the LP3's panel: the SDK's variants as the phone draws
- * them, measured off its own tools and stated in canvas pixels like everything
- * else. Heading is a menu row and a setting's value; Copy a list title; Detail a
- * subtitle or a label; Fine a page title; Paragraph prose.
+ * Light's type scale in canvas pixels, measured off the phone's own tools.
+ * Heading is a menu row and a setting's value, Copy a list title, Detail a
+ * subtitle or a label, Fine a page title, Paragraph prose.
  */
 object LightType {
     const val DETAIL_PX = 41

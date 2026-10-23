@@ -42,13 +42,10 @@ import com.sublunar.amp.App
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.ChoiceButton
 import com.sublunar.amp.ui.components.rememberTapHaptics
-import com.thelightphone.lp3Keyboard.ui.LayoutOptions
-import com.thelightphone.lp3Keyboard.ui.viewmodel.EnQwertyLp3KeyboardViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
-import com.thelightphone.sdk.ui.LightIconConfiguration
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LocalHapticsEnabled
@@ -69,9 +66,7 @@ class TextEntryScreen(
     sealed: SealedLightActivity,
     private val title: String,
     private val initial: String = "",
-    private val singleLine: Boolean = true,
     private val submitLabel: String = "DONE",
-    private val submitIcon: LightIconConfiguration? = null,
 ) : SimpleLightScreen<String?>(sealed) {
 
     // While casting, the rocker belongs to the speaker — see handleVolumeKey.
@@ -85,9 +80,7 @@ class TextEntryScreen(
             TextEditor(
                 title = title,
                 state = state,
-                singleLine = singleLine,
                 submitLabel = submitLabel,
-                submitIcon = submitIcon,
                 onSubmit = { goBack(state.text.toString()) },
                 onBack = { goBack(null) },
             )
@@ -97,30 +90,24 @@ class TextEntryScreen(
 
 /**
  * The SDK's `LightTextInputEditor`, laid out the same way from the same public
- * parts, plus what Notes does when its text is held.
+ * parts, plus what Notes does when its text is held: its menu where the keys
+ * were (see [EditMenu]), with a chevron beneath to bring the keys back.
  *
- * LightOS answers a hold on the text with Copy, Paste and Clear where the keys
- * were, and a chevron beneath them to bring the keys back; each verb does its
- * thing at once and brings the keys back too — see [EditMenu] for which of them
- * Amp can offer. The SDK's editor has no way in for this: its text area takes
- * every touch to place the cursor and hands nothing on. The keyboard itself
- * does, through
- * [LightEmbeddedLp3Keyboard]'s `overlay`, which the keyboard library draws in
- * place of the keys at their height, with its own chevron in the bar beneath.
+ * The SDK's editor has no way in for this (its text area takes every touch to
+ * place the cursor), but the keyboard does: [LightEmbeddedLp3Keyboard]'s
+ * `overlay` is drawn in place of the keys, with its own chevron in the bar.
  *
- * The hold lasts as long as the phone's own — LightOS's text view asks
- * `ViewConfiguration` for it, and so does this — not Amp's slower row hold.
+ * The hold lasts as long as the phone's own (`ViewConfiguration`'s long-press
+ * timeout, as LightOS's text view uses), not Amp's slower row hold.
  *
- * **If the SDK's editor changes, this will not follow**, the same cost the
- * search keyboard carries — see [EditingKeyboardCallback].
+ * **If the SDK's editor changes, this will not follow**, the same cost
+ * [EditingKeyboardCallback] carries.
  */
 @Composable
 private fun TextEditor(
     title: String,
     state: TextFieldState,
-    singleLine: Boolean,
     submitLabel: String,
-    submitIcon: LightIconConfiguration?,
     onSubmit: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -128,26 +115,15 @@ private fun TextEditor(
     val inputStyle = inputTextStyle()
     var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
     var menu by remember { mutableStateOf(false) }
-    // The same thud every hold in Amp gives when it lands, and a tick per key
-    // when the phone's own haptics setting is on — the SDK's editor read the
-    // same setting for its key buzz.
+    // The thud every hold in Amp gives when it lands, and a tick per key when
+    // the phone's own haptics setting is on, as the SDK's editor reads it.
     val (tick, thud) = rememberTapHaptics()
     val hapticsOn by rememberUpdatedState(LocalHapticsEnabled.current)
-    val options = rememberPhoneKeyboardOptions()
-    // Held in remember rather than through viewModel(), as on the search page:
-    // the tool doesn't carry lifecycle-viewmodel-compose.
-    val keyboard = remember(state) {
-        EnQwertyLp3KeyboardViewModel<Unit>(
-            EditingKeyboardCallback(
-                state,
-                singleLine,
-                onReturn = onSubmit,
-                onHaptic = { if (hapticsOn) tick() },
-            ),
-            keyboardOptionsFlow = options,
-            optionsForLayout = { LayoutOptions(!it.isRootLayout) },
-        )
-    }
+    val keyboard = rememberEditingKeyboard(
+        state,
+        onReturn = onSubmit,
+        onHaptic = { if (hapticsOn) tick() },
+    )
 
     fun placeCursor(position: Offset) {
         val layout = textLayout ?: return
@@ -171,7 +147,7 @@ private fun TextEditor(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         placeCursor(down.position)
                         // Lifted in time is a tap, which has already placed the
-                        // cursor; moving first drags it, as in the SDK; neither
+                        // cursor. Moving first drags it, as in the SDK. Neither
                         // by the deadline is the hold.
                         var dragged = false
                         val ended = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
@@ -212,9 +188,9 @@ private fun TextEditor(
                     text = state.text.toString(),
                     style = inputStyle,
                     onTextLayout = { textLayout = it },
-                    maxLines = if (singleLine) 1 else Int.MAX_VALUE,
-                    softWrap = !singleLine,
-                    overflow = if (singleLine) TextOverflow.StartEllipsis else TextOverflow.Clip,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.StartEllipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(modifier = Modifier.height(INPUT_UNDERLINE_GAP_GRID_UNITS.gridUnitsAsDp()))
@@ -243,21 +219,12 @@ private fun TextEditor(
             additionalBottomHeight = 5f.gridUnitsAsDp(),
             bottomBar = {
                 LightBottomBar(
-                    items = listOf(
-                        when (submitIcon) {
-                            null -> LightBarButton.Text(text = submitLabel, onClick = onSubmit)
-                            else -> LightBarButton.LightIcon(
-                                icon = submitIcon,
-                                onClick = onSubmit,
-                                contentDescription = submitLabel,
-                            )
-                        },
-                    ),
+                    items = listOf(LightBarButton.Text(text = submitLabel, onClick = onSubmit)),
                 )
             },
             // Only while the menu is up: the keyboard sends its chevron here
-            // whenever this is set, and the number page's chevron — back to
-            // letters — would otherwise close a menu that isn't open.
+            // whenever this is set, and the number page's chevron (back to
+            // letters) would otherwise close a menu that isn't open.
             onOverlayDismissed = if (menu) {
                 { menu = false }
             } else {
@@ -273,14 +240,11 @@ private fun TextEditor(
 }
 
 /**
- * Notes' menu, in the keys' place — Clear alone, for now.
- *
- * Notes offers Copy, Paste and Clear. The first two are left out because
- * LightOS keeps its own clipboard, and nothing in the SDK reaches it: a tool can
- * only use Android's, which nothing else on the phone fills or reads, so Paste
- * after a Copy in Notes did nothing. They belong here once LightOS shares its
- * clipboard with tools — light-sdk#45, which Light is doing internally, and
- * which may bring the whole menu to the SDK's own editor (see SDK-GAPS.md).
+ * Notes' menu in the keys' place: Clear alone. Notes also offers Copy and Paste,
+ * but LightOS keeps its own clipboard and nothing in the SDK reaches it. A tool
+ * only gets Android's, which nothing else on the phone fills or reads. They
+ * belong here once LightOS shares its clipboard with tools (light-sdk#45, see
+ * SDK-GAPS.md).
  */
 @Composable
 private fun EditMenu(state: TextFieldState, onDone: () -> Unit) {

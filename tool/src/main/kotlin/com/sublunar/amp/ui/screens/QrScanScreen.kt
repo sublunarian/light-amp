@@ -15,12 +15,8 @@ import com.thelightphone.sdk.SimpleLightScreen
 
 /**
  * Reads one QR code with the phone's camera and returns its text, or null when
- * dismissed with back.
- *
- * The SDK's own scanner, including its camera-permission request through
- * LightOS — the same one Light's Authenticator uses. Its barcode model was in
- * the APK already, through the SDK; the camera and scanning code that R8 used
- * to strip as unused is what using it adds, about 1 MB.
+ * dismissed with back. The SDK's own scanner, camera-permission request
+ * through LightOS included.
  */
 class QrScanScreen(
     sealed: SealedLightActivity,
@@ -42,7 +38,7 @@ class QrScanScreen(
             )
         }
         // Not from inside onScanned: the scanner asks that navigating away wait
-        // for a LaunchedEffect, so the camera is let go of in order.
+        // for an effect, so the camera is released in order.
         LaunchedEffect(scanned) {
             scanned?.let { goBack(it) }
         }

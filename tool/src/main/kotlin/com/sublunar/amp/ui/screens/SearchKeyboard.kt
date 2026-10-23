@@ -3,66 +3,38 @@ package com.sublunar.amp.ui.screens
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.delete
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.text.TextRange
-import com.thelightphone.lp3Keyboard.ui.LayoutOptions
 import com.thelightphone.lp3Keyboard.ui.SpecialKey
-import com.thelightphone.lp3Keyboard.ui.viewmodel.EnQwertyLp3KeyboardViewModel
 import com.thelightphone.lp3Keyboard.ui.viewmodel.Lp3RepeatableKeyboardCallback
 import com.thelightphone.sdk.ui.keyboard.LightEmbeddedLp3Keyboard
 
 /**
  * The LP3's own keyboard, against the bottom of the search page.
  *
- * The SDK hosts this inside [com.thelightphone.sdk.ui.LightTextInputEditor],
- * which is a whole screen: the text sits at the top with nothing below it, which
- * is no use to a search that has to show its results narrowing as you type. The
- * keyboard itself is a composable though, and the view model that drives it is
- * public — so the page keeps its own layout and simply places the keyboard last.
- *
- * Nothing in the SDK is patched or worked around to do this. The one thing not
- * reused is `TextInputKeyboardCallback`, which is `internal`, so
- * [EditingKeyboardCallback] below implements the same public interface instead.
+ * The SDK hosts it inside [com.thelightphone.sdk.ui.LightTextInputEditor], a
+ * whole screen with the text at the top and nothing below, which is no use to a
+ * search that shows its results narrowing as you type. The keyboard composable
+ * and its view model are public, so the page keeps its own layout and places
+ * the keyboard last. Nothing in the SDK is patched for this.
  */
 @Composable
 fun SearchKeyboard(state: TextFieldState, onReturn: () -> Unit) {
-    val callback = remember(state) { EditingKeyboardCallback(state, onReturn = onReturn) }
-    val options = rememberPhoneKeyboardOptions()
-    // Held in remember rather than through viewModel(): the tool doesn't carry
-    // lifecycle-viewmodel-compose, and this is a state holder for a view that
-    // lives exactly as long as the typing does.
-    val keyboard = remember(callback) {
-        EnQwertyLp3KeyboardViewModel<Unit>(
-            callback,
-            keyboardOptionsFlow = options,
-            optionsForLayout = { LayoutOptions(!it.isRootLayout) },
-        )
-    }
-    LightEmbeddedLp3Keyboard(viewModel = keyboard)
+    LightEmbeddedLp3Keyboard(viewModel = rememberEditingKeyboard(state, onReturn))
 }
 
 /**
- * What the keys do to the text — the search query here, and every field typed
- * in [TextEntryScreen].
+ * What the keys do to the text: the search query, and every field typed in
+ * [TextEntryScreen]. Return ends the typing rather than inserting a break.
  *
- * A port of the SDK's own `TextInputKeyboardCallback`, which is `internal` and so
- * cannot be reused from a tool. On a [singleLine] field Return ends the typing
- * rather than inserting a break.
- *
- * **If the SDK's editing behaviour changes, this will not follow.** It is a copy
- * of a private thing, which is the one real cost of hosting the keyboard here;
- * the alternative was to make that class public, which means patching the SDK.
+ * A port of the SDK's `TextInputKeyboardCallback`, which is `internal`.
+ * **If the SDK's editing behaviour changes, this will not follow**: the other
+ * way was to make that class public, which means patching the SDK.
  */
 internal class EditingKeyboardCallback(
     private val state: TextFieldState,
-    private val singleLine: Boolean = true,
     private val onReturn: () -> Unit,
-    /**
-     * A tick as each key goes down, as the SDK's own callback gives — every
-     * field had one through the SDK's editor until Amp drew its own. The
-     * search page passes nothing: it never buzzed, and still doesn't.
-     */
-    private val onHaptic: () -> Unit = {},
+    /** A tick as each key goes down, as the SDK's callback gives. */
+    private val onHaptic: () -> Unit,
 ) : Lp3RepeatableKeyboardCallback {
 
     override fun onKeyPressed(code: Int) = onHaptic()
@@ -80,7 +52,7 @@ internal class EditingKeyboardCallback(
         when (key) {
             // Surrogate-aware, or deleting an emoji leaves half of one behind.
             SpecialKey.Backspace -> deleteBefore(surrogateAwareCount())
-            SpecialKey.Return -> if (singleLine) onReturn() else insert("\n")
+            SpecialKey.Return -> onReturn()
             else -> Unit
         }
     }

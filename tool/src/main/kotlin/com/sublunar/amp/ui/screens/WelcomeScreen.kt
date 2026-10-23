@@ -22,14 +22,9 @@ import com.sublunar.amp.source.AddEntry
 /**
  * First run: pick where the music comes from.
  *
- * The three kinds are offered as equals. An earlier version put a Subsonic login
- * form here with the phone's own music as a footnote and no mention of Plex at
- * all, which quietly told anyone who came for the other two that they'd
- * installed the wrong app. None of the three is the default.
- *
- * Each choice hands off to the same screen used to add that kind of source later
- * from Settings, so there is one setup flow per kind rather than two that can
- * drift apart.
+ * The kinds are offered as equals, none of them the default. Each choice opens
+ * the same screen Settings uses to add that kind of source, so there is one
+ * setup flow per kind.
  */
 @Composable
 fun WelcomeContent(
