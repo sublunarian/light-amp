@@ -264,6 +264,7 @@ object App {
             clearLikedArtists()
             clearDownloads()
             clearAllTopSongs()
+            clearAllPlaylistTracks()
         }
         downloads.deleteSource(source.id)
         artwork.forget(source.id, covers)
