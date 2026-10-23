@@ -2,6 +2,7 @@ package com.sublunar.amp.source.jellyfin
 
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.ArtistRef
+import com.sublunar.amp.data.LikeTarget
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.Lyrics
 import com.sublunar.amp.data.MusicFolder
@@ -588,15 +589,9 @@ class JellyfinClient(
         send("POST", path, payload = payload)
     }
 
-    override suspend fun starSong(songId: String) = favourite(songId, true)
-    override suspend fun unstarSong(songId: String) = favourite(songId, false)
-    override suspend fun starAlbum(albumId: String) = favourite(albumId, true)
-    override suspend fun unstarAlbum(albumId: String) = favourite(albumId, false)
-    override suspend fun starArtist(artistId: String) = favourite(artistId, true)
-    override suspend fun unstarArtist(artistId: String) = favourite(artistId, false)
-
-    private suspend fun favourite(id: String, on: Boolean) {
-        writeForUser(if (on) "POST" else "DELETE", "/UserFavoriteItems/$id", "/Users/$userId/FavoriteItems/$id")
+    /** A favourite is one flag on any item, whatever it is. */
+    override suspend fun setLiked(target: LikeTarget, id: String, liked: Boolean) {
+        writeForUser(if (liked) "POST" else "DELETE", "/UserFavoriteItems/$id", "/Users/$userId/FavoriteItems/$id")
     }
 
     // --- Playlists -----------------------------------------------------------

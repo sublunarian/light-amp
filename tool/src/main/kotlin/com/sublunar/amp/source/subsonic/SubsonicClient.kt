@@ -3,6 +3,7 @@ package com.sublunar.amp.source.subsonic
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.ArtistRef
 import com.sublunar.amp.data.CANT_DO_THAT
+import com.sublunar.amp.data.LikeTarget
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.Lyrics
 import com.sublunar.amp.data.MusicFolder
@@ -688,14 +689,15 @@ class SubsonicClient(
 
     // --- Writing back --------------------------------------------------------
 
-    override suspend fun starSong(songId: String) = Unit.also { request("star", listOf("id" to songId)) }
-    override suspend fun unstarSong(songId: String) = Unit.also { request("unstar", listOf("id" to songId)) }
-    override suspend fun starAlbum(albumId: String) = Unit.also { request("star", listOf("albumId" to albumId)) }
-    override suspend fun unstarAlbum(albumId: String) = Unit.also { request("unstar", listOf("albumId" to albumId)) }
-    override suspend fun starArtist(artistId: String) =
-        Unit.also { request("star", listOf("artistId" to artistId)) }
-    override suspend fun unstarArtist(artistId: String) =
-        Unit.also { request("unstar", listOf("artistId" to artistId)) }
+    /** `star` and `unstar` take a song, an album and an artist each under a parameter of its own. */
+    override suspend fun setLiked(target: LikeTarget, id: String, liked: Boolean) {
+        val param = when (target) {
+            LikeTarget.SONG -> "id"
+            LikeTarget.ALBUM -> "albumId"
+            LikeTarget.ARTIST -> "artistId"
+        }
+        request(if (liked) "star" else "unstar", listOf(param to id))
+    }
 
     /**
      * Register a play, optionally at the time it actually happened.

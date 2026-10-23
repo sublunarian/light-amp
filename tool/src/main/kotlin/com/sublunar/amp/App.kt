@@ -619,7 +619,6 @@ object App {
             // The playlists cached last time, shown before anything is fetched.
             scope.launch { library.primePlaylists() }
             scope.launch {
-                pending.refreshCount()
                 serverReachable.collect { reachable ->
                     // The browsed server's downloads stop when it goes and pick
                     // up when it comes back: reachability says nothing of the

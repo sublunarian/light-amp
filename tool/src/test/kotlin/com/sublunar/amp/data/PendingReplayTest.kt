@@ -124,4 +124,16 @@ class PendingReplayTest {
         val legacy = action(Kind.UNSTAR_SONG, "a", source = null)
         assertEquals(listOf(other), listOf(other, legacy).filterNot { action(Kind.STAR_SONG, "a", source = "a").replaces(it) })
     }
+
+    /** The stored kind names are the contract; each like is stored under its own and sent as what it was. */
+    @Test
+    fun `a like is stored under its own kind and read back as what it sets`() {
+        assertEquals(Kind.STAR_SONG, likeKind(LikeTarget.SONG, liked = true))
+        assertEquals(Kind.UNSTAR_ALBUM, likeKind(LikeTarget.ALBUM, liked = false))
+        assertEquals(Kind.STAR_ARTIST, likeKind(LikeTarget.ARTIST, liked = true))
+        for (target in LikeTarget.entries) {
+            for (liked in listOf(true, false)) assertEquals(target to liked, likeKind(target, liked).like())
+        }
+        assertEquals(6, Kind.entries.count { it.like() != null })
+    }
 }

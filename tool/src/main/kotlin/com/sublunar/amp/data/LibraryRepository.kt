@@ -1928,12 +1928,10 @@ class LibraryRepository(
     private val taps = ConcurrentHashMap<String, Int>()
 
     /**
-     * The server's half of a like or a rating the phone already shows.
-     *
-     * Saved: anything older still queued for the same thing is dropped, since
-     * sent later it would undo this. Unreachable: queued for when the server is
-     * back. Refused: the phone's half is taken back with [undo] (as the next sync
-     * would, silently) and said, when [say] — only while no later tap on the same
+     * The server's half of a like or a rating the phone already shows: sent,
+     * or queued for when the server is back — see PendingActions.attempt. A
+     * refusal takes the phone's half back with [undo] (as the next sync would,
+     * silently) and says so, when [say] — only while no later tap on the same
      * thing has replaced this one, which must not be taken back with it.
      *
      * [client] is the one there at the tap, like the dao [undo] writes to: a
@@ -1943,22 +1941,18 @@ class LibraryRepository(
         action: PendingAction,
         client: MusicServer?,
         say: Boolean,
-        send: suspend (MusicServer) -> Unit,
         undo: suspend () -> Unit,
     ): WriteResult {
         val key = "${action.sourceId}:${action.kind.group()}:${action.id}"
         val tap = taps.merge(key, 1, Int::plus)!!
         return likeWrites.withLock {
-            if (client == null) return@withLock WriteResult.Unreachable(UNREACHABLE).also { pending.add(action) }
-            val result = attemptWrite { send(client) }
-            if (result != WriteResult.Saved) android.util.Log.w("AmpSync", "${action.kind} ${action.id} → $result")
-            when (result) {
-                WriteResult.Saved -> pending.forget(action)
-                is WriteResult.Unreachable -> pending.add(action)
-                is WriteResult.Refused -> if (taps[key] == tap) {
-                    undo()
-                    if (say) tell("Couldn't save\n${result.reason}")
-                }
+            val result = pending.attempt(action, client) { name -> client?.let { artistIdFor(name, it) } }
+            if (client != null && result != WriteResult.Saved) {
+                android.util.Log.w("AmpSync", "${action.kind} ${action.id} → $result")
+            }
+            if (result is WriteResult.Refused && taps[key] == tap) {
+                undo()
+                if (say) tell("Couldn't save\n${result.reason}")
             }
             result
         }
@@ -1975,10 +1969,8 @@ class LibraryRepository(
         pinned.setTrackLiked(track.id, liked)
         wroteHere()
         val source = settings.activeSource.first()?.id
-        val kind = if (liked) PendingAction.Kind.STAR_SONG else PendingAction.Kind.UNSTAR_SONG
         mirror(
-            PendingAction(kind, track.id, sourceId = source), client, say = true,
-            send = { if (liked) it.starSong(track.id) else it.unstarSong(track.id) },
+            PendingAction(likeKind(LikeTarget.SONG, liked), track.id, sourceId = source), client, say = true,
             undo = {
                 pinned.setTrackLiked(track.id, !liked)
                 wroteHere()
@@ -1997,13 +1989,8 @@ class LibraryRepository(
         val client = reachableClient()
         if (liked) pinned.likeArtists(listOf(LikedArtistEntity(name))) else pinned.unlikeArtist(name)
         val source = settings.activeSource.first()?.id
-        val kind = if (liked) PendingAction.Kind.STAR_ARTIST else PendingAction.Kind.UNSTAR_ARTIST
         mirror(
-            PendingAction(kind, name, sourceId = source), client, say = true,
-            send = {
-                val id = artistIdFor(name, it) ?: throw RefusedWrite(NO_SUCH_ARTIST)
-                if (liked) it.starArtist(id) else it.unstarArtist(id)
-            },
+            PendingAction(likeKind(LikeTarget.ARTIST, liked), name, sourceId = source), client, say = true,
             undo = { if (liked) pinned.unlikeArtist(name) else pinned.likeArtists(listOf(LikedArtistEntity(name))) },
         )
     }
@@ -2029,10 +2016,8 @@ class LibraryRepository(
         pinned.setAlbumLiked(album.id, liked)
         wroteHere()
         val source = settings.activeSource.first()?.id
-        val kind = if (liked) PendingAction.Kind.STAR_ALBUM else PendingAction.Kind.UNSTAR_ALBUM
         mirror(
-            PendingAction(kind, album.id, sourceId = source), client, say = true,
-            send = { if (liked) it.starAlbum(album.id) else it.unstarAlbum(album.id) },
+            PendingAction(likeKind(LikeTarget.ALBUM, liked), album.id, sourceId = source), client, say = true,
             undo = {
                 pinned.setAlbumLiked(album.id, !liked)
                 wroteHere()
@@ -2057,7 +2042,6 @@ class LibraryRepository(
         val kind = if (isAlbum) PendingAction.Kind.RATE_ALBUM else PendingAction.Kind.RATE_SONG
         return mirror(
             PendingAction(kind, id, value = stars, sourceId = source), client, say = false,
-            send = { it.setRating(id, stars) },
             undo = { store(previous) },
         )
     }

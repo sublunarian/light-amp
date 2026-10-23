@@ -34,8 +34,8 @@ class PendingActionsStoredTest {
             answer(what)
         }
         override suspend fun scrobble(songId: String, atMs: Long?, submission: Boolean) = take("play $songId")
-        override suspend fun starSong(songId: String) = take("star $songId")
-        override suspend fun unstarSong(songId: String) = take("unstar $songId")
+        override suspend fun setLiked(target: LikeTarget, id: String, liked: Boolean) =
+            take(if (liked) "star $id" else "unstar $id")
         override suspend fun ping() = Unit
         override fun close() = Unit
         override suspend fun getMusicFolders(): List<MusicFolder> = emptyList()
@@ -73,7 +73,6 @@ class PendingActionsStoredTest {
         assertEquals(emptyList(), phone.pending.flush(server))
         assertEquals(listOf("play 1", "star x"), server.sent)
         assertEquals("[$UNKNOWN_KIND]", phone.stored)
-        assertEquals(1, phone.pending.count.value)
     }
 
     @Test
@@ -150,15 +149,12 @@ class PendingActionsStoredTest {
         val phone = Phone(PLAY_1, STAR_X)
         phone.pending.flush(Server())
         assertEquals("", phone.stored)
-        assertEquals(0, phone.pending.count.value)
     }
 
     @Test
     fun `text that isn't a list is no queue`() = runBlocking {
         val store = MemoryDataStore(preferencesOf(stringPreferencesKey(KEY) to "not json"))
         val pending = PendingActions(AppSettings(store))
-        pending.refreshCount()
-        assertEquals(0, pending.count.value)
         pending.forget(PendingAction(Kind.STAR_SONG, "x", atMs = 9L, sourceId = "a"))
         assertEquals("not json", store.raw(KEY))
     }

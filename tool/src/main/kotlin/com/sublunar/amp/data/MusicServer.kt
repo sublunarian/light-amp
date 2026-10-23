@@ -284,12 +284,8 @@ interface MusicServer {
      */
     suspend fun setRating(id: String, stars: Int): Unit = throw RefusedWrite()
 
-    suspend fun starSong(songId: String): Unit = throw RefusedWrite()
-    suspend fun unstarSong(songId: String): Unit = throw RefusedWrite()
-    suspend fun starAlbum(albumId: String): Unit = throw RefusedWrite()
-    suspend fun unstarAlbum(albumId: String): Unit = throw RefusedWrite()
-    suspend fun starArtist(artistId: String): Unit = throw RefusedWrite()
-    suspend fun unstarArtist(artistId: String): Unit = throw RefusedWrite()
+    /** Like or unlike [target] by the server's own [id] for it — an artist's from [getArtistIndex]. */
+    suspend fun setLiked(target: LikeTarget, id: String, liked: Boolean): Unit = throw RefusedWrite()
 
     // --- Playlists -----------------------------------------------------------
 
@@ -383,6 +379,9 @@ sealed interface SongChanges {
     /** Nothing changed since the mark. */
     data class Nothing(override val mark: String) : SongChanges
 }
+
+/** What a like is for — see [MusicServer.setLiked]. */
+enum class LikeTarget { SONG, ALBUM, ARTIST }
 
 /** What [MusicServer.reportTimeline] tells the server a session is doing. */
 enum class TimelineState {

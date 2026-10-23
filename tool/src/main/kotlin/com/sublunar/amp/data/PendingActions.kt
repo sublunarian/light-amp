@@ -1,7 +1,5 @@
 package com.sublunar.amp.data
 
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.EncodeDefault
@@ -67,23 +65,12 @@ class PendingActions(private val settings: AppSettings) {
 
     private val lock = Mutex()
 
-    private val _count = MutableStateFlow(0)
-
-    /** How many actions are waiting. */
-    val count: StateFlow<Int> = _count
-
-    /** Call once at boot so the count is right before anything is added. */
-    suspend fun refreshCount() {
-        _count.value = decode(settings.pendingActions()).size
-    }
-
     suspend fun add(action: PendingAction) = lock.withLock {
         // A like or rating replaces the last one for the same thing: only the
         // final state matters. Plays are never collapsed.
         val queue = decode(settings.pendingActions()).filterNot { action.replaces(it.about) } + entry(action)
         val trimmed = if (queue.size > MAX_QUEUED) queue.takeLast(MAX_QUEUED) else queue
         settings.setPendingActions(encode(trimmed))
-        _count.value = trimmed.size
     }
 
     /**
@@ -97,7 +84,6 @@ class PendingActions(private val settings: AppSettings) {
             val left = queue.filterNot { landed.replaces(it.about) }
             if (left.size == queue.size) return@withLock
             settings.setPendingActions(encode(left))
-            _count.value = left.size
         }
     }
 
@@ -118,29 +104,52 @@ class PendingActions(private val settings: AppSettings) {
             val mine = { e: Entry -> e.action != null && (e.action.sourceId == null || e.action.sourceId == sourceId) }
             val run = replay(queue, mine) { send(it.action!!, client, artistId) }
             settings.setPendingActions(encode(run.left))
-            _count.value = run.left.size
             run.refused
         }
+
+    /**
+     * Send [action] now, and keep the queue in step with the answer — the one
+     * way a write that may have to wait is sent. Saved: anything older still
+     * queued for the same thing goes, since sent later it would undo this.
+     * Unreachable, or no [client] to send it to: it is queued for later.
+     * Refused: left to the caller to take back and say.
+     *
+     * [artistId] turns an artist's name into the server's id for it; a name
+     * it can't find is refused.
+     */
+    suspend fun attempt(
+        action: PendingAction,
+        client: MusicServer?,
+        artistId: suspend (String) -> String?,
+    ): WriteResult {
+        val result = if (client == null) WriteResult.Unreachable(UNREACHABLE) else send(action, client, artistId)
+        when (result) {
+            WriteResult.Saved -> forget(action)
+            is WriteResult.Unreachable -> add(action)
+            is WriteResult.Refused -> Unit
+        }
+        return result
+    }
 
     private suspend fun send(
         action: PendingAction,
         client: MusicServer,
         artistId: suspend (String) -> String?,
     ): WriteResult = attemptWrite {
-        when (action.kind) {
-            PendingAction.Kind.SCROBBLE -> client.scrobble(action.id, action.atMs)
-            PendingAction.Kind.STAR_SONG -> client.starSong(action.id)
-            PendingAction.Kind.UNSTAR_SONG -> client.unstarSong(action.id)
-            PendingAction.Kind.STAR_ALBUM -> client.starAlbum(action.id)
-            PendingAction.Kind.UNSTAR_ALBUM -> client.unstarAlbum(action.id)
-            // An artist the server doesn't know by that name is refused, not
-            // retried forever; the next sync brings back the server's own likes.
-            PendingAction.Kind.STAR_ARTIST ->
-                client.starArtist(artistId(action.id) ?: throw RefusedWrite(NO_SUCH_ARTIST))
-            PendingAction.Kind.UNSTAR_ARTIST ->
-                client.unstarArtist(artistId(action.id) ?: throw RefusedWrite(NO_SUCH_ARTIST))
-            PendingAction.Kind.RATE_SONG, PendingAction.Kind.RATE_ALBUM ->
-                client.setRating(action.id, action.value)
+        val like = action.kind.like()
+        when {
+            like != null -> {
+                val (target, liked) = like
+                // An artist the server doesn't know by that name is refused, not
+                // retried forever; the next sync brings back the server's own likes.
+                val id = when (target) {
+                    LikeTarget.ARTIST -> artistId(action.id) ?: throw RefusedWrite(NO_SUCH_ARTIST)
+                    else -> action.id
+                }
+                client.setLiked(target, id, liked)
+            }
+            action.kind == PendingAction.Kind.SCROBBLE -> client.scrobble(action.id, action.atMs)
+            else -> client.setRating(action.id, action.value)
         }
     }
 
@@ -226,6 +235,24 @@ internal fun PendingAction.replaces(queued: PendingAction?): Boolean =
  */
 internal fun PendingAction.supersededBy(next: PendingAction): Boolean =
     id == next.id && kind.group() == next.kind.group() && (sourceId == null || sourceId == next.sourceId)
+
+/** The kind that stores a like or an unlike of [target] — the stored names stay as they are. */
+internal fun likeKind(target: LikeTarget, liked: Boolean): PendingAction.Kind = when (target) {
+    LikeTarget.SONG -> if (liked) PendingAction.Kind.STAR_SONG else PendingAction.Kind.UNSTAR_SONG
+    LikeTarget.ALBUM -> if (liked) PendingAction.Kind.STAR_ALBUM else PendingAction.Kind.UNSTAR_ALBUM
+    LikeTarget.ARTIST -> if (liked) PendingAction.Kind.STAR_ARTIST else PendingAction.Kind.UNSTAR_ARTIST
+}
+
+/** What a stored like or unlike is for, and which way — [likeKind] read back. Null for a play or a rating. */
+internal fun PendingAction.Kind.like(): Pair<LikeTarget, Boolean>? = when (this) {
+    PendingAction.Kind.STAR_SONG -> LikeTarget.SONG to true
+    PendingAction.Kind.UNSTAR_SONG -> LikeTarget.SONG to false
+    PendingAction.Kind.STAR_ALBUM -> LikeTarget.ALBUM to true
+    PendingAction.Kind.UNSTAR_ALBUM -> LikeTarget.ALBUM to false
+    PendingAction.Kind.STAR_ARTIST -> LikeTarget.ARTIST to true
+    PendingAction.Kind.UNSTAR_ARTIST -> LikeTarget.ARTIST to false
+    PendingAction.Kind.SCROBBLE, PendingAction.Kind.RATE_SONG, PendingAction.Kind.RATE_ALBUM -> null
+}
 
 /** Which actions describe the same piece of state, whichever way they set it. */
 internal fun PendingAction.Kind.group(): String = when (this) {
