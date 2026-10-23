@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 14,
-    "identityHash": "06139b5420ef6aabea86274cd5f9456a",
+    "identityHash": "b6254d11ba58f9b0fbc9b8b28bae33a0",
     "entities": [
       {
         "tableName": "tracks",
@@ -350,7 +350,7 @@
       },
       {
         "tableName": "playlist_tracks",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`playlistId` TEXT NOT NULL, `position` INTEGER NOT NULL, `trackId` TEXT NOT NULL, `stampedAtMs` INTEGER NOT NULL, `fetchedAtMs` INTEGER NOT NULL, PRIMARY KEY(`playlistId`, `position`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`playlistId` TEXT NOT NULL, `position` INTEGER NOT NULL, `trackId` TEXT NOT NULL, PRIMARY KEY(`playlistId`, `position`))",
         "fields": [
           {
             "fieldPath": "playlistId",
@@ -369,18 +369,6 @@
             "columnName": "trackId",
             "affinity": "TEXT",
             "notNull": true
-          },
-          {
-            "fieldPath": "stampedAtMs",
-            "columnName": "stampedAtMs",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "fetchedAtMs",
-            "columnName": "fetchedAtMs",
-            "affinity": "INTEGER",
-            "notNull": true
           }
         ],
         "primaryKey": {
@@ -394,7 +382,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '06139b5420ef6aabea86274cd5f9456a')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b6254d11ba58f9b0fbc9b8b28bae33a0')"
     ]
   }
 }

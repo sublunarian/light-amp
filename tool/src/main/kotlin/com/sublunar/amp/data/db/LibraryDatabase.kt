@@ -141,35 +141,18 @@ data class DownloadEntity(
  * fetched per playlist at real cost, and is needed precisely when the server
  * can't be asked: it backs both the download badge and the offline rebuild of a
  * playlist's page.
- *
- * Two timestamps, because they answer different questions. [stampedAtMs] is the
- * playlist's own [Playlist.updatedAt] as it stood when these rows were written —
- * the version this membership belongs to, and what lets a playlist that hasn't
- * moved be skipped. [fetchedAtMs] is when we actually asked, which is the only
- * thing that bounds staleness on a server whose stamp can't be trusted:
- * Jellyfin reports a playlist's creation date as its update time, so its stamp
- * never moves no matter how the playlist changes.
  */
 @Entity(tableName = "playlist_tracks", primaryKeys = ["playlistId", "position"])
 data class PlaylistTrackEntity(
     val playlistId: String,
     val position: Int,
     val trackId: String,
-    val stampedAtMs: Long,
-    val fetchedAtMs: Long,
 )
 
-/** One playlist's membership, in order — see [LibraryDao.observePlaylistTracks]. */
+/** One playlist's membership, in order — see [LibraryDao.storedPlaylistTracks]. */
 data class PlaylistTrackRow(
     val playlistId: String,
     val trackId: String,
-)
-
-/** What version of each playlist the stored membership belongs to, and when it was asked for. */
-data class PlaylistStamp(
-    val playlistId: String,
-    val stampedAtMs: Long,
-    val fetchedAtMs: Long,
 )
 
 /** A downloaded file, without the lyrics blob — see [LibraryDao.observeDownloads]. */
@@ -542,19 +525,10 @@ interface LibraryDao {
      * set; observing it back would only add a window in which a second caller
      * sees "not known yet" and fetches the same playlist again. Ordered so the
      * grouping downstream keeps each playlist's own order, which the offline
-     * rebuild shows and the badge doesn't care about. A projection again: the
-     * stamps are only wanted when deciding what to re-fetch, and
-     * [playlistStamps] asks for those on their own.
+     * rebuild shows and the badge doesn't care about.
      */
     @Query("SELECT playlistId, trackId FROM playlist_tracks ORDER BY playlistId, position")
     suspend fun storedPlaylistTracks(): List<PlaylistTrackRow>
-
-    /** The version each stored playlist's membership belongs to, and when it was fetched. */
-    @Query(
-        "SELECT playlistId, MAX(stampedAtMs) AS stampedAtMs, MAX(fetchedAtMs) AS fetchedAtMs " +
-            "FROM playlist_tracks GROUP BY playlistId",
-    )
-    suspend fun playlistStamps(): List<PlaylistStamp>
 
     @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId")
     suspend fun clearPlaylistTracks(playlistId: String)

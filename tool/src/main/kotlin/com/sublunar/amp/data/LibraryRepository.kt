@@ -732,43 +732,25 @@ class LibraryRepository(
      * window where a second caller sees "not known yet" and fetches again. The
      * table is the copy that outlives the process, and is read back only by
      * [seedPlaylistTrackIds] when a database opens.
-     *
-     * [stamp] is the playlist's [Playlist.updatedAt] at the time of the fetch;
-     * zero when the playlist isn't in the list yet, which simply means the TTL
-     * is the only thing that will refresh it.
      */
-    private suspend fun storeMembership(id: String, trackIds: List<String>, stamp: Long) {
+    private suspend fun storeMembership(id: String, trackIds: List<String>) {
+        val unchanged = _playlistTrackIds.value[id] == trackIds
         _playlistTrackIds.update { it + (id to trackIds) }
         // This *is* the replacement the mark was asking for.
         staleMembership.update { it - id }
-        val now = System.currentTimeMillis()
+        if (unchanged) return
         runCatching {
-            dao.setPlaylistTracks(
-                id,
-                trackIds.mapIndexed { index, trackId ->
-                    PlaylistTrackEntity(id, index, trackId, stamp, now)
-                },
-            )
+            dao.setPlaylistTracks(id, trackIds.mapIndexed { index, trackId -> PlaylistTrackEntity(id, index, trackId) })
         }
     }
 
-    /** The stamp to file membership under, from the playlist list as it stands. */
-    private fun stampFor(id: String): Long =
-        _playlists.value.firstOrNull { it.id == id }?.updatedAt ?: 0L
-
     /**
-     * Playlists whose stored songs are known to be out of date but are being
-     * kept until they can be replaced.
+     * Playlists held but not yet re-read from the server: everything loaded
+     * from disk, and anything a refused edit left uncertain.
      *
-     * Held in memory rather than written down, and that is the right place for
-     * it: the mark comes from comparing against a server answer, so a session
-     * that never reaches the server has nothing to say about staleness and
-     * should serve what it has. The next successful refresh re-derives it.
-     *
-     * What it buys is the difference between "don't trust this" and "don't show
-     * this". A stale list still opens the playlist and still plays, which
-     * offline is the entire value of having it; the mark only tells the priming
-     * to fetch this one again even though it is already known.
+     * A stale list still opens the playlist and still plays, which offline is
+     * the entire value of having it; the mark only tells the priming to fetch
+     * this one again even though it is already known.
      */
     private val staleMembership = MutableStateFlow<Set<String>>(emptySet())
 
@@ -786,25 +768,13 @@ class LibraryRepository(
      * Nothing to do when we don't: the playlist has never been primed, and an
      * edit is not enough to build a membership out of — the next prime will
      * fetch the whole truth anyway.
-     *
-     * The stamp deliberately stays the one the *pre-edit* membership was filed
-     * under. The server's own [Playlist.updatedAt] moves when it accepts our
-     * edit, so the next refresh sees a stamp it doesn't recognise and re-primes
-     * this playlist — our optimistic copy carries the app until then and is
-     * replaced by the server's account of the same edit. Self-correcting rather
-     * than authoritative, which is what an optimistic write should be.
      */
     private suspend fun editMembership(id: String, edit: (List<String>) -> List<String>) {
         val current = _playlistTrackIds.value[id] ?: return
-        storeMembership(id, edit(current), stampFor(id))
+        storeMembership(id, edit(current))
     }
 
-    /**
-     * Forget one playlist's membership everywhere, so the next prime refetches it.
-     *
-     * Used when an edit makes the stored copy wrong and when the server says the
-     * playlist has moved on.
-     */
+    /** Forget one playlist's membership everywhere. */
     private suspend fun dropMembership(id: String) {
         _playlistTrackIds.update { it - id }
         staleMembership.update { it - id }
@@ -816,13 +786,16 @@ class LibraryRepository(
      *
      * Only what isn't already known: a prime that finished while this was
      * loading is the newer answer of the two, and re-seeding over it would put
-     * the disk's older copy back.
+     * the disk's older copy back. What loads is marked stale, so it is read
+     * again whenever the server can be asked and serves until then.
      */
     private suspend fun seedPlaylistTrackIds(from: LibraryDao) {
         val stored = runCatching { from.storedPlaylistTracks() }.getOrNull() ?: return
         if (stored.isEmpty()) return
         val grouped = stored.groupBy({ it.playlistId }, { it.trackId })
+        val seeded = grouped.keys - _playlistTrackIds.value.keys
         _playlistTrackIds.update { known -> grouped + known }
+        staleMembership.update { it + seeded }
     }
 
     /**
@@ -897,51 +870,15 @@ class LibraryRepository(
         if (_playlists.value.isEmpty()) _playlists.value = loadCachedPlaylists()
     }
 
-    /**
-     * Throw away stored membership the server has just contradicted.
-     *
-     * This is the whole of the cache-busting, and it rides a request that was
-     * already being made: the playlist list carries each playlist's own update
-     * time, so comparing it against the version our rows were filed under says
-     * which playlists have moved since we last read them. Dropping one is
-     * enough — the ordinary priming refills it, under the same gates as always.
-     *
-     * Two things this cannot catch, both handled by the age check rather than
-     * the stamp. A server may not report a real modification time at all —
-     * Jellyfin gives a playlist's creation date as its update time, so its
-     * stamp never moves however the playlist changes. And our own optimistic
-     * edits are filed under the pre-edit stamp on purpose, so they *want* to be
-     * contradicted here.
-     */
+    /** Forget the membership of playlists the server no longer lists. */
     private suspend fun reconcileMembership(fetched: List<Playlist>) {
-        val stamps = runCatching { dao.playlistStamps() }.getOrNull() ?: return
-        if (stamps.isEmpty()) return
-        val live = fetched.associateBy { it.id }
-        val now = System.currentTimeMillis()
-        for (stamp in stamps) {
-            val playlist = live[stamp.playlistId]
-            // Gone from the server: the rows are for a playlist that no longer
-            // exists, and prunePlaylistTracks below would get it anyway — but
-            // the in-memory map needs telling too.
-            if (playlist == null) {
-                dropMembership(stamp.playlistId)
-                continue
-            }
-            val moved = playlist.updatedAt > 0L && playlist.updatedAt != stamp.stampedAtMs
-            val aged = now - stamp.fetchedAtMs > PLAYLIST_MEMBERSHIP_TTL_MS
-            // Marked, not dropped. Knowing the songs are out of date is not the
-            // same as being able to fetch the new ones: the playlist list is
-            // allowed on a metered link, the membership fetch behind it is not.
-            // Dropping here would empty every stored playlist the moment the
-            // app was opened on cellular, with no way to refill until Wi-Fi —
-            // which is the failure this whole table exists to prevent. The
-            // stale copy keeps serving and the next prime replaces it.
-            if (moved || aged) markMembershipStale(stamp.playlistId)
+        val live = fetched.mapTo(HashSet()) { it.id }
+        _playlistTrackIds.update { known -> known.filterKeys { it in live } }
+        staleMembership.update { marked -> marked.filterTo(HashSet()) { it in live } }
+        runCatching {
+            // Room expands an empty list to `NOT IN ()`, which SQLite rejects.
+            if (live.isEmpty()) dao.clearAllPlaylistTracks() else dao.prunePlaylistTracks(live.toList())
         }
-        // Guarded: Room expands an empty list to `NOT IN ()`, which SQLite
-        // rejects outright. A server that returned no playlists at all has
-        // already had every stored one dropped by the loop above anyway.
-        if (fetched.isNotEmpty()) runCatching { dao.prunePlaylistTracks(fetched.map { it.id }) }
     }
 
     /** Restores the last known playlists so a cold start offline isn't blank. */
@@ -989,16 +926,11 @@ class LibraryRepository(
             // downloaded?" of a shorter list than the playlist really has.
             // Held, it does the same for the rest of the session.
             //
-            // Storing one would also renew the fetch time on a copy nothing
-            // re-checked, deferring the age backstop — which on a server whose
-            // modification time never moves is the only thing that ever
-            // refreshes a playlist at all.
-            //
             // The map is only filled from a rebuild when it holds nothing for
             // this playlist, where the ids came from the cached list rather
             // than from the map and are the first thing known about it.
             if (whole) {
-                storeMembership(id, ids, stampFor(id))
+                storeMembership(id, ids)
             } else if (id !in _playlistTrackIds.value) {
                 _playlistTrackIds.update { it + (id to ids) }
             }
@@ -1107,7 +1039,7 @@ class LibraryRepository(
         if (!metadataAllowed()) return
         awaitPlaylistWrites()
         val tracks = runCatching { serverClient.value?.getPlaylistTracks(id) }.noteOom("playlist prime $id").getOrNull() ?: return
-        storeMembership(id, tracks.map { track -> track.id }, stampFor(id))
+        storeMembership(id, tracks.map { track -> track.id })
     }
 
     /**
@@ -2670,17 +2602,6 @@ private const val RADIO_LENGTH = 50
 
 /** How long a stored popular-songs list is served before being refreshed. */
 private const val TOP_SONGS_TTL_MS = 7L * 24 * 60 * 60 * 1000
-
-/**
- * How long stored playlist membership is trusted without the server agreeing.
- *
- * The backstop for a stamp that can't be relied on (see reconcileMembership),
- * not the ordinary path — where the stamp works, a playlist is re-fetched when
- * it changes and not on a clock. A day is chosen against what this replaces:
- * before it was thrown away on every launch, so anything up to "once a day on
- * an unmetered link" is strictly less traffic than shipping today.
- */
-private const val PLAYLIST_MEMBERSHIP_TTL_MS = 24L * 60 * 60 * 1000
 
 /**
  * The next [size] of [ordered] after [after], and where the walk got to — null
