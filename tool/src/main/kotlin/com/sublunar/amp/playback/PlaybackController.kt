@@ -565,6 +565,59 @@ class PlaybackController(
     private val playerSpeaks: Boolean get() = !isCasting && !standIn.active
 
     /**
+     * Since when a speaker the phone owns has sat paused, by the clock that
+     * runs on through sleep; 0 while it plays or starts, or there is none —
+     * see [forgetPausedSpeaker].
+     */
+    @Volatile
+    private var speakerPausedSinceMs = 0L
+
+    /** Lets a paused speaker go on time, while the phone is awake to run it. */
+    private var forgetJob: Job? = null
+
+    init {
+        scope.launch {
+            combine(_active, _isPlaying, _buffering) { a, playing, starting ->
+                a != null && a.family in Outputs.phone && !playing && !starting
+            }.distinctUntilChanged().collect { paused ->
+                forgetJob?.cancel()
+                if (!paused) {
+                    speakerPausedSinceMs = 0L
+                    return@collect
+                }
+                speakerPausedSinceMs = android.os.SystemClock.elapsedRealtime()
+                forgetJob = launch {
+                    delay(FORGET_PAUSED_SPEAKER_MS)
+                    withContext(Dispatchers.Main.immediate) { forgetPausedSpeaker() }
+                }
+            }
+        }
+    }
+
+    /**
+     * Let go of a speaker the phone has left paused for ten minutes, as an
+     * iPhone lets go of an AirPlay speaker and Spotify of a Connect device: the
+     * next play — the next morning's too — is on the phone. Remembered, a play
+     * the morning after went straight to the speaker. The speaker is stopped
+     * and the queue comes back here, paused where it was.
+     *
+     * Asked of the clock and not left to the timer alone, which a sleeping
+     * phone or an app frozen in the background doesn't run: a play, and a
+     * look at the Output page, ask first. A source's own players are left
+     * alone; they hold the queue themselves. Main only.
+     */
+    fun forgetPausedSpeaker() {
+        val since = speakerPausedSinceMs
+        if (since == 0L) return
+        val a = _active.value ?: return
+        if (a.family !in Outputs.phone) return
+        val pausedFor = android.os.SystemClock.elapsedRealtime() - since
+        if (pausedFor < FORGET_PAUSED_SPEAKER_MS) return
+        android.util.Log.i(a.output.logTag, "paused ${pausedFor / 60_000} min on ${a.target.name} → back to the phone")
+        playHere()
+    }
+
+    /**
      * Where the controls go while the sound is elsewhere, or null for this
      * phone — see [OutputControls]. Every control asks this once and falls
      * through to the phone's own code when it is null.
@@ -1759,6 +1812,7 @@ class PlaybackController(
     }
 
     fun togglePlayPause() {
+        forgetPausedSpeaker()
         remote?.let { out ->
             val wasPlaying = _isPlaying.value
             _isPlaying.value = !wasPlaying
@@ -1801,6 +1855,7 @@ class PlaybackController(
     }
 
     fun play() {
+        forgetPausedSpeaker()
         remote?.let { out ->
             _isPlaying.value = true
             // A start rather than a resume — see togglePlayPause.
@@ -3944,6 +3999,9 @@ class PlaybackController(
          * walk out of range and back, not an afternoon out. See rejoinLost.
          */
         private const val LOST_OUTPUT_KEPT_MS = 10 * 60 * 1000L
+
+        /** How long a speaker the phone owns stays chosen while paused — see forgetPausedSpeaker. */
+        private const val FORGET_PAUSED_SPEAKER_MS = 10 * 60 * 1000L
 
         /** How long the search for it may take once the link is back. */
         private const val REJOIN_SEARCH_MS = 30_000L

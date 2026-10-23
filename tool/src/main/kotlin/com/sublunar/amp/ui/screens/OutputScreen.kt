@@ -66,6 +66,11 @@ class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
+    // A speaker left paused long enough is let go before the page names it.
+    override fun willShow() {
+        App.playback.forgetPausedSpeaker()
+    }
+
     @Composable
     override fun Content() {
         val volume by App.playback.volume.collectAsState()
