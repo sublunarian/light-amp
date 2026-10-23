@@ -431,7 +431,6 @@ object DlnaCast {
     suspend fun state(renderer: DlnaRenderer): DlnaState {
         val response = soap(renderer, "GetTransportInfo", "<InstanceID>0</InstanceID>")
             ?: return DlnaState.UNKNOWN
-        lastTransportStatus = tagValue(response, "CurrentTransportStatus")?.trim()
         return when (tagValue(response, "CurrentTransportState")?.trim()?.uppercase()) {
             "PLAYING" -> DlnaState.PLAYING
             "PAUSED_PLAYBACK", "PAUSED" -> DlnaState.PAUSED
@@ -440,20 +439,6 @@ object DlnaCast {
             else -> DlnaState.UNKNOWN
         }
     }
-
-    /**
-     * AmpCast: temporary — the last CurrentTransportStatus read by [state]: OK,
-     * or ERROR_OCCURRED when a renderer couldn't load what it was given. For the
-     * start-poll log, chasing a speaker that sat on the old song for a minute
-     * after a source switch (2026-10-20).
-     */
-    @Volatile
-    var lastTransportStatus: String? = null
-        private set
-
-    /** AmpCast: temporary — the address [renderer] holds as its current one, for the same log. */
-    suspend fun mediaUri(renderer: DlnaRenderer): String? =
-        soap(renderer, "GetMediaInfo", "<InstanceID>0</InstanceID>")?.let { tagValue(it, "CurrentURI")?.trim() }
 
     // --- SOAP / HTTP ---------------------------------------------------------
 

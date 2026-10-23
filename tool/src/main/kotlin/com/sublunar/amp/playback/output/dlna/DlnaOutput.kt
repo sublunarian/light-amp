@@ -101,9 +101,6 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      */
     private var castNextOffered: String? = null
 
-    /** The last address the renderer reported that was neither its track nor the one offered after it — logged once each. */
-    private var strangeUri: String? = null
-
     /**
      * The renderer holds nothing to resume: the queue ran out there. Play
      * starts the queue's track where the clock stands — a bare resume played
@@ -1013,10 +1010,6 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             durationMs = track.durationMs,
             mimeType = mime,
         )
-        // AmpCast: temporary — chasing a hand-off the poll never followed
-        // (2026-10-20). With the failed call's own line from DlnaCast, this
-        // says whether the renderer was told and whether it answered.
-        android.util.Log.i("AmpCast", "next idx=$after offered: ${if (queued) "taken" else "no answer"}")
         // Renderers that don't implement it fault; the stop-and-restart path then
         // carries the queue as it did before. An offer it never answered is
         // still looked for — see castNextOffered.
@@ -1135,24 +1128,11 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         var heardMs = -1L
         // Stopped part-way and shown paused there, until it plays again.
         var stoppedThere = false
-        // AmpCast: temporary — the first polls after a start, chasing a renderer
-        // that kept the old song's address for twenty seconds after being
-        // handed a new one, after a source switch (2026-10-20).
-        var startPolls = 0
         while (coroutineContext.isActive && steered()?.id == renderer.id) {
             delay(CAST_POLL_MS)
             undoHush(renderer)
             val position = DlnaCast.position(renderer)
             val state = DlnaCast.state(renderer)
-            if (!settled && startPolls < START_POLLS_LOGGED) {
-                startPolls++
-                android.util.Log.i(
-                    "AmpCast",
-                    "start poll $startPolls idx=${host.index.value}: $state (${DlnaCast.lastTransportStatus}) on " +
-                        "${DlnaCast.loggable(position?.trackUri)} at ${position?.positionMs}, " +
-                        "holds ${DlnaCast.loggable(DlnaCast.mediaUri(renderer))}",
-                )
-            }
             // This reading is of the track we pushed or followed.
             var oursNow = false
             if (position != null) {
@@ -1227,11 +1207,6 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 // offset we had seeked to was added on top.
                 val ours = reported == null || DlnaCast.sameUri(reported, castCurrentUrl)
                 oursNow = ours
-                if (!ours && reported != strangeUri) {
-                    // AmpCast: temporary — see queueNextOnRenderer.
-                    strangeUri = reported
-                    android.util.Log.i("AmpCast", "renderer reports ${DlnaCast.loggable(reported)}, neither its track nor the next")
-                }
                 if (ours) {
                     // Until this track has settled, only a reading near where
                     // it was started is believed: a renderer reports the new
@@ -1473,9 +1448,6 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
          * track was turned away — see pollRenderer.
          */
         const val TURNED_AWAY_POLLS = 3
-
-        /** AmpCast: temporary — how many polls after a start are logged. */
-        const val START_POLLS_LOGGED = 12
 
         /** A cast seek this close to the end, or past it, is the next track: nothing is left to hear. */
         const val CAST_SEEK_END_SLACK_MS = 1_000L

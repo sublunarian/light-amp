@@ -1121,13 +1121,6 @@ class PlaybackController(
                     fromFile && known > 0L -> known
                     else -> reported
                 }
-                // AmpDur: temporary — chasing a downloaded track whose position
-                // ran past its end with no sound (2026-09-02).
-                android.util.Log.i(
-                    "AmpDur",
-                    "duration reported=$reported known=$known off=$streamOffsetMs " +
-                        "file=$fromFile -> ${_durationMs.value}",
-                )
             }
         }
         // ReplayGain: the playing track's measured gain becomes the player's
@@ -1209,18 +1202,6 @@ class PlaybackController(
      * the one found at connect.
      */
     private fun landedOn(p: LightAudioPlayer, idx: Int, startMs: Long) {
-        // AmpDur: temporary — see the duration collector. What the player
-        // landed on, against what the library says it should be.
-        val landed = _queue.value.getOrNull(idx)
-        android.util.Log.i(
-            "AmpDur",
-            "track pIdx=$idx uiIdx=${_index.value} id=${landed?.id} " +
-                "\"${landed?.title}\" libDur=${landed?.durationMs} " +
-                "pDur=${p.durationMs.value} off=$streamOffsetMs at=$startMs " +
-                "local=${landed?.id?.let { localFiles[it] }?.let { (f, fmt) ->
-                    "${f.name} ${f.length()}B ${fmt.id}"
-                } ?: "stream"}",
-        )
         // Gapless into the next track: sound never stopped, so there is no new
         // "playing" for the isPlaying collector to clear this on.
         if (p.isPlaying.value) _buffering.value = false
@@ -2260,12 +2241,6 @@ class PlaybackController(
             val wasPlaying = p.playWhenReady
             val at = _index.value
             if (at < 0) return@launch
-            // AmpSeek: temporary — chasing the repeat-one wrap of a server-seeked
-            // remainder (2026-10-20). See restartCopyAt.
-            android.util.Log.i(
-                "AmpSeek",
-                "server seek idx=$at to=$target repeat=${p.repeatMode} playing=$wasPlaying",
-            )
             // Repeat-one is lifted for the swap. Taking the playing item out has
             // Media3 look for what plays after it, and under repeat-one that is
             // the same item, which is gone — so it gave up and went to the first
@@ -2304,8 +2279,6 @@ class PlaybackController(
         p.repeatMode = Player.REPEAT_MODE_OFF
         p.addMediaItem(at + 1, track.toAudioItem())
         restartCopyAt = at + 1
-        // AmpSeek: temporary — see serverSeek.
-        android.util.Log.i("AmpSeek", "restart copy queued after idx=$at")
     }
 
     /**
@@ -2341,8 +2314,6 @@ class PlaybackController(
         _queue.value.getOrNull(_index.value)?.durationMs?.takeIf { it > 0L }?.let { _durationMs.value = it }
         p.removeMediaItem(copy - 1)
         if (_repeatMode.value == RepeatMode.TRACK) p.repeatMode = Player.REPEAT_MODE_ONE
-        // AmpSeek: temporary — see serverSeek.
-        android.util.Log.i("AmpSeek", "restart copy took over at idx=${_index.value}")
         bufferAfterSeek(p)
     }
 
@@ -2778,10 +2749,6 @@ class PlaybackController(
             KeyEvent.KEYCODE_VOLUME_DOWN -> -VOLUME_KEY_STEP
             else -> return false
         }
-        // AmpKeys: temporary — whether a volume key reaches Amp at all while
-        // casting, or a button mapper in front of it takes the key first
-        // (2026-10-20).
-        android.util.Log.i("AmpKeys", "volume key $keyCode while casting to ${_active.value?.let { "${it.family.id}:${it.target.name}" }}")
         setVolume(_volume.value + step)
         return true
     }
