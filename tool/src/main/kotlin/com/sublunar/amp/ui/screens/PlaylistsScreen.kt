@@ -127,6 +127,8 @@ class PlaylistDetailScreen(
     override fun Content() {
         LaunchedEffect(playlistId) {
             if (entries.value == null) {
+                // Ticks left from an earlier visit name rows of a list read afresh here.
+                Selections.of("playlist:$playlistId").clear()
                 val view = App.library.playlistView(playlistId)
                 wholeList.value = view.complete
                 entries.value = entriesOf(view)
@@ -310,7 +312,7 @@ class PlaylistDetailScreen(
                                                 onSelect = { selection.begin(entry.key) },
                                                 // Absent, not failing: see the delete icon above.
                                                 onRemoveFromPlaylist =
-                                                    if (canEdit()) ({ removeSong(index) }) else null,
+                                                    if (canEdit()) ({ removeSongs(setOf(entry.key)) }) else null,
                                             )
                                         }
                                     },
@@ -439,12 +441,6 @@ class PlaylistDetailScreen(
         }
     }
 
-    /** [index] is the row's place among those shown. */
-    private fun removeSong(index: Int) {
-        val entry = shownEntries().getOrNull(index) ?: return
-        removeSongs(setOf(entry.key))
-    }
-
     /**
      * Remove rows by their keys, not their songs: a playlist can hold a song twice,
      * and ticking one of them means that one. The server is told positions in the
@@ -456,11 +452,13 @@ class PlaylistDetailScreen(
         // name different songs on the server. See [canEdit].
         if (!canEdit()) return
         val current = entries.value ?: return
+        // Only rows on screen: another library's songs are never the user's to remove here.
+        val doomed = current.filter { it.shown && it.key in keys }.mapTo(HashSet()) { it.key }
         // Each position with the song seen there, so a playlist that has been edited
         // from somewhere else in the meantime is refused rather than mis-pruned.
-        val at = current.indices.filter { current[it].key in keys }.associateWith { current[it].track.id }
+        val at = current.indices.filter { current[it].key in doomed }.associateWith { current[it].track.id }
         if (at.isEmpty()) return
-        edit(current.filterNot { it.key in keys }) {
+        edit(current.filterNot { it.key in doomed }) {
             App.library.removeFromPlaylistAt(playlistId, at)
         }
     }

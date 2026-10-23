@@ -972,10 +972,13 @@ class LibraryRepository(
         )
         if (!view.narrows || d == null) return { true }
         val rows = runCatching {
-            tracks.map { it.id }.distinct().chunked(MAX_BOUND_IDS).flatMap { d.trackLibraries(it) }
+            tracks.mapNotNullTo(HashSet()) { it.albumId }.toList().chunked(MAX_BOUND_IDS).flatMap { d.albumLibraries(it) }
         }.noteOom("playlist libraries").getOrNull() ?: return { true }
-        val byId = rows.associateBy { it.trackId }
-        return { track -> byId[track.id]?.let { view.showsSong(it.albumId, it.hasAlbum, it.libraryId) } ?: false }
+        val libraryOf = rows.associate { it.id to it.libraryId }
+        return { track ->
+            val albumId = track.albumId
+            view.showsSong(albumId, albumId != null && albumId in libraryOf, albumId?.let { libraryOf[it] })
+        }
     }
 
     /** The songs, and whether they're the playlist entire rather than what could be recovered. */
@@ -1113,7 +1116,12 @@ class LibraryRepository(
             allTracks,
             combine(selectedLibrary, hiddenLibraries) { library, hidden -> LibraryView(library, hidden).narrows },
         ) { membership, downloaded, inLibrary, narrows ->
-            val shown = if (narrows) inViewIds(inLibrary) else null
+            val shown = if (narrows) {
+                inViewIds(inLibrary)
+            } else {
+                inViewIds = null
+                null
+            }
             membership.entries.mapNotNullTo(mutableSetOf()) { (playlistId, ids) ->
                 playlistId.takeIf { playlistMarked(ids, downloaded, shown) }
             }
@@ -2544,6 +2552,7 @@ class LibraryRepository(
         albumSizes = null
         artistSizes = null
         trackIndex = null
+        inViewIds = null
         // Stopped, these would still offer the last source's — see genres.
         tagValues.forEach { it.value = emptyList() }
     }
