@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.Playlist
+import com.sublunar.amp.data.isReorderOf
 
 /**
  * Playlists for the phone's own music, kept as `.m3u8` files on the phone.
@@ -139,6 +140,7 @@ object LocalPlaylists : PhonePlaylists {
     /** Whether the edit reached the file — see [removeAt]. */
     override suspend fun reorder(id: String, orderedIds: List<String>): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
+        if (!isReorderOf(orderedIds, readIds(file))) return@withContext false
         writeIds(file, orderedIds)
     }
 

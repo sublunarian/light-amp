@@ -36,9 +36,11 @@ import com.sublunar.amp.ui.components.rememberDragReorderState
 import com.sublunar.amp.ui.components.dragReorderContainer
 import com.sublunar.amp.ui.components.dragRowTarget
 import com.sublunar.amp.ui.components.dropInsertIndex
+import com.sublunar.amp.ui.components.placeBlock
 import com.sublunar.amp.ui.components.AutoScroll
 import com.sublunar.amp.ui.components.DropIndicatorLine
 import com.sublunar.amp.App
+import com.sublunar.amp.data.PlaylistView
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.components.AppArtwork
@@ -90,10 +92,12 @@ class PlaylistDetailScreen(
     private var lastEdit: Job? = null
     @Volatile private var editEpoch = 0
 
-    // Whether what's on screen is the whole playlist -- see PlaylistView. Removing and
-    // reordering both address the server's copy by position, so neither is offered when
-    // this list is only part of it: the indices would point at other songs entirely.
-    // Read at load and not revisited, which is the same snapshot the list itself is.
+    // Whether [entries] is the server's whole playlist rather than a rebuild -- see
+    // PlaylistView. Removing and reordering both address the server's copy by position,
+    // so neither is offered on a rebuild: the indices would point at other songs entirely.
+    // Rows another library holds are in [entries] too, just not shown, so a playlist
+    // narrowed to one library is still whole. Read at load and not revisited, which is
+    // the same snapshot the list itself is.
     private val wholeList = mutableStateOf(true)
 
     // Whether the library is down to its downloads right now, unlike wholeList kept live:
@@ -125,7 +129,7 @@ class PlaylistDetailScreen(
             if (entries.value == null) {
                 val view = App.library.playlistView(playlistId)
                 wholeList.value = view.complete
-                entries.value = view.tracks.map { PlaylistEntry(newEntryKey(), it) }
+                entries.value = entriesOf(view)
             }
         }
         // Collected for the life of the screen, not read once: this is the half of
@@ -160,7 +164,7 @@ class PlaylistDetailScreen(
                             },
                             onConfirm = {
                                 openSelectionActions(
-                                    selection.pick(entries.value.orEmpty()) { it.key }.map { it.track },
+                                    selection.pick(shownEntries()) { it.key }.map { it.track },
                                     selection,
                                 )
                             },
@@ -185,7 +189,14 @@ class PlaylistDetailScreen(
                     }
                     when (val list = entries.value) {
                         null -> Centered("Loading…")
-                        else -> if (list.isEmpty()) Centered("Empty playlist") else TrackList(list, selection)
+                        else -> {
+                            val shown = remember(list) { list.filter { it.shown } }
+                            when {
+                                shown.isNotEmpty() -> TrackList(shown, selection)
+                                list.isEmpty() || offline.value -> Centered("Empty playlist")
+                                else -> Centered("No songs in this library")
+                            }
+                        }
                     }
                 }
                 // Dead centre and above the list: the rows themselves have just
@@ -195,8 +206,17 @@ class PlaylistDetailScreen(
         }
     }
 
-    /** One playlist row: [key] is a synthetic per-row id (see [entries]); [track] is what it shows. */
-    private data class PlaylistEntry(val key: String, val track: Track)
+    /**
+     * One playlist row: [key] is a synthetic per-row id (see [entries]); [track] is what
+     * it holds. [shown] is false for a song the chosen library doesn't hold, which stays
+     * in place for the edits to work against but isn't listed.
+     */
+    private data class PlaylistEntry(val key: String, val track: Track, val shown: Boolean = true)
+
+    private fun entriesOf(view: PlaylistView): List<PlaylistEntry> =
+        view.all.mapIndexed { i, track -> PlaylistEntry(newEntryKey(), track, view.shown[i]) }
+
+    private fun shownEntries(): List<PlaylistEntry> = entries.value.orEmpty().filter { it.shown }
 
     /**
      * Edit mode is one mode, not two: the grab bars appear and rows become
@@ -406,10 +426,10 @@ class PlaylistDetailScreen(
             }
             editEpoch++
             val view = App.library.playlistView(playlistId)
-            if (view.complete && view.tracks.map { it.id } != before.map { it.track.id }) {
+            if (view.complete && view.all.map { it.id } != before.map { it.track.id }) {
                 // New rows, new keys: what was ticked no longer names anything.
                 Selections.of("playlist:$playlistId").let { if (it.active) it.begin() }
-                entries.value = view.tracks.map { PlaylistEntry(newEntryKey(), it) }
+                entries.value = entriesOf(view)
             } else {
                 entries.value = before
             }
@@ -419,19 +439,21 @@ class PlaylistDetailScreen(
         }
     }
 
+    /** [index] is the row's place among those shown. */
     private fun removeSong(index: Int) {
-        val entry = entries.value?.getOrNull(index) ?: return
+        val entry = shownEntries().getOrNull(index) ?: return
         removeSongs(setOf(entry.key))
     }
 
     /**
      * Remove rows by their keys, not their songs: a playlist can hold a song twice,
-     * and ticking one of them means that one. The server is told positions, all of
-     * them read against the list as it stands now -- see [MusicServer.removeFromPlaylistAt].
+     * and ticking one of them means that one. The server is told positions in the
+     * whole playlist, shown or not, all of them read against the list as it stands
+     * now -- see [MusicServer.removeFromPlaylistAt].
      */
     private fun removeSongs(keys: Set<String>) {
-        // The indices below are into what's shown; if that isn't the whole playlist
-        // they name different songs on the server. See [canEdit].
+        // The indices below are into [entries]; if that isn't the whole playlist they
+        // name different songs on the server. See [canEdit].
         if (!canEdit()) return
         val current = entries.value ?: return
         // Each position with the song seen there, so a playlist that has been edited
@@ -444,19 +466,22 @@ class PlaylistDetailScreen(
     }
 
     /**
-     * Move the rows at [indices] as a block to position [insertAt] among the rest: pull
-     * them out in their current relative order, then reinsert them there. For a lone
-     * dragged row this is the familiar single-row reorder; for a multi-row selection the
-     * whole set rides along together, so moving one selected row moves them all.
+     * Move the shown rows at [indices] as a block to position [insertAt] among the rest
+     * shown: pull them out in their current relative order, then reinsert them there.
+     * For a lone dragged row this is the familiar single-row reorder; for a multi-row
+     * selection the whole set rides along together, so moving one selected row moves them
+     * all. Rows that aren't shown keep their places — see [placeBlock].
      */
     private fun reorderGroup(indices: Set<Int>, insertAt: Int) {
         // A partial order would be an instruction to lose everything it omits.
         if (!canEdit()) return
         val current = entries.value ?: return
-        val moving = current.filterIndexed { i, _ -> i in indices }
-        if (moving.isEmpty() || moving.size == current.size) return
-        val remaining = current.filterIndexed { i, _ -> i !in indices }
-        val newList = remaining.toMutableList().apply { addAll(insertAt.coerceIn(0, remaining.size), moving) }
+        val shown = current.filter { it.shown }
+        val moving = shown.filterIndexed { i, _ -> i in indices }.mapTo(HashSet()) { it.key }
+        if (moving.isEmpty() || moving.size == shown.size) return
+        val remaining = shown.filterNot { it.key in moving }
+        val before = remaining.getOrNull(insertAt.coerceIn(0, remaining.size))?.key
+        val newList = placeBlock(current, { it.key }, moving, before, remaining.last().key)
         if (newList == current) return
         edit(newList) { App.library.reorderPlaylist(playlistId, newList.map { it.track.id }) }
     }

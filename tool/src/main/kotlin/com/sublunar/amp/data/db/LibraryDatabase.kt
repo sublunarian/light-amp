@@ -149,6 +149,14 @@ data class PlaylistTrackEntity(
     val trackId: String,
 )
 
+/** A song, and the library its album is in — see [LibraryDao.trackLibraries]. */
+data class TrackLibraryRow(
+    val trackId: String,
+    val albumId: String?,
+    val hasAlbum: Boolean,
+    val libraryId: String?,
+)
+
 /** One playlist's membership, in order — see [LibraryDao.storedPlaylistTracks]. */
 data class PlaylistTrackRow(
     val playlistId: String,
@@ -269,6 +277,13 @@ interface LibraryDao {
     /** Straight into [Track]: reading the entity and copying it made two objects a row. At most [MAX_BOUND_IDS] ids at a time. */
     @Query("SELECT * FROM tracks WHERE id IN (:ids)")
     suspend fun tracksByIds(ids: List<String>): List<Track>
+
+    /** Which library each song is in, for a playlist narrowed to one. At most [MAX_BOUND_IDS] ids at a time. */
+    @Query(
+        "SELECT t.id AS trackId, t.albumId AS albumId, (a.id IS NOT NULL) AS hasAlbum, a.libraryId AS libraryId " +
+            "FROM tracks t LEFT JOIN albums a ON a.id = t.albumId WHERE t.id IN (:ids)",
+    )
+    suspend fun trackLibraries(ids: List<String>): List<TrackLibraryRow>
 
     /** Any one song, for the probes that need a real id — see ServerFeatures. */
     @Query("SELECT id FROM tracks LIMIT 1")

@@ -71,17 +71,21 @@ data class SearchResults(
 }
 
 /**
- * A playlist's songs, and whether they are all of them.
+ * A playlist's songs: [all] of them in order, and which are [shown].
  *
- * [LibraryRepository.playlistTracks] can hand back less than the playlist holds —
- * filtered to what's playable offline, or rebuilt from a cached membership that
- * the local library no longer has every track for. That's right for showing, and
- * wrong for editing: [LibraryRepository.removeFromPlaylistAt] takes an index into
- * the *server's* list, and [LibraryRepository.reorderPlaylist] takes an order that
- * has to name every track or the ones left out are the ones lost. A caller that
- * edits must check [complete] first.
+ * A song is shown when the chosen library holds it and, offline, when it can
+ * play. [tracks] is what a page lists and plays. Edits address [all]:
+ * [LibraryRepository.removeFromPlaylistAt] takes an index into the *server's*
+ * list, and [LibraryRepository.reorderPlaylist] takes an order that has to name
+ * every song or the ones left out are the ones lost.
+ *
+ * [complete] is whether [all] is the server's own list rather than a rebuild
+ * from cached membership the library no longer has every song for. A caller
+ * that edits must check it first.
  */
-data class PlaylistView(val tracks: List<Track>, val complete: Boolean)
+data class PlaylistView(val all: List<Track>, val complete: Boolean, val shown: List<Boolean> = all.map { true }) {
+    val tracks: List<Track> = all.filterIndexed { i, _ -> shown[i] }
+}
 
 /**
  * The library: reads come from the Room cache (instant on launch) and are kept
@@ -407,11 +411,11 @@ class LibraryRepository(
 
     private val allAlbums: StateFlow<List<Album>> =
         combine(albumRows, selectedLibrary, hiddenLibraries) { rows, library, hidden ->
+            val view = LibraryView(library, hidden)
             rows.asSequence()
-                .filter { library == null || it.libraryId == null || it.libraryId == library }
                 // Tracks, artists, search and the liked filters all narrow from
                 // here, so this one line hides a library everywhere they look.
-                .filter { it.libraryId == null || it.libraryId !in hidden }
+                .filter { view.showsAlbum(it.libraryId) }
                 .map { it.toAlbum() }
                 .toList()
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -944,20 +948,34 @@ class LibraryRepository(
         } else if (ids.isNotEmpty() && id !in _playlistTrackIds.value) {
             _playlistTrackIds.update { it + (id to ids) }
         }
-        // A hidden library's songs leave the page too. Marked incomplete when
-        // any did, which keeps the playlist from being edited here: an edit
-        // writes back the list as shown, and would delete them from the server.
-        val hiddenAlbums = hiddenLibraries.value.takeIf { it.isNotEmpty() }?.let { hidden ->
-            albumRows.value.asSequence().filter { it.libraryId in hidden }.map { it.id }.toSet()
-        }.orEmpty()
-        val shown = if (hiddenAlbums.isEmpty()) tracks else tracks.filterNot { it.albumId in hiddenAlbums }
-        val wholeShown = whole && shown.size == tracks.size
-        if (!offline.value) return PlaylistView(shown, wholeShown)
+        val inView = inLibraryView(d, tracks)
         // A song from the phone's own folder needs no server, so it stays whatever
         // the connection is.
-        val downloaded = downloadedTrackIds.value
-        val playable = shown.filter { it.id in downloaded || PhoneFiles.isPhoneFile(it.id) }
-        return PlaylistView(playable, wholeShown && playable.size == shown.size)
+        val downloaded = if (offline.value) downloadedTrackIds.value else null
+        return PlaylistView(
+            tracks,
+            whole,
+            tracks.map { inView(it) && (downloaded == null || it.id in downloaded || PhoneFiles.isPhoneFile(it.id)) },
+        )
+    }
+
+    /**
+     * Which of [tracks] the chosen library shows, by the Songs tab's rule.
+     *
+     * Read from the database and the stored choice rather than the lists held
+     * in memory, which are still loading when a playlist is opened at launch.
+     */
+    private suspend fun inLibraryView(d: LibraryDao?, tracks: List<Track>): (Track) -> Boolean {
+        val view = LibraryView(
+            libraryId.first(),
+            settings.activeSource.first()?.hiddenLibraryIds?.filterNotNull()?.toSet().orEmpty(),
+        )
+        if (!view.narrows || d == null) return { true }
+        val rows = runCatching {
+            tracks.map { it.id }.distinct().chunked(MAX_BOUND_IDS).flatMap { d.trackLibraries(it) }
+        }.noteOom("playlist libraries").getOrNull() ?: return { true }
+        val byId = rows.associateBy { it.trackId }
+        return { track -> byId[track.id]?.let { view.showsSong(it.albumId, it.hasAlbum, it.libraryId) } ?: false }
     }
 
     /** The songs, and whether they're the playlist entire rather than what could be recovered. */
@@ -1087,13 +1105,26 @@ class LibraryRepository(
             .joinAll()
     }
 
-    /** Playlists whose every known track is downloaded — drives the download badge. */
+    /** Playlists whose every song the chosen library shows is downloaded — drives the download badge. */
     val downloadedPlaylistIds: StateFlow<Set<String>> =
-        combine(_playlistTrackIds, downloadedTrackIds) { membership, downloaded ->
+        combine(
+            _playlistTrackIds,
+            downloadedTrackIds,
+            allTracks,
+            combine(selectedLibrary, hiddenLibraries) { library, hidden -> LibraryView(library, hidden).narrows },
+        ) { membership, downloaded, inLibrary, narrows ->
+            val shown = if (narrows) inViewIds(inLibrary) else null
             membership.entries.mapNotNullTo(mutableSetOf()) { (playlistId, ids) ->
-                playlistId.takeIf { ids.isNotEmpty() && ids.all { trackId -> trackId in downloaded } }
+                playlistId.takeIf { playlistMarked(ids, downloaded, shown) }
             }
         }.stateIn(scope, SharingStarted.Eagerly, emptySet())
+
+    // Memoised on the list instance, so a download landing doesn't rebuild it.
+    @Volatile private var inViewIds: Pair<List<Track>, Set<String>>? = null
+
+    private fun inViewIds(list: List<Track>): Set<String> =
+        inViewIds?.takeIf { it.first === list }?.second
+            ?: list.mapTo(HashSet()) { it.id }.also { inViewIds = list to it }
 
     suspend fun createPlaylist(name: String): WriteResult = createPlaylist(name, emptyList())
 

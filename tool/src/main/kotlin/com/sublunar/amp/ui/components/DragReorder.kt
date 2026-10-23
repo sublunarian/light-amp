@@ -104,6 +104,24 @@ fun dropInsertIndex(size: Int, from: Int, movingIndices: Set<Int>, target: Int):
     return (0 until anchorIndex).count { it !in movingIndices }
 }
 
+/**
+ * [full] with the [moving] rows taken out and put back as one block, in their order:
+ * just before [beforeKey], or, when that is null, just after [afterKey]. Both are rows
+ * on screen, and [full] may hold rows that aren't; those keep their order and places,
+ * and none is dropped.
+ */
+fun <T, K> placeBlock(full: List<T>, key: (T) -> K, moving: Set<K>, beforeKey: K?, afterKey: K?): List<T> {
+    val block = full.filter { key(it) in moving }
+    val rest = full.filterNot { key(it) in moving }
+    val at = when {
+        beforeKey != null -> rest.indexOfFirst { key(it) == beforeKey }
+        afterKey != null -> rest.indexOfFirst { key(it) == afterKey }.let { if (it < 0) -1 else it + 1 }
+        else -> -1
+    }
+    if (at < 0) return full
+    return rest.toMutableList().apply { addAll(at, block) }
+}
+
 /** Auto-scrolls [listState] while a drag is pinned against the top or bottom edge. */
 @Composable
 fun <K> DragReorderState<K>.AutoScroll(listState: LazyListState, rowPx: Float) {

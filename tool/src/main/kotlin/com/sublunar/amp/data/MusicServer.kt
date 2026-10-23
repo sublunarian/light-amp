@@ -432,7 +432,8 @@ interface MusicServer {
      * Remove the entries [at] these positions — in the playlist as the server
      * holds it, all of them read against the list as it stands before any is
      * removed. Positions rather than song ids because a playlist can hold a
-     * song twice and only one of them is meant.
+     * song twice and only one of them is meant. Positions are in the whole list
+     * [getPlaylistTracks] returns, never in a page narrowed to one library.
      *
      * Each position comes with the id of the song the caller saw there, and an
      * implementation must find that song there before it removes anything: the
@@ -448,9 +449,16 @@ interface MusicServer {
      */
     suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean = false
 
-    /** Whether the edit landed — see [removeFromPlaylistAt]. */
+    /**
+     * Whether the edit landed — see [removeFromPlaylistAt]. [orderedSongIds] is
+     * the whole playlist in its new order: every song it holds, in every library.
+     */
     suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = false
 }
+
+/** Whether [order] holds exactly the songs of [songs], as many times each, in any order. */
+internal fun isReorderOf(order: List<String>, songs: List<String>): Boolean =
+    order.size == songs.size && order.groupingBy { it }.eachCount() == songs.groupingBy { it }.eachCount()
 
 /**
  * When the server says it is, from a response's `Date` header — a change mark

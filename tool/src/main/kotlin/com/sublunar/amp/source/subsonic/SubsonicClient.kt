@@ -37,6 +37,7 @@ import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.UNREACHABLE
 import com.sublunar.amp.data.WriteResult
+import com.sublunar.amp.data.isReorderOf
 import com.sublunar.amp.data.md5Hex
 
 /** Connection + credentials for a Navidrome/Subsonic server. */
@@ -863,13 +864,13 @@ class SubsonicClient(
 
     /**
      * Subsonic has no reorder; overwrite the playlist with the full ordered id
-     * list. Which is why the count is checked against the server's own copy
+     * list. Which is why the songs are checked against the server's own copy
      * first: an overwrite with a partial list doesn't reorder a playlist, it
      * deletes everything the list left out.
      */
     override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean {
         val known = getPlaylist(id).trackIds
-        if (known.size != orderedSongIds.size) return false
+        if (!isReorderOf(orderedSongIds, known)) return false
         val params = mutableListOf("playlistId" to id)
         orderedSongIds.forEach { params.add("songId" to it) }
         request("createPlaylist", params)
