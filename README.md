@@ -1,8 +1,8 @@
 # Amp
 
-**A music player** for the Light Phone III.
-
-Plays your own library - a Subsonic server, Plex, Jellyfin or files on the phone.
+A Light Phone III tool that plays music you own: files on the phone, your
+Bandcamp collection, or your own Plex, Jellyfin, Navidrome or other Subsonic
+server.
 
 <p align="center">
   <img src="docs/screenshots/albums.png" width="24%" alt="All albums, with the A–Z index">
@@ -15,84 +15,107 @@ Plays your own library - a Subsonic server, Plex, Jellyfin or files on the phone
 
 ## Features
 
-- Subsonic (Navidrome, Airsonic, Gonic), Plex, Jellyfin and/or local files on the phone.
 - Bandcamp [speaks Subsonic](https://blog.bandcamp.com/2026/07/16/discover-improvements-and-subsonic-implementation/)
   now, so you can use Amp without hosting anything.
-- Offline downloads, by album, track, or everything you've liked.
-- Data Mode: choose what happens off Wi-Fi. Nothing is silently downgraded.
-  **Defaults to WiFi Only**, so on cellular it plays your downloads rather than
-  streaming — change it in Settings if you'd rather it streamed.
+- Lossless playback.
+- Offline downloads, by album, playlist, track, or everything you've liked.
+- Data Mode: choose what happens off Wi-Fi. By default Amp streams on cellular
+  and leaves downloads for Wi-Fi. Nothing is silently downgraded.
 - Synced lyrics.
+- Song radio, on servers that have it.
 - Play counts, ratings, likes and playlist edits sync back to the server.
-- Cast to a DLNA speaker or receiver, or — on a Plex source — to another Plex
-  player such as the Apple TV app. A Plex player fetches the music from your
-  server itself, so the quality is settled between those two: Amp's streaming
-  setting doesn't apply, and lossless depends on the player's own quality
-  setting. The player also needs "Remote Control: Advertise as Player" turned
-  on.
+- Cast to a DLNA speaker or receiver, or from Plex to another Plex player (it
+  needs "Remote Control: Advertise as Player" turned on).
 - Artwork can be turned off completely.
 
 ## Installing
 
-USB debugging needs to be on: **Settings → Developer options → Allow USB
-debugging**. Then take the APK from [Releases](../../releases) and either drop
-it on [Light Phone Manager](https://github.com/greghare/light-phone-manager), or:
+USB debugging needs to be on, in Android's own settings rather than LightOS's:
+**Developer options → USB debugging**. Then take the APK from
+[Releases](../../releases) and either drop it on
+[Light Phone Manager](https://github.com/greghare/light-phone-manager), or:
 
 ```bash
 adb install -r amp-*.apk
 ```
 
+To update, install the new APK the same way. Don't uninstall first: that
+deletes your downloads, sign-ins and settings.
+
+Hold a song, album or playlist for its options. Hold the top-right button on
+any page for Settings.
+
 ## Music on the phone
 
-Amp reads `Music/Amp`, and nothing else.
+Amp reads `Music/Amp`, and nothing else, so music added with Light's Music tool
+won't show up.
 
 ```bash
 adb push ~/Music/some-album "/sdcard/Music/Amp/"
 ```
 
 Sub-folders are fine. Names come from the tags rather than the folders, and
-artwork has to be embedded in the files — a `cover.jpg` next to them won't show.
+artwork has to be embedded in the files. A `cover.jpg` next to them won't show.
+APE, WavPack and DSD files are skipped.
 
-Playlists live in `Music/Amp/Playlists` as `.m3u8`, so one you make on the phone
-opens anywhere else, and one you drop in that folder shows up in Amp.
+Playlists live in `Music/Amp/Playlists` as `.m3u8`. One you drop in there shows
+up in Amp, but Amp can't change or delete it.
 
-## What isn't in the SDK yet
+Adding music through Light's Tool Manager, instead of adb, is on the to-do list.
 
-Two things sit outside the official SDK: **background downloads**, and an extra
-that would come out for a store build, **colour**.
-Amp also adds to the SDK's player (bulk queue edits, repeat, volume) in patches
-meant to go upstream. A build from Light's own store builder can't carry any of
-these yet, so getting Amp into the Tool Library is still work in progress.
+## Color
 
-What each stands in for, and what would replace it, is in
-[SDK gaps](tool/docs/SDK-GAPS.md). The SDK changes themselves are listed with
-revert steps in [SDK patches](tool/docs/SDK-PATCHES.md).
-
-Colour is the only one you have to do anything about. It's off by default, and
-switching the phone's greyscale filter needs a one-time grant:
+Artwork is grey until you run this once from a computer:
 
 ```bash
 adb shell pm grant com.sublunar.amp android.permission.WRITE_SECURE_SETTINGS
 ```
 
-Colour then simply follows the artwork setting — artwork on means colour on.
+Color then follows the artwork setting: artwork on means color on. Doing this
+without adb is waiting on Light
+([light-sdk#190](https://github.com/lightphone/light-sdk/issues/190)).
+
+## Known issues
+
+- ALAC (Apple Lossless) files don't play. The phone's ALAC decoder is broken,
+  and Light needs to fix it in a LightOS update
+  ([light-sdk#192](https://github.com/lightphone/light-sdk/issues/192)). Until
+  then, stream and download in Opus or MP3 (MP3 on Plex), or convert the files
+  to FLAC.
+
+Also waiting on Light:
+
+- No controls on the lock screen
+  ([light-sdk#136](https://github.com/lightphone/light-sdk/issues/136), being
+  fixed in [light-sdk#295](https://github.com/lightphone/light-sdk/pull/295)).
+- The back swipe doesn't work in Amp.
+- Bluetooth can't be picked in Amp. Connect it in LightOS's settings instead
+  ([light-sdk#191](https://github.com/lightphone/light-sdk/issues/191)).
+- Paste doesn't work. For a Bandcamp login, use Scan Username & Password
+  ([light-sdk#45](https://github.com/lightphone/light-sdk/issues/45)).
+- The volume buttons only change Amp's volume while it's on screen, and
+  LightOS's volume panel doesn't show
+  ([light-sdk#189](https://github.com/lightphone/light-sdk/issues/189)).
+
+[Open an issue](../../issues) for anything else, with the version from
+Settings → About.
 
 ## Building
-
-Light's SDK comes in as the `light-sdk` submodule; Amp is the `tool/` module
-built against it, which is the shape a LightOS tool takes. Every change Amp
-makes to the SDK itself is a patch file in [`light-sdk-patch/`](light-sdk-patch/),
-and the build applies the set to the pristine submodule for you.
 
 ```bash
 git submodule update --init
 ./gradlew :tool:assembleRelease
 ```
 
-Where things live, and how to add a kind of server: [ARCHITECTURE](tool/docs/ARCHITECTURE.md).
+Light's SDK comes in as the `light-sdk` submodule, and the build applies Amp's
+patches to it. A build of your own won't install over a release without
+uninstalling first.
 
-## Licence
+Where things live: [ARCHITECTURE](tool/docs/ARCHITECTURE.md). What Amp still
+needs from Light's SDK: [SDK gaps](tool/docs/SDK-GAPS.md). Pull requests:
+[CONTRIBUTING](CONTRIBUTING.md).
 
-MIT. The app is © Amp contributors; Light's SDK, © The Light Phone, comes in
-as a submodule, with our changes carried as patches on top. See
+## License
+
+MIT. The app is © Amp contributors and Light's SDK is © The Light Phone. See
 [LICENSE](LICENSE).
