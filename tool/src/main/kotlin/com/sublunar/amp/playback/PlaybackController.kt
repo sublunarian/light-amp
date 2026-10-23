@@ -2841,10 +2841,12 @@ class PlaybackController(
         // again and it would sit on the dashboard beside the player's — two
         // streams for one listener — until it timed out.
         if (next.reportsItself) sessions.close()
-        // One route at a time — whatever has the sound hands over quietly. The
-        // same family is only pointed somewhere else.
-        val current = remote
-        if (current != null && current !== next) dropOutput(Disconnect.Switch)
+        // One route at a time — whatever has the sound hands over quietly,
+        // including a second speaker of the same kind.
+        val current = _active.value
+        if (current != null && (current.output !== next || current.target.id != target.id)) {
+            dropOutput(Disconnect.Switch)
+        }
         // Already the stand-in when this is a switch, which follows the
         // output by itself.
         queuePlayer?.pause()

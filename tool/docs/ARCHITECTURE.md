@@ -96,6 +96,15 @@ source lists its players; its calls stay on `PlexClient`, which holds the token
 and the lock they need. The Output page lists `OutputFamilies` — the source's
 and the phone's — without naming any of them.
 
+While an output has the sound, the phone's own player plays a **stand-in**
+(`playback/StandIn.kt`): one silent MP3, named and timed like the output's song
+and kept at its place and play state. The media session belongs to that player,
+so a launcher's controls, Bluetooth buttons and LightOS see what the output is
+doing, and a press that reaches the stand-in is passed on to the output. Playing,
+it also keeps the media service in the foreground, so Android doesn't freeze Amp
+while it casts with its screen closed. The queue stays the controller's alone
+until the sound comes back, when it goes back into the player.
+
 **`ui/screens`** is one file per screen. `LibraryShell` is the tabbed root;
 `BootScreen` hosts it and decides what to show while the library loads.
 `LibraryNav` holds the navigation state screens share, because the tab bar is
