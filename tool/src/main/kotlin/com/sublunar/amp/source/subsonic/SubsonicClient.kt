@@ -856,6 +856,7 @@ class SubsonicClient(
         if (at.isEmpty()) return true
         val known = getPlaylist(id).trackIds
         if (at.any { (index, songId) -> known.getOrNull(index) != songId }) return false
+        if (holdsHiddenSongs(id, known.size)) return false
         val params = mutableListOf("playlistId" to id)
         at.keys.forEach { params.add("songIndexToRemove" to it.toString()) }
         request("updatePlaylist", params)
@@ -871,10 +872,24 @@ class SubsonicClient(
     override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean {
         val known = getPlaylist(id).trackIds
         if (!isReorderOf(orderedSongIds, known)) return false
+        if (holdsHiddenSongs(id, known.size)) return false
         val params = mutableListOf("playlistId" to id)
         orderedSongIds.forEach { params.add("songId" to it) }
         request("createPlaylist", params)
         return true
+    }
+
+    /**
+     * Whether the server keeps songs in this playlist that getPlaylist leaves out: on
+     * Navidrome, ones whose file has gone missing. Its own player keeps them through
+     * every edit. Over Subsonic they can't be kept, since a remove's index counts them
+     * and a reorder rewrites the playlist without them, so such a playlist isn't edited.
+     */
+    private suspend fun holdsHiddenSongs(id: String, shown: Int): Boolean {
+        val stored = request("getPlaylists").playlists?.playlist.orEmpty().firstOrNull { it.id == id }?.songCount
+        val hidden = stored != null && stored > shown
+        if (hidden) android.util.Log.w("AmpSync", "playlist $id holds ${stored!! - shown} song(s) the server doesn't list; not editing it")
+        return hidden
     }
 
     // --- Mapping -------------------------------------------------------------
