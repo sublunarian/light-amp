@@ -732,15 +732,19 @@ class LibraryRepository(
      * window where a second caller sees "not known yet" and fetches again. The
      * table is the copy that outlives the process, and is read back only by
      * [seedPlaylistTrackIds] when a database opens.
+     *
+     * [d] is the database the caller started with; after a source switch the
+     * answer belongs to neither the new map nor the new database.
      */
-    private suspend fun storeMembership(id: String, trackIds: List<String>) {
+    private suspend fun storeMembership(d: LibraryDao?, id: String, trackIds: List<String>) {
+        if (d == null || daos.value !== d) return
         val unchanged = _playlistTrackIds.value[id] == trackIds
         _playlistTrackIds.update { it + (id to trackIds) }
         // This *is* the replacement the mark was asking for.
         staleMembership.update { it - id }
         if (unchanged) return
         runCatching {
-            dao.setPlaylistTracks(id, trackIds.mapIndexed { index, trackId -> PlaylistTrackEntity(id, index, trackId) })
+            d.setPlaylistTracks(id, trackIds.mapIndexed { index, trackId -> PlaylistTrackEntity(id, index, trackId) })
         }
     }
 
@@ -769,16 +773,17 @@ class LibraryRepository(
      * edit is not enough to build a membership out of — the next prime will
      * fetch the whole truth anyway.
      */
-    private suspend fun editMembership(id: String, edit: (List<String>) -> List<String>) {
+    private suspend fun editMembership(d: LibraryDao?, id: String, edit: (List<String>) -> List<String>) {
         val current = _playlistTrackIds.value[id] ?: return
-        storeMembership(id, edit(current))
+        storeMembership(d, id, edit(current))
     }
 
     /** Forget one playlist's membership everywhere. */
-    private suspend fun dropMembership(id: String) {
+    private suspend fun dropMembership(d: LibraryDao?, id: String) {
+        if (d == null || daos.value !== d) return
         _playlistTrackIds.update { it - id }
         staleMembership.update { it - id }
-        runCatching { dao.clearPlaylistTracks(id) }
+        runCatching { d.clearPlaylistTracks(id) }
     }
 
     /**
@@ -791,7 +796,7 @@ class LibraryRepository(
      */
     private suspend fun seedPlaylistTrackIds(from: LibraryDao) {
         val stored = runCatching { from.storedPlaylistTracks() }.getOrNull() ?: return
-        if (stored.isEmpty()) return
+        if (stored.isEmpty() || daos.value !== from) return
         val grouped = stored.groupBy({ it.playlistId }, { it.trackId })
         val seeded = grouped.keys - _playlistTrackIds.value.keys
         _playlistTrackIds.update { known -> grouped + known }
@@ -860,24 +865,26 @@ class LibraryRepository(
             return
         }
         if (!metadataAllowed()) return
+        val d = daos.value
         val fetched = runCatching { serverClient.value?.getPlaylists(libraryId.first()) }.getOrNull()
         if (fetched != null) {
             _playlists.value = fetched
             settings.setCachedPlaylists(sourceId, json.encodeToString(fetched))
-            reconcileMembership(fetched)
+            reconcileMembership(d, fetched)
             return
         }
         if (_playlists.value.isEmpty()) _playlists.value = loadCachedPlaylists()
     }
 
     /** Forget the membership of playlists the server no longer lists. */
-    private suspend fun reconcileMembership(fetched: List<Playlist>) {
+    private suspend fun reconcileMembership(d: LibraryDao?, fetched: List<Playlist>) {
+        if (d == null || daos.value !== d) return
         val live = fetched.mapTo(HashSet()) { it.id }
         _playlistTrackIds.update { known -> known.filterKeys { it in live } }
         staleMembership.update { marked -> marked.filterTo(HashSet()) { it in live } }
         runCatching {
             // Room expands an empty list to `NOT IN ()`, which SQLite rejects.
-            if (live.isEmpty()) dao.clearAllPlaylistTracks() else dao.prunePlaylistTracks(live.toList())
+            if (live.isEmpty()) d.clearAllPlaylistTracks() else d.prunePlaylistTracks(live.toList())
         }
     }
 
@@ -904,6 +911,7 @@ class LibraryRepository(
 
     /** [playlistTracks] plus whether it's the whole playlist — see [PlaylistView]. */
     suspend fun playlistView(id: String): PlaylistView {
+        val d = daos.value
         val (tracks, whole) = fetchPlaylistTracks(id)
         // Cached below at full membership, then narrowed on the way out: the
         // badge needs to know what the playlist *is*, the page needs to show
@@ -930,7 +938,7 @@ class LibraryRepository(
             // this playlist, where the ids came from the cached list rather
             // than from the map and are the first thing known about it.
             if (whole) {
-                storeMembership(id, ids)
+                storeMembership(d, id, ids)
             } else if (id !in _playlistTrackIds.value) {
                 _playlistTrackIds.update { it + (id to ids) }
             }
@@ -1037,9 +1045,10 @@ class LibraryRepository(
             return
         }
         if (!metadataAllowed()) return
+        val d = daos.value
         awaitPlaylistWrites()
         val tracks = runCatching { serverClient.value?.getPlaylistTracks(id) }.noteOom("playlist prime $id").getOrNull() ?: return
-        storeMembership(id, tracks.map { track -> track.id })
+        storeMembership(d, id, tracks.map { track -> track.id })
     }
 
     /**
@@ -1117,13 +1126,14 @@ class LibraryRepository(
     }
 
     suspend fun deletePlaylist(id: String): WriteResult = playlistWrite {
+        val d = daos.value
         val phone = phonePlaylists()
         val result = if (phone != null) {
             fileWrite(phone.delete(id))
         } else {
             serverWrite { it.deletePlaylist(id) }
         }
-        dropMembership(id)
+        dropMembership(d, id)
         refreshPlaylists()
         said("deletePlaylist($id)", result)
     }
@@ -1134,13 +1144,14 @@ class LibraryRepository(
      * contract hold across calls, not just within a single caller's loop.
      */
     suspend fun addToPlaylist(id: String, trackId: String): WriteResult = playlistWrite {
+        val d = daos.value
         val phone = phonePlaylists()
         val result = if (phone != null) {
             fileWrite(phone.add(id, trackId))
         } else {
             serverWrite { it.addToPlaylist(id, trackId) }
         }
-        editMembership(id) { it + trackId }
+        editMembership(d, id) { it + trackId }
         said("addToPlaylist($id)", result)
     }
 
@@ -1175,6 +1186,7 @@ class LibraryRepository(
      * a false.
      */
     suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean = playlistWrite {
+        val d = daos.value
         val phone = phonePlaylists()
         if (phone != null) {
             phone.removeAt(id, at)
@@ -1186,13 +1198,14 @@ class LibraryRepository(
                 .onFailure { android.util.Log.w("AmpSync", "removeFromPlaylistAt($id) failed: ${it.message}", it) }
                 .getOrDefault(false)
         }.also { ok ->
-            if (ok) editMembership(id) { ids -> ids.filterIndexed { index, _ -> index !in at.keys } }
-            else dropMembership(id)
+            if (ok) editMembership(d, id) { ids -> ids.filterIndexed { index, _ -> index !in at.keys } }
+            else dropMembership(d, id)
         }
     }
 
     /** Whether the new order landed — see [removeFromPlaylistAt]. */
     suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = playlistWrite {
+        val d = daos.value
         val phone = phonePlaylists()
         if (phone != null) {
             phone.reorder(id, orderedSongIds)
@@ -1205,7 +1218,7 @@ class LibraryRepository(
             // Order is the whole content of this edit, so the new order *is*
             // the new membership. A refusal leaves the server's order unknown
             // to us — Plex's can fail partway — so the stored copy goes.
-            if (ok) editMembership(id) { orderedSongIds } else dropMembership(id)
+            if (ok) editMembership(d, id) { orderedSongIds } else dropMembership(d, id)
         }
     }
 
