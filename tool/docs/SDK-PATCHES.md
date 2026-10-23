@@ -53,45 +53,35 @@ git -C light-sdk branch -r | tr -d ' ' \
   | xargs -I{} git -C light-sdk grep -l "fun replaceRange" {} -- '*/LightAudioPlayer.kt'
 ```
 
-Last counted 2026-10-21 against 0.2.1 (`3a6b204`): eleven members on
+Last counted 2026-10-20 against 0.2.1 (`3a6b204`): eight members on
 `LightAudioPlayer` (`addItems`, `replaceRange`, `setMediaQueueAt`,
-`repeatMode`, `playWhenReady`, `isCurrentItemSeekable`, `onItemRepeated`,
-`onPlaybackError`, `playbackGain`, `deviceVolume`, `setSystemVolume`), none of
-them on any upstream branch. 0.2.1's own queue edits replaced four that the
-August count had (`addItemAt`, `removeItem`, `moveItem`, `seekToIndex`).
+`repeatMode`, `playWhenReady`, `playbackGain`, `deviceVolume`,
+`setSystemVolume`), none of them on any upstream branch. 0.2.1's own queue
+edits replaced four that the August count had (`addItemAt`, `removeItem`,
+`moveItem`, `seekToIndex`), and three more went the same day
+(`onPlaybackError`, `isCurrentItemSeekable`, `onItemRepeated`): Amp gets what
+they told it from its own `StreamProxy` and restart copy now.
 
 ---
 
 ## Additions
 
-### 1. `LightScreen.popToRoot()` / `LightActivity.popToRoot()`
+### 1. ~~`LightScreen.popToRoot()` / `LightActivity.popToRoot()`~~ — dropped 20 Oct 2026
 
-Unwind to the initial screen. A tool with a tab bar visible on nested screens
-needs it — `goBack()` only unwinds one level.
+Amp unwinds with `goBack()` in a loop instead (`backToRoot` in `Nav.kt`),
+stopping as soon as the library screen is showing, since one more back would
+close Amp. The worry was that each page on the way down gets drawn for a frame,
+and it doesn't: the pops all happen in one main-thread turn, so Compose draws
+only the last one. Tested on the phone with a probe on the SDK's composition:
+every unwind drew its destination and nothing in between.
 
-Two details matter in the implementation:
+### 2. ~~`LightAudioPlayer.onPlaybackError`~~ — dropped 20 Oct 2026
 
-- Publish `currentScreen` **once**, after the loop. Assigning it per iteration
-  makes every screen on the way down the current one for a frame, and since it
-  drives composition each gets drawn on its way out — unwinding four screens
-  flashes four pages past the user.
-- Only the visible screen gets `notifyWillHide()`; the rest were never shown.
-
-### 2. `LightAudioPlayer.onPlaybackError`
-
-Forward Media3's `onPlayerError` to a tool-settable callback. Without it a
-failed stream is indistinguishable from a pause, and an offline-capable player
-can't fall back to a downloaded copy.
-
-The `PlaybackException` itself is worth passing, not just the fact of an error:
-its `errorCode` separates "the server answered with an error status" from "the
-server never answered", which are different situations. Treating both as
-"offline" takes a whole library down to downloads-only over one bad URL.
-
-SDK 0.1.1 added an `error: StateFlow<LightAudioError?>` of its own — the right
-idea, but it maps the exception into a type without the raw `errorCode`. This
-callback stays until the flow carries the code, then folds into it. 0.2.1 adds
-the failed item's id to the error, but still not the code or the cause.
+Amp needed the raw error for two facts the SDK's `error` flow leaves out: the
+server's HTTP status (a 5xx means try the original's other address) and
+whether the app's own rule refused the stream. Every stream now goes through
+`StreamProxy`, which saw both, so Amp reads the flow for what failed and asks
+the door what the server said (`StreamProxy.lastOutcome`).
 
 ### 3. `LightAudioPlayer.replaceRange(fromIndex, toIndex, items)`
 
@@ -122,7 +112,6 @@ restore it, and be driven by the phone's own controls.
 | `playbackGain` | ReplayGain: tracks play at an even loudness. Shaped like the SDK's own `speed`; on by default in Amp. |
 | `repeatMode` | Repeat off / all / one. |
 | `playWhenReady` | The caller's intent, distinct from `isPlaying`, which is false mid-rebuffer — a seek issued in that window read "paused" and never resumed. |
-| `onItemRepeated` | The repeat-one wrap. The index flow can't carry it (the index doesn't change), and a server-seeked stream needs rebuilding at the track's start or it loops its own tail. |
 
 None of them is novel — every one is a `Player` method or property that media3
 already exposes and the SDK does not forward. That is also why they would survive
@@ -137,13 +126,13 @@ shipping any schema change crashes every existing install on launch. Recreating
 the tables is the right default: a tool's Room database is a rebuildable cache of
 server state, not the system of record.
 
-### 6. Splash icon centring
+### 6. ~~Splash icon centring~~ — dropped 20 Oct 2026
 
-`sdk/client/src/main/res/drawable/loading_text_icon.xml` — the "loading…"
-glyphs sit at y≈96 in a 240-unit viewport whose centre is 120, so the word
-renders ~88px above centre on a 1240px panel (measured). The paths are wrapped
-in `<group android:translateY="24.5">`; the paths themselves are untouched, so
-reverting is deleting the group.
+The "loading…" word sits ~88px above centre on the splash, as it does in every
+SDK tool. Light's designer owns the splash (light-sdk #41), and a store build
+couldn't carry the fix anyway, so Amp now looks like the other tools. The patch
+wrapped the paths of `loading_text_icon.xml` in
+`<group android:translateY="24.5">`, if it is ever wanted back.
 
 ---
 
@@ -159,18 +148,12 @@ detached controller hear device-volume changes, which keeps the fader in step.
 A tool cannot do this for itself — it needs a `BroadcastReceiver`, and
 `android.content` is blocked.
 
-### 8. `LightAudioPlayer.isCurrentItemSeekable`
+### 8. ~~`LightAudioPlayer.isCurrentItemSeekable`~~ — dropped 20 Oct 2026
 
-Whether the stream that actually arrived can be seeked within — true for a file
-or any response carrying a length and byte ranges, false for a live chunked
-transcode. Media3 already knows; the SDK didn't pass it on.
-
-Without it a tool has to infer seekability from the format it *asked* for, and
-that is wrong precisely when a server declines to transcode. Ask Navidrome for
-mp3 when the file is already mp3 and it sends the file untouched — then ignores
-`timeOffset`, having no encode to offset. The tool seeks the only way it thinks
-it can, the server ignores it, and the track silently restarts while the
-position readout insists the seek landed.
+Whether the stream that arrived can be seeked within. Guessing from the format
+Amp *asked* for is wrong when a server declines to transcode, and fails
+silently. `StreamProxy` sees whether the server sent a length, which is what
+the player decides on too, so Amp asks the door instead.
 
 ### 9. `hasRuntimePermission(permission)` — `LightPermissions.kt`
 
@@ -183,23 +166,13 @@ the server hearing of it. A tool with only the server's answer told such a
 phone to allow access it already had, and sent it to a prompt with nothing to
 change. Exposes `LightServiceConnection.applicationContext` (internal) to ask.
 
-### 10. `LightAudioNetworkPolicy` — `audio/LightAudioNetworkPolicy.kt`
+### 10. ~~`LightAudioNetworkPolicy`~~ — dropped 20 Oct 2026
 
-A tool's say over whether its players may use the network at all: one
-process-wide predicate, asked by a gating `DataSource` before every remote
-connection the platform player opens and again as it reads. Both players are
-built on it, through `buildSdkExoPlayer` in `SdkExoPlayer.kt`. Amp wires
-it to `App.networkAllowed` at boot, which is how Wi-Fi Only becomes a wall
-rather than a set of courtesy checks: a stream already in the queue used to
-play on over cellular, and the next one along with it. Local files, assets and
-other in-phone sources never ask — nor does a loopback address, which is how
-Amp's own `StreamProxy` serves the player. While that proxy is on, this patch
-is only the net under it: it still stands in front of any server URL handed to
-the player directly (the proxy's self-test failed, or a queue built before it
-came up). It goes when the proxy has proven itself on devices, or when Amp
-streams through the proxy only, never handing the player a server URL. Revert:
-drop the gated factory from `SdkExoPlayer.kt` and the file; nothing else
-references it.
+It gated the player's own HTTP fetches, the one thing Wi-Fi Only couldn't
+otherwise reach. Amp now streams only through `StreamProxy`: the player is
+never handed a server's address, the door asks the rule at every request and
+while it serves, and when the door isn't up nothing streams and the screen
+says so.
 
 ## Workarounds
 
@@ -209,10 +182,11 @@ remove it — in [SDK-GAPS.md](SDK-GAPS.md). In brief:
 ### 11. ~~`audio/LightMediaService.kt`~~ — retired 31 Aug 2026
 
 The background-audio spike is gone: Amp adopted the SDK's official
-`detached-audio` capability. What replaced it in the patch set is
-`audio-service.patch`: a `sessionActivity` on the SDK's own service, which
-belongs with the additions above, not the workarounds. (Its player's
-device-volume and becoming-noisy lines moved to `SdkExoPlayer.kt` with 0.2.1.)
+`detached-audio` capability. What replaced it in the patch set was
+`audio-service.patch`: a `sessionActivity` on the SDK's own service, so that
+tapping a media surface opens the tool. Dropped 20 Oct 2026, because nothing on
+LightOS reads it. (Its player's device-volume and becoming-noisy lines moved to
+`SdkExoPlayer.kt` with 0.2.1.)
 
 ### 12. `transfer/LightTransferService.kt` + manifest
 
@@ -269,8 +243,8 @@ If you are reading an old checkout, the markers are the only truth there.)
 
 ## Before submitting a tool
 
-The workarounds are the thing to remove: delete the `spike-*.patch` files, plus
-the spike-marked hunks of `light-activity.patch`. Each
+The workarounds are the thing to remove: delete the `spike-*.patch` files and
+`light-activity.patch`, which is all spike now. Each
 carries its own revert steps, and this finds every one of them:
 
 ```bash

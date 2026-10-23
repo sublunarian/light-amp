@@ -237,6 +237,42 @@ class StreamProxyTest {
         assertEquals(404, fetch("http://127.0.0.1:$port/s/${"0".repeat(32)}").first)
     }
 
+    @Test
+    fun aClosedDoorNeverHandsOutTheServersAddress() {
+        proxy.stop()
+        val url = proxy.wrap(originUrl("/file"), group = "track-closed")
+        assertEquals(StreamProxy.UNAVAILABLE_URL, url)
+        assertTrue(!url.contains("${origin.localPort}"), "the server's address reached the player")
+    }
+
+    @Test
+    fun theDoorRemembersWhatTheServerSaid() {
+        fetch(proxy.wrap(originUrl("/file"), group = "track-file"))
+        fetch(proxy.wrap(originUrl("/chunked"), group = "track-chunked"))
+        fetch(proxy.wrap(originUrl("/gone"), group = "track-gone"))
+        fetch(proxy.wrap(originUrl("/broken"), group = "track-broken"))
+
+        assertEquals(StreamProxy.Outcome.Answered(200, lengthKnown = true), proxy.lastOutcome("track-file"))
+        assertEquals(StreamProxy.Outcome.Answered(200, lengthKnown = false), proxy.lastOutcome("track-chunked"))
+        assertEquals(StreamProxy.Outcome.Answered(404, lengthKnown = false), proxy.lastOutcome("track-gone"))
+        assertEquals(StreamProxy.Outcome.Answered(500, lengthKnown = false), proxy.lastOutcome("track-broken"))
+        assertEquals(null, proxy.lastOutcome("track-never-fetched"))
+    }
+
+    @Test
+    fun aClosedRuleIsRememberedAsTheDoorsOwnAnswer() {
+        gateOpen = false
+        fetch(proxy.wrap(originUrl("/file"), group = "track-refused"))
+        assertEquals(StreamProxy.Outcome.Refused, proxy.lastOutcome("track-refused"))
+    }
+
+    @Test
+    fun aServerOutOfReachIsRemembered() {
+        // Nothing can listen below 1024 without root, so this refuses at once.
+        runCatching { fetch(proxy.wrap("http://127.0.0.1:1/song", group = "track-unreachable")) }
+        assertEquals(StreamProxy.Outcome.Unreachable, proxy.lastOutcome("track-unreachable"))
+    }
+
     // --- A very small music server -------------------------------------------
 
     @Volatile private var originHits = 0
@@ -351,6 +387,7 @@ class StreamProxyTest {
                             }
                             head("0\r\n\r\n")
                         }
+                        "/broken" -> head("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                         else -> head("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                     }
                     out.flush()

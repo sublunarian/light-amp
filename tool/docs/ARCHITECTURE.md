@@ -195,8 +195,8 @@ tested against fakes.
 
 **Every socket goes through `NetworkGate`.** Wi-Fi Only is a wall at the
 transport, not a set of checks: HTTP clients are built with
-`NetworkGate.httpClient`, the player asks the SDK's `LightAudioNetworkPolicy`,
-and the raw paths ask `NetworkGate.check()`. A bare `HttpClient(OkHttp)` or
+`NetworkGate.httpClient`, the player streams only through `StreamProxy`, whose
+upstream is one of those clients, and the raw paths ask `NetworkGate.check()`. A bare `HttpClient(OkHttp)` or
 `URL.openConnection()` anywhere else is a hole in that wall — the courtesy
 checks (`metadataAllowed`, `heavyDataAllowed`) only save work, they stop nothing.
 

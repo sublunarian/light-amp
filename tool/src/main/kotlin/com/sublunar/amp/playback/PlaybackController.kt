@@ -1,7 +1,6 @@
 package com.sublunar.amp.playback
 
 import androidx.media3.common.Player
-import com.thelightphone.sdk.audio.LightAudioNetworkBlockedException
 import com.sublunar.amp.data.KnownStream
 import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.AppSettings
@@ -36,6 +35,8 @@ import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.qualityRank
 import com.thelightphone.sdk.audio.LightAudio
+import com.thelightphone.sdk.audio.LightAudioError
+import com.thelightphone.sdk.audio.LightAudioErrorKind
 import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioPlayerAvailability
@@ -299,8 +300,9 @@ class PlaybackController(
      * player's queue, so it would be what plays on every later visit — a
      * repeat wrap or a tap on the row would play the tail the last seek left
      * behind. The index collector puts the original item back the moment
-     * playback leaves the slot; [LightAudioPlayer.onItemRepeated] handles the
-     * one return path with no index change.
+     * playback leaves the slot. The one return path with no index change, a
+     * repeat-one wrap, never comes back to a remainder: under repeat-one the
+     * whole song is queued after it — see [restartCopyAt].
      */
     @Volatile
     private var offsetItemTrackId: String? = null
@@ -814,8 +816,6 @@ class PlaybackController(
         handleJob?.cancel()
         handleJob = null
         standIn.unbind()
-        old.onPlaybackError = null
-        old.onItemRepeated = null
         old.release()
         val p = try {
             audio.newPlayer(LightPlayerSpec(playback = LightAudioPlayback.Detached))
@@ -859,64 +859,6 @@ class PlaybackController(
     ) {
         val handle = SupervisorJob(scope.coroutineContext[Job])
         handleJob = handle
-        p.onItemRepeated = {
-            // Repeat-one wrapped the current item. A full track wraps to its
-            // own beginning and needs nothing; a server-seeked remainder would
-            // loop its last few seconds forever, so it is rebuilt from the
-            // track's real start. On Main: the player invokes this on its own
-            // thread, which is Main by the looper rule.
-            // AmpSeek: temporary — see serverSeek.
-            android.util.Log.i(
-                "AmpSeek",
-                "repeat wrap idx=${_index.value} off=$streamOffsetMs pos=${p.positionMs.value}",
-            )
-            if (streamOffsetMs > 0L) seekTo(0)
-        }
-        p.onPlaybackError = failed@{ error ->
-            // The stand-in's silence, not the music: nothing to park, fall
-            // back from, or blame on the server.
-            if (standIn.active) {
-                android.util.Log.w("AmpStandIn", "the silence failed: ${error.errorCodeName}")
-                return@failed
-            }
-            _buffering.value = false
-            settleRestartCopy()
-            val fromFile = queuedSources.getOrNull(_index.value) is LightAudioSource.FileSource
-            val network = error.errorCode in PlaybackException.ERROR_CODE_IO_UNSPECIFIED..
-                PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE
-            android.util.Log.i(
-                "AmpNet",
-                "player error ${error.errorCodeName}${error.httpStatus()?.let { " (HTTP $it)" }.orEmpty()} " +
-                    "at idx=${_index.value} (${if (fromFile) "file" else "stream"})",
-            )
-            if (fromFile || !network) {
-                // Not a matter for the network at all: a file on the phone, or
-                // audio that arrived and would not decode. Nothing about the
-                // link or the server can change it, so it is neither retried
-                // nor blamed on them — a local file once sat here saying
-                // "Waiting for server". It says what it is, and playback moves
-                // on if it was moving.
-                blockedAtCurrent(because = if (fromFile) CANT_PLAY_FILE else CANT_PLAY_FORMAT)
-            } else if (error.refusedByGate()) {
-                // Not the server's failure and not the network's: the app's
-                // own rule, at the player's own connection. Nothing to fall
-                // back to and nothing to latch — the server is not unreachable,
-                // it is unasked.
-                blockedAtCurrent()
-            } else if (error.isServerFault() && playOriginalElsewhere(p)) {
-                // Rebuilt on the other address the server has for the same
-                // file. Only a failure there as well comes down to the path
-                // below, which says so like any other refusal.
-            } else {
-                // A bad HTTP status is proof the server is *there*: it answered, it
-                // just didn't like the request. Treating that as "unreachable" takes
-                // the whole library down to downloads-only over one bad URL, and it
-                // stays that way until something else proves otherwise.
-                fallBackOffline(
-                    serverAnswered = error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
-                )
-            }
-        }
         // Mirror the system media volume so the fader reflects it (and the
         // hardware volume keys, which drive the same stream).
         // The hardware rocker moves Android's own media volume, which while
@@ -958,8 +900,8 @@ class PlaybackController(
             standIn.bind(p)
             // An error the service's player was already sitting in — raised
             // while no handle was listening, after a back-out or in a
-            // handover's gap — reaches only the error flow: onPlaybackError
-            // hears of errors from here on. Noted and left as it was. It can be
+            // handover's gap — is noted and left as it was: the error
+            // collector acts on failures from here on. It can be
             // any age, and a player that failed while playing still wants to
             // play, so handled as a live failure it would skip ahead and start
             // the next track the moment the app was opened, which a reopen must
@@ -1073,6 +1015,18 @@ class PlaybackController(
      * own rebuild, still moves the screen.
      */
     private fun collectHandle(p: LightAudioPlayer, handle: Job, heldByPark: Boolean) {
+        // A failure is the player going from no error to one. The flow also
+        // sends an error again when the queue moves under it, which is the
+        // same failure, and a retry clears it first, so a second failure
+        // counts again. The one already there at connect was dealt with in
+        // attachHandle.
+        scope.launch(handle + Dispatchers.Main.immediate) {
+            var last = p.error.value
+            p.error.collect { error ->
+                if (error != null && last == null) playerFailed(p, error)
+                last = error
+            }
+        }
         // While casting, the renderer is the source of truth for these — the local
         // player sits paused and would otherwise report position 0 / not-playing
         // straight over the cast state.
@@ -1394,7 +1348,14 @@ class PlaybackController(
                     }
                 }
         }
-        scope.launch(bound) { App.streamProxy.state.collect { reresolveQueue() } }
+        // The door coming up or going down moves every stream's address, and a
+        // track parked for want of it can be cued again.
+        scope.launch(bound) {
+            App.streamProxy.state.collect { state ->
+                reresolveQueue()
+                if (state is StreamProxy.State.On) cueIfParked()
+            }
+        }
         // Nothing may wait on "buffering" for ever: a start that produced
         // neither sound nor an error in this long is not holding anyone back.
         scope.launch(bound) {
@@ -1871,6 +1832,8 @@ class PlaybackController(
             // A press is also a reason to ask the server again, if it is the
             // server being waited for: the answer arrives through App.rules.
             if (!App.rules.value.serverReachable) App.reachability.check(delayMs = 0L)
+            // And to try the door again, if it is the door that is closed.
+            if (App.streamProxy.state.value is StreamProxy.State.Off) App.streamProxy.start(App.scope)
             resumeAfterWait(play = true)
             return
         }
@@ -1883,30 +1846,69 @@ class PlaybackController(
         reportTimeline(TimelineState.PLAYING)
     }
 
-    /** The status a server answered with, where that is what went wrong — for the log. */
-    private fun PlaybackException.httpStatus(): Int? =
-        generateSequence<Throwable>(this) { it.cause }
-            .firstNotNullOfOrNull { Regex("""Response code: (\d{3})""").find(it.message.orEmpty()) }
-            ?.groupValues?.get(1)?.toIntOrNull()
-
-    /** The server answered, and the failure was its own: a 5xx rather than a no to the request. */
-    private fun PlaybackException.isServerFault(): Boolean =
-        errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && httpStatus() in 500..599
-
-    /** Whether the player's own connection was refused by the network rule. */
-    private fun PlaybackException.refusedByGate(): Boolean =
-        generateSequence<Throwable>(this) { it.cause }.any {
-            // The SDK patch's own refusal, or the loopback door's — which
-            // reaches here as the player's "Response code: 470".
-            it is LightAudioNetworkBlockedException ||
-                it.message?.contains("Response code: ${StreamProxy.GATE_STATUS}") == true
+    /**
+     * The player failed on the current item. Main only.
+     *
+     * The player says what kind of failure it was. What the server said, if
+     * anything, only the door saw — see StreamProxy.lastOutcome.
+     */
+    private fun playerFailed(p: LightAudioPlayer, error: LightAudioError) {
+        // The stand-in's silence, not the music: nothing to park, fall back
+        // from, or blame on the server.
+        if (standIn.active) {
+            android.util.Log.w("AmpStandIn", "the silence failed: ${error.diagnostic}")
+            return
         }
+        _buffering.value = false
+        settleRestartCopy()
+        val source = queuedSources.getOrNull(_index.value)
+        val fromFile = source is LightAudioSource.FileSource
+        val network = error.kind == LightAudioErrorKind.Source
+        val outcome = _queue.value.getOrNull(_index.value)?.let { App.streamProxy.lastOutcome(it.id) }
+        val status = (outcome as? StreamProxy.Outcome.Answered)?.status
+        android.util.Log.i(
+            "AmpNet",
+            "player error ${error.diagnostic}${status?.let { " (HTTP $it)" }.orEmpty()} " +
+                "at idx=${_index.value} (${if (fromFile) "file" else "stream"})",
+        )
+        val serverAnswered = error.diagnostic == BAD_HTTP_STATUS
+        if (fromFile || !network) {
+            // Not a matter for the network at all: a file on the phone, or
+            // audio that arrived and would not decode. Nothing about the
+            // link or the server can change it, so it is neither retried
+            // nor blamed on them — a local file once sat here saying
+            // "Waiting for server". It says what it is, and playback moves
+            // on if it was moving.
+            blockedAtCurrent(because = if (fromFile) CANT_PLAY_FILE else CANT_PLAY_FORMAT)
+        } else if (
+            outcome == StreamProxy.Outcome.Refused ||
+            !App.streamProxy.isOn ||
+            (source as? LightAudioSource.UrlSource)?.url == StreamProxy.UNAVAILABLE_URL
+        ) {
+            // Not the server's failure and not the network's: the app's own
+            // rule at the door, or no door to stream through yet. Nothing to
+            // fall back to and nothing to latch — the server is not
+            // unreachable, it is unasked.
+            blockedAtCurrent()
+        } else if (serverAnswered && status in 500..599 && playOriginalElsewhere(p)) {
+            // Rebuilt on the other address the server has for the same
+            // file. Only a failure there as well comes down to the path
+            // below, which says so like any other refusal.
+        } else {
+            // A bad HTTP status is proof the server is *there*: it answered, it
+            // just didn't like the request. Treating that as "unreachable" takes
+            // the whole library down to downloads-only over one bad URL, and it
+            // stays that way until something else proves otherwise.
+            fallBackOffline(serverAnswered = serverAnswered)
+        }
+    }
 
     /** Whether [track] can play under the rules as they stand — for the screens. */
     fun isPlayable(track: Track): Boolean = isPlayable(track, App.rules.value)
 
     private fun isPlayable(track: Track, rules: LinkRules): Boolean =
-        PhoneFiles.isPhoneFile(track.id) || localFiles.containsKey(track.id) || rules.mayStream
+        PhoneFiles.isPhoneFile(track.id) || localFiles.containsKey(track.id) ||
+            (rules.mayStream && App.streamProxy.isOn)
 
     /**
      * The current track needs the server and can't have it. Main only.
@@ -1935,7 +1937,8 @@ class PlaybackController(
         // If the rules say streaming is fine and it still failed, it is the
         // server that isn't delivering — never "Wi-Fi", which would send the
         // user looking for the wrong thing.
-        val reason = because ?: rules.waitingFor ?: LinkRules.WAITING_FOR_SERVER
+        val reason = because ?: rules.waitingFor
+            ?: if (App.streamProxy.isOn) LinkRules.WAITING_FOR_SERVER else STREAM_UNAVAILABLE
         val wanted = p.playWhenReady
         val next = when {
             !wanted || at == pickedIndex || at == lastSkipTarget -> null
@@ -2168,21 +2171,22 @@ class PlaybackController(
     private var seekGeneration = 0
 
     /** True when the player can't be trusted to seek within this stream. */
-    private fun needsServerSeek(track: Track, askPlayer: Boolean = true): Boolean {
+    private fun needsServerSeek(track: Track, askDoor: Boolean = true): Boolean {
         if (track.source() is LightAudioSource.FileSource) return false
         if (track.id in seekNeedsReload) return true
-        // A queue being rebuilt has nothing prepared to ask: the player's
-        // answer would be about the item it held before.
-        if (!askPlayer) return effectiveFormat() != StreamFormat.RAW
-        // Ask the player, which knows what actually arrived. Asking for mp3 and
+        // A queue being rebuilt is about to fetch afresh: what the door saw
+        // was the stream it held before.
+        if (!askDoor) return effectiveFormat() != StreamFormat.RAW
+        // Ask the door, which saw what actually arrived. Asking for mp3 and
         // getting mp3 means the server sent the file untouched — with a length
         // and byte ranges — and it then ignores timeOffset, because it is not
         // transcoding and has nothing to offset. Inferring "not RAW, therefore a
         // transcode" picks server-seeking for exactly the streams where only
         // native seeking works, and the failure is silent: the audio restarts
         // and the clock claims the seek landed.
-        player?.let { if (it.isCurrentItemSeekable) return false }
-        // Nothing playing yet to ask — fall back to the request we made.
+        val answered = App.streamProxy.lastOutcome(track.id) as? StreamProxy.Outcome.Answered
+        if (answered != null && answered.status in 200..299 && answered.lengthKnown) return false
+        // Nothing fetched yet to ask about — fall back to the request we made.
         return effectiveFormat() != StreamFormat.RAW
     }
 
@@ -2257,7 +2261,7 @@ class PlaybackController(
             val at = _index.value
             if (at < 0) return@launch
             // AmpSeek: temporary — chasing the repeat-one wrap of a server-seeked
-            // remainder (2026-10-20). See onItemRepeated.
+            // remainder (2026-10-20). See restartCopyAt.
             android.util.Log.i(
                 "AmpSeek",
                 "server seek idx=$at to=$target repeat=${p.repeatMode} playing=$wasPlaying",
@@ -3385,10 +3389,10 @@ class PlaybackController(
         withStreamDecision { player?.play() }
     }
 
-    /** The row at [index] is a stream and the rules, read now, forbid streaming. */
+    /** The row at [index] is a stream, and the rules, read now, or a closed door forbid streaming. */
     private fun cannotStreamNow(index: Int): Boolean =
         queuedSources.getOrNull(index) is LightAudioSource.UrlSource &&
-            (!NetworkGate.isOpen() || !App.rulesNow().mayStream)
+            (!NetworkGate.isOpen() || !App.rulesNow().mayStream || !App.streamProxy.isOn)
 
     /** Sort [tracks] back into the relative order they had in [original]. */
     private fun restoreOrder(tracks: List<Track>, original: List<Track>): List<Track> {
@@ -3887,7 +3891,7 @@ class PlaybackController(
         // no end: a full bar and a total of 0:00.
         track.durationMs.takeIf { it > 0L }?.let { _durationMs.value = it }
         val client = serverClient.value
-        if (at > 1_000L && client != null && needsServerSeek(track, askPlayer = false)) {
+        if (at > 1_000L && client != null && needsServerSeek(track, askDoor = false)) {
             android.util.Log.i("AmpCast", "rebuild idx=$index at=$at via server offset")
             // See serverSeek: an estimated length invites range probes the
             // transcode can't answer (416), which errored the restore.
@@ -3937,6 +3941,12 @@ class PlaybackController(
 
         /** A stream that arrived and would not decode. */
         private const val CANT_PLAY_FORMAT = "Can't play this format"
+
+        /** Streaming waits on the door the player streams through, which isn't up — see StreamProxy. */
+        private const val STREAM_UNAVAILABLE = "Can't stream right now"
+
+        /** The player's name for "the server answered with an error status". */
+        private val BAD_HTTP_STATUS = PlaybackException.getErrorCodeName(PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS)
 
         /** How often the link is re-read while playing or parked — see bind. */
         private const val LINK_POLL_MS = 3_000L

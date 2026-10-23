@@ -7,13 +7,12 @@ exists. Checked against SDK 0.2.1 (`3a6b204`, 20 Oct 2026), which is where the
 Data modes below), and 0.2.1 brought single-item queue edits; the rest stand.
 
 Built the way Light's store builder builds it (a pristine SDK, via
-`scripts/store-build-check.sh`), Amp stops at 60 compile errors on 0.2.1
-(checked at `ac9e701`), every one a call into our patches. It was 164 on
-21 Sep. Most used first:
-`playWhenReady`, `popToRoot`, `repeatMode`, `replaceRange`, `playbackGain`,
-`deviceVolume`/`setSystemVolume`, `setMediaQueueAt`, `onPlaybackError`,
-`onItemRepeated`, `hasRuntimePermission`, the network policy, the transfer
-service, `isCurrentItemSeekable`, `addItems` and `LightDisplayColor`.
+`scripts/store-build-check.sh`), Amp stops at 42 compile errors on 0.2.1
+(checked 20 Oct), every one a call into our patches. It was 164 on 21 Sep.
+Most used first:
+`playWhenReady`, `repeatMode`, `replaceRange`, `playbackGain`,
+`deviceVolume`/`setSystemVolume`, `setMediaQueueAt`, `hasRuntimePermission`,
+the transfer service, `addItems` and `LightDisplayColor`.
 
 ## Workarounds we would drop
 
@@ -24,9 +23,8 @@ The gap that started the spikes is gone: Amp declares
 `LightAudioService`. The `LightMediaService` spike was deleted in full.
 What remains ours: two player defaults, `setDeviceVolumeControlEnabled` and
 `setHandleAudioBecomingNoisy`, set once in `SdkExoPlayer.kt` for both players
-since 0.2.1 (`audio-player.patch`), and the session's `sessionActivity`
-(`audio-service.patch`). Nothing on LightOS reads the session activity today,
-so that line could go. One
+since 0.2.1 (`audio-player.patch`). The session's `sessionActivity` was
+dropped on 20 Oct 2026: nothing on LightOS reads it. One
 behavioural trade accepted: the SDK stops a paused, unheld session after 15
 minutes, where the spike held on indefinitely.
 
@@ -326,13 +324,13 @@ the data-mode gates.
 
 Amp has a mode whose promise is that no cellular data is used. Everything the
 tool's own code sends goes through one wall (`NetworkGate`) and is store-legal
-as it stands. Three things it cannot reach from inside the sandbox, as of
+as it stands. Two things it cannot reach from inside the sandbox, as of
 0.2.1. None of them is a dependency: Amp works around each, and says below
 what the workaround costs. **These are requests, not blockers.**
 
 | Request | Why | What Amp does meanwhile |
 |---|---|---|
-| **A network policy for the player** — a tool-supplied predicate (or `DataSource.Factory`) consulted before the platform player opens or reads a remote source, for both the attached player and `LightAudioService`. | The player fetches with its own HTTP stack: the next item ahead of time, and a dropped stream again at once, on whatever network is then the default. A tool with a Wi-Fi-only setting has no say, and after the user backs out of the tool there is no tool code left running that could stop it. #127 shipped without one: a tool-supplied read path was taken out before the merge (`5ec3bc9`), to come back later as a media3-free byte-reader API. | `light-sdk-patch/audio-network-policy.patch` (side-load builds only). A store build has no equivalent. Streaming only through `StreamProxy`, never handing the player a server URL, would make the patch unnecessary, and a store build needs that anyway. |
+| ~~**A network policy for the player**~~ — **not needed since 20 Oct 2026.** | The player fetches with its own HTTP stack, and a tool has no say over it. | Amp never hands the player a server's address: it streams only through `StreamProxy`, which asks the rule at every request and while it serves. When the door isn't up, nothing streams and Now Playing says so. The SDK patch is gone. |
 | **Sockets bound to a network** — e.g. `LightConnectivity.unmeteredNetwork(): Network?`, or a `SocketFactory` bound to it. | The rule can only be asked about the phone's *default* network. If the default moves from Wi-Fi to cellular between the check and `connect()`, one TLS handshake (a few KB) leaves on cellular before the request is refused. `Network.bindSocket` closes that race; it needs `ConnectivityManager`, which a tool is not given. | Check before DNS, before the socket, and again on the wire; close every socket when the rule closes. No request or response byte leaks; one handshake can. |
 | **The default-network callback in `observeNetworkStatus()`** | `registerNetworkCallback(request)` hears networks appear, change and vanish, but is not guaranteed to fire when the default moves from a weak Wi-Fi to cellular while both stay up — the one change that flips `isMetered`. | Re-read `currentStatus` every 3 s while playing or waiting, once a second while a download queue is held, and when the window regains focus. |
 | ~~**A resume hook for screens**~~ — **not a gap.** `SimpleLightScreen.willShow()` already fires from `LightActivity.onResume`, for whichever screen is showing. | A process frozen in the background hears of a network change late or not at all; returning to the tool is the moment to look again. | Still `LocalWindowInfo.isWindowFocused` on `BootScreen`, which only fires when the library is the screen showing. To do: move it to `willShow`. |
@@ -359,14 +357,9 @@ follows the green light. Nothing is filed yet; the issues below marked
 | `deviceVolume`, `setSystemVolume` | The Output page's fader on This device. A tool can't reach `AudioManager`. | Ask (drafted); Light may see volume as LightOS's. |
 | `setHandleAudioBecomingNoisy(true)` | One line on the builder. Without it, unplugging headphones leaves music playing out of the speaker. Doing it by hand needs a `BroadcastReceiver`, which the sandbox blocks. | Ask, as a bug report (drafted). |
 | `replaceRange()`, `addItems` | One queue update instead of one per item. Reordering by repeated `moveMediaItem` rebuilds the session queue per move, and a few hundred moves exhausts memory. | Ask for list versions on [#217](https://github.com/lightphone/light-sdk/issues/217), once we've timed a big shuffle on the phone. |
-| `popToRoot()` | A tab bar visible on nested screens has to unwind to the root. Without it, tapping a tab three levels deep only goes back one. | Could drop: `goBack()` in a loop, if it doesn't flash the pages in between. Ask only if it does. |
 | Room migrations | `buildDatabase` exposes no builder, so a tool cannot register a migration. We patched in `fallbackToDestructiveMigration`, which means every schema change wipes the user's cache and download index. | Nothing to ask: [#281](https://github.com/lightphone/light-sdk/pull/281) and [#285](https://github.com/lightphone/light-sdk/pull/285) both add a builder hook. Retire the patch when one merges. |
-| `onPlaybackError` | The fallback logic reads the raw error code and HTTP status (a bad HTTP status proves the server is *there*); 0.2.1's `error` flow carries neither. | Could drop: `StreamProxy` sees every status itself. |
-| `isCurrentItemSeekable` | Whether the stream that arrived can be seeked. Guessing from the requested format is wrong when a server declines to transcode, and it fails silently. | Could drop: `StreamProxy` sees whether the server sent a length. |
-| `onItemRepeated` | The repeat-one wrap of a server-seeked stream, which has to be rebuilt from the song's start. | Could drop: since the restart copy (20 Oct), the player's own repeat is off while a remainder plays, so the wrap this catches may no longer happen. Check once the repeat-one work settles. |
 | `hasRuntimePermission` | LightOS answers music access from its policy, and can say Blocked to a phone that granted it. | Could drop: any audio file visible in `Music/Amp` proves access. |
 | `TextInputKeyboardCallback` | `LightEmbeddedLp3Keyboard` is public and usable on a tool's own screen, but the callback that turns keys into edits is `internal`. We copied ~60 lines of it, including surrogate-aware backspace, to put a keyboard under our search results. | Wait for Light's keyboard push (#45). |
-| Splash icon centring | The loading glyph sits ~88px above centre on a 1240px panel; the artwork is off-centre inside its own viewport. | Could drop: Light's designer owns the splash (#41). |
 
 ## Blocked above the API
 
