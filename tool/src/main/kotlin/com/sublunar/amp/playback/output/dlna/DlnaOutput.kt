@@ -922,6 +922,12 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         format: StreamFormat,
         key: String,
     ): Boolean? {
+        // Known without a fetch, which would take the very transcode the
+        // speaker is about to ask for — see MusicServer.knownStream.
+        host.knownStream(track, format)?.let {
+            castSeekable[key] = it.ranges
+            return it.ranges
+        }
         val probeUrl = host.streamUrl(
             track,
             format,
@@ -1075,11 +1081,11 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val key = "${renderer.id}|${desired.id}"
         castFormats[key]?.let { return it }
 
-        val probeUrl = host.streamUrl(track, desired)
         val sink = runCatching { DlnaCast.sinkFormats(renderer) }.getOrDefault(emptySet())
         // Same as probeSeekable: this asks the music server; DlnaCast's own
-        // switch stands in front of it.
-        val mime = probeUrl?.let { DlnaCast.probeMime(it) }
+        // switch stands in front of it. Not where the server already says.
+        val mime = host.knownStream(track, desired)?.mime
+            ?: host.streamUrl(track, desired)?.let { DlnaCast.probeMime(it) }
             ?: assumedMime(desired)
         val choice = if (sinkAccepts(sink, mime)) {
             desired to mime
@@ -1358,7 +1364,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                     startedIndex = host.index.value
                     stall.reset()
                     restartAfter = STALLED_POLLS_TO_RESTART
-                    if (!startOrStop(renderer, fresh = true)) return
+                    if (!startOrStop(renderer, host.positionMs.value, fresh = true)) return
                 }
                 // Asked again and it still won't play: something is wrong with
                 // this track rather than with the hand-off, and sitting in

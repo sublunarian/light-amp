@@ -23,6 +23,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.ArtistRef
+import com.sublunar.amp.data.KnownStream
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.Lyrics
 import com.sublunar.amp.data.LyricsRepository
@@ -608,6 +609,16 @@ class PlexClient(
 
     /** See [MusicServer.oneSessionPerPlayer]: what Plexamp does, and what the dashboard expects. */
     override val oneSessionPerPlayer: Boolean get() = true
+
+    /**
+     * The transcoder's output is always a live MP3 encode, never served in
+     * ranges, so a speaker has nothing to find out by fetching it. And a fetch
+     * to find out took the transcode of that very song a moment before the
+     * speaker asked for it: the Denon turned the first song of every cast away,
+     * and played the next, which nothing had fetched first.
+     */
+    override fun knownStream(track: Track, format: StreamFormat): KnownStream? =
+        if (fromTranscoder(track, format)) KnownStream(mime = "audio/mpeg", ranges = false) else null
 
     /** Whether [streamUrl] sends this track's stream through the transcoder rather than the file. */
     private fun fromTranscoder(track: Track, format: StreamFormat): Boolean =

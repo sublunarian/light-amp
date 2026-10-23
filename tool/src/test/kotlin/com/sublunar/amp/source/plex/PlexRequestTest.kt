@@ -1,5 +1,6 @@
 package com.sublunar.amp.source.plex
 
+import com.sublunar.amp.data.KnownStream
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.source.jellyfin.JellyfinClient
@@ -71,5 +72,16 @@ class PlexRequestTest {
     @Test
     fun `other servers have no other address for an original`() {
         assertNull(JellyfinClient("https://jf.example", "tok", "u1").alternateOriginalUrl(track()))
+    }
+
+    @Test
+    fun `a transcode is known to be a live mp3 with no ranges, so nothing fetches it first`() {
+        assertEquals(KnownStream(mime = "audio/mpeg", ranges = false), client.knownStream(track(), StreamFormat.MP3))
+        assertEquals(KnownStream(mime = "audio/mpeg", ranges = false), client.knownStream(track(streamPath = ""), StreamFormat.RAW))
+    }
+
+    @Test
+    fun `the original file is left to be found out`() {
+        assertNull(client.knownStream(track(), StreamFormat.RAW))
     }
 }

@@ -2,6 +2,7 @@ package com.sublunar.amp.playback
 
 import androidx.media3.common.Player
 import com.thelightphone.sdk.audio.LightAudioNetworkBlockedException
+import com.sublunar.amp.data.KnownStream
 import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.Connectivity
@@ -3130,6 +3131,9 @@ class PlaybackController(
             estimateContentLength: Boolean,
             sessionId: String?,
         ): String? = serverClient.value?.playableUrl(track, format, timeOffsetSeconds, estimateContentLength, sessionId)
+
+        override fun knownStream(track: Track, format: StreamFormat): KnownStream? =
+            serverClient.value?.knownStream(track, format)
 
         override fun ownStreamSession(trackId: String): String = streamSessionIdFor(trackId, decidedFirst = false)
 

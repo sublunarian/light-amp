@@ -12,6 +12,9 @@ import io.ktor.client.statement.HttpResponse
  * every row the queue names, and the track that was playing has to survive the
  * ones that drop out.
  */
+/** A stream's content type, and whether it is served in byte ranges — see [MusicServer.knownStream]. */
+data class KnownStream(val mime: String, val ranges: Boolean)
+
 data class SavedQueue(
     val trackIds: List<String>,
     val currentId: String?,
@@ -250,6 +253,14 @@ interface MusicServer {
      */
     fun downloadUrl(track: Track, format: StreamFormat): String =
         streamUrl(track, format, estimateContentLength = false)
+
+    /**
+     * What [streamUrl] for [track] in [format] will send, where the server
+     * knows without being asked. Null — the default — when only fetching it
+     * would tell: then a speaker's format and seeking are found out by a
+     * first fetch of their own.
+     */
+    fun knownStream(track: Track, format: StreamFormat): KnownStream? = null
 
     /**
      * Another address for the same original file, for a server that serves

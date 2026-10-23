@@ -1,5 +1,6 @@
 package com.sublunar.amp.playback.output
 
+import com.sublunar.amp.data.KnownStream
 import com.sublunar.amp.data.LinkRules
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.RepeatMode
@@ -270,6 +271,9 @@ interface OutputHost {
         estimateContentLength: Boolean = true,
         sessionId: String? = null,
     ): String?
+
+    /** What the server says the stream for [track] in [format] will be, when it knows without a fetch. */
+    fun knownStream(track: Track, format: StreamFormat): KnownStream?
 
     /** The session id for a stream the far end fetches itself: one no timeline names. */
     fun ownStreamSession(trackId: String): String
