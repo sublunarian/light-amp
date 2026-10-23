@@ -46,7 +46,6 @@ class PlexIdentityTest {
     @Test
     fun `an older link keeps the identifier its token was issued to`() {
         assertEquals("com.sublunar.amp", PlexClient.LEGACY_CLIENT_ID)
-        assertEquals(PlexClient.LEGACY_CLIENT_ID, identifierOf(PlexClient.plexIdentity()))
         assertEquals(PlexClient.LEGACY_CLIENT_ID, plexSource(deviceId = "").plexClientIdentifier)
         assertTrue("X-Plex-Client-Identifier=com.sublunar.amp" in streamOf(plexSource(deviceId = "")))
     }
@@ -71,14 +70,14 @@ class PlexIdentityTest {
 
     @Test
     fun `only Plex keeps one session for the whole listening`() {
-        assertTrue(PlexClient("http://plex.example:32400", "tok").oneSessionPerPlayer)
+        assertTrue(PlexClient("http://plex.example:32400", "tok", clientIdentifier = "amp-1234").oneSessionPerPlayer)
         assertFalse(JellyfinClient("https://jf.example", "tok", "u1").oneSessionPerPlayer)
     }
 
     /** The stream of every song carries the one session id it is handed — nothing per song is added. */
     @Test
     fun `songs streamed in one session carry the same id`() {
-        val client = PlexClient("http://plex.example:32400", "tok")
+        val client = PlexClient("http://plex.example:32400", "tok", clientIdentifier = "amp-1234")
         val a = client.streamUrl("7", StreamFormat.MP3, sessionId = "S")
         val b = client.streamUrl("8", StreamFormat.MP3, sessionId = "S")
         assertTrue("X-Plex-Session-Identifier=S&" in a, a)
@@ -94,7 +93,7 @@ class PlexIdentityTest {
     /** Plex holds a tracked session to a decision per song, but only for what the transcoder serves. */
     @Test
     fun `only a transcoder stream needs a decision first`() {
-        val plex = PlexClient("http://plex.example:32400", "tok")
+        val plex = PlexClient("http://plex.example:32400", "tok", clientIdentifier = "amp-1234")
         val part = track("/library/parts/42/1700000000/file.flac")
         assertTrue(plex.streamNeedsDecision(part, StreamFormat.MP3))
         assertFalse(plex.streamNeedsDecision(part, StreamFormat.RAW))

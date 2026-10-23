@@ -4,6 +4,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -14,16 +15,10 @@ import com.sublunar.amp.data.NetworkGate
 /**
  * Linking a Plex account, and finding the servers on it.
  *
- * The PIN flow rather than a password: the app asks plex.tv for a four-character
- * code, shows it, and the user types it at **plex.tv/link** on whatever device
- * they already have to hand. Nothing is typed on the phone, which on this
- * keyboard is the difference between a minute and a fight — and the app never
- * sees a password.
- *
- * The token that comes back is also what lists the account's servers, so the
- * user never types a server address either: [resources] returns each one with
- * its local, remote and relay URIs, and [reachable] picks the first that
- * answers.
+ * The PIN flow rather than a password: plex.tv hands out a four-character
+ * code, the user types it at plex.tv/link on any other device, and the token
+ * that comes back lists the account's servers with every address they
+ * advertise. Neither a password nor a server address is typed on the phone.
  */
 object PlexAccount {
 
@@ -40,12 +35,10 @@ object PlexAccount {
     /**
      * Ask for a code. Null when plex.tv can't be reached.
      *
-     * Deliberately *not* `strong=true`: that returns a long random string, which
-     * is right for a machine-to-machine link and wrong here. The short code is
-     * the one plex.tv/link accepts, and the one a person can read off a phone
-     * and type somewhere else.
+     * Not `strong=true`: that returns a long random string, and plex.tv/link
+     * accepts only the short code a person can read off a phone.
      *
-     * [clientIdentifier] is the link's own — see [PlexClient.newClientIdentifier].
+     * [clientIdentifier] is the link's own (see [PlexClient.newClientIdentifier]).
      * The token is issued to it, and plex.tv only answers [awaitToken] for a
      * code asked for under the same one.
      */
@@ -55,15 +48,12 @@ object PlexAccount {
     }.getOrNull()
 
     /**
-     * Poll until the code is claimed, or give up.
-     *
-     * Plex expires a PIN after fifteen minutes; this stops well short of that,
-     * because a code left on screen that long has been abandoned.
+     * Poll until the code is claimed, or give up. Plex expires a PIN after
+     * fifteen minutes, and this stops well short of that.
      */
-    suspend fun awaitToken(pin: PlexPin, clientIdentifier: String, onTick: (Int) -> Unit = {}): String? {
-        repeat(POLL_ATTEMPTS) { attempt ->
+    suspend fun awaitToken(pin: PlexPin, clientIdentifier: String): String? {
+        repeat(POLL_ATTEMPTS) {
             delay(POLL_INTERVAL_MS)
-            onTick(attempt)
             val token = runCatching {
                 val response = http.get("$PLEX_TV/api/v2/pins/${pin.id}") { plexHeaders(clientIdentifier) }
                 json.decodeFromString<PlexPin>(response.bodyAsText()).authToken
@@ -84,51 +74,30 @@ object PlexAccount {
     }.getOrDefault(emptyList())
 
     /**
-     * The first connection that answers, local ones first.
-     *
-     * A server usually advertises several addresses — a LAN one, a public one
-     * and a relay. The LAN address is the fastest when you're at home and dead
-     * when you're not, so they're tried in that order rather than guessed at.
+     * Every advertised address, best first: local, then direct, then relay.
+     * All are kept on the source (see MusicSource.connections) so the choice
+     * can be redone when the network changes underneath it.
      */
-    /** Every advertised address, best first — local, then direct, then relay. */
     fun candidates(resource: PlexResource): List<String> =
         resource.connections
             .sortedWith(compareBy({ !it.local }, { it.relay }))
             .map { it.uri.trimEnd('/') }
             .distinct()
 
-    /**
-     * The first advertised address that answers.
-     *
-     * Local first because it is faster and avoids Plex's relay — but see
-     * [MusicSource.connections]: the rest are kept so this can be redone when
-     * the network changes underneath a source.
-     */
-    suspend fun reachable(resource: PlexResource, token: String, clientIdentifier: String): String? {
-        val ordered = resource.connections.sortedWith(
-            compareBy({ !it.local }, { it.relay }),
-        )
-        return firstAnswering(ordered.map { it.uri }, resource.accessToken ?: token, clientIdentifier)
-    }
-
-    /** The first of [uris] that answers, for re-resolving a stored source. */
-    suspend fun firstReachable(uris: List<String>, token: String, clientIdentifier: String): String? =
-        firstAnswering(uris, token, clientIdentifier)
+    /** The best-ranked of [resource]'s addresses that answers. */
+    suspend fun reachable(resource: PlexResource, token: String, clientIdentifier: String): String? =
+        firstReachable(candidates(resource), resource.accessToken ?: token, clientIdentifier)
 
     /**
-     * The best-ranked of [uris] that answers, in a few seconds rather than
-     * however many addresses a server lists times ten.
+     * The best-ranked of [uris] that answers.
      *
-     * A server lists every address it has — LAN, public, relay — and from any
-     * one place some of them lead nowhere. Tried in turn, each of those had to
-     * time out before the next was asked, which is what kept linking on
-     * "Looking at…" for ten seconds and more. Asked all at once, with a short
-     * limit each, the wait is the best-ranked address's answer, or the limit
-     * if that one is silent; ranking still decides which wins. Nothing
-     * answering that fast — a slow link — gets the patient pass, in turn, as
-     * before, so a slow address is late rather than lost.
+     * From any one place some of a server's addresses lead nowhere, and tried
+     * in turn each of those has to time out before the next is asked. So all
+     * are probed at once with a short limit, the ranking still deciding which
+     * wins, and only when none answers that fast (a slow link) do they get a
+     * patient pass in turn.
      */
-    private suspend fun firstAnswering(uris: List<String>, token: String, clientIdentifier: String): String? {
+    suspend fun firstReachable(uris: List<String>, token: String, clientIdentifier: String): String? {
         val quick = coroutineScope {
             val probes = uris.map { uri ->
                 async { withTimeoutOrNull(QUICK_PROBE_MS) { answers(uri, token, clientIdentifier) } == true }
@@ -145,7 +114,7 @@ object PlexAccount {
         http.get(uri.trimEnd('/') + "/identity") {
             plexHeaders(clientIdentifier)
             header("X-Plex-Token", token)
-        }.status.value in 200..299
+        }.status.isSuccess()
     }.getOrDefault(false)
 
     private fun io.ktor.client.request.HttpRequestBuilder.plexHeaders(clientIdentifier: String) {

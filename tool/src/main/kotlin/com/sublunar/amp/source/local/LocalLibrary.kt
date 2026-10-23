@@ -18,68 +18,42 @@ import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.Track
 
 /**
- * The phone's own music: the files the Light Music app plays, read straight off
- * the filesystem.
+ * The phone's own music, read straight off the filesystem.
  *
- * There is no MediaStore here — `android.content` is a blocked import for a
- * tool, so the library can't be queried the usual way. What a tool *can* do is
- * hold `READ_MEDIA_AUDIO` (it's on the SDK's allowed list) and walk the shared
- * music folder with `java.io`, reading tags with [MediaMetadataRetriever], which
- * takes a plain path and needs no context. That is exactly what this does.
+ * There is no MediaStore here: `android.content` is a blocked import for a
+ * tool. A tool *can* hold `READ_MEDIA_AUDIO` and walk the shared music folder
+ * with `java.io`, reading tags with [MediaMetadataRetriever], which takes a
+ * plain path.
  *
- * Ids are the file's own path — see [PhoneFiles], which every part of the app
- * that needs to tell a phone file from a server's track reads them with.
+ * Ids are the file's own path: see [PhoneFiles].
  */
 object LocalLibrary {
 
     /**
-     * The folder this app claims inside the shared music directory.
-     *
-     * `Music/<AppName>`, which is what other LP3 music tools do — Reverb reads
-     * `/storage/emulated/0/Music/Reverb`. Following the same shape means anyone
-     * who has loaded music onto one of these phones before already knows where
-     * this goes, and two tools can sit side by side without fighting over a
-     * folder.
+     * The folder this app claims inside the shared music directory,
+     * `Music/<AppName>` as other LP3 music tools do (Reverb reads `Music/Reverb`).
+     * Only this folder: the phone's other audio isn't a library, and another
+     * tool's folder is that tool's library.
      */
     const val FOLDER = "Music/Amp"
 
+    /** [FOLDER] on the phone's shared storage. */
+    internal val MUSIC_DIR = File("/storage/emulated/0", FOLDER)
+
     /**
-     * Where music lands.
-     *
-     * A folder of our own inside the shared Music directory rather than all of
-     * it: the phone's other audio (ringtones, voice notes, whatever another app
-     * has left lying about) isn't a library, and a player that swept the lot up
-     * would be listing things nobody chose to put in it.
-     *
-     * This folder only. Another tool's folder is that tool's library, and
-     * silently absorbing it means the user can't tell what they put here from
-     * what something else did — so anything Amp is to play gets copied in
-     * deliberately.
-     *
-     * Both entries are the same directory: `/sdcard` is a symlink to
-     * `/storage/emulated/0`, listed twice only because the roots are filtered by
-     * which actually resolve. They are deduplicated by canonical path below, so
-     * nothing is scanned or listed twice.
+     * Where music is looked for. Both are the same directory (`/sdcard` is a
+     * symlink to `/storage/emulated/0`), listed twice only because the roots
+     * are filtered by which actually resolve, then deduplicated by canonical
+     * path, so nothing is scanned twice.
      */
-    private val ROOTS = listOf(
-        "/storage/emulated/0/$FOLDER",
-        "/sdcard/$FOLDER",
-    )
-
-    /** Created on demand, so the folder exists to be copied into. */
-    fun ensureFolder() {
-        runCatching { File("/storage/emulated/0/$FOLDER").mkdirs() }
-    }
+    private val ROOTS = listOf(MUSIC_DIR, File("/sdcard", FOLDER))
 
     /**
-     * What the phone can actually play, by extension.
-     *
-     * Deliberately not everything with audio in it: `ape`, `wv` and `dsf` have
-     * no decoder here, so listing them would put tracks in the library that
-     * fail the moment they are pressed — a silent substitute of a different
-     * kind. `oga` and `mka` are here because they are ordinary Ogg and
-     * Matroska audio under names some rippers prefer, and `m4b` because an
-     * audiobook is an MP4 the phone plays like any other.
+     * What the phone can actually play, by extension. Not everything with
+     * audio in it: `ape`, `wv` and `dsf` have no decoder here, and listing them
+     * would put tracks in the library that fail the moment they are pressed.
+     * `oga`, `mka` and `m4b` are ordinary Ogg, Matroska and MP4 audio under
+     * other names.
      */
     private val AUDIO_EXTENSIONS = setOf(
         "mp3", "flac", "m4a", "m4b", "aac", "ogg", "oga", "opus",
@@ -93,22 +67,16 @@ object LocalLibrary {
     const val PERMISSION = "android.permission.READ_MEDIA_AUDIO"
 
     /**
-     * Whether the app may actually read the music folder — and if not, why.
+     * Whether the app may actually read the music folder, and if not, why.
      *
-     * Not inferred from the filesystem: without the permission, listing
-     * `/sdcard/Music` returns an *empty* array rather than null or an error, so
-     * a folder full of music and a folder we aren't allowed to see look exactly
-     * alike from here — which is how a local library ends up silently showing
-     * nothing.
+     * Not inferred from the filesystem: without the permission, listing the
+     * folder returns an *empty* array rather than an error, so a folder we
+     * can't see looks exactly like an empty one.
      *
-     * The grant itself, asked of this process, is what decides. LightOS is asked
-     * only when the process can't say yet. Its answer used to be the whole test,
-     * and LightOS answers from its own policy before it looks at the grant —
-     * BlockedByServer, or Unknown when it can't say — so a phone where the
-     * permission had been granted in Android's own settings, or where LightOS's
-     * policy and the grant disagreed, was told to allow access it already had,
-     * and sent to a prompt that had nothing to change. Both answers are logged,
-     * because a report from such a phone needs them side by side.
+     * The grant, asked of this process, decides. LightOS answers from its own
+     * policy before it looks at the grant, so its word counts only when the
+     * process can't say, or to tell a block from a missing grant. Both are
+     * logged side by side for a report where they disagree.
      */
     suspend fun access(): PhoneAccess {
         val held = hasRuntimePermission(PERMISSION)
@@ -124,28 +92,26 @@ object LocalLibrary {
         }
     }
 
-    suspend fun permitted(): Boolean = access() == PhoneAccess.GRANTED
+    /** Created on demand, so there is somewhere obvious to copy music into. */
+    private fun ensureFolder() {
+        runCatching { MUSIC_DIR.mkdirs() }
+    }
 
     private fun roots(): List<File> =
-        ROOTS.map(::File).filter { it.isDirectory }.distinctBy { it.canonicalPath }
+        ROOTS.filter { it.isDirectory }.distinctBy { it.canonicalPath }
 
     /**
-     * Walk the folders and read every file's tags.
-     *
-     * On the IO dispatcher and cancellable between files: a few thousand tracks
-     * is a few thousand retriever opens, and the user may well walk away from the
-     * page that started it.
+     * Walk the folders and read every file's tags, on IO and cancellable
+     * between files: a few thousand tracks is a few thousand retriever opens.
      */
-    suspend fun scan(onProgress: (Int) -> Unit = {}): PhoneScan = withContext(Dispatchers.IO) {
-        // Made once access is granted, so there is somewhere obvious to copy
-        // music into rather than a folder the user has to know to create.
+    suspend fun scan(onProgress: (Int) -> Unit): PhoneScan = withContext(Dispatchers.IO) {
         ensureFolder()
+        val roots = roots()
         val files = mutableListOf<File>()
-        roots().forEach { root -> collect(root, 0, files) }
-        // Logged because "no songs" has two very different causes — a folder the
-        // app can't read and a folder with nothing in it — and they look the same
-        // from the library screen.
-        Log.i(TAG, "Scanned ${roots().joinToString { it.path }}: ${files.size} files")
+        roots.forEach { root -> collect(root, 0, files) }
+        // "No songs" has two causes, a folder the app can't read and a folder
+        // with nothing in it, and they look the same from the library screen.
+        Log.i(TAG, "Scanned ${roots.joinToString { it.path }}: ${files.size} files")
 
         val retriever = MediaMetadataRetriever()
         val tracks = mutableListOf<Track>()
@@ -174,63 +140,44 @@ object LocalLibrary {
         }
     }
 
-    private fun readTrack(retriever: MediaMetadataRetriever, file: File): Track? {
-        val tags = runCatching {
-            retriever.setDataSource(file.absolutePath)
-            Tags(
-                title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE),
-                artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST),
-                albumArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST),
-                album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM),
-                track = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER),
-                disc = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER),
-                year = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR),
-                // The tag pages are offered only where the library has the tag
-                // (see LibraryIndex), and nothing read these — so a phone full
-                // of tagged files still reported having no genres and no
-                // composers, and neither page could ever appear.
-                genre = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE),
-                composer = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_COMPOSER),
-                durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                    ?.toLongOrNull() ?: 0L,
-            )
-        }.getOrElse {
-            Log.w(TAG, "Unreadable audio file: ${file.name}")
-            null
-        } ?: return null
-
+    private fun readTrack(retriever: MediaMetadataRetriever, file: File): Track? = runCatching {
+        retriever.setDataSource(file.absolutePath)
+        fun tag(key: Int): String = retriever.extractMetadata(key)?.trim().orEmpty()
         // A file with no tags at all is still music: the name is what the Light
         // app shows for it, and the folder is as good an album as any.
-        val title = tags.title?.trim().orEmpty().ifBlank { file.nameWithoutExtension }
-        val album = tags.album?.trim().orEmpty().ifBlank { file.parentFile?.name.orEmpty() }
-        val artist = tags.artist?.trim().orEmpty().ifBlank { UNKNOWN_ARTIST }
-        val albumArtist = tags.albumArtist?.trim().orEmpty().ifBlank { artist }
-
-        return Track(
+        val title = tag(MediaMetadataRetriever.METADATA_KEY_TITLE).ifBlank { file.nameWithoutExtension }
+        val album = tag(MediaMetadataRetriever.METADATA_KEY_ALBUM).ifBlank { file.parentFile?.name.orEmpty() }
+        val artist = tag(MediaMetadataRetriever.METADATA_KEY_ARTIST).ifBlank { UNKNOWN_ARTIST }
+        val albumArtist = tag(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST).ifBlank { artist }
+        Track(
             id = PhoneFiles.idFor(file),
             title = title,
             artist = artist,
             album = album,
             albumArtist = albumArtist,
             albumId = albumId(albumArtist, album),
-            // The file is its own cover: see ArtworkLoader, which reads the
-            // embedded picture for any id that points at a path.
+            // The file is its own cover: ArtworkLoader reads the embedded
+            // picture for any id that points at a path.
             coverArtId = PhoneFiles.idFor(file),
-            durationMs = tags.durationMs,
-            trackNumber = tags.track?.substringBefore('/')?.trim()?.toIntOrNull(),
-            discNumber = tags.disc?.substringBefore('/')?.trim()?.toIntOrNull(),
-            year = tags.year?.take(4)?.toIntOrNull(),
-            // Nothing counts plays here: there is no server to keep the tally,
-            // and inventing one locally would make Most Played mean something
-            // different from what it means on every other source.
+            durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L,
+            trackNumber = tag(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                .substringBefore('/').trim().toIntOrNull(),
+            discNumber = tag(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)
+                .substringBefore('/').trim().toIntOrNull(),
+            year = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.take(4)?.toIntOrNull(),
+            // No server keeps a tally here, and a local one would make Most
+            // Played mean something different from every other source.
             playCount = 0,
             lastPlayedMs = 0L,
-            genre = tags.genre?.trim().orEmpty(),
-            composer = tags.composer?.trim().orEmpty(),
-            // The retriever cannot see a custom tag, and ReplayGain is always
-            // one — read separately, off the same file. See ReplayGainTags.
+            genre = tag(MediaMetadataRetriever.METADATA_KEY_GENRE),
+            composer = tag(MediaMetadataRetriever.METADATA_KEY_COMPOSER),
+            // ReplayGain is always a custom tag, which the retriever can't see.
             gainDb = ReplayGainTags.gainDb(file),
         )
+    }.getOrElse {
+        Log.w(TAG, "Unreadable audio file: ${file.name}")
+        null
     }
 
     /** Albums are derived from the tags, the way the Artists list already is. */
@@ -256,19 +203,6 @@ object LocalLibrary {
 
     private fun albumId(albumArtist: String, album: String): String =
         PhoneFiles.ID_PREFIX + "album/" + albumArtist.lowercase() + "/" + album.lowercase()
-
-    private data class Tags(
-        val title: String?,
-        val artist: String?,
-        val albumArtist: String?,
-        val album: String?,
-        val track: String?,
-        val disc: String?,
-        val year: String?,
-        val genre: String?,
-        val composer: String?,
-        val durationMs: Long,
-    )
 
     private const val UNKNOWN_ARTIST = "Unknown Artist"
     private const val PROGRESS_EVERY = 25

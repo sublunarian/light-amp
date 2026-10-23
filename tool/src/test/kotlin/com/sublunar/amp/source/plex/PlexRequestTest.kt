@@ -15,7 +15,7 @@ import org.junit.Test
  */
 class PlexRequestTest {
 
-    private val client = PlexClient("http://plex.example:32400/", "tok")
+    private val client = PlexClient("http://plex.example:32400/", "tok", clientIdentifier = "amp-1234")
 
     private fun track(streamPath: String = "/library/parts/42/1700000000/file.flac") = Track(
         id = "7", title = "Gone", artist = "", album = "", albumArtist = "", albumId = null,

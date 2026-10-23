@@ -32,10 +32,8 @@ object PlexProvider : SourceProvider {
 
     /**
      * Plex has star ratings but no separate favourite, so nothing for a heart
-     * to sync to. And it creates a playlist *from* something, with no call for
-     * an empty one — which is why PlexAmp makes you pick the songs first — so
-     * "New Playlist" on its own isn't offered, though filing songs into a new
-     * playlist still is.
+     * to sync to. And it has no call for an empty playlist, so "New Playlist"
+     * on its own isn't offered, though filing songs into a new one still is.
      */
     override fun capabilities(features: ServerFeatures?) = SourceCapabilities(
         likes = false,
@@ -63,7 +61,7 @@ object PlexProvider : SourceProvider {
 
     override val ui: SourceUi get() = PlexUi
 
-    /** The account's Plex players — an Apple TV, another Plexamp — which the server steers for us. */
+    /** The account's Plex players, such as an Apple TV or another Plexamp, steered directly. */
     override val outputFamilies: List<OutputFamily> get() = listOf(PlexCompanionFamily)
 
     /** Matched by the server's own id, so a server re-linked from another address is still the one it was. */
@@ -72,12 +70,8 @@ object PlexProvider : SourceProvider {
 
     /**
      * The server's other advertised addresses, tried for one that answers.
-     *
-     * Plex hands out a LAN address and one or more remote ones. Whichever
-     * answered at link time is almost always the LAN one — and it stops working
-     * the moment the phone leaves that network, with nothing to re-resolve it.
-     * The stored source then points at 192.168.x.x for ever and Plex appears
-     * broken on cellular no matter what else is changed.
+     * The address that answered at link time is usually the LAN one, which
+     * dies the moment the phone leaves that network.
      */
     override suspend fun relocate(source: MusicSource): MusicSource? {
         if (source.connections.isEmpty()) return null
@@ -90,16 +84,16 @@ object PlexProvider : SourceProvider {
 /**
  * The other addresses first, and the one that just failed last. A minus on a
  * list drops only the first match, so a stored address listed twice is still
- * tried once early — kept as it always was.
+ * tried once early.
  */
 internal fun relocationOrder(source: MusicSource): List<String> = (source.connections - source.baseUrl) + source.baseUrl
 
 private object PlexUi : SourceUi {
     override val addEntries = listOf(AddEntry("Plex Server", AddIcon.ADD, AddAction.OpenScreen { PlexLinkScreen(it) }))
 
-    // Plex signs in by token, so there are no fields to edit — a different
+    // Plex signs in by token, so there are no fields to edit: a different
     // server or account means linking again, which updates this source in
-    // place. The row still answers where the music comes from.
+    // place. The row still states where the music comes from.
     override fun connection(source: MusicSource) = ConnectionRow()
 }
 

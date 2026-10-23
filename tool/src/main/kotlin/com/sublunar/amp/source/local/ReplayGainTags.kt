@@ -33,7 +33,7 @@ object ReplayGainTags {
             when (file.extension.lowercase()) {
                 "flac" -> pick(readFlac(raf))
                 "ogg", "oga", "opus" -> pick(readOgg(raf))
-                "mp3", "mp2", "mpga" -> pick(readId3(raf))
+                "mp3" -> pick(readId3(raf))
                 "m4a", "m4b", "mp4", "aac" -> pick(readMp4(raf))
                 // A container this doesn't know may still be one of the above
                 // wearing the wrong name; the magic bytes decide.
@@ -210,7 +210,7 @@ object ReplayGainTags {
         while (p + ID3_FRAME_HEADER <= size) {
             val id = String(body, p, 4, Charsets.US_ASCII)
             // Padding: the frames are over and the rest of the tag is zeroes.
-            if (id[0] == ' ') break
+            if (id[0] == '\u0000') break
             // v2.4 made frame sizes syncsafe; v2.3 left them plain.
             val frameSize = if (major >= 4) syncSafe(body, p + 4) else be32(body, p + 4)
             p += ID3_FRAME_HEADER
@@ -240,7 +240,7 @@ object ReplayGainTags {
                 val charset = if (encoding == ID3_UTF8) Charsets.UTF_8 else Charsets.ISO_8859_1
                 val split = indexOfNull(body, text, end) ?: return null
                 val key = String(body, text, split - text, charset)
-                val value = String(body, split + 1, end - split - 1, charset).trimEnd(' ', ' ')
+                val value = String(body, split + 1, end - split - 1, charset).trimEnd(' ', '\u0000')
                 key to value
             }
         }
@@ -430,7 +430,7 @@ object ReplayGainTags {
     private const val MIN_DB = -60f
     private const val MAX_DB = 30f
 
-    private const val BOM = '﻿'
+    private const val BOM = '\uFEFF'
     private const val FLAC_VORBIS_COMMENT = 4
     private const val MAX_BLOCKS = 32
     private const val MAX_BLOCK_BYTES = 8 * 1024 * 1024

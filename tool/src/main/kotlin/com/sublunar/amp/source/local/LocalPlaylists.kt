@@ -10,18 +10,14 @@ import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.isReorderOf
 
 /**
- * Playlists for the phone's own music, kept as `.m3u8` files on the phone.
- *
- * A local source has no server to hold them, so they live beside the music in
- * `Music/Amp/Playlists` in the format every other music player already reads.
- * That is the point of choosing M3U over something of our own: a playlist made
- * here opens in VLC or foobar or Navidrome's importer, and one made anywhere
- * else shows up here. Dropping a `.m3u8` into the folder over adb is a
- * supported way to make a playlist.
+ * Playlists for the phone's own music, kept as `.m3u8` files in
+ * `Music/Amp/Playlists`, the format every other music player already reads.
+ * A file another app or adb put there is listed, but scoped storage leaves it
+ * read-only to Amp.
  *
  * Entries are absolute paths, which is also exactly what a track id is once
- * [PhoneFiles.ID_PREFIX] is taken off — so the mapping in both directions is
- * a string operation and never needs the library to be loaded.
+ * [PhoneFiles.ID_PREFIX] is taken off, so the mapping in both directions is a
+ * string operation that never needs the library loaded.
  *
  * Everything here touches the disk, so it all runs on [Dispatchers.IO].
  */
@@ -33,11 +29,11 @@ object LocalPlaylists : PhonePlaylists {
     /** What a playlist file is called. `.m3u8` rather than `.m3u` says UTF-8. */
     private const val EXTENSION = ".m3u8"
 
+    private val UNSAFE_IN_NAME = Regex("""[/\\:*?"<>|]""")
+
     private const val TAG = "LocalPlaylists"
 
-    private fun folder(): File = File("/storage/emulated/0/${LocalLibrary.FOLDER}", "Playlists")
-
-    fun isLocalPlaylist(id: String): Boolean = id.startsWith(ID_PREFIX)
+    private fun folder(): File = File(LocalLibrary.MUSIC_DIR, "Playlists")
 
     private fun idFor(file: File): String = ID_PREFIX + file.absolutePath
 
@@ -45,14 +41,11 @@ object LocalPlaylists : PhonePlaylists {
         if (id.startsWith(ID_PREFIX)) File(id.removePrefix(ID_PREFIX)) else null
 
     /**
-     * A name safe to be a filename.
-     *
-     * The name *is* the filename — there is no sidecar recording the real one —
-     * so anything the filesystem would choke on has to go. A name that reduces
-     * to nothing still needs a file, hence the fallback.
+     * A name safe to be a filename. The name *is* the filename, with no sidecar
+     * recording the real one, so anything the filesystem would choke on goes.
      */
     private fun fileNameFor(name: String): String {
-        val cleaned = name.trim().replace(Regex("""[/\\:*?"<>|]"""), "_").take(120)
+        val cleaned = name.trim().replace(UNSAFE_IN_NAME, "_").take(120)
         return (cleaned.ifBlank { "Playlist" }) + EXTENSION
     }
 
@@ -65,8 +58,7 @@ object LocalPlaylists : PhonePlaylists {
             Playlist(
                 id = idFor(file),
                 name = file.name.removeSuffix(EXTENSION),
-                // The first track's own file, so the row gets the same embedded
-                // cover the track would show. See ArtworkLoader.
+                // The first track's own file: the row gets its embedded cover.
                 coverArtId = ids.firstOrNull(),
                 createdAt = file.lastModified(),
                 updatedAt = file.lastModified(),
@@ -112,7 +104,7 @@ object LocalPlaylists : PhonePlaylists {
         file.renameTo(target).also { if (!it) Log.w(TAG, "couldn't rename ${file.name}") }
     }
 
-    /** Whether the playlist is gone — one already gone, by another app or over adb, included. */
+    /** Whether the playlist is gone, counting one another app or adb already removed. */
     override suspend fun delete(id: String): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
         if (!file.exists()) return@withContext true
@@ -123,8 +115,7 @@ object LocalPlaylists : PhonePlaylists {
     override suspend fun add(id: String, trackId: String): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
         if (!file.isFile) return@withContext false
-        // Appending duplicates is allowed on purpose: a playlist is an ordered
-        // list, and the same song twice is a decision someone might mean.
+        // Duplicates on purpose: the same song twice is a decision someone might mean.
         writeIds(file, readIds(file) + trackId)
     }
 
@@ -145,18 +136,13 @@ object LocalPlaylists : PhonePlaylists {
     }
 
     /**
-     * Track ids from a playlist file.
+     * Track ids from a playlist file. Comments and blank lines are skipped
+     * (`#EXTM3U`, `#EXTINF`), and relative paths resolve against the file's
+     * own folder, as other tools write them.
      *
-     * Comments and blank lines are skipped, so an `#EXTM3U` header and the
-     * `#EXTINF` lines other players write are read without complaint. Relative
-     * paths resolve against the file's own folder, which is what a playlist
-     * written by another tool will normally contain.
-     *
-     * Paths are canonicalised, which matters more than it looks: `/sdcard` is a
-     * symlink to `/storage/emulated/0`, and an id is only ever compared as text.
-     * A playlist written elsewhere with `/sdcard/...` entries would otherwise
-     * produce ids that match nothing in the library, and every track in it would
-     * quietly disappear rather than fail in any visible way.
+     * Paths are canonicalised: `/sdcard` is a symlink to `/storage/emulated/0`
+     * and ids are compared as text, so `/sdcard/...` entries would otherwise
+     * match nothing in the library and quietly disappear.
      */
     private fun readIds(file: File): List<String> = runCatching {
         file.readLines()
@@ -164,9 +150,8 @@ object LocalPlaylists : PhonePlaylists {
             .filter { it.isNotEmpty() && !it.startsWith("#") }
             .map { line ->
                 val entry = if (line.startsWith("/")) File(line) else File(file.parentFile, line)
-                // canonicalPath touches the filesystem and throws if it can't
-                // resolve; a missing file should still make it into the list so
-                // the count is honest, so fall back to plain normalisation.
+                // canonicalPath throws if it can't resolve, and a missing file
+                // still belongs in the list so the count is honest.
                 val path = runCatching { entry.canonicalPath }
                     .getOrElse { entry.normalize().absolutePath }
                 PhoneFiles.ID_PREFIX + path

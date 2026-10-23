@@ -58,12 +58,10 @@ object LocalProvider : SourceProvider {
 
     override val ui: SourceUi get() = LocalUi
 
-    // A getter: LocalLibrary asks LightOS about access, and loading this
-    // provider must never get as far as that.
     override val phoneLibrary: PhoneLibrary get() = LocalPhoneLibrary
 }
 
-/** The phone's music folder and its playlists — see [LocalLibrary] and [LocalPlaylists]. */
+/** The phone's music folder and its playlists: see [LocalLibrary] and [LocalPlaylists]. */
 internal object LocalPhoneLibrary : PhoneLibrary {
     override val folderLabel: String get() = LocalLibrary.FOLDER
 
