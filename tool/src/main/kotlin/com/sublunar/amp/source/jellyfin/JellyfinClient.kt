@@ -1,24 +1,5 @@
 package com.sublunar.amp.source.jellyfin
 
-import java.time.Instant
-import java.time.Duration
-import io.ktor.client.HttpClient
-import io.ktor.client.request.delete
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.contentType
-import java.net.URLEncoder
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.ArtistRef
 import com.sublunar.amp.data.LyricLine
@@ -35,29 +16,44 @@ import com.sublunar.amp.data.Starred
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
-import com.sublunar.amp.data.serverClock
 import com.sublunar.amp.data.isReorderOf
 import com.sublunar.amp.data.placementMoves
+import com.sublunar.amp.data.serverClock
+import io.ktor.client.HttpClient
+import io.ktor.client.request.delete
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
+import io.ktor.http.isSuccess
+import java.net.URLEncoder
+import java.time.Duration
+import java.time.Instant
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * A Jellyfin server's music library, behind the same [MusicServer] interface
- * Navidrome and Plex use.
+ * Subsonic and Plex use.
  *
- * Jellyfin sits closer to Subsonic than Plex does: it has real favourites, real
- * playlists you can create empty, and a transcoder that will produce the format
- * it is asked for. What it does *not* have is left out rather than faked (see
- * the capability flags on [MusicSource], which is what the UI reads):
+ * Closer to Subsonic than Plex is: real favourites, playlists that can be
+ * created empty, and a transcoder that produces the format it is asked for.
+ * What it lacks is left out rather than faked (see JellyfinProvider.capabilities):
  *
- * - **Star ratings.** Jellyfin's user data carries a favourite flag and a
- *   like/dislike, not a 1–5 rating. There is nothing for stars to round-trip
- *   to, so they are not offered.
+ * - **Star ratings.** Its user data has a favourite flag and a like/dislike,
+ *   nothing for 1–5 stars to round-trip to.
  * - **Popular songs.** No per-artist popularity ranking over the API.
- * - **A shared play queue.** Nothing of the shape Subsonic's `savePlayQueue`
- *   has, so a queue started here doesn't follow you to another client.
+ * - **A shared play queue.** Nothing like Subsonic's `savePlayQueue`.
  *
  * Everything else — browsing, artwork, streaming, playlists, favourites, play
- * counts, now-playing and lyrics — round-trips, so what happens here shows up
- * in Jellyfin's own clients and the other way about.
+ * counts, now-playing and lyrics — round-trips with Jellyfin's own clients.
  */
 class JellyfinClient(
     /** The server's address, e.g. `http://192.168.1.10:8096`. */
@@ -65,11 +61,9 @@ class JellyfinClient(
     /** From `/Users/AuthenticateByName`; every request carries it. */
     private val token: String,
     /**
-     * Whose library this is.
-     *
-     * Jellyfin scopes nearly everything to a user — what is favourited, what
-     * has been played, which libraries are visible — so this is not optional
-     * decoration. It is captured at login and stored with the source.
+     * Whose library this is. Jellyfin scopes nearly everything to a user —
+     * favourites, plays, which libraries are visible — so it is captured at
+     * sign-in and stored with the source.
      */
     private val userId: String,
     /** Overrides the `Client` this reports itself as; null keeps the app's own. */
@@ -81,14 +75,10 @@ class JellyfinClient(
     private val http = NetworkGate.httpClient { expectSuccess = false }
 
     /**
-     * A second, small client for the two calls a person is waiting on — the
-     * reachability ping and the stream decision. A separate client is a
-     * separate request queue: on the shared one they stood behind a launch
-     * sync's hundreds of requests (five at a time per host), and a ping that
-     * waited out its turn there was read as "the server is gone" — which
-     * narrowed the library to downloads in the very minutes the user was
-     * trying to start a song. Built on first use; most sessions never need it
-     * more than a handful of times.
+     * A second client for the calls a person is waiting on — the reachability
+     * ping and the stream decision — with a request queue of its own: behind a
+     * launch sync's hundreds of requests on the shared one, a ping that waited
+     * its turn read as the server gone. Built on first use.
      */
     private val quickClient = lazy { NetworkGate.httpClient(isolated = true) { expectSuccess = false } }
     private val quick get() = quickClient.value
@@ -97,7 +87,6 @@ class JellyfinClient(
         ignoreUnknownKeys = true
         coerceInputValues = true
         isLenient = true
-        encodeDefaults = true
     }
 
     override fun close() {
@@ -170,15 +159,12 @@ class JellyfinClient(
 
     /**
      * Whether this server has the per-user routes that take the user as a
-     * query parameter — `/UserViews`, `/UserFavoriteItems`, `/UserPlayedItems`
-     * — rather than in the path. Jellyfin 10.9 added them and keeps the
-     * `/Users/{userId}/…` ones only "for backwards compatibility", hidden from
-     * its API; 10.8 has only those. Read once per client from the version,
-     * since a 404 can't tell a missing route from a missing song.
-     *
-     * A version read that fails throws, as the request it was for would have;
-     * one that can't be parsed keeps to the old routes, which every server
-     * there is still answers.
+     * query parameter (`/UserViews`, `/UserFavoriteItems`, `/UserPlayedItems`)
+     * rather than in the path: 10.9 added them and keeps the old ones only for
+     * backwards compatibility. Read once per client from the version, since a
+     * 404 can't tell a missing route from a missing song. A version read that
+     * fails throws; one that can't be parsed keeps to the old routes, which
+     * every server still answers.
      */
     private suspend fun usesUserRoutes(): Boolean = userRoutes
         ?: (hasUserRoutes(fetch<JellyfinPublicInfo>("/System/Info/Public").version) ?: false)
@@ -228,13 +214,9 @@ class JellyfinClient(
     // --- Browsing ------------------------------------------------------------
 
     /**
-     * The user's music libraries.
-     *
-     * The user's views rather than `/Items`: views are what this user is
-     * allowed to see and are already scoped to them, where the item tree
-     * includes everything on the server. Anything that isn't a music
-     * collection is dropped — a shelf of films is not a shelf you can browse
-     * here.
+     * The user's music libraries: the user's views rather than `/Items`, since
+     * views are what this user may see, where the item tree holds everything on
+     * the server.
      */
     override suspend fun getMusicFolders(): List<MusicFolder> {
         val views = if (usesUserRoutes()) {
@@ -242,25 +224,19 @@ class JellyfinClient(
         } else {
             fetch<JellyfinItems>("/Users/$userId/Views")
         }
-        return views.items
-            .filter { it.collectionType.equals("music", ignoreCase = true) }
-            .map { MusicFolder(id = it.id, name = it.name) }
+        return views.musicLibraries()
     }
 
     override suspend fun getAllAlbums(musicFolderId: String?): List<Album> =
         paged(musicFolderId, ALBUM_TYPE).map { it.toAlbum() }.distinctBy { it.id }
 
     /**
-     * Everything of one type, following the pages to the end.
-     *
-     * Jellyfin caps nothing by default but will happily hold a whole library in
-     * memory to answer one request, and a phone on a slow link waits for all of
-     * it. Paging keeps each round trip small and bounded, and `TotalRecordCount`
-     * says when to stop.
+     * Everything of one type, following the pages to the end, so each round
+     * trip stays small rather than one body holding a whole library.
      *
      * The explicit sort is not cosmetic: a page is an offset into a result set,
      * and without an ordering the server may arrange the rows differently for
-     * each request — which drops some rows and repeats others across a page
+     * each request, dropping some rows and repeating others across a page
      * boundary. `SortName` is the same key the app's own lists use.
      */
     private suspend fun paged(
@@ -293,30 +269,22 @@ class JellyfinClient(
 
     /**
      * Whether there is a page after this one. A short page is the end; a full
-     * one goes on unless the server's total says otherwise — a total it left
-     * out reads as 0, and stopping on that cut every list off at one page.
+     * one goes on unless the server's total says otherwise. A total it left
+     * out reads as 0, which must not stop the paging at one page.
      */
     private fun JellyfinItems.continuesAfter(start: Int): Boolean =
         items.size >= PAGE_SIZE && (totalRecordCount == 0 || start < totalRecordCount)
 
     /**
-     * The albums whose songs Jellyfin saved since [mark].
+     * The albums whose songs Jellyfin saved since [mark], from every library:
+     * the sync re-reads only albums it has.
      *
-     * Jellyfin stamps an item's DateLastSaved on every save — the probe that
-     * replaces a placeholder (named after its file, no artist, no length) with
-     * the file's tags, a re-tag a scan picked up, an edit made in Jellyfin —
-     * and not on a scan that changed nothing. It can be filtered on but not
-     * read, so the mark is the server's own clock, and each ask reaches back
-     * [MARK_OVERLAP] before it: a row is stamped a moment before it is written.
-     *
-     * Every library, whatever [libraries] says: a song changed in one that
-     * this sync didn't fetch is left out by the sync, which only re-reads
-     * albums it has.
-     *
-     * Not every save is stamped, though. The loudness scan writes the gains it
-     * measures straight to the database, which leaves DateLastSaved where it
-     * was — so a gain measured after an album was synced is never listed here,
-     * and the sync walks the library as well ([SongChanges.Albums.alsoWalk]).
+     * Jellyfin stamps DateLastSaved on every save (a probe filling in a
+     * file's tags, a re-tag, an edit) and not on a scan that changed nothing.
+     * It can be filtered on but not read, so the mark is the server's own
+     * clock, and each ask reaches back [MARK_OVERLAP]: a row is stamped a
+     * moment before it is written. The loudness scan writes gains without
+     * stamping it, so the sync walks the library as well ([SongChanges.Albums.alsoWalk]).
      */
     override suspend fun songChangesSince(mark: String?, libraries: List<String?>): SongChanges {
         val since = mark?.let { runCatching { Instant.parse(it) }.getOrNull() }
@@ -374,9 +342,9 @@ class JellyfinClient(
 
     /**
      * Jellyfin's instant mix: songs it judges to go with this one, from its own
-     * genre and artist data rather than an outside agent. Verified against the
-     * public demo — the seed comes back first, and the repository puts it
-     * first anyway, so it is dropped there rather than counted on here.
+     * genre and artist data rather than an outside agent. The seed comes back
+     * first; the repository puts it first anyway, so it is dropped there rather
+     * than counted on here.
      */
     override suspend fun getSimilarSongs(songId: String, count: Int): List<Track> = runCatching {
         fetch<JellyfinItems>(
@@ -385,20 +353,17 @@ class JellyfinClient(
                 if (count > 0) listOf("Limit" to count.toString()) else emptyList(),
         ).items.filter { it.type == TRACK_TYPE }.map { it.toTrack() }
     }.onFailure { android.util.Log.w("AmpRadio", "jellyfin instant mix failed: ${it.message}") }
-        .onSuccess { android.util.Log.i("AmpRadio", "jellyfin instant mix: ${it.size} items for $songId") }
         .getOrDefault(emptyList())
 
     /**
-     * Favourites, which Jellyfin keeps per user and per item.
-     *
-     * Artists come back as names rather than ids because the app's artist list
-     * is derived from track tags and has no server id to match against — the
-     * same reason [Starred] carries names for them everywhere else.
+     * Favourites, which Jellyfin keeps per user and per item. Artists come back
+     * as names: the app's artists are derived from track tags and have no
+     * server id to match — the same reason [Starred] carries names everywhere.
      */
     override suspend fun getStarred(musicFolderId: String?): Starred {
         // A failure goes up rather than reading as "nothing is liked": the
         // sync takes this answer as the whole truth and unlikes everything
-        // missing from it, so one bad request used to wipe every like.
+        // missing from it, so one bad request would wipe every like.
         val favourite = listOf("Filters" to "IsFavorite")
         val songs = paged(musicFolderId, TRACK_TYPE, favourite)
         val albums = paged(musicFolderId, ALBUM_TYPE, favourite)
@@ -473,20 +438,6 @@ class JellyfinClient(
     // --- Media ---------------------------------------------------------------
 
     /**
-     * Jellyfin's universal audio endpoint, which — unlike Plex's — really does
-     * produce the container it is asked for.
-     *
-     * `container` is a list of what the *client* will accept and `audioCodec`
-     * what it should be encoded as; giving both is what stops the server
-     * deciding it knows better and remuxing to something else. Original quality
-     * skips the transcoder entirely through `static=true`, which serves the file
-     * whole, with its real container and content type — so a FLAC arrives as a
-     * FLAC with its seek table intact.
-     *
-     * `startTimeTicks` is the same trick the other backends use for seeking
-     * inside a transcode: the stream begins that far in.
-     */
-    /**
      * A copy to keep — see [SubsonicClient.downloadUrl], which this mirrors.
      *
      * `/Items/{id}/Download` is the endpoint for taking a file away, and unlike
@@ -502,6 +453,13 @@ class JellyfinClient(
             streamUrl(track, format, estimateContentLength = false)
         }
 
+    /**
+     * Jellyfin's universal audio endpoint, which — unlike Plex's — really does
+     * produce the container it is asked for. Original quality skips the
+     * transcoder through `static=true`, which serves the file whole, with its
+     * real container and content type, so a FLAC keeps its seek table.
+     * `StartTimeTicks` starts a transcode that far in.
+     */
     override fun streamUrl(
         songId: String,
         format: StreamFormat,
@@ -523,9 +481,9 @@ class JellyfinClient(
             add("UserId" to userId)
             add("DeviceId" to deviceId)
             add(TOKEN_PARAM to token)
-            // Container and codec together: "ogg" alone lets any Ogg file
-            // through untouched, so a Vorbis file came as Vorbis at its own
-            // bitrate when Opus was asked for.
+            // Container and codec together, which stops the server remuxing to
+            // something else: "ogg" alone lets any Ogg file through untouched,
+            // Vorbis at its own bitrate when Opus was asked for.
             add("Container" to "$container|${CODECS[format] ?: container}")
             add("AudioCodec" to (CODECS[format] ?: container))
             add("TranscodingContainer" to container)
@@ -545,8 +503,8 @@ class JellyfinClient(
 
     /**
      * Jellyfin serves an image for any id it is given, answering 404 only when
-     * the fetch happens — so a cover id is minted here only for an item that
-     * said it had one. [JellyfinItem.imageId] is where that decision is made.
+     * the fetch happens — so a cover id is minted only for an item that said
+     * it had one: see [imageId].
      */
     override fun coverArtUrl(coverArtId: String?): String? {
         if (coverArtId.isNullOrBlank()) return null
@@ -554,11 +512,9 @@ class JellyfinClient(
     }
 
     /**
-     * The cover through Jellyfin's own resizer.
-     *
-     * Stored art is whatever the scanner found, routinely far larger than any
-     * phone needs; asking the server to shrink it turns a page of covers from
-     * megabytes into kilobytes.
+     * The cover through Jellyfin's own resizer: stored art is routinely far
+     * larger than a phone needs, and a page of covers drops from megabytes to
+     * kilobytes.
      */
     override fun coverArtUrl(coverArtId: String?, maxSizePx: Int): String? {
         if (coverArtId.isNullOrBlank()) return null
@@ -575,30 +531,18 @@ class JellyfinClient(
     }
 
     /**
-     * Words for a song, from Jellyfin 10.9's lyrics endpoint.
-     *
-     * Timed where the file carried timings and plain where it didn't — an
-     * unsynced sheet still belongs on screen, just without the karaoke. Older
-     * servers have no such endpoint and answer 404, which reads as "no lyrics"
-     * rather than as an error.
+     * Words for a song, from Jellyfin 10.9's lyrics endpoint. Servers before it
+     * answer 404, which reads as "no lyrics" rather than as an error.
      */
     override suspend fun getLyrics(songId: String): Lyrics? = runCatching {
-        val parsed = fetch<JellyfinLyrics>("/Audio/$songId/Lyrics")
-        val lines = parsed.lyrics
-            .filter { it.text.isNotBlank() }
-            .map { LyricLine(it.start?.let { ticks -> ticks / TICKS_PER_MS }, it.text.trim()) }
-        if (lines.isEmpty()) return@runCatching null
-        Lyrics(lines, synced = lines.any { it.timeMs != null })
+        fetch<JellyfinLyrics>("/Audio/$songId/Lyrics").toLyrics()
     }.getOrNull()
 
     // --- Writing back --------------------------------------------------------
 
     /**
-     * Jellyfin separates the two statements the way this interface does: a start
-     * notice opens a session on the server, and a play is recorded against the
-     * item. Sending only the second would announce nothing while a track played;
-     * sending only the first would count everything skipped past as a play.
-     *
+     * Jellyfin separates the two statements the way this interface does: a
+     * start notice opens a session, and a play is recorded against the item.
      * The play throws when it didn't land, so one made while the server was
      * away is kept and sent again; the start notice is only true now, and is
      * let go.
@@ -620,11 +564,9 @@ class JellyfinClient(
 
     /**
      * The heartbeat behind Jellyfin's "now playing", and what moves the progress
-     * bar on its dashboard.
-     *
-     * Stopping is a different endpoint rather than a state, which is Jellyfin's
-     * shape rather than this app's: a session that is merely reported paused for
-     * ever is still a session, and the server keeps showing it.
+     * bar on its dashboard. Stopping is an endpoint of its own rather than a
+     * state: a session reported paused for ever is still a session, and the
+     * server keeps showing it.
      */
     override suspend fun reportTimeline(
         sessionId: String,
@@ -667,18 +609,18 @@ class JellyfinClient(
             .filter { it.mediaType.isNullOrBlank() || it.mediaType.equals(AUDIO_MEDIA, ignoreCase = true) }
             .distinctBy { it.id }
             .map {
-            Playlist(
-                id = it.id,
-                name = it.name,
-                coverArtId = it.imageId(),
-                createdAt = jellyfinDateMs(it.dateCreated),
-                // When songs were last added, which is what moves a playlist
-                // up "Recently updated"; Jellyfin keeps no date for a removal,
-                // a reorder or a rename. Its creation where it has neither.
-                updatedAt = jellyfinDateMs(it.dateLastMediaAdded ?: it.dateCreated),
-                trackIds = emptyList(),
-            )
-        }
+                Playlist(
+                    id = it.id,
+                    name = it.name,
+                    coverArtId = it.imageId(),
+                    createdAt = jellyfinDateMs(it.dateCreated),
+                    // When songs were last added, which is what moves a playlist
+                    // up "Recently updated"; Jellyfin keeps no date for a removal,
+                    // a reorder or a rename. Its creation where it has neither.
+                    updatedAt = jellyfinDateMs(it.dateLastMediaAdded ?: it.dateCreated),
+                    trackIds = emptyList(),
+                )
+            }
 
     override suspend fun getPlaylist(id: String): Playlist {
         val summary = getPlaylists().firstOrNull { it.id == id }
@@ -698,12 +640,7 @@ class JellyfinClient(
     private suspend fun playlistEntries(id: String): List<JellyfinItem> =
         allPlaylistEntries(id).filter { it.type == TRACK_TYPE }
 
-    /**
-     * Everything in a playlist, a page at a time. One request for a whole
-     * playlist answered a large one as a single body the phone couldn't hold
-     * — the same failure Plex's playlists had — and opening Playlists fetched
-     * every playlist's contents at once.
-     */
+    /** Everything in a playlist, a page at a time: a large one in a single body is more than the phone can hold. */
     private suspend fun allPlaylistEntries(id: String): List<JellyfinItem> {
         val items = mutableListOf<JellyfinItem>()
         var start = 0
@@ -749,11 +686,10 @@ class JellyfinClient(
     }
 
     /**
-     * Only the name goes: Jellyfin's update leaves whatever a request leaves
-     * out alone, but takes any `Ids` it is sent — an empty list included — as
-     * the playlist's new contents. An earlier version sent `"Ids": []`, and
-     * renaming a playlist emptied it. Servers before 10.9 have no playlist
-     * update at all and refuse, which leaves the name as it was.
+     * Only the name goes: Jellyfin's update leaves alone whatever a request
+     * leaves out, but takes any `Ids` it is sent — an empty list included — as the
+     * playlist's new contents. Servers before 10.9 have no playlist update at
+     * all and refuse, which leaves the name as it was.
      */
     override suspend fun renamePlaylist(id: String, name: String) {
         write("POST", "/Playlists/$id", payload = renameBody(name))
@@ -844,16 +780,11 @@ class JellyfinClient(
 
     private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
 
-    private fun HttpStatusCode.isSuccess(): Boolean = value in 200..299
-
     companion object {
         /**
-         * The original file, or anything the transcoder will produce.
-         *
-         * Unlike Plex's, Jellyfin's universal endpoint honours the container and
-         * codec it is given, so every one of these really does come back as what
-         * was asked for — which is why the whole list is offered rather than the
-         * two Plex is limited to.
+         * The original file, or anything the transcoder will produce. Unlike
+         * Plex's, Jellyfin's universal endpoint honours the container and codec
+         * it is given, so the whole list is offered rather than Plex's two.
          */
         val STREAM_FORMATS: List<StreamFormat> = StreamFormat.entries.toList()
 
@@ -861,12 +792,10 @@ class JellyfinClient(
          * How a URL that can't carry a header — a stream, a download, a cover —
          * carries the token.
          *
-         * Not `api_key`: that spelling is "legacy authorization", which Jellyfin
-         * 12 switches off by default and on every upgraded server, and then
-         * ignores — the request arrives with no token at all. A transcode or a
-         * download answers that with 401; the original file and the covers
-         * need no login and kept working, which is what made it look like
-         * only some things were broken. Every server since 10.8 reads `ApiKey`.
+         * Not `api_key`: that is "legacy authorization", which Jellyfin 12
+         * switches off, and the request then arrives with no token at all. A
+         * transcode or a download answers 401, while originals and covers need
+         * no login and keep working. Every server since 10.8 reads `ApiKey`.
          */
         const val TOKEN_PARAM = "ApiKey"
 
@@ -950,15 +879,14 @@ class JellyfinClient(
         )
 
         /**
-         * The device every install of Amp used to sign in as, and which
-         * sources signed in before [MusicSource.deviceId] existed still are:
-         * their tokens were issued to it.
+         * The device every install of Amp once signed in as, which sources
+         * signed in before [MusicSource.deviceId] existed still are: their
+         * tokens were issued to it.
          *
-         * One id for every phone was the trouble. Jellyfin keeps one sign-in
-         * per device and user, and signing in again ends the one before — so
-         * adding a server a second time, or the same account on a second
-         * phone, quietly logged the first one out ("the server refused the
-         * login"). Each sign-in now gets an id of its own: [newDeviceId].
+         * Jellyfin keeps one sign-in per device and user, so with one id for
+         * every phone a second sign-in (the same server added again, the same
+         * account on another phone) ended the first. Each sign-in now gets an
+         * id of its own: [newDeviceId].
          */
         const val LEGACY_DEVICE_ID = "com.sublunar.amp"
 
@@ -969,14 +897,12 @@ class JellyfinClient(
          * Jellyfin's own authorization scheme, which every request carries.
          *
          * `Client` is what the server lists the session under, so a source with
-         * its own name reports itself by it. `Device` deliberately stays the
-         * hardware: two sources configured here are still the same phone, and
-         * naming the device after one of them loses which machine was playing.
+         * its own name reports itself by it. `Device` stays the hardware: two
+         * sources here are still one phone.
          *
          * Each value is percent-encoded, which the server undoes: a quote or a
-         * comma in a player name would otherwise end its field early, and a
-         * character outside ASCII — a curly apostrophe — can't go in a header
-         * at all, so every request failed before it was sent.
+         * comma in a player name would end its field early, and a character
+         * outside ASCII, such as a curly apostrophe, can't go in a header.
          */
         fun authorization(
             product: String? = null,
@@ -997,23 +923,14 @@ class JellyfinClient(
     }
 }
 
-/** What a library calls an album that isn't by one artist. */
-
 /**
  * The cover id for an item, or null when it hasn't got one.
  *
- * Jellyfin will serve `/Items/{anything}/Images/Primary` and only answer 404
- * when the bytes are asked for, so "has a cover" has to be decided from the
- * metadata. A track usually carries no image of its own and inherits the
- * album's, which is why the album is the fallback rather than the track id.
- */
-/**
- * The album's picture before the item's own, where the item has an album.
- *
- * A track with art embedded in its file has a Primary image of its own, and
- * Jellyfin says so — but it is the same sleeve its album has, and keyed by the
- * track it was cached once per song: a downloaded library held thousands of
- * copies of a few hundred covers. The album's id keys them all to one file.
+ * Jellyfin serves `/Items/{anything}/Images/Primary` and answers 404 only when
+ * the bytes are asked for, so "has a cover" is decided from [JellyfinItem.imageTags].
+ * The album's picture comes first where the item has one: a track's embedded
+ * art is the same sleeve, and keyed by the track the cover cache held one copy
+ * per song.
  */
 fun JellyfinItem.imageId(): String? = when {
     !albumPrimaryImageTag.isNullOrBlank() && !albumId.isNullOrBlank() -> albumId
@@ -1021,14 +938,22 @@ fun JellyfinItem.imageId(): String? = when {
     else -> null
 }
 
-/**
- * Jellyfin's own record of an album, as one of the app's.
- *
- * Top-level rather than a method on the client because it needs nothing from
- * one — and because the compilation trap below is worth being able to test
- * without a server.
- */
+/** The music collections among a user's views; a library of films has no place here. */
+internal fun JellyfinItems.musicLibraries(): List<MusicFolder> =
+    items
+        .filter { it.collectionType.equals("music", ignoreCase = true) }
+        .map { MusicFolder(id = it.id, name = it.name) }
 
+/** Timed where the file carried timings, plain where it didn't; null when there are no words. */
+internal fun JellyfinLyrics.toLyrics(): Lyrics? {
+    val lines = lyrics
+        .filter { it.text.isNotBlank() }
+        .map { LyricLine(it.start?.let { ticks -> ticks / TICKS_PER_MS }, it.text.trim()) }
+    if (lines.isEmpty()) return null
+    return Lyrics(lines, synced = lines.any { it.timeMs != null })
+}
+
+/** Jellyfin's own record of an album, as one of the app's. */
 internal fun JellyfinItem.toAlbum(): Album = Album(
     id = id,
     title = name,

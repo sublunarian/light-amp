@@ -34,7 +34,7 @@ interface SourceProvider {
      */
     fun createClient(source: MusicSource): MusicServer?
 
-    /** What screens show of this kind — see [SourceUi]. A getter, so loading a provider never loads screens. */
+    /** What screens show of this kind — see [SourceUi]. */
     val ui: SourceUi
 
     /**

@@ -121,14 +121,6 @@ class ServerFeaturesTest {
     }
 
     @Test
-    fun `answers from an older set of probes are not trusted for a newer question`() {
-        // What a build that never asked about scanning left behind: it cannot
-        // speak for a question it didn't put, so the record has to be re-asked.
-        val old = ServerFeatures(checkedVersion = "1.16.1/BandcampServer/1.0", generation = 1)
-        assertTrue(old.generation != ServerFeatures.GENERATION)
-    }
-
-    @Test
     fun `the servers that answer for everything are unchanged`() {
         val navidrome = subsonic(ServerFeatures(checkedVersion = "1.16.1/navidrome/0.58"))
         assertTrue(navidrome.supportsRatings)

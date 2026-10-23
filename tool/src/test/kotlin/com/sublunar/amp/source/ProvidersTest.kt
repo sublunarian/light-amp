@@ -5,9 +5,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * Every kind has a provider. A `when` over the kinds used to fail to compile
- * when a kind was added without an answer; looked up in a list, the same gap
- * would be a crash on the first source of that kind, so it is checked here.
+ * Every kind has a provider. Looked up in a list, a missing one would be a
+ * crash on the first source of that kind rather than a compile error, so it is
+ * checked here.
  */
 class ProvidersTest {
 

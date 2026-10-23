@@ -74,7 +74,6 @@ data class PlayQueueDto(
 @Serializable
 data class ScanStatusDto(
     val scanning: Boolean = false,
-    val count: Long? = null,
     /** When the last scan ran (OpenSubsonic); see SubsonicClient.songChangesSince. */
     val lastScan: String? = null,
 )
@@ -84,17 +83,12 @@ data class ScanStatusDto(
 data class ArtistsRootDto(val index: List<ArtistIndexDto> = emptyList())
 
 @Serializable
-data class ArtistIndexDto(
-    val name: String? = null,
-    val artist: List<ArtistDto> = emptyList(),
-)
+data class ArtistIndexDto(val artist: List<ArtistDto> = emptyList())
 
 @Serializable
 data class ArtistDto(
     val id: String,
     val name: String? = null,
-    val albumCount: Int? = null,
-    val starred: String? = null,
 )
 
 @Serializable
@@ -137,7 +131,6 @@ data class AlbumDto(
     val name: String? = null,
     val title: String? = null,
     val artist: String? = null,
-    val artistId: String? = null,
     val coverArt: String? = null,
     val songCount: Int? = null,
     val duration: Int? = null,
@@ -145,7 +138,6 @@ data class AlbumDto(
     val created: String? = null,
     val played: String? = null,
     val playCount: Int? = null,
-    val starred: String? = null,
     // OpenSubsonic full release dates. `year` alone can't order two releases from
     // the same year, so prefer these when the server sends them.
     val originalReleaseDate: ItemDateDto? = null,
@@ -174,7 +166,7 @@ data class AlbumDto(
 
 /** One name in an album's artist credit. Everything optional: servers vary. */
 @Serializable
-data class AlbumArtistDto(val id: String = "", val name: String? = null)
+data class AlbumArtistDto(val name: String? = null)
 
 /** OpenSubsonic ItemDate: any component may be missing. */
 @Serializable
@@ -188,9 +180,7 @@ data class ItemDateDto(
 data class PlaylistDto(
     val id: String,
     val name: String? = null,
-    val comment: String? = null,
     val songCount: Int? = null,
-    val duration: Int? = null,
     val created: String? = null,
     val changed: String? = null,
     val coverArt: String? = null,
@@ -200,9 +190,7 @@ data class PlaylistDto(
 @Serializable
 data class SongDto(
     val id: String,
-    val parent: String? = null,
     val title: String? = null,
-    val name: String? = null,
     val album: String? = null,
     val artist: String? = null,
     val albumArtist: String? = null,
@@ -213,17 +201,11 @@ data class SongDto(
      */
     val displayAlbumArtist: String? = null,
     val albumId: String? = null,
-    val artistId: String? = null,
     val track: Int? = null,
     val discNumber: Int? = null,
     val year: Int? = null,
     val coverArt: String? = null,
-    val size: Long? = null,
-    val contentType: String? = null,
-    val suffix: String? = null,
     val duration: Int? = null,
-    val bitRate: Int? = null,
-    val path: String? = null,
     val created: String? = null,
     val starred: String? = null,
     /** Subsonic userRating, 1–5; absent or 0 means unrated. */
@@ -233,12 +215,7 @@ data class SongDto(
     /** Tag fields Navidrome sends when the file carries them. */
     val genre: String? = null,
     val composer: String? = null,
-    /**
-     * As with the album artist, composer is an OpenSubsonic field under a name
-     * of its own — there is no plain `composer` on a Child. Reading only the
-     * plain spelling is why the library never reported having any composers,
-     * and so why the Composers page never appeared.
-     */
+    /** The composer under OpenSubsonic's name, as with [displayAlbumArtist]: a Child has no plain `composer`. */
     val displayComposer: String? = null,
     /**
      * OpenSubsonic ReplayGain, sent when the file is tagged. Gains are dB
@@ -259,7 +236,6 @@ data class LyricsListDto(val structuredLyrics: List<StructuredLyricDto> = emptyL
 @Serializable
 data class StructuredLyricDto(
     val synced: Boolean = false,
-    val lang: String? = null,
     val offset: Long? = null,
     val line: List<LyricLineDto> = emptyList(),
 )

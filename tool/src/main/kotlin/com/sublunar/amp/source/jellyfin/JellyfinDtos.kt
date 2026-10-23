@@ -28,17 +28,10 @@ data class JellyfinItems(
 data class JellyfinItem(
     @SerialName("Id") val id: String = "",
     @SerialName("Name") val name: String = "",
-    @SerialName("ServerId") val serverId: String? = null,
     @SerialName("Type") val type: String = "",
     /** "Audio" for a song or a playlist of songs; "Video" and others are left out — see JellyfinClient.getPlaylists. */
     @SerialName("MediaType") val mediaType: String? = null,
-    /**
-     * What a view holds — "music" is the one this app cares about.
-     *
-     * Only set on the user's views (`/UserViews`, or `/Users/{id}/Views`
-     * before 10.9); a library of films answers "movies" and has no business
-     * in a music app.
-     */
+    /** What a view holds, "music" or "movies" and so on — see [musicLibraries]. Only set on the user's views. */
     @SerialName("CollectionType") val collectionType: String? = null,
     @SerialName("RunTimeTicks") val runTimeTicks: Long? = null,
     @SerialName("ProductionYear") val productionYear: Int? = null,
@@ -52,13 +45,7 @@ data class JellyfinItem(
     @SerialName("AlbumId") val albumId: String? = null,
     @SerialName("AlbumArtist") val albumArtist: String? = null,
     @SerialName("AlbumArtists") val albumArtists: List<JellyfinNamed> = emptyList(),
-    /**
-     * The performers on *this* track, which is not the record's artist.
-     *
-     * A compilation's every track carries the album artist "Various Artists",
-     * so a client that reads only that shows a shelf of records by nobody. The
-     * track's own artists are here.
-     */
+    /** The performers on *this* track, which on a compilation are not the album artist — see [toTrack]. */
     @SerialName("Artists") val artists: List<String> = emptyList(),
     @SerialName("ArtistItems") val artistItems: List<JellyfinNamed> = emptyList(),
     @SerialName("Genres") val genres: List<String> = emptyList(),
@@ -83,23 +70,16 @@ data class JellyfinItem(
      * is asked for — see FIELDS.
      */
     @SerialName("People") val people: List<JellyfinPerson> = emptyList(),
-    /**
-     * Which images the item actually has.
-     *
-     * Jellyfin serves an image URL for any id whether or not one exists —
-     * answering 404 at fetch time — so this is the only way to know before
-     * asking. "Primary" is the cover.
-     */
+    /** Which images the item actually has; "Primary" is the cover — see [imageId]. */
     @SerialName("ImageTags") val imageTags: Map<String, String> = emptyMap(),
-    /** An album's own cover, on a track that hasn't got one of its own. */
+    /** On a track, its album's cover, which [imageId] prefers to the track's own. */
     @SerialName("AlbumPrimaryImageTag") val albumPrimaryImageTag: String? = null,
     @SerialName("UserData") val userData: JellyfinUserData? = null,
     @SerialName("ChildCount") val childCount: Int? = null,
     /**
-     * The playlist entry's own id, which is not the track's.
-     *
-     * The same song can sit in a playlist twice, so removing "that one" needs
-     * the entry rather than the song — see JellyfinClient.removeFromPlaylistAt.
+     * The playlist entry's id. Removes and moves name an entry, not a song,
+     * since one song can sit in a playlist twice; but since Jellyfin 12 this is
+     * the song's id — see JellyfinClient.removeFromPlaylistAt.
      */
     @SerialName("PlaylistItemId") val playlistItemId: String? = null,
 )
@@ -122,7 +102,6 @@ data class JellyfinPerson(
 data class JellyfinUserData(
     @SerialName("PlayCount") val playCount: Int = 0,
     @SerialName("IsFavorite") val isFavorite: Boolean = false,
-    @SerialName("Played") val played: Boolean = false,
     @SerialName("LastPlayedDate") val lastPlayedDate: String? = null,
 )
 
@@ -143,7 +122,6 @@ data class JellyfinPolicy(
 data class JellyfinAuthResult(
     @SerialName("User") val user: JellyfinNamed = JellyfinNamed(),
     @SerialName("AccessToken") val accessToken: String = "",
-    @SerialName("ServerId") val serverId: String = "",
 )
 
 /** The public bits of `/System/Info/Public`, used to name a server. */
@@ -186,10 +164,7 @@ const val TICKS_PER_MS = 10_000L
  * date part is taken, which is all the app sorts and displays by.
  */
 fun jellyfinDateMs(value: String?): Long {
-    val text = value?.takeIf { it.length >= 10 } ?: return 0L
-    val year = text.substring(0, 4).toIntOrNull() ?: return 0L
-    val month = text.substring(5, 7).toIntOrNull() ?: return 0L
-    val day = text.substring(8, 10).toIntOrNull() ?: return 0L
+    val (year, month, day) = yearMonthDay(value) ?: return 0L
     return java.util.GregorianCalendar(
         java.util.TimeZone.getTimeZone("UTC"),
     ).apply {
@@ -200,9 +175,15 @@ fun jellyfinDateMs(value: String?): Long {
 
 /** The same date as a sortable YYYYMMDD, which is how [Album.releaseDate] reads. */
 fun jellyfinDateNumber(value: String?): Long {
-    val text = value?.takeIf { it.length >= 10 } ?: return 0L
-    val year = text.substring(0, 4).toIntOrNull() ?: return 0L
-    val month = text.substring(5, 7).toIntOrNull() ?: return 0L
-    val day = text.substring(8, 10).toIntOrNull() ?: return 0L
+    val (year, month, day) = yearMonthDay(value) ?: return 0L
     return year * 10_000L + month * 100L + day
+}
+
+/** The `YYYY-MM-DD` a Jellyfin date starts with, or null when it doesn't. */
+private fun yearMonthDay(value: String?): Triple<Int, Int, Int>? {
+    val text = value?.takeIf { it.length >= 10 } ?: return null
+    val year = text.substring(0, 4).toIntOrNull() ?: return null
+    val month = text.substring(5, 7).toIntOrNull() ?: return null
+    val day = text.substring(8, 10).toIntOrNull() ?: return null
+    return Triple(year, month, day)
 }

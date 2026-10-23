@@ -39,8 +39,7 @@ import com.sublunar.amp.ui.screens.adoptServer
  *
  * With [again], the same page signs an existing source in again — after the
  * server stopped taking its token, or to reach it at a new address — and the
- * source keeps its library and its downloads. Logging out and adding it anew
- * was the only way back before, and that deleted them.
+ * source keeps its library and its downloads, which logging out would delete.
  */
 class JellyfinLinkScreen(
     sealed: SealedLightActivity,
@@ -197,7 +196,6 @@ class JellyfinLinkScreen(
             resultCallback = { text -> if (text != null) onResult(text) },
         )
     }
-
 }
 
 /**

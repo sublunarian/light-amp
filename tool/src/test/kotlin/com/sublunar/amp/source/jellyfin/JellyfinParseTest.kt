@@ -1,6 +1,7 @@
 package com.sublunar.amp.source.jellyfin
 
 import com.sublunar.amp.data.LyricLine
+import com.sublunar.amp.data.Lyrics
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -122,8 +123,7 @@ class JellyfinParseTest {
             ]}
             """.trimIndent(),
         )
-        val music = views.items.filter { it.collectionType.equals("music", ignoreCase = true) }
-        assertEquals(listOf("1", "3"), music.map { it.id })
+        assertEquals(listOf("1", "3"), views.musicLibraries().map { it.id })
     }
 
     @Test
@@ -161,10 +161,12 @@ class JellyfinParseTest {
         val synced: JellyfinLyrics = json.decodeFromString(
             """{"Lyrics":[{"Start":10000000,"Text":"one"},{"Start":25000000,"Text":"two"}]}""",
         )
-        val lines = synced.lyrics.map { LyricLine(it.start?.div(TICKS_PER_MS), it.text) }
-        assertEquals(listOf(1000L, 2500L), lines.map { it.timeMs })
+        val timed = synced.toLyrics()!!
+        assertTrue(timed.synced)
+        assertEquals(listOf(1000L, 2500L), timed.lines.map { it.timeMs })
 
-        val plain: JellyfinLyrics = json.decodeFromString("""{"Lyrics":[{"Text":"one"}]}""")
-        assertNull(plain.lyrics.first().start)
+        val plain: JellyfinLyrics = json.decodeFromString("""{"Lyrics":[{"Text":"one"},{"Text":" "}]}""")
+        assertEquals(Lyrics(listOf(LyricLine(null, "one")), synced = false), plain.toLyrics())
+        assertNull(json.decodeFromString<JellyfinLyrics>("""{"Lyrics":[]}""").toLyrics())
     }
 }

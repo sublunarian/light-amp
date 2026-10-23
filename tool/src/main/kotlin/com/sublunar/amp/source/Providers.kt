@@ -22,10 +22,9 @@ object Providers {
     fun of(kind: SourceKind): SourceProvider = byKind.getValue(kind)
 
     /**
-     * Every way to add a source, given the ones there are already: the same
-     * list on Add Source and on the first-run screen, which once kept a copy
-     * of its own and quietly lacked Plex because nobody updated it. Least
-     * effort first: what needs no server of your own, then the servers.
+     * Every way to add a source, given the ones there are already: the one
+     * list both Add Source and the first-run screen show. Least effort first:
+     * what needs no server of your own, then the servers.
      */
     fun addEntries(existing: List<MusicSource>): List<AddEntry> =
         all.flatMap { provider ->

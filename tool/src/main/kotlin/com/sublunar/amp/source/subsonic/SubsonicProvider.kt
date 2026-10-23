@@ -77,8 +77,8 @@ private object SubsonicUi : SourceUi {
 
 /**
  * Null unless this is a Subsonic server with somewhere to point. The kind is
- * checked here rather than left to the caller: the server form falls back to
- * whichever source is active, and that can be any kind.
+ * checked here rather than left to the caller: ServerScreen falls back to the
+ * active source when the one it edits isn't listed, and that can be any kind.
  */
 fun MusicSource.toSubsonicConfig(): SubsonicConfig? =
     if (kind == SourceKind.SUBSONIC && baseUrl.isNotBlank()) {

@@ -8,9 +8,8 @@ import com.thelightphone.sdk.SimpleLightScreen
  * A kind of source's half that only screens read: how it is added, and the
  * Connection row on a source's own page.
  *
- * Kept apart from the rest of [SourceProvider], and reached through a
- * getter, so that loading a provider — which every capability check does —
- * never loads a screen.
+ * Kept apart from the rest of [SourceProvider] and reached through a getter,
+ * so the capability checks that load a provider never build it.
  */
 interface SourceUi {
     /** How this kind is added, in the order offered. */

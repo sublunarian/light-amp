@@ -6,10 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.runBlocking
 
-/**
- * The Connection row on each kind's own page, and Log Out's word to the
- * server — as SourceDetailScreen had them before each kind said its own.
- */
+/** The Connection row on each kind's own page, and Log Out's word to the server. */
 class ConnectionRowTest {
 
     private fun source(kind: SourceKind) = MusicSource(id = "s", kind = kind, name = "Source")
@@ -34,7 +31,10 @@ class ConnectionRowTest {
         )
     }
 
-    /** No kind is asked anything here: none has a client without its token, so nothing reaches the network. */
+    /**
+     * Nothing reaches the network: only Jellyfin says anything at Log Out, and
+     * only through a client, which needs the token this source hasn't got.
+     */
     @Test
     fun `Log Out's word to the server returns for every kind, and needs a client to say anything`() = runBlocking {
         for (kind in SourceKind.entries) {

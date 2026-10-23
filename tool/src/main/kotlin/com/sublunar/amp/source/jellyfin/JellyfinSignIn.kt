@@ -74,7 +74,6 @@ object JellyfinSignIn {
         baseUrl: String,
         username: String,
         password: String,
-        product: String? = null,
         /** Who the phone signs in as — a fresh [JellyfinClient.newDeviceId] unless re-signing a source in. */
         deviceId: String,
     ): JellyfinSignInResult {
@@ -114,7 +113,7 @@ object JellyfinSignIn {
             }
             val result = try {
                 val response = http.post("$root/Users/AuthenticateByName") {
-                    header("Authorization", JellyfinClient.authorization(product, deviceId = deviceId))
+                    header("Authorization", JellyfinClient.authorization(deviceId = deviceId))
                     header("Accept", "application/json")
                     contentType(ContentType.Application.Json)
                     setBody(json.encodeToString(JsonObject.serializer(), payload))
@@ -135,7 +134,7 @@ object JellyfinSignIn {
 
             return JellyfinSignInResult.SignedIn(
                 JellyfinSession(
-                    client = JellyfinClient(root, result.accessToken, result.user.id, product, deviceId),
+                    client = JellyfinClient(root, result.accessToken, result.user.id, deviceId = deviceId),
                     token = result.accessToken,
                     userId = result.user.id,
                     serverName = info.serverName,

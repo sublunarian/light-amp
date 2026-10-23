@@ -53,14 +53,12 @@ fun unavailableReason(status: Int): String =
     "That address answered, but the server behind it isn't available (error $status). " +
         "Check it's running, then try again."
 
-/**
- * Why nothing answered, in words that point at a fix.
- *
- * Causes are walked because Ktor wraps: the interesting exception is rarely
- * the outermost one.
- */
+/** This exception and the ones it wraps, outermost first. Ktor wraps: the telling one is rarely on top. */
+fun Throwable.causes(): Sequence<Throwable> = generateSequence(this) { it.cause }.take(8)
+
+/** Why nothing answered, in words that point at a fix. */
 fun unreachedReason(error: Throwable): String {
-    val chain = generateSequence(error) { it.cause }.take(8).toList()
+    val chain = error.causes().toList()
     return when {
         chain.any { it is UnknownHostException } ->
             "Couldn't find that address. Check the spelling, and that this phone is " +

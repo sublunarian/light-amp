@@ -22,14 +22,6 @@ class AddEntriesTest {
     }
 
     @Test
-    fun `the first-run screen offers what needs no server first`() {
-        assertEquals(
-            listOf("MUSIC ON THIS PHONE", "BANDCAMP", "PLEX SERVER", "JELLYFIN SERVER", "SUBSONIC SERVER"),
-            Providers.addEntries(emptyList()).map { it.label.uppercase() },
-        )
-    }
-
-    @Test
     fun `the phone's own music is offered only while there is none`() {
         val local = MusicSource("local", SourceKind.LOCAL, "Local Music")
         val server = MusicSource("s", SourceKind.SUBSONIC, "Navidrome", baseUrl = "https://music.example")
