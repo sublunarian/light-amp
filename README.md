@@ -15,8 +15,6 @@ server.
 
 ## Features
 
-- Bandcamp [speaks Subsonic](https://blog.bandcamp.com/2026/07/16/discover-improvements-and-subsonic-implementation/)
-  now, so you can use Amp without hosting anything.
 - Lossless playback.
 - Offline downloads, by album, playlist, track, or everything you've liked.
 - Data Mode: choose what happens off Wi-Fi. By default Amp streams on cellular
