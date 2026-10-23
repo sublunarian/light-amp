@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Playlists follow the library you pick. On Navidrome a playlist shows that
+  library's songs; on Plex and Jellyfin you see the playlists with songs from
+  it, as in their own apps. Editing never touches another library's songs.
+- Amp reopens on the tab you last used, or on Now Playing.
+- Playlist and queue songs line up with every other list, and playlists show
+  download marks.
+- Reordering a big Plex or Jellyfin playlist is much faster.
+
+### Fixed
+
+- Downloaded playlists open with their songs when you're offline (#19, thanks
+  @wsturgiss).
+- A song's menu in a playlist could say "Track not found".
+- A Navidrome playlist with missing files is no longer edited from Amp, which
+  could remove the wrong song, plus several other playlist fixes.
+
 ## 0.8.2
 
 ### Fixed
