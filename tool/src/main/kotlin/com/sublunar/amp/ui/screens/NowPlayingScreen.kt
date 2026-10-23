@@ -78,7 +78,10 @@ import com.sublunar.amp.ui.components.ListScrollBar
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_ART_PX
+import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import com.sublunar.amp.ui.components.ROW_GAP_PX
+import com.sublunar.amp.ui.components.ROW_LEAD_PX
+import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.ROW_SUB_PX
 import com.sublunar.amp.ui.components.ROW_SUB_LINE_PX
 import com.sublunar.amp.ui.components.SelectionArtwork
@@ -117,6 +120,9 @@ private const val LYRIC_ANCHOR = 0.38f
  * up down the right edge of the list.
  */
 private const val QUEUE_TRAILING_SLOT_PX = 51
+
+/** Where every other list's covers start: its edge and the download mark's slot. */
+private const val QUEUE_START_PX = LIST_EDGE_PX + ROW_LEAD_PX
 
 enum class NpView { ARTWORK, QUEUE }
 
@@ -357,10 +363,10 @@ class NowPlayingScreen(
         index: Int,
         selection: SelectionState,
         modifier: Modifier = Modifier,
-        horizontalPadding: Dp = px(41),
         listState: LazyListState = rememberLazyListState(),
     ) {
         val drag = rememberDragReorderState<String>()
+        val artworkHidden by App.hideArtwork.collectAsState()
         val rowPx = with(LocalDensity.current) { px(160).toPx() }
         // Read unconditionally, branch on the result — see ARCHITECTURE.md on
         // conditional composable calls.
@@ -421,7 +427,7 @@ class NowPlayingScreen(
         ) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().padding(horizontal = horizontalPadding),
+                modifier = Modifier.fillMaxSize().padding(start = px(QUEUE_START_PX), end = px(SCROLLBAR_LANE_PX)),
             ) {
                 itemsIndexed(queue, key = { i, t -> "$i-${t.id}" }) { i, track ->
                     val isCurrent = i == index
@@ -459,10 +465,11 @@ class NowPlayingScreen(
                         ) {
                             if (selection.active) {
                                 SelectionArtwork(track.coverArtId, track.id in selection.selected, size = px(ROW_ART_PX))
-                            } else {
+                                Spacer(Modifier.width(px(ROW_GAP_PX)))
+                            } else if (!artworkHidden) {
                                 AppArtwork(track.coverArtId, size = px(ROW_ART_PX))
+                                Spacer(Modifier.width(px(ROW_GAP_PX)))
                             }
-                            Spacer(Modifier.width(px(ROW_GAP_PX)))
                             Column(Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (isCurrent) {
@@ -503,7 +510,7 @@ class NowPlayingScreen(
                 }
             }
             if (drag.draggingIndex != null) {
-                DragOverlay(queue, drag.draggingKeys, drag.dragStartTops, drag.fingerOffsetY, horizontalPadding)
+                DragOverlay(queue, drag.draggingKeys, drag.dragStartTops, drag.fingerOffsetY, artworkHidden)
             }
         }
     }
@@ -521,7 +528,7 @@ class NowPlayingScreen(
         draggingKeys: Set<String>,
         dragStartTops: Map<String, Float>,
         fingerOffsetY: Float,
-        horizontalPadding: Dp,
+        artworkHidden: Boolean,
     ) {
         queue.forEachIndexed { i, track ->
             val rowKey = "$i-${track.id}"
@@ -533,11 +540,13 @@ class NowPlayingScreen(
                     .height(px(160))
                     .align(Alignment.TopStart)
                     .graphicsLayer { translationY = top + fingerOffsetY }
-                    .padding(horizontal = horizontalPadding),
+                    .padding(start = px(QUEUE_START_PX), end = px(SCROLLBAR_LANE_PX)),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AppArtwork(track.coverArtId, size = px(ROW_ART_PX))
-                Spacer(Modifier.width(px(ROW_GAP_PX)))
+                if (!artworkHidden) {
+                    AppArtwork(track.coverArtId, size = px(ROW_ART_PX))
+                    Spacer(Modifier.width(px(ROW_GAP_PX)))
+                }
                 Column(Modifier.weight(1f)) {
                     AppText(track.title, pxSp(ROW_TITLE_PX), lineHeight = pxSp(ROW_TITLE_LINE_PX), maxLines = 1)
                     AppText(
@@ -783,7 +792,6 @@ class NowPlayingScreen(
                     index,
                     selection,
                     Modifier.fillMaxSize(),
-                    horizontalPadding = px(INSET_PX),
                     listState = listState,
                 )
                 // Outside the list's own margins, hard against the screen edge —
