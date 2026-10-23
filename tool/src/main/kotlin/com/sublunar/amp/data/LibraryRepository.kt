@@ -1133,7 +1133,7 @@ class LibraryRepository(
         } else {
             serverWrite { it.deletePlaylist(id) }
         }
-        dropMembership(d, id)
+        if (result == WriteResult.Saved) dropMembership(d, id)
         refreshPlaylists()
         said("deletePlaylist($id)", result)
     }
@@ -1151,7 +1151,7 @@ class LibraryRepository(
         } else {
             serverWrite { it.addToPlaylist(id, trackId) }
         }
-        editMembership(d, id) { it + trackId }
+        if (result == WriteResult.Saved) editMembership(d, id) { it + trackId }
         said("addToPlaylist($id)", result)
     }
 
@@ -1199,7 +1199,7 @@ class LibraryRepository(
                 .getOrDefault(false)
         }.also { ok ->
             if (ok) editMembership(d, id) { ids -> ids.filterIndexed { index, _ -> index !in at.keys } }
-            else dropMembership(d, id)
+            else markMembershipStale(id)
         }
     }
 
@@ -1217,8 +1217,9 @@ class LibraryRepository(
         }.also { ok ->
             // Order is the whole content of this edit, so the new order *is*
             // the new membership. A refusal leaves the server's order unknown
-            // to us — Plex's can fail partway — so the stored copy goes.
-            if (ok) editMembership(d, id) { orderedSongIds } else dropMembership(d, id)
+            // to us — Plex's can fail partway — so it is read again, and the
+            // stored copy serves until then.
+            if (ok) editMembership(d, id) { orderedSongIds } else markMembershipStale(id)
         }
     }
 
