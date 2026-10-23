@@ -28,6 +28,7 @@ import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.Playlist
+import com.sublunar.amp.data.RADIO_LENGTH
 import com.sublunar.amp.data.RefusedWrite
 import com.sublunar.amp.data.ScanRequest
 import com.sublunar.amp.data.ServerException
@@ -341,7 +342,7 @@ class PlexClient(
      * The app's artist names come from track tags, so the artist is looked up
      * by name first, in an index built once and kept.
      */
-    override suspend fun getTopSongs(artistName: String, count: Int): List<Track> {
+    override suspend fun getTopSongs(artistName: String): List<Track> {
         val (section, key) = artistLocation(artistName) ?: return emptyList()
         return runCatching {
             fetch(
@@ -354,7 +355,7 @@ class PlexClient(
                     "group" to "title",
                     "ratingCount>>" to "0",
                     "sort" to "ratingCount:desc",
-                    "limit" to (if (count > 0) count else TOP_SONGS_LIMIT).toString(),
+                    "limit" to TOP_SONGS_LIMIT.toString(),
                 ),
             ).container.metadata.map { it.toTrack() }
         }.getOrDefault(emptyList())
@@ -393,13 +394,12 @@ class PlexClient(
      * with the key's own `?type=10` kept). Empty when there is none: the caller
      * says so, and nothing plays instead.
      */
-    override suspend fun getSimilarSongs(songId: String, count: Int): List<Track> {
-        val limit = if (count > 0) count else RADIO_DEFAULT
+    override suspend fun getSimilarSongs(songId: String): List<Track> {
         val own = runCatching { stationTracks(songId, "track") }
             .onFailure { android.util.Log.w(RADIO_TAG, "plex track station failed: ${it.message}") }
             .getOrDefault(StationAnswer())
-        if (own.tracks.isNotEmpty()) return own.tracks.take(limit)
-        val nearest = runCatching { nearestTracks(songId, limit) }
+        if (own.tracks.isNotEmpty()) return own.tracks.take(RADIO_LENGTH)
+        val nearest = runCatching { nearestTracks(songId, RADIO_LENGTH) }
             .onFailure { android.util.Log.w(RADIO_TAG, "plex nearest failed: ${it.message}") }
             .getOrDefault(emptyList())
         android.util.Log.i(RADIO_TAG, "plex nearest: ${nearest.size} tracks for $songId")
@@ -416,10 +416,10 @@ class PlexClient(
                 .getOrDefault(StationAnswer())
             val before = merged.size
             answer.tracks.forEach { merged.putIfAbsent(it.id, it) }
-            if (merged.size == before || merged.size >= limit) break
+            if (merged.size == before || merged.size >= RADIO_LENGTH) break
         }
         android.util.Log.i(RADIO_TAG, "plex artist radio: ${merged.size} tracks after up to $STATION_ASKS asks")
-        return merged.values.take(limit)
+        return merged.values.take(RADIO_LENGTH)
     }
 
     /** What asking an item for its station came to, plus the artist it named. */
@@ -555,17 +555,16 @@ class PlexClient(
     /**
      * Plex's universal transcoder, which takes a metadata key rather than a
      * file. `offset` starts the stream that many seconds in. Everything it
-     * transcodes comes out as MP3 (see [STREAM_FORMATS]). Asked to direct-play,
-     * it returns the original bytes behind an `.mp3` URL, which anything
-     * trusting the extension (a UPnP renderer, say) believes, so the original
-     * goes through the [Track] overload wherever the file is known. For
+     * transcodes comes out as MP3 (see PlexProvider.streamFormats). Asked to
+     * direct-play, it returns the original bytes behind an `.mp3` URL, which
+     * anything trusting the extension (a UPnP renderer, say) believes, so the
+     * original goes through [streamUrl]'s file wherever the file is known. For
      * [sessionId] see [transcodeParams].
      */
-    override fun streamUrl(
+    private fun transcodeUrl(
         songId: String,
         format: StreamFormat,
         timeOffsetSeconds: Int,
-        estimateContentLength: Boolean,
         sessionId: String?,
     ): String {
         val query = transcodeParams(songId, format, timeOffsetSeconds, sessionId)
@@ -622,7 +621,7 @@ class PlexClient(
         sessionId: String?,
     ): String {
         if (fromTranscoder(track, format)) {
-            return streamUrl(track.id, format, timeOffsetSeconds, estimateContentLength, sessionId)
+            return transcodeUrl(track.id, format, timeOffsetSeconds, sessionId)
         }
         // No transcode session behind the file, so nothing to attach sessionId to.
         return partUrl(track, download = false)
@@ -694,8 +693,6 @@ class PlexClient(
         val lines = raw.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
         return if (lines.isEmpty()) null else Lyrics(lines.map { LyricLine(null, it) }, synced = false)
     }
-
-    override val streamFormats: List<StreamFormat> get() = STREAM_FORMATS
 
     /** Plex hands out cover paths, not ids; the token rides along in the URL. */
     override fun coverArtUrl(coverArtId: String?): String? {
@@ -1405,19 +1402,10 @@ class PlexClient(
 
         private const val LIBRARY_IDENTIFIER = "com.plexapp.plugins.library"
 
-        /** Songs per radio when the caller leaves it to the server. */
-        private const val RADIO_DEFAULT = 50
         private const val RADIO_TAG = "AmpRadio"
 
         /** How many fresh stations to deal from before calling the radio full. */
         private const val STATION_ASKS = 5
-
-        /**
-         * The original file, or MP3: Plex's universal music transcoder produces
-         * MP3 whatever is asked for, with nothing in the response to admit it,
-         * so the formats it can't serve are absent rather than silently swapped.
-         */
-        val STREAM_FORMATS: List<StreamFormat> = listOf(StreamFormat.RAW, StreamFormat.MP3)
 
         /** Items per request. Big enough to be one round trip on most libraries. */
         private const val PAGE_SIZE = 500

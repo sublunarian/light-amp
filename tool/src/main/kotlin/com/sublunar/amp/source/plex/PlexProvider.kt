@@ -25,7 +25,12 @@ import com.sublunar.amp.source.plex.companion.PlexCompanionFamily
 object PlexProvider : SourceProvider {
     override val kind = SourceKind.PLEX
 
-    override val streamFormats: List<StreamFormat> get() = PlexClient.STREAM_FORMATS
+    /**
+     * The original file, or MP3: Plex's universal music transcoder produces
+     * MP3 whatever is asked for, with nothing in the response to admit it,
+     * so the formats it can't serve are absent rather than silently swapped.
+     */
+    override val streamFormats: List<StreamFormat> = listOf(StreamFormat.RAW, StreamFormat.MP3)
 
     // Plexamp lists the chosen library's playlists and plays each one whole.
     override val libraryNarrowsPlaylistSongs: Boolean get() = false

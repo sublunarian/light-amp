@@ -176,9 +176,8 @@ data class MusicSource(
     val hasServer: Boolean get() = phoneLibrary == null
 
     /**
-     * The formats this source can actually serve, the same list its client
-     * gives — see [MusicServer.streamFormats]. Read from the provider rather
-     * than a live client so the settings screens can offer the right choices
+     * The formats this source can actually serve — see SourceProvider.streamFormats.
+     * Known without a client, so the settings screens offer the right choices
      * for a source that isn't the one connected.
      */
     val streamFormats: List<StreamFormat> get() = provider.streamFormats

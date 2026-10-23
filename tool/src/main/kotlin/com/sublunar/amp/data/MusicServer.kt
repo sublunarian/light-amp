@@ -109,31 +109,31 @@ interface MusicServer {
     /** Server-side artist ids, for the star calls that need one. */
     suspend fun getArtistIndex(musicFolderId: String? = null): List<ArtistRef> = emptyList()
 
-    /**
-     * An artist's best-known songs. Empty where the server doesn't rank them.
-     *
-     * A [count] of 0 means "however many the server thinks sensible" — it is not
-     * a request for none, and an implementation must not pass it straight
-     * through as a limit.
-     */
-    suspend fun getTopSongs(artistName: String, count: Int = 0): List<Track> = emptyList()
+    /** An artist's best-known songs, as many as the server thinks sensible. Empty where the server doesn't rank them. */
+    suspend fun getTopSongs(artistName: String): List<Track> = emptyList()
 
     /**
-     * Songs to follow on from this one: a radio seeded by a track.
+     * Songs to follow on from this one: a radio seeded by a track, up to
+     * [RADIO_LENGTH] of them.
      *
      * Navidrome answers from its Last.fm agent — the track's artist and artists
      * like them — Plex from the station it builds for the track, and Jellyfin
      * from its instant mix. Empty where the server has no such idea, or nothing
      * to say about this track; the caller tells the user so rather than playing
-     * something else instead. A [count] of 0 means the server's own default, as
-     * for [getTopSongs].
+     * something else instead.
      */
-    suspend fun getSimilarSongs(songId: String, count: Int = 0): List<Track> = emptyList()
+    suspend fun getSimilarSongs(songId: String): List<Track> = emptyList()
 
     // --- Media ---------------------------------------------------------------
 
+    /**
+     * Where to stream [track] from in [format], [timeOffsetSeconds] in.
+     *
+     * The whole track rather than its id: Plex serves the original bytes only
+     * from the path to the file it gave out with the track ([Track.streamPath]).
+     */
     fun streamUrl(
-        songId: String,
+        track: Track,
         format: StreamFormat,
         timeOffsetSeconds: Int = 0,
         estimateContentLength: Boolean = true,
@@ -142,23 +142,10 @@ interface MusicServer {
          * never shared with a download. Optional, and ignored by servers with
          * no idea of a session (Subsonic); Plex uses it to tie the stream to
          * the session its timeline reports, and to keep a download alongside
-         * it from tearing it down — see the comment on [PlexClient.streamUrl].
+         * it from tearing it down — see PlexClient.transcodeParams.
          */
         sessionId: String? = null,
     ): String
-
-    /**
-     * The same, for a caller that has the whole track — prefer it wherever one
-     * is in hand. Plex keeps the path to the file on the track
-     * ([Track.streamPath]) and can only serve the original bytes when it has it.
-     */
-    fun streamUrl(
-        track: Track,
-        format: StreamFormat,
-        timeOffsetSeconds: Int = 0,
-        estimateContentLength: Boolean = true,
-        sessionId: String? = null,
-    ): String = streamUrl(track.id, format, timeOffsetSeconds, estimateContentLength, sessionId)
 
     /**
      * Where to fetch a *copy* from, as opposed to something to play now.
@@ -242,14 +229,6 @@ interface MusicServer {
      */
     fun coverArtUrl(coverArtId: String?, maxSizePx: Int): String? = coverArtUrl(coverArtId)
 
-    /**
-     * The formats this server will actually deliver, declared by the code that
-     * builds the URLs. A server asked for something it cannot produce doesn't
-     * say so — it sends what it has — so a format missing from this list is one
-     * the app must never request.
-     */
-    val streamFormats: List<StreamFormat>
-
     /** Words for a song, timed where the server has them. */
     suspend fun getLyrics(songId: String): Lyrics? = null
 
@@ -315,8 +294,6 @@ interface MusicServer {
     // --- Playlists -----------------------------------------------------------
 
     suspend fun getPlaylists(musicFolderId: String? = null): List<Playlist> = emptyList()
-    suspend fun getPlaylist(id: String): Playlist =
-        Playlist(id = id, name = "", coverArtId = null, createdAt = 0L, updatedAt = 0L, trackIds = emptyList())
     suspend fun getPlaylistTracks(id: String): List<Track> = emptyList()
 
     /**
@@ -363,6 +340,9 @@ interface MusicServer {
      */
     suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = false
 }
+
+/** How many songs a radio asks the server for — Subsonic's own default. */
+internal const val RADIO_LENGTH = 50
 
 /** Whether [order] holds exactly the songs of [songs], as many times each, in any order. */
 internal fun isReorderOf(order: List<String>, songs: List<String>): Boolean =

@@ -95,14 +95,20 @@ class ClientFactoryTest {
         clientOf(jellyfin.copy(userId = "")) { assertNull(it) }
     }
 
+    private val song = Track(
+        id = "t", title = "Gone", artist = "", album = "", albumArtist = "", albumId = null,
+        coverArtId = null, durationMs = 0, trackNumber = null, discNumber = null, year = null,
+        playCount = 0, lastPlayedMs = 0,
+    )
+
     @Test
     fun `a Jellyfin source signs its streams with the device it signed in as`() {
         clientOf(jellyfin) {
-            val stream = assertIs<JellyfinClient>(it).streamUrl("t", StreamFormat.OPUS)
+            val stream = assertIs<JellyfinClient>(it).streamUrl(song, StreamFormat.OPUS)
             assertTrue("DeviceId=com.sublunar.amp" in stream, stream)
         }
         clientOf(jellyfin.copy(deviceId = "amp-1")) {
-            val stream = assertIs<JellyfinClient>(it).streamUrl("t", StreamFormat.OPUS)
+            val stream = assertIs<JellyfinClient>(it).streamUrl(song, StreamFormat.OPUS)
             assertTrue("DeviceId=amp-1" in stream, stream)
         }
     }

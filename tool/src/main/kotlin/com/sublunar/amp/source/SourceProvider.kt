@@ -20,7 +20,12 @@ import com.sublunar.amp.playback.output.OutputFamily
 interface SourceProvider {
     val kind: SourceKind
 
-    /** The formats a stream from this kind may be asked for. Empty means played as stored, with nothing to choose. */
+    /**
+     * The formats a stream from this kind may be asked for, declared beside the
+     * code that builds its URLs. A server asked for something it cannot produce
+     * doesn't say so — it sends what it has — so a format missing here is one
+     * the app must never request. Empty means played as stored, with nothing to choose.
+     */
     val streamFormats: List<StreamFormat>
 
     /** What this kind can do, less whatever [features] says its server answered for as missing. */

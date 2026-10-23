@@ -25,7 +25,7 @@ class JellyfinRequestTest {
         // request arrives with no token, and a transcode or a download is 401.
         val urls = buildList {
             StreamFormat.entries.forEach {
-                add(client.streamUrl("t1", it))
+                add(client.streamUrl(track, it))
                 add(client.downloadUrl(track, it))
             }
             add(client.coverArtUrl("al").orEmpty())
@@ -47,8 +47,8 @@ class JellyfinRequestTest {
     @Test
     fun `a stream names the device its source signed in as`() {
         val own = JellyfinClient("https://jf.example", "tok", "u1", deviceId = "amp-1234")
-        assertTrue("DeviceId=amp-1234" in own.streamUrl("t1", StreamFormat.OPUS))
-        assertTrue("DeviceId=${JellyfinClient.LEGACY_DEVICE_ID}" in client.streamUrl("t1", StreamFormat.OPUS))
+        assertTrue("DeviceId=amp-1234" in own.streamUrl(track, StreamFormat.OPUS))
+        assertTrue("DeviceId=${JellyfinClient.LEGACY_DEVICE_ID}" in client.streamUrl(track, StreamFormat.OPUS))
     }
 
     @Test
@@ -65,8 +65,8 @@ class JellyfinRequestTest {
     @Test
     fun `asking for Opus can't come back as some other Ogg`() {
         // "ogg" alone direct-plays any Ogg file, Vorbis included.
-        assertTrue("Container=ogg%7Copus" in client.streamUrl("t1", StreamFormat.OPUS))
-        assertTrue("Container=mp3%7Cmp3" in client.streamUrl("t1", StreamFormat.MP3))
+        assertTrue("Container=ogg%7Copus" in client.streamUrl(track, StreamFormat.OPUS))
+        assertTrue("Container=mp3%7Cmp3" in client.streamUrl(track, StreamFormat.MP3))
     }
 
     @Test

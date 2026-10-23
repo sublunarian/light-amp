@@ -36,14 +36,13 @@ class PendingActionsStoredTest {
         override suspend fun scrobble(songId: String, atMs: Long?, submission: Boolean) = take("play $songId")
         override suspend fun starSong(songId: String) = take("star $songId")
         override suspend fun unstarSong(songId: String) = take("unstar $songId")
-        override val streamFormats: List<StreamFormat> = emptyList()
         override suspend fun ping() = Unit
         override fun close() = Unit
         override suspend fun getMusicFolders(): List<MusicFolder> = emptyList()
         override suspend fun getAllAlbums(musicFolderId: String?): List<Album> = emptyList()
         override suspend fun getAlbumTracks(albumId: String): List<Track> = emptyList()
         override fun streamUrl(
-            songId: String,
+            track: Track,
             format: StreamFormat,
             timeOffsetSeconds: Int,
             estimateContentLength: Boolean,

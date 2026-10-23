@@ -23,7 +23,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 object JellyfinProvider : SourceProvider {
     override val kind = SourceKind.JELLYFIN
 
-    override val streamFormats: List<StreamFormat> get() = JellyfinClient.STREAM_FORMATS
+    /**
+     * The original file, or anything the transcoder will produce. Unlike
+     * Plex's, Jellyfin's universal endpoint honours the container and codec
+     * it is given, so the whole list is offered rather than Plex's two.
+     */
+    override val streamFormats: List<StreamFormat> = StreamFormat.entries.toList()
 
     // Jellyfin's own app lists a library's playlists by their songs and shows each one whole.
     override val libraryNarrowsPlaylistSongs: Boolean get() = false

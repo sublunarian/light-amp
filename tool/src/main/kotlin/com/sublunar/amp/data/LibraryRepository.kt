@@ -1889,7 +1889,7 @@ class LibraryRepository(
      */
     suspend fun radioFrom(seed: Track): List<Track> {
         val client = serverClient.value ?: return emptyList()
-        val answered = client.getSimilarSongs(seed.id, RADIO_LENGTH)
+        val answered = client.getSimilarSongs(seed.id)
         // Matched after the answer, on only the songs it named: a whole-library map
         // made before the call would hold that library for as long as the server took.
         val named = answered.mapTo(HashSet()) { it.id }
@@ -2203,9 +2203,6 @@ class LibraryRepository(
         private const val TAG_VALUES_KEEP_MS = 5_000L
 
         private const val SEARCH_LIMIT = 100
-
-        /** How many songs a radio asks the server for — Subsonic's own default. */
-        private const val RADIO_LENGTH = 50
 
         /** How long a stored popular-songs list is served before being refreshed. */
         private const val TOP_SONGS_TTL_MS = 7L * 24 * 60 * 60 * 1000

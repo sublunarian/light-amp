@@ -9,6 +9,7 @@ import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.Playlist
+import com.sublunar.amp.data.RADIO_LENGTH
 import com.sublunar.amp.data.SavedQueue
 import com.sublunar.amp.data.ScanRequest
 import com.sublunar.amp.data.ServerException
@@ -207,8 +208,6 @@ class SubsonicClient(
         if (quickClient.isInitialized()) quick.close()
     }
 
-    override val streamFormats: List<StreamFormat> get() = STREAM_FORMATS
-
     // --- URL builders --------------------------------------------------------
 
     private fun restUrl(endpoint: String, params: List<Pair<String, String>>): String =
@@ -243,7 +242,7 @@ class SubsonicClient(
 
     /** Streaming URL for a song in the given format, with optional server-side time seek. */
     override fun streamUrl(
-        songId: String,
+        track: Track,
         format: StreamFormat,
         timeOffsetSeconds: Int,
         /**
@@ -257,7 +256,7 @@ class SubsonicClient(
         /** Subsonic has no session concept; unused here. */
         sessionId: String?,
     ): String {
-        val params = mutableListOf("id" to songId)
+        val params = mutableListOf("id" to track.id)
         if (format == StreamFormat.RAW) {
             params.add("format" to "raw")
         } else {
@@ -627,10 +626,13 @@ class SubsonicClient(
      * An artist's most popular songs. Navidrome answers this from its Last.fm
      * agent, matched back onto the local library, so it needs Last.fm configured
      * server-side; it returns an empty list rather than failing when it isn't.
+     *
+     * No `count`: Subsonic reads one as the number of songs to return, so a 0
+     * asks for none, where leaving it out gets the server's own default.
      */
-    override suspend fun getTopSongs(artistName: String, count: Int): List<Track> {
+    override suspend fun getTopSongs(artistName: String): List<Track> {
         return try {
-            val body = request("getTopSongs", listOf("artist" to artistName) + countParam(count))
+            val body = request("getTopSongs", listOf("artist" to artistName))
             body.topSongs?.song.orEmpty().map { it.toTrack() }
         } catch (_: Exception) {
             emptyList()
@@ -643,22 +645,14 @@ class SubsonicClient(
      * no agent it still answers from that artist's own catalogue, so the radio
      * narrows rather than vanishes.
      */
-    override suspend fun getSimilarSongs(songId: String, count: Int): List<Track> {
+    override suspend fun getSimilarSongs(songId: String): List<Track> {
         return try {
-            val body = request("getSimilarSongs", listOf("id" to songId) + countParam(count))
+            val body = request("getSimilarSongs", listOf("id" to songId, "count" to RADIO_LENGTH.toString()))
             body.similarSongs?.song.orEmpty().map { it.toTrack() }
         } catch (_: Exception) {
             emptyList()
         }
     }
-
-    /**
-     * `count`, left out when 0: Subsonic reads it as the number of songs to
-     * return, so a literal 0 asks for none, where leaving it out gets the
-     * server's own default.
-     */
-    private fun countParam(count: Int): List<Pair<String, String>> =
-        if (count > 0) listOf("count" to count.toString()) else emptyList()
 
     override suspend fun getLyrics(songId: String): Lyrics? {
         return try {
@@ -779,12 +773,6 @@ class SubsonicClient(
         return body.playlists?.playlist.orEmpty().map { it.toPlaylist() }
     }
 
-    override suspend fun getPlaylist(id: String): Playlist {
-        val body = request("getPlaylist", listOf("id" to id))
-        val dto = body.playlist ?: throw SubsonicException("Playlist not found.")
-        return dto.toPlaylist(trackIds = dto.entry.map { it.id })
-    }
-
     /** Songs of a playlist, in order, as full tracks. */
     override suspend fun getPlaylistTracks(id: String): List<Track> {
         val body = request("getPlaylist", listOf("id" to id))
@@ -819,7 +807,7 @@ class SubsonicClient(
      */
     override suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean {
         if (at.isEmpty()) return true
-        val known = getPlaylist(id).trackIds
+        val known = playlistSongIds(id)
         if (at.any { (index, songId) -> known.getOrNull(index) != songId }) return false
         if (holdsHiddenSongs(id, known.size)) return false
         val params = mutableListOf("playlistId" to id)
@@ -835,13 +823,20 @@ class SubsonicClient(
      * deletes everything the list left out.
      */
     override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean {
-        val known = getPlaylist(id).trackIds
+        val known = playlistSongIds(id)
         if (!isReorderOf(orderedSongIds, known)) return false
         if (holdsHiddenSongs(id, known.size)) return false
         val params = mutableListOf("playlistId" to id)
         orderedSongIds.forEach { params.add("songId" to it) }
         request("createPlaylist", params)
         return true
+    }
+
+    /** The song ids of a playlist as the server holds it, in order, for an edit to check against. */
+    private suspend fun playlistSongIds(id: String): List<String> {
+        val playlist = request("getPlaylist", listOf("id" to id)).playlist
+            ?: throw SubsonicException("Playlist not found.")
+        return playlist.entry.map { it.id }
     }
 
     /**
@@ -952,24 +947,16 @@ class SubsonicClient(
         )
     }
 
-    private fun PlaylistDto.toPlaylist(trackIds: List<String> = emptyList()): Playlist = Playlist(
+    private fun PlaylistDto.toPlaylist(): Playlist = Playlist(
         id = id,
         name = name ?: "Playlist",
         coverArtId = coverArt,
         createdAt = parseInstantMs(created),
         updatedAt = parseInstantMs(changed),
-        trackIds = trackIds,
+        trackIds = emptyList(),
     )
 
     companion object {
-        /**
-         * Everything the Subsonic API's `format` parameter defines, which a
-         * server is expected to transcode to on demand. A deployment missing a
-         * transcoder for one of these answers with its default instead — that is
-         * a server-side gap, and the honest place to close it is the server.
-         */
-        val STREAM_FORMATS: List<StreamFormat> = StreamFormat.entries.toList()
-
         /**
          * Default `c=` value, when a source has no [SubsonicConfig.clientName]
          * of its own. Navidrome registers a Player under whatever this is.

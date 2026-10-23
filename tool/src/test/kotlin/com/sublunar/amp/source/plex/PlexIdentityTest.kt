@@ -32,13 +32,13 @@ class PlexIdentityTest {
 
     /** A transcode URL carries the identity in its query, so it shows which identifier a client sends. */
     private fun streamOf(source: MusicSource): String =
-        (source.toClient() as PlexClient).streamUrl("7", StreamFormat.MP3, sessionId = "S")
+        (source.toClient() as PlexClient).streamUrl(track("7"), StreamFormat.MP3, sessionId = "S")
 
     @Test
     fun `a link of its own says so on every request`() {
         assertEquals("amp-1234", identifierOf(PlexClient.plexIdentity(clientIdentifier = "amp-1234")))
         val stream = PlexClient("http://plex.example:32400", "tok", clientIdentifier = "amp-1234")
-            .streamUrl("7", StreamFormat.MP3, sessionId = "S")
+            .streamUrl(track("7"), StreamFormat.MP3, sessionId = "S")
         assertTrue("X-Plex-Client-Identifier=amp-1234" in stream, stream)
     }
 
@@ -78,14 +78,14 @@ class PlexIdentityTest {
     @Test
     fun `songs streamed in one session carry the same id`() {
         val client = PlexClient("http://plex.example:32400", "tok", clientIdentifier = "amp-1234")
-        val a = client.streamUrl("7", StreamFormat.MP3, sessionId = "S")
-        val b = client.streamUrl("8", StreamFormat.MP3, sessionId = "S")
+        val a = client.streamUrl(track("7"), StreamFormat.MP3, sessionId = "S")
+        val b = client.streamUrl(track("8"), StreamFormat.MP3, sessionId = "S")
         assertTrue("X-Plex-Session-Identifier=S&" in a, a)
         assertTrue("X-Plex-Session-Identifier=S&" in b, b)
     }
 
-    private fun track(streamPath: String) = Track(
-        id = "7", title = "Gone", artist = "", album = "", albumArtist = "", albumId = null,
+    private fun track(id: String = "7", streamPath: String = "") = Track(
+        id = id, title = "Gone", artist = "", album = "", albumArtist = "", albumId = null,
         coverArtId = null, durationMs = 0, trackNumber = null, discNumber = null, year = null,
         playCount = 0, lastPlayedMs = 0, streamPath = streamPath,
     )
@@ -94,11 +94,11 @@ class PlexIdentityTest {
     @Test
     fun `only a transcoder stream needs a decision first`() {
         val plex = PlexClient("http://plex.example:32400", "tok", clientIdentifier = "amp-1234")
-        val part = track("/library/parts/42/1700000000/file.flac")
+        val part = track(streamPath = "/library/parts/42/1700000000/file.flac")
         assertTrue(plex.streamNeedsDecision(part, StreamFormat.MP3))
         assertFalse(plex.streamNeedsDecision(part, StreamFormat.RAW))
         // No part to name: the original comes through the transcoder too.
-        assertTrue(plex.streamNeedsDecision(track(""), StreamFormat.RAW))
+        assertTrue(plex.streamNeedsDecision(track(), StreamFormat.RAW))
         assertFalse(JellyfinClient("https://jf.example", "tok", "u1").streamNeedsDecision(part, StreamFormat.MP3))
     }
 }

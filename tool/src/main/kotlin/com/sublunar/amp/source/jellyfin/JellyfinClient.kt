@@ -8,6 +8,7 @@ import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.Playlist
+import com.sublunar.amp.data.RADIO_LENGTH
 import com.sublunar.amp.data.ScanRequest
 import com.sublunar.amp.data.ServerException
 import com.sublunar.amp.data.ServerFeatures
@@ -346,11 +347,10 @@ class JellyfinClient(
      * first; the repository puts it first anyway, so it is dropped there rather
      * than counted on here.
      */
-    override suspend fun getSimilarSongs(songId: String, count: Int): List<Track> = runCatching {
+    override suspend fun getSimilarSongs(songId: String): List<Track> = runCatching {
         fetch<JellyfinItems>(
             "/Items/$songId/InstantMix",
-            listOf("userId" to userId, "Fields" to FIELDS) +
-                if (count > 0) listOf("Limit" to count.toString()) else emptyList(),
+            listOf("userId" to userId, "Fields" to FIELDS, "Limit" to RADIO_LENGTH.toString()),
         ).items.filter { it.type == TRACK_TYPE }.map { it.toTrack() }
     }.onFailure { android.util.Log.w("AmpRadio", "jellyfin instant mix failed: ${it.message}") }
         .getOrDefault(emptyList())
@@ -461,7 +461,7 @@ class JellyfinClient(
      * `StartTimeTicks` starts a transcode that far in.
      */
     override fun streamUrl(
-        songId: String,
+        track: Track,
         format: StreamFormat,
         timeOffsetSeconds: Int,
         estimateContentLength: Boolean,
@@ -469,7 +469,7 @@ class JellyfinClient(
     ): String {
         if (format == StreamFormat.RAW) {
             return url(
-                "/Audio/$songId/stream",
+                "/Audio/${track.id}/stream",
                 listOf(
                     "static" to "true",
                     TOKEN_PARAM to token,
@@ -496,10 +496,8 @@ class JellyfinClient(
             // dashboard shows one session rather than a new one per request.
             if (!sessionId.isNullOrBlank()) add("PlaySessionId" to sessionId)
         }
-        return url("/Audio/$songId/universal", params)
+        return url("/Audio/${track.id}/universal", params)
     }
-
-    override val streamFormats: List<StreamFormat> get() = STREAM_FORMATS
 
     /**
      * Jellyfin serves an image for any id it is given, answering 404 only when
@@ -621,13 +619,6 @@ class JellyfinClient(
                     trackIds = emptyList(),
                 )
             }
-
-    override suspend fun getPlaylist(id: String): Playlist {
-        val summary = getPlaylists().firstOrNull { it.id == id }
-        val trackIds = getPlaylistTracks(id).map { it.id }
-        return summary?.copy(trackIds = trackIds)
-            ?: Playlist(id, "", null, 0L, 0L, trackIds)
-    }
 
     override suspend fun getPlaylistTracks(id: String): List<Track> =
         playlistEntries(id).map { it.toTrack() }
@@ -781,13 +772,6 @@ class JellyfinClient(
     private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
 
     companion object {
-        /**
-         * The original file, or anything the transcoder will produce. Unlike
-         * Plex's, Jellyfin's universal endpoint honours the container and codec
-         * it is given, so the whole list is offered rather than Plex's two.
-         */
-        val STREAM_FORMATS: List<StreamFormat> = StreamFormat.entries.toList()
-
         /**
          * How a URL that can't carry a header — a stream, a download, a cover —
          * carries the token.

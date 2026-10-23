@@ -24,7 +24,13 @@ import com.sublunar.amp.source.SourceUi
 object SubsonicProvider : SourceProvider {
     override val kind = SourceKind.SUBSONIC
 
-    override val streamFormats: List<StreamFormat> get() = SubsonicClient.STREAM_FORMATS
+    /**
+     * Everything the Subsonic API's `format` parameter defines, which a
+     * server is expected to transcode to on demand. A deployment missing a
+     * transcoder for one of these answers with its default instead — that is
+     * a server-side gap, and the honest place to close it is the server.
+     */
+    override val streamFormats: List<StreamFormat> = StreamFormat.entries.toList()
 
     /**
      * Asked of this server rather than assumed of the protocol: not every
