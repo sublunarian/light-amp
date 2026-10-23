@@ -79,7 +79,7 @@ class DlnaFormatsTest {
     }
 
     @Test
-    fun `without a length, or never heard, a stop is the end as before`() {
+    fun `without a length, or never heard, a stop is the end`() {
         assertFalse(stoppedPartWay(heardMs = 77_000L, totalMs = 0L))
         assertFalse(stoppedPartWay(heardMs = -1L, totalMs = 163_000L))
     }

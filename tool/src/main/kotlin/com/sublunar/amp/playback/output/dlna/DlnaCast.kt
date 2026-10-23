@@ -7,17 +7,11 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * DLNA / UPnP-AV casting.
- *
- * Implements just enough of a UPnP AV control point to push a stream at a
- * renderer: SSDP discovery, then SOAP calls against the device's AVTransport
- * service. No external dependency — SSDP is raw UDP and the SOAP calls are
- * plain HTTP, so `java.net` covers all of it.
- */
+/** A media renderer as [DlnaCast.discover] described it. */
 data class DlnaRenderer(
     /** Device UDN, stable across discoveries. */
     val id: String,
@@ -25,9 +19,9 @@ data class DlnaRenderer(
     /** Absolute URL of the device's AVTransport control endpoint. */
     val controlUrl: String,
     /** RenderingControl endpoint, when the device exposes volume control. */
-    val renderingControlUrl: String? = null,
+    val renderingControlUrl: String?,
     /** ConnectionManager endpoint, used to ask which formats it accepts. */
-    val connectionManagerUrl: String? = null,
+    val connectionManagerUrl: String?,
 )
 
 /** Playback state reported by a renderer. */
@@ -37,9 +31,14 @@ data class DlnaPosition(
     val positionMs: Long,
     val durationMs: Long,
     /** What the renderer says it is playing — how a gapless hand-off is noticed. */
-    val trackUri: String? = null,
+    val trackUri: String?,
 )
 
+/**
+ * Just enough of a UPnP AV control point to push a stream at a renderer: SSDP
+ * discovery, then SOAP calls against the device's AVTransport service. SSDP is
+ * raw UDP and SOAP is plain HTTP, so `java.net` covers all of it.
+ */
 object DlnaCast {
 
     /**
@@ -63,16 +62,30 @@ object DlnaCast {
     private const val RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1"
     private const val CONNECTION_MANAGER = "urn:schemas-upnp-org:service:ConnectionManager:1"
 
+    private const val RENDERER_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1"
+
     /**
-     * Top of the fader's range, as a DLNA 0-100 volume.
-     *
-     * Carried over from the previous app (`services/castVolume.ts`), where the
-     * window was tuned so this receiver behaves like an iPhone casting to it —
-     * a full fader is 74, not a raw 100.
+     * Top of the fader's range, as a DLNA 0-100 volume: a full fader is 74,
+     * not 100, so a receiver sounds as it does with an iPhone casting to it.
      */
     private const val VOLUME_CEILING = 74
-    private const val RENDERER_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1"
     private const val HTTP_TIMEOUT_MS = 5_000
+    private const val DISCOVERY_MS = 3_000L
+    private const val RECEIVE_SLICE_MS = 400
+
+    /** The tag a failed call is logged under: the cast's own. */
+    private const val LOG_TAG = "AmpCast"
+
+    /** More escaping than any renderer has been seen to add. */
+    private const val UNESCAPE_ROUNDS = 3
+
+    /** The parts of a stream address a log line keeps: which song, in what, from where. */
+    private val LOGGED_PARAMS = listOf("id", "format", "maxBitRate", "timeOffset", "path")
+
+    private val SERVICE_BLOCK = Regex("<service>.*?</service>", RegexOption.DOT_MATCHES_ALL)
+
+    /** [tagValue]'s pattern for each tag, compiled once: a cast's poll reads four tags a second. */
+    private val TAG_PATTERNS = ConcurrentHashMap<String, Regex>()
 
     // --- Discovery -----------------------------------------------------------
 
@@ -82,7 +95,7 @@ object DlnaCast {
      * Replies arrive as unicast to our ephemeral port, so a plain [DatagramSocket]
      * is enough — no multicast lock (and therefore no WifiManager) required.
      */
-    suspend fun discover(timeoutMs: Long = 3_000): List<DlnaRenderer> = withContext(Dispatchers.IO) {
+    suspend fun discover(): List<DlnaRenderer> = withContext(Dispatchers.IO) {
         if (!allowsNetwork()) return@withContext emptyList()
         val locations = linkedSetOf<String>()
         try {
@@ -103,7 +116,7 @@ object DlnaCast {
                 }
 
                 val buffer = ByteArray(8192)
-                val deadline = System.currentTimeMillis() + timeoutMs
+                val deadline = System.currentTimeMillis() + DISCOVERY_MS
                 while (System.currentTimeMillis() < deadline) {
                     val packet = DatagramPacket(buffer, buffer.size)
                     try {
@@ -126,17 +139,19 @@ object DlnaCast {
         val xml = httpGet(location) ?: return null
         val name = tagValue(xml, "friendlyName")?.takeIf { it.isNotBlank() } ?: return null
         val control = controlUrlFor(xml, "AVTransport") ?: return null
-        val absolute = runCatching { URL(URL(location), control).toString() }.getOrNull() ?: return null
+        val absolute = resolve(location, control) ?: return null
         return DlnaRenderer(
             id = tagValue(xml, "UDN")?.takeIf { it.isNotBlank() } ?: location,
             name = name.trim(),
             controlUrl = absolute,
-            renderingControlUrl = controlUrlFor(xml, "RenderingControl")
-                ?.let { runCatching { URL(URL(location), it).toString() }.getOrNull() },
-            connectionManagerUrl = controlUrlFor(xml, "ConnectionManager")
-                ?.let { runCatching { URL(URL(location), it).toString() }.getOrNull() },
+            renderingControlUrl = controlUrlFor(xml, "RenderingControl")?.let { resolve(location, it) },
+            connectionManagerUrl = controlUrlFor(xml, "ConnectionManager")?.let { resolve(location, it) },
         )
     }
+
+    /** [path] made absolute against the description's [location], or null when it won't parse. */
+    private fun resolve(location: String, path: String): String? =
+        runCatching { URL(URL(location), path).toString() }.getOrNull()
 
     /** The controlURL of the service block whose serviceType contains [service]. */
     internal fun controlUrlFor(xml: String, service: String): String? =
@@ -161,7 +176,7 @@ object DlnaCast {
         artist: String,
         album: String,
         durationMs: Long,
-        mimeType: String = "audio/mpeg",
+        mimeType: String,
     ): Boolean = setUri(renderer, url, title, artist, album, durationMs, mimeType) && resume(renderer)
 
     /**
@@ -175,7 +190,7 @@ object DlnaCast {
         artist: String,
         album: String,
         durationMs: Long,
-        mimeType: String = "audio/mpeg",
+        mimeType: String,
     ): Boolean {
         val didl = didlMetadata(url, title, artist, album, durationMs, mimeType)
         return soap(
@@ -189,16 +204,12 @@ object DlnaCast {
     }
 
     /**
-     * Hand the renderer the *next* track so it can cross into it without a gap.
+     * Hand the renderer the *next* track so it can cross into it without a gap:
+     * it pre-buffers `NextAVTransportURI` and switches on its own, where a
+     * stop-then-push costs seconds of silence.
      *
-     * This is how UPnP does gapless: the renderer pre-buffers `NextAVTransportURI`
-     * and switches at the end of the current stream on its own, with no round trip
-     * to us. Waiting for it to report STOPPED and then pushing a new URI costs a
-     * poll interval plus two SOAP calls plus a buffer fill — seconds of silence.
-     *
-     * Optional in the spec: renderers that don't implement it answer with a SOAP
-     * fault, which surfaces here as false and leaves the stop-and-start path to
-     * carry on as before.
+     * Optional in the spec: a renderer without it answers with a SOAP fault,
+     * false here, and the stop-and-start path carries the queue instead.
      */
     suspend fun setNext(
         renderer: DlnaRenderer,
@@ -207,7 +218,7 @@ object DlnaCast {
         artist: String,
         album: String,
         durationMs: Long,
-        mimeType: String = "audio/mpeg",
+        mimeType: String,
     ): Boolean {
         val didl = didlMetadata(url, title, artist, album, durationMs, mimeType)
         return soap(
@@ -247,11 +258,8 @@ object DlnaCast {
 
     /**
      * MIME types the renderer says it can play, from ConnectionManager's Sink
-     * protocol info.
-     *
-     * Worth asking because it decides whether we can hand the device lossless
-     * audio instead of transcoding to MP3. An empty result means "unknown" — the
-     * caller should then assume only the safe baseline.
+     * protocol info. Empty when it won't say, which [sinkAccepts] takes as
+     * accepting anything.
      */
     suspend fun sinkFormats(renderer: DlnaRenderer): Set<String> {
         val url = renderer.connectionManagerUrl ?: return emptySet()
@@ -265,23 +273,16 @@ object DlnaCast {
     }
 
     /**
-     * The MIME type of what the server will actually stream, decided by sniffing
-     * the container's magic bytes.
-     *
-     * The response header can't be trusted: a Navidrome transcoding "flac" happily
-     * sends `Content-Type: audio/flac` with an **Ogg**-FLAC body. A renderer that
-     * advertises `audio/flac` accepts that URI and then stalls without erroring, so
-     * the bytes are the only reliable answer. Falls back to the header, then null.
+     * The MIME type of what the server will actually stream, sniffed from the
+     * container's magic bytes. The header can't be trusted: a Navidrome
+     * transcoding "flac" sends `Content-Type: audio/flac` with an **Ogg**-FLAC
+     * body, which an `audio/flac` renderer accepts and then stalls on silently.
+     * Falls back to the header, then null.
      */
     suspend fun probeMime(url: String): String? = withContext(Dispatchers.IO) {
         if (!allowsNetwork()) return@withContext null
         try {
-            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                setRequestProperty("Range", "bytes=0-11")
-                connectTimeout = HTTP_TIMEOUT_MS
-                readTimeout = HTTP_TIMEOUT_MS
-            }
+            val connection = rangeGet(url)
             val head = ByteArray(12)
             val read = connection.inputStream.use { it.read(head) }
             val header = connection.contentType?.substringBefore(';')?.trim()?.lowercase()
@@ -294,30 +295,20 @@ object DlnaCast {
 
     /**
      * Whether the server will hand [url] over in byte ranges, and so whether a
-     * renderer can seek inside it at all. Null when the question could not be
-     * answered, so the caller keeps doing whatever it would have done.
+     * renderer can seek inside it at all. Null when it couldn't be asked.
      *
-     * This has to be measured rather than inferred from the format asked for. A
-     * server asked for mp3 when the file is *already* mp3 hands the file over
-     * untouched — seekable, and it ignores a time offset — while the identical
-     * request against a flac original is a live transcode that is neither. Only
-     * the response separates them: a range request against a real file comes
-     * back 206, and against a chunked encode it comes back 200 with the range
-     * quietly ignored.
+     * Measured, not inferred from the format: mp3 asked of an mp3 file is the
+     * file untouched (seekable, and it ignores a time offset), while the same
+     * request of a flac original is a live transcode that is neither. A range
+     * request answers 206 for a file and 200 for a chunked encode.
      */
     suspend fun supportsRanges(url: String): Boolean? = withContext(Dispatchers.IO) {
         if (!allowsNetwork()) return@withContext null
         try {
-            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                setRequestProperty("Range", "bytes=0-11")
-                connectTimeout = HTTP_TIMEOUT_MS
-                readTimeout = HTTP_TIMEOUT_MS
-            }
+            val connection = rangeGet(url)
             val partial = connection.responseCode == HttpURLConnection.HTTP_PARTIAL
-            // Drained and closed rather than abandoned: a transcode left hanging
-            // on a socket nobody reads is the exact stall this file already had
-            // to be fixed for once.
+            // Drained and closed: a transcode left hanging on a socket nobody
+            // reads stalls.
             runCatching { connection.inputStream.use { it.read(ByteArray(12)) } }
             connection.disconnect()
             partial
@@ -325,6 +316,15 @@ object DlnaCast {
             null
         }
     }
+
+    /** A GET for [url]'s first twelve bytes, as both probes ask. */
+    private fun rangeGet(url: String): HttpURLConnection =
+        (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            setRequestProperty("Range", "bytes=0-11")
+            connectTimeout = HTTP_TIMEOUT_MS
+            readTimeout = HTTP_TIMEOUT_MS
+        }
 
     /** Container from magic bytes, or null when nothing recognisable was read. */
     internal fun sniffContainer(head: ByteArray, length: Int): String? {
@@ -348,10 +348,8 @@ object DlnaCast {
     // --- Volume (RenderingControl) -------------------------------------------
 
     /**
-     * Set the renderer's volume from a 0..1 fader position.
-     *
-     * Volume lives on a *different* UPnP service from transport, so this needs the
-     * device's RenderingControl endpoint; devices without one report false.
+     * Set the renderer's volume from a 0..1 fader position. Volume is on the
+     * RenderingControl service, not AVTransport: false for a device without it.
      */
     suspend fun setVolume(renderer: DlnaRenderer, fraction: Float): Boolean =
         setRawVolume(renderer, fractionToVolume(fraction))
@@ -481,9 +479,7 @@ object DlnaCast {
             val body = (if (ok) connection.inputStream else connection.errorStream)
                 ?.use { it.readBytes().decodeToString() }
             connection.disconnect()
-            // A line for a call that failed, with the renderer's own reason
-            // where it gave one. They used to vanish here, and a hand-off the
-            // renderer had taken looked the same as one it refused.
+            // A failed call is logged with the renderer's own reason, where it gave one.
             if (ok) {
                 failing.remove("$action $controlUrl")
             } else {
@@ -500,11 +496,10 @@ object DlnaCast {
     }
 
     /**
-     * The calls whose last try failed, by action and renderer. A renderer
-     * gone from the network fails its poll every second, and a line for
-     * each would roll the log the device tests are read from.
+     * The calls whose last try failed, by action and renderer. A renderer gone
+     * from the network fails its poll every second, too often to log each.
      */
-    private val failing = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val failing = ConcurrentHashMap.newKeySet<String>()
 
     /** Log [action]'s failure once, until it next succeeds. */
     private fun noteFailure(action: String, controlUrl: String, why: String) {
@@ -574,18 +569,6 @@ object DlnaCast {
 
     // --- Parsing helpers -----------------------------------------------------
 
-    private val SERVICE_BLOCK = Regex("<service>.*?</service>", RegexOption.DOT_MATCHES_ALL)
-    private const val RECEIVE_SLICE_MS = 400
-
-    /** The tag a failed call is logged under: the cast's own. */
-    private const val LOG_TAG = "AmpCast"
-
-    /** More escaping than any renderer has been seen to add. */
-    private const val UNESCAPE_ROUNDS = 3
-
-    /** The parts of a stream address a log line keeps: which song, in what, from where. */
-    private val LOGGED_PARAMS = listOf("id", "format", "maxBitRate", "timeOffset", "path")
-
     /** Value of an SSDP/HTTP response header, case-insensitively. */
     internal fun headerValue(response: String, name: String): String? =
         response.lineSequence()
@@ -595,16 +578,18 @@ object DlnaCast {
             ?.takeIf { it.isNotEmpty() }
 
     /**
-     * First value of an XML element, ignoring namespace prefixes. Deliberately
-     * regex rather than a parser: these documents are small and we only need a
-     * handful of leaf values.
+     * First value of an XML element, ignoring namespace prefixes. Regex rather
+     * than a parser: the documents are small and only a few leaf values are read.
      */
     internal fun tagValue(xml: String, tag: String): String? =
-        Regex("<(?:[A-Za-z0-9_.-]+:)?$tag[^>]*>(.*?)</(?:[A-Za-z0-9_.-]+:)?$tag>", RegexOption.DOT_MATCHES_ALL)
-            .find(xml)
+        tagPattern(tag).find(xml)
             ?.groupValues
             ?.get(1)
             ?.let(::unescape)
+
+    private fun tagPattern(tag: String): Regex = TAG_PATTERNS.getOrPut(tag) {
+        Regex("<(?:[A-Za-z0-9_.-]+:)?$tag[^>]*>(.*?)</(?:[A-Za-z0-9_.-]+:)?$tag>", RegexOption.DOT_MATCHES_ALL)
+    }
 
     private fun escape(value: String): String = value
         .replace("&", "&amp;")

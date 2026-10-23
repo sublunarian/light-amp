@@ -13,13 +13,12 @@ package com.sublunar.amp.playback.output.dlna
  * [notPlaying] also counts readings that came back UNKNOWN, which is what a
  * failed SOAP call looks like. It decides whether a track that has *never*
  * played needs starting by hand, and a false positive there costs nothing:
- * there was no audio to interrupt. Counting only STOPPED for that was a bug —
- * a renderer that is dead *and* slow to answer flaps between STOPPED and
- * UNKNOWN, every UNKNOWN put the count back to zero, the threshold was never
- * reached, and the cast sat in silence indefinitely.
+ * there was no audio to interrupt. Counting only STOPPED there fails on a
+ * renderer that is dead *and* slow to answer: it flaps between STOPPED and
+ * UNKNOWN, the count never reaches the threshold, and the cast sits silent.
  *
- * TRANSITIONING clears both. It is the renderer saying it is busy opening a
- * stream, which is the one state that deserves more patience rather than less.
+ * TRANSITIONING clears both: the renderer is busy opening a stream, the one
+ * state that deserves more patience rather than less.
  */
 internal class CastStallCounter {
 

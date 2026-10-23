@@ -7,13 +7,9 @@ import org.junit.Test
 class CastStallCounterTest {
 
     /**
-     * The readings the Denon actually gave while a cast failed to start, taken
-     * from a capture on 2026-08-15. The renderer had been handed a stream, was
-     * not playing it, and was answering only intermittently.
-     *
-     * Restarting needs six in a row. Counting only STOPPED, this run peaked at
-     * two and then went back to zero, which is why the cast was never recovered
-     * and sat in silence until it was restarted by hand.
+     * Readings a real renderer gave while a cast failed to start: handed a
+     * stream, not playing it, and answering only now and then. Restarting
+     * needs six in a row, and counting only STOPPED this run never gets there.
      */
     private val whenACastNeverStarted = listOf(
         DlnaState.UNKNOWN,

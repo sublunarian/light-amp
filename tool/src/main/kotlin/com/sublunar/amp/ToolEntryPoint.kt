@@ -5,11 +5,7 @@ import com.thelightphone.sdk.LightEntryPoint
 import com.thelightphone.sdk.shared.LightServerData
 import kotlinx.coroutines.flow.StateFlow
 
-/**
- * Tool lifecycle hook. The player initializes its singletons lazily from the
- * first screen (which owns the activity context), so there is nothing to do
- * here yet. Push notifications are unused.
- */
+/** Required by the SDK. Amp boots from BootScreen instead (see App.boot), and uses no pushes. */
 @EntryPoint
 object ToolEntryPoint : LightEntryPoint {
     override suspend fun onToolCreate(serverData: StateFlow<LightServerData?>) {}

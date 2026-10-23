@@ -35,9 +35,8 @@ internal fun sinkAccepts(sink: Set<String>, mime: String): Boolean {
 /**
  * Whether a renderer that stopped after playing stopped part-way through: last
  * heard [heardMs] into the track, more than [nearEndMs] short of [totalMs].
- * Then it was stopped — the Denon's remote pauses that way — rather than come
- * to the end of the song. A length nobody knows can't say, and is the end, as
- * it always was.
+ * Then it was stopped (some remotes pause that way) rather than come to the
+ * end of the song. With no known length, a stop is the end.
  */
 internal fun stoppedPartWay(heardMs: Long, totalMs: Long, nearEndMs: Long = 10_000L): Boolean =
     totalMs > 0L && heardMs >= 0L && totalMs - heardMs > nearEndMs

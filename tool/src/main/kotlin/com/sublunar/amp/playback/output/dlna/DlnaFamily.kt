@@ -11,19 +11,17 @@ import com.sublunar.amp.playback.output.OutputTarget
  * server's stream URL and steered over UPnP. [DlnaCast] speaks the protocol,
  * [DlnaOutput] does the playing.
  *
- * All of DLNA is in this folder, and Amp's own code throughout — it needs
- * nothing the sandbox withholds. Nothing outside the folder names it but
- * Outputs, which lists the family, so taking DLNA out is deleting this
- * folder, its tests' folder and that one line.
+ * All of DLNA is Amp's own code in this folder, needing nothing the sandbox
+ * withholds. Nothing outside it names it but Outputs, so taking DLNA out is
+ * deleting this folder, its tests' folder and that one line.
  */
 object DlnaFamily : OutputFamily {
     override val id = "dlna"
 
     override fun create(host: OutputHost): Output = DlnaOutput(host)
 
-    // DLNA is a Wi-Fi feature, full stop: no search, no cast, no probe
-    // and no control call anywhere else. Asked of the system each time
-    // — a cast is a handful of calls a second, not a stream of bytes.
+    // LAN only: every search, probe and control call asks the rules afresh,
+    // which a handful of calls a second can afford.
     override fun install(rules: () -> LinkRules) {
         DlnaCast.allowsNetwork = { rules().mayUseLan }
     }

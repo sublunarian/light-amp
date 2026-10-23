@@ -10,28 +10,24 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * What every control is routed to while the sound is somewhere other than
- * this phone: a speaker on the network, or a Plex player across the room.
+ * Where every control goes while the sound is somewhere other than this
+ * phone: a speaker on the network, or a Plex player across the room.
  *
- * The phone's own player is not one of these. It is the controller's default
- * path, and a standby kept up to date even while something else plays — every
- * queue edit reaches it — so "no output" means this phone, and each control
- * asks the output first and falls through to its own code when there is none.
+ * The phone's own player is not an output. It is the controller's default,
+ * kept up to date as a standby while something else plays, so "no output"
+ * means this phone and each control falls through to the controller's code.
  *
- * Called on the caller's thread, which is Main except where a member says
- * otherwise. The controller's state is still the one the screens read: it
- * writes what it can say for itself before calling — a press of play is shown
- * as playing at once — and the output keeps the rest true as the far end
- * reports.
+ * Called on Main unless a member says otherwise. The controller shows what it
+ * can say for itself before calling (a press of play shows playing at once);
+ * the output keeps the rest true as the far end reports.
  */
 interface OutputControls {
     /** The log tag its lines go under. A constant, never worked out from a class name. */
     val logTag: String
 
     /**
-     * The far end tells the server about its own playback, as a session of
-     * its own: the phone then sends no timeline and no now-playing, which
-     * would put a second listener on the server's dashboard.
+     * The far end reports its own playback to the server, so the phone sends
+     * no timeline and no now-playing: that would be a second listener.
      */
     val reportsItself: Boolean
 
@@ -98,10 +94,9 @@ interface Output : OutputControls {
 
     /**
      * Take the sound to [target], from [fromMs] into the queue's current
-     * track: playing there if [play] — the phone was playing, or starting —
-     * and otherwise chosen and waiting for a play, as an AirPlay speaker
-     * chosen while paused stays silent. On Main, with the phone already
-     * paused and this already the output that has the sound.
+     * track: playing there if [play] (the phone was playing, or starting),
+     * otherwise chosen and silent until a play. On Main, with the phone
+     * already paused and this already the output that has the sound.
      */
     fun connect(target: OutputTarget, fromMs: Long, play: Boolean)
 
@@ -122,8 +117,8 @@ interface Output : OutputControls {
 
     /**
      * The link is back after [Disconnect.LinkLost] took [target] away: find
-     * it again, stop whatever of this queue's it is still playing — as an
-     * iPhone does with a speaker it finds again — and say where it had got
+     * it again, stop whatever of this queue's it is still playing (as an
+     * iPhone does with a speaker it finds again) and say where it had got
      * to. Off Main, and bounded by the caller. Null when it isn't to be found,
      * or is busy with something that isn't this queue's.
      */
@@ -201,13 +196,11 @@ enum class VolumeControl {
 
 /**
  * What an output is given of the controller: the state the screens read,
- * which the output keeps true while it has the sound, and the few services
- * the core keeps for every kind of output.
+ * which the output keeps true while it has the sound, and a few services.
  *
- * The flows stay the controller's. An output writes them through the show
- * calls rather than keeping a copy of its own for the screens to follow:
- * what a cast does in one breath — move the index, then announce the song at
- * it — has to be read in that order, and a copy would be a hop behind.
+ * The flows stay the controller's, written through the show calls. A copy of
+ * the output's own would be a hop behind: a cast moves the index and then
+ * announces the song at it, and those must be read in that order.
  */
 interface OutputHost {
     /** The process's scope. An output's jobs live here, never with a handle: a cast outlives the activity. */
@@ -228,17 +221,15 @@ interface OutputHost {
     fun showPlaying(playing: Boolean)
 
     /**
-     * Paused at the far end — its own remote, a player's own button — and
-     * not waiting on anything, so nothing is starting any more. Apart from
-     * [showPlaying] because a player that is buffering isn't playing either,
-     * and that one still is starting.
+     * Paused at the far end (its own remote, say), so nothing is starting any
+     * more. Apart from `showPlaying(false)`, which a buffering player also
+     * says while it is still starting.
      */
     fun showPaused()
 
     /**
-     * The far end is making sound — its own report that it is playing what it
-     * was given: a start under way has started. Apart from [showPlaying],
-     * which a start says of itself before a note has played.
+     * The far end says it is making sound: a start under way has started.
+     * Apart from [showPlaying], which a start says before a note has played.
      */
     fun showSounding()
     fun showPosition(ms: Long)
@@ -262,8 +253,8 @@ interface OutputHost {
 
     /**
      * The server's own address for [track] in [format], or null with no
-     * server. Never the loopback door's: the far end fetches for itself, and
-     * the door is on this phone, where a speaker can't reach it.
+     * server. Never the loopback proxy's: the far end fetches for itself and
+     * can't reach a door on this phone.
      */
     fun streamUrl(
         track: Track,
@@ -283,10 +274,9 @@ interface OutputHost {
     fun announceNowPlaying()
 
     /**
-     * [output]'s far end ran out of queue: back to the first track, at its
-     * start, paused — what the phone's own player does at the end of a queue.
-     * The output stays the one with the sound, and plays from there at the
-     * next press of play.
+     * [output]'s far end ran out of queue: back to the first track, paused, as
+     * the phone's own player does. The output keeps the sound, and plays from
+     * there at the next press of play.
      */
     fun queueFinished(output: Output)
 
@@ -295,9 +285,8 @@ interface OutputHost {
 
     /**
      * [output] gave up on [target] before anything played there: let go of it,
-     * and nothing else. The phone sits paused where the cast began, and is
-     * shown so. Only if [target] is still the one being steered — a newer
-     * cast is left alone.
+     * and nothing else; the phone is shown paused where the cast began. Only
+     * if [target] is still the one being steered: a newer cast is left alone.
      */
     fun dropped(output: Output, target: OutputTarget)
 
@@ -308,9 +297,9 @@ interface OutputHost {
     fun couldNotPlay(output: Output)
 
     /**
-     * The far end stopped on its own — stop pressed on the TV, its app quit:
-     * let go of [target], show paused, give the fader back to the phone and
-     * cue the queue on the phone where the far end left it, paused. Any thread.
+     * The far end stopped on its own (stop pressed on the TV, its app quit):
+     * let go of [target], give the fader back to the phone and cue the queue
+     * on the phone where the far end left it, paused. Any thread.
      */
     fun endedOnItsOwn(output: Output, target: OutputTarget)
 }

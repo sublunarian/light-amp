@@ -1,26 +1,21 @@
 package com.sublunar.amp.source.plex.companion
 
+import com.sublunar.amp.data.NetworkGate
+import com.sublunar.amp.source.plex.PlexPlayer
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import com.sublunar.amp.data.NetworkGate
-import com.sublunar.amp.source.plex.PlexPlayer
 
 /**
- * Plex's own LAN discovery — GDM — for finding players on this network.
+ * Plex's own LAN discovery, GDM, for finding players on this network. Needed
+ * because plex.tv's device list drops a device that sleeps: an Apple TV woken
+ * and playing can be missing from it while on the same Wi-Fi.
  *
- * The way Plex's own controllers find a player, and the reason it is here: the
- * account's device list at plex.tv is not a reliable census. It drops a device
- * that sleeps, and an Apple TV woken up and playing music can be missing from
- * it entirely while sitting on the same Wi-Fi, ready. Asking the network
- * settles that without asking anyone's opinion.
- *
- * A broadcast `M-SEARCH` to port 32412 and each player answers, unicast, with
+ * A broadcast `M-SEARCH` to port 32412, and each player answers, unicast, with
  * a few HTTP-shaped headers naming itself. Replies come back to our own
- * ephemeral port, so this needs no multicast lock and no WifiManager — the
- * same reason the SSDP discovery in `DlnaCast` doesn't.
+ * ephemeral port, so no multicast lock or WifiManager is needed.
  */
 object PlexGdm {
 
@@ -29,16 +24,10 @@ object PlexGdm {
     private const val LISTEN_MS = 2_000
     private const val SOCKET_TIMEOUT_MS = 400
 
-    /**
-     * Players that answer within a couple of seconds.
-     *
-     * Blocking on the network, so it belongs off the main thread; [findPlayers]
-     * places itself.
-     */
+    /** Players that answer within a couple of seconds. */
     suspend fun findPlayers(): List<PlexPlayer> = withContext(Dispatchers.IO) {
-        // A broadcast is a LAN thing, and the LAN in question could be a
-        // hotspot — which is metered, and so cellular as far as Wi-Fi Only is
-        // concerned. Same wall as every other socket in the app.
+        // The LAN could be a metered hotspot, which Wi-Fi Only counts as
+        // cellular: the same wall as every other socket.
         if (!NetworkGate.isOpen()) return@withContext emptyList()
         val found = LinkedHashMap<String, PlexPlayer>()
         runCatching {
@@ -47,8 +36,7 @@ object PlexGdm {
                 socket.soTimeout = SOCKET_TIMEOUT_MS
                 val payload = SEARCH.toByteArray()
                 val target = InetAddress.getByName("255.255.255.255")
-                // Twice: UDP drops, and a missed search is a device that
-                // simply doesn't appear.
+                // Twice: UDP drops, and a missed search is a missing device.
                 repeat(2) {
                     runCatching {
                         socket.send(DatagramPacket(payload, payload.size, target, CLIENT_PORT))
@@ -86,8 +74,7 @@ object PlexGdm {
             }
             .toMap()
         val id = headers["resource-identifier"]?.takeIf { it.isNotBlank() } ?: return null
-        // Controllers and servers answer too; only somewhere sound can go is
-        // worth listing.
+        // Controllers and servers answer too: only players are listed.
         if (headers["protocol-capabilities"]?.contains("playback") != true) return null
         val port = headers["port"]?.toIntOrNull() ?: return null
         return PlexPlayer(

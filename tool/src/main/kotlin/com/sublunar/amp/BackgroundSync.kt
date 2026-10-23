@@ -6,20 +6,15 @@ import com.thelightphone.sdk.LightJobHandler
 import com.thelightphone.sdk.LightJobResult
 
 /**
- * Periodic library refresh. Runs while the tool's process is alive; on a fresh
- * process (no booted app) it no-ops, since the next launch syncs anyway.
+ * Periodic library refresh, enqueued under the same key as App.SYNC_JOB_KEY.
+ * A no-op in a process with no booted app: the next launch syncs anyway.
  */
 @LightJob("library-sync")
 val librarySyncJob: LightJobHandler = { _, _ ->
-    // Bulk work, by the same test as everything else that is: on a metered
-    // link outside Make it Hurt it waits. Left alone, this walked the whole
-    // album index every half hour of a cellular listening session, against
-    // the stream being played — the launch sync's floor did not cover it.
-    //
-    // Asked of the system rather than of the last callback: a queue held for
-    // Wi-Fi no longer re-reads the link while it waits (see Downloader.drain),
-    // and a callback that missed Wi-Fi arriving is caught here — the fresh
-    // look moves the rules, and the rules start the queue again.
+    // Bulk work, so on a metered link outside Make it Hurt it waits rather
+    // than walk the album index against the stream being played. Asked of the
+    // system, not the last callback: a callback that missed Wi-Fi arriving is
+    // caught here, and the fresh rules restart a download queue held for Wi-Fi.
     if (App.isReady && App.rulesNow().mayMoveHeavyBytes) {
         runCatching { App.library.sync() }.noteOom("background sync")
         // The one background moment a download server that stopped answering

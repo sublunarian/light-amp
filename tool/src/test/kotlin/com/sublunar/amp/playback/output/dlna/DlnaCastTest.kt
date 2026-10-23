@@ -147,8 +147,8 @@ class DlnaCastTest {
     }
 
     @Test
-    fun `fader maps onto the old app's 0-74 cast volume window`() {
-        // Matches services/castVolume.ts: a full fader is 74, not 100.
+    fun `fader maps onto the 0-74 cast volume window`() {
+        // A full fader is 74, not 100.
         assertEquals(0, DlnaCast.fractionToVolume(0f))
         assertEquals(37, DlnaCast.fractionToVolume(0.5f))
         assertEquals(74, DlnaCast.fractionToVolume(1f))

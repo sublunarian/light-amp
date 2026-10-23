@@ -5,9 +5,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 /**
- * The Companion bodies are the only XML the tool itself parses, and the parser
- * is a hand-rolled attribute scan — exactly the sort of thing that quietly
- * breaks on an entity or a similar tag name, so it is pinned down here.
+ * The Companion parser is a hand-rolled attribute scan, the sort of thing that
+ * quietly breaks on an entity or a similar tag name, so it is pinned here.
  */
 class PlexCompanionParsingTest {
 
