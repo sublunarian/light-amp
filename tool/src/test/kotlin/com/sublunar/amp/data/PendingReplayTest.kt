@@ -108,20 +108,20 @@ class PendingReplayTest {
             action(Kind.SCROBBLE, "a"),
             action(Kind.RATE_ALBUM, "a"),
         )
-        assertEquals(queue.drop(1), queue.without(action(Kind.STAR_SONG, "a")))
-        assertEquals(queue, queue.without(action(Kind.RATE_SONG, "a")))
+        assertEquals(queue.drop(1), queue.filterNot { action(Kind.STAR_SONG, "a").replaces(it) })
+        assertEquals(queue, queue.filterNot { action(Kind.RATE_SONG, "a").replaces(it) })
     }
 
     @Test
     fun `a play never replaces another play`() {
         val queue = listOf(action(Kind.SCROBBLE, "a"), action(Kind.SCROBBLE, "a"))
-        assertEquals(queue, queue.without(action(Kind.SCROBBLE, "a")))
+        assertEquals(queue, queue.filterNot { action(Kind.SCROBBLE, "a").replaces(it) })
     }
 
     @Test
     fun `the same thing on another source is a different thing, but an entry with no source is anyone's`() {
         val other = action(Kind.UNSTAR_SONG, "a", source = "b")
         val legacy = action(Kind.UNSTAR_SONG, "a", source = null)
-        assertEquals(listOf(other), listOf(other, legacy).without(action(Kind.STAR_SONG, "a", source = "a")))
+        assertEquals(listOf(other), listOf(other, legacy).filterNot { action(Kind.STAR_SONG, "a", source = "a").replaces(it) })
     }
 }

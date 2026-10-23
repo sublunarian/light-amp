@@ -4,8 +4,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Something the user did that the server hasn't been told about yet.
@@ -20,7 +24,8 @@ data class PendingAction(
     val id: String,
     /** Stars for [Kind.RATE]; unused otherwise. */
     val value: Int = 0,
-    val atMs: Long = System.currentTimeMillis(),
+    // Always written: left out, it would read back as the time it was read.
+    @EncodeDefault val atMs: Long = System.currentTimeMillis(),
     /**
      * The source it was done on. The queue is one for every source, and a like
      * replayed to a server that never had the song is refused and dropped.
@@ -58,10 +63,14 @@ data class PendingAction(
  * leave the server disagreeing with the phone. A write the server answered no to
  * is dropped and said instead: it would get the same answer every time, and kept,
  * it held everything behind it — plays included — for good.
+ *
+ * Read one entry at a time. One this build can't read — a kind a newer build
+ * added, a field whose type moved — is never sent and stays as it was stored,
+ * where it was, so going back a version neither loses it nor everything else
+ * with it. A later like or rating for the same thing still replaces it.
  */
 class PendingActions(private val settings: AppSettings) {
 
-    private val json = Json { ignoreUnknownKeys = true }
     private val lock = Mutex()
 
     private val _count = MutableStateFlow(0)
@@ -69,20 +78,18 @@ class PendingActions(private val settings: AppSettings) {
     /** How many actions are waiting — surfaced in Settings. */
     val count: StateFlow<Int> = _count
 
-    suspend fun load(): List<PendingAction> = decode(settings.pendingActions())
-
     /** Call once at boot so the count is right before anything is added. */
     suspend fun refreshCount() {
-        _count.value = load().size
+        _count.value = decode(settings.pendingActions()).size
     }
 
     suspend fun add(action: PendingAction) = lock.withLock {
         // A rating or a like replaces the last one for the same thing: only the
         // final state matters, and a long offline session shouldn't send a
         // hundred requests to arrive at it. Plays are never collapsed.
-        val queue = decode(settings.pendingActions()).without(action) + action
+        val queue = decode(settings.pendingActions()).filterNot { action.replaces(it.about) } + entry(action)
         val trimmed = if (queue.size > MAX_QUEUED) queue.takeLast(MAX_QUEUED) else queue
-        settings.setPendingActions(json.encodeToString(trimmed))
+        settings.setPendingActions(encode(trimmed))
         _count.value = trimmed.size
     }
 
@@ -94,9 +101,9 @@ class PendingActions(private val settings: AppSettings) {
         if (landed.kind == PendingAction.Kind.SCROBBLE) return
         lock.withLock {
             val queue = decode(settings.pendingActions())
-            val left = queue.without(landed)
+            val left = queue.filterNot { landed.replaces(it.about) }
             if (left.size == queue.size) return@withLock
-            settings.setPendingActions(if (left.isEmpty()) "" else json.encodeToString(left))
+            settings.setPendingActions(encode(left))
             _count.value = left.size
         }
     }
@@ -118,10 +125,10 @@ class PendingActions(private val settings: AppSettings) {
         lock.withLock {
             val queue = decode(settings.pendingActions())
             if (queue.isEmpty()) return@withLock emptyList()
-            val run = replay(queue, mine = { it.sourceId == null || it.sourceId == sourceId }) {
-                send(it, client, artistId)
-            }
-            settings.setPendingActions(if (run.left.isEmpty()) "" else json.encodeToString(run.left))
+            // One this build can't read is nobody's here: it waits for the build that can.
+            val mine = { e: Entry -> e.action != null && (e.action.sourceId == null || e.action.sourceId == sourceId) }
+            val run = replay(queue, mine) { send(it.action!!, client, artistId) }
+            settings.setPendingActions(encode(run.left))
             _count.value = run.left.size
             run.refused
         }
@@ -149,19 +156,45 @@ class PendingActions(private val settings: AppSettings) {
         }
     }
 
-    private fun decode(raw: String): List<PendingAction> {
-        if (raw.isBlank()) return emptyList()
-        return runCatching { json.decodeFromString<List<PendingAction>>(raw) }.getOrDefault(emptyList())
+    /**
+     * One stored entry, and what this build reads in it — null when it can't.
+     * [about] is what a later like or rating for the same thing replaces.
+     */
+    private class Entry(val stored: JsonElement, val action: PendingAction?) {
+        val about: PendingAction? = action ?: aboutOf(stored)
     }
+
+    private fun entry(action: PendingAction) =
+        Entry(json.encodeToJsonElement(PendingAction.serializer(), action), action)
+
+    private fun decode(raw: String): List<Entry> {
+        val stored = runCatching { json.parseToJsonElement(raw) }.getOrNull() as? JsonArray ?: return emptyList()
+        return stored.map { Entry(it, read(it)) }
+    }
+
+    /** As stored, character for character, which re-encoding wouldn't always be. */
+    private fun encode(queue: List<Entry>): String =
+        if (queue.isEmpty()) "" else JsonArray(queue.map { it.stored }).toString()
 
     private companion object {
         /** Weeks of offline listening, and still nothing near a preferences limit. */
         const val MAX_QUEUED = 2_000
+
+        val ABOUT = setOf("kind", "id", "sourceId")
+
+        val json = Json { ignoreUnknownKeys = true }
+
+        fun read(stored: JsonElement): PendingAction? =
+            runCatching { json.decodeFromJsonElement(PendingAction.serializer(), stored) }.getOrNull()
+
+        /** Its kind, id and source alone, which may still read when the rest of it doesn't. */
+        fun aboutOf(stored: JsonElement): PendingAction? =
+            (stored as? JsonObject)?.let { entry -> read(JsonObject(entry.filterKeys { it in ABOUT })) }
     }
 }
 
 /** What a run through the queue left behind, and the reasons for what it dropped. */
-internal data class Replay(val left: List<PendingAction>, val refused: List<String>)
+internal data class Replay<T>(val left: List<T>, val refused: List<String>)
 
 /**
  * Send [queue] in order through [send], skipping what isn't [mine].
@@ -170,12 +203,12 @@ internal data class Replay(val left: List<PendingAction>, val refused: List<Stri
  * run: it and everything after it stay, in order, unsent. What isn't [mine]
  * stays where it was.
  */
-internal suspend fun replay(
-    queue: List<PendingAction>,
-    mine: (PendingAction) -> Boolean,
-    send: suspend (PendingAction) -> WriteResult,
-): Replay {
-    val left = mutableListOf<PendingAction>()
+internal suspend fun <T> replay(
+    queue: List<T>,
+    mine: (T) -> Boolean,
+    send: suspend (T) -> WriteResult,
+): Replay<T> {
+    val left = mutableListOf<T>()
     val refused = mutableListOf<String>()
     queue.forEachIndexed { i, action ->
         if (!mine(action)) {
@@ -192,11 +225,11 @@ internal suspend fun replay(
 }
 
 /**
- * The queue without whatever [landed] replaces. Plays are never collapsed: each
- * one is its own play.
+ * Whether this makes [queued] moot. Plays are never collapsed: each one is its
+ * own play. One this build can't read is nothing it knows to replace.
  */
-internal fun List<PendingAction>.without(landed: PendingAction): List<PendingAction> =
-    if (landed.kind == PendingAction.Kind.SCROBBLE) this else filterNot { it.supersededBy(landed) }
+internal fun PendingAction.replaces(queued: PendingAction?): Boolean =
+    queued != null && kind != PendingAction.Kind.SCROBBLE && queued.supersededBy(this)
 
 /**
  * Whether [next] sets the same piece of state on the same source. An entry with
