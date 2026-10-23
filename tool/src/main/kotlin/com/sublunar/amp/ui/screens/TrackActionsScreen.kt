@@ -96,11 +96,15 @@ class TrackActionsScreen(
     override fun Content() {
         val source by App.source.collectAsState()
         val tracks by App.library.tracks.collectAsState()
+        val cached by App.library.cachedTracks.collectAsState()
         val playing by App.playback.currentTrack.collectAsState()
         val id = if (followCurrent) playing?.id ?: trackId else trackId
         // The library row is preferred over the queue's copy: liked and rating
         // are edited here and the cached row is the one that gets updated.
-        val track = tracks.firstOrNull { it.id == id } ?: playing?.takeIf { it.id == id } ?: known?.takeIf { it.id == id }
+        val track = tracks.firstOrNull { it.id == id }
+            ?: cached.firstOrNull { it.id == id }
+            ?: playing?.takeIf { it.id == id }
+            ?: known?.takeIf { it.id == id }
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val downloaded = id in downloadedIds
         val queue by App.playback.queue.collectAsState()

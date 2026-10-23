@@ -50,7 +50,7 @@ class PlaylistActionsScreen(
         // would really delete one — and Plex builds their contents from a
         // filter, so renaming is the only thing it would even accept. Neither
         // is offered: see Playlist.readOnly.
-        val readOnly = App.library.playlists.collectAsState().value
+        val readOnly = App.library.allPlaylists.collectAsState().value
             .firstOrNull { it.id == playlistId }?.readOnly == true
         val kind = if (readOnly) "Smart playlist" else "Playlist"
 

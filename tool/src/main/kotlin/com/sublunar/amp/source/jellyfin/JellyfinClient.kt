@@ -166,6 +166,7 @@ class JellyfinClient(
     ): Boolean = runCatching { write(method, path, params, payload) }.isSuccess
 
     @Volatile private var userRoutes: Boolean? = null
+    @Volatile private var movesExact: Boolean? = null
 
     /**
      * Whether this server has the per-user routes that take the user as a
@@ -803,21 +804,43 @@ class JellyfinClient(
         // names an entry by its song since Jellyfin 12, and moves the first.
         // Either way the order that landed wouldn't be the one asked for.
         if (all.size != known.size || known.distinctBy { it.playlistItemId }.size != known.size) return false
-        val entryOf = known.associate { it.id to (it.playlistItemId ?: return false) }
+        // Move names an entry, so a song's copies are handed out in their order.
+        val pool = known.groupBy({ it.id }, { it.playlistItemId ?: return false }).mapValues { ArrayDeque(it.value) }
+        val wanted = orderedSongIds.map { pool.getValue(it).removeFirst() }
         // Worked out from one read: Move takes the index the entry ends up at.
-        val local = known.map { it.id }.toMutableList()
-        val moves = placementMoves(local.toList(), orderedSongIds)
-        for ((songId, after) in moves) {
-            local.remove(songId)
-            val to = if (after == null) 0 else local.indexOf(after) + 1
-            local.add(to, songId)
-            if (!send("POST", "/Playlists/$id/Items/${entryOf.getValue(songId)}/Move/$to")) return false
+        val local = known.mapNotNull { it.playlistItemId }.toMutableList()
+        var moved = false
+        suspend fun move(entryId: String, to: Int): Boolean {
+            local.remove(entryId)
+            local.add(to, entryId)
+            moved = true
+            return send("POST", "/Playlists/$id/Items/$entryId/Move/$to")
         }
-        if (moves.isEmpty()) return true
+        if (movesLandWhereAsked()) {
+            for ((entryId, after) in placementMoves(local.toList(), wanted)) {
+                val to = if (after == null) 0 else local.filterNot { it == entryId }.indexOf(after) + 1
+                if (!move(entryId, to)) return false
+            }
+        } else {
+            // Only ever up, which lands where asked on every version.
+            for (target in wanted.indices) {
+                if (local[target] != wanted[target] && !move(wanted[target], target)) return false
+            }
+        }
+        if (!moved) return true
         // Read once more: a song this account can't see can put a move a place off.
         val landed = runCatching { playlistEntries(id) }.getOrNull() ?: return false
         return landed.map { it.id } == orderedSongIds
     }
+
+    /**
+     * Whether Move puts an entry at the index it is given. 10.10.2 to 10.10.7 put
+     * one moved down a place further, so those are only ever moved up. Read once
+     * per client; a version that can't be read is treated as one of them.
+     */
+    private suspend fun movesLandWhereAsked(): Boolean = movesExact
+        ?: (movesLandWhereAsked(fetch<JellyfinPublicInfo>("/System/Info/Public").version) ?: false)
+            .also { movesExact = it }
 
     private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
 
@@ -855,6 +878,15 @@ class JellyfinClient(
         internal fun takesEveryCopy(held: List<String?>, asked: List<String>): Boolean {
             val copies = held.groupingBy { it }.eachCount()
             return asked.groupingBy { it }.eachCount().all { (entry, n) -> copies[entry] == n }
+        }
+
+        /** Whether a server of [version] moves an entry to the index asked — see [movesLandWhereAsked]. Null when it doesn't read. */
+        internal fun movesLandWhereAsked(version: String): Boolean? {
+            val parts = version.trim().split('.').map { it.takeWhile(Char::isDigit).toIntOrNull() }
+            val major = parts.getOrNull(0) ?: return null
+            val minor = parts.getOrNull(1) ?: return null
+            val patch = parts.getOrNull(2) ?: 0
+            return !(major == 10 && minor == 10 && patch in 2..7)
         }
 
         /**

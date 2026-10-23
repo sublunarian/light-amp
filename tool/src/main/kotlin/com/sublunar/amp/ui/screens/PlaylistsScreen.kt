@@ -135,7 +135,7 @@ class PlaylistDetailScreen(
         // The stored name, not the one this screen was opened with: the corner
         // menu can rename the playlist while this page is under it, and the
         // constructor's copy would keep saying the old name until reopened.
-        val liveName = App.library.playlists.collectAsState().value
+        val liveName = App.library.allPlaylists.collectAsState().value
             .firstOrNull { it.id == playlistId }?.name ?: playlistName
 
         LibrarySubPage(LibraryPage.PLAYLIST, liveName) {

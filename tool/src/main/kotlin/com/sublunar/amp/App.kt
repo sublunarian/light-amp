@@ -1571,8 +1571,8 @@ object App {
             // each playlist's songs, once — reading Playlist.trackIds, always
             // empty for a server playlist, had both modes quietly downloading
             // no playlist at all.
-            if (library.playlists.value.isEmpty()) runCatching { library.refreshPlaylists() }
-            runCatching { library.primePlaylistTrackIds(library.playlists.value.map { it.id }) }
+            if (library.allPlaylists.value.isEmpty()) runCatching { library.refreshPlaylists() }
+            runCatching { library.primePlaylistTrackIds(library.allPlaylists.value.map { it.id }) }
                 .noteOom("playlists of ${source.name}")
             return library.freshPlaylistTrackIds().values.flatten().toHashSet()
         }

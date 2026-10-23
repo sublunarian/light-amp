@@ -510,7 +510,7 @@ class NowPlayingScreen(
                 }
             }
             if (drag.draggingIndex != null) {
-                DragOverlay(queue, drag.draggingKeys, drag.dragStartTops, drag.fingerOffsetY, artworkHidden)
+                DragOverlay(queue, drag.draggingKeys, drag.dragStartTops, drag.fingerOffsetY, artworkHidden, selection)
             }
         }
     }
@@ -529,6 +529,7 @@ class NowPlayingScreen(
         dragStartTops: Map<String, Float>,
         fingerOffsetY: Float,
         artworkHidden: Boolean,
+        selection: SelectionState,
     ) {
         queue.forEachIndexed { i, track ->
             val rowKey = "$i-${track.id}"
@@ -543,7 +544,10 @@ class NowPlayingScreen(
                     .padding(start = px(QUEUE_START_PX), end = px(SCROLLBAR_LANE_PX)),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (!artworkHidden) {
+                if (selection.active) {
+                    SelectionArtwork(track.coverArtId, track.id in selection.selected, size = px(ROW_ART_PX))
+                    Spacer(Modifier.width(px(ROW_GAP_PX)))
+                } else if (!artworkHidden) {
                     AppArtwork(track.coverArtId, size = px(ROW_ART_PX))
                     Spacer(Modifier.width(px(ROW_GAP_PX)))
                 }
