@@ -1,5 +1,5 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
-index 0304e2a..80f032d 100644
+index 0304e2a..e647953 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
 @@ -2,9 +2,11 @@ package com.thelightphone.sdk.audio
@@ -22,7 +22,7 @@ index 0304e2a..80f032d 100644
  import kotlinx.coroutines.CoroutineScope
  import kotlinx.coroutines.Dispatchers
  import kotlinx.coroutines.Job
-@@ -80,7 +83,45 @@ class LightAudioPlayer internal constructor(
+@@ -80,7 +83,34 @@ class LightAudioPlayer internal constructor(
      /** Connection and command-acceptance lifecycle of this player. */
      val availability: StateFlow<LightAudioPlayerAvailability> = commands.availability
  
@@ -35,17 +35,6 @@ index 0304e2a..80f032d 100644
 +    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 +    private val _deviceVolume = MutableStateFlow(1f)
 +    val deviceVolume: StateFlow<Float> = _deviceVolume.asStateFlow()
-+
-+    /**
-+     * Called when playback fails. Set by the tool; see [Player.Listener.onPlayerError].
-+     */
-+    var onPlaybackError: ((PlaybackException) -> Unit)? = null
-+
-+    /**
-+     * Called when repeat-one wraps the current item, on the player's thread.
-+     * See the transition listener for why a tool needs to hear about it.
-+     */
-+    var onItemRepeated: (() -> Unit)? = null
 +
 +    /**
 +     * SDK PATCH (additive, upstreamable): per-track playback gain as a 0..1
@@ -68,7 +57,7 @@ index 0304e2a..80f032d 100644
          when (spec.playback) {
              LightAudioPlayback.Attached ->
                  connectPlayer(buildSdkExoPlayer(context, spec.usage, spec.cache))
-@@ -94,6 +135,8 @@ class LightAudioPlayer internal constructor(
+@@ -94,6 +124,8 @@ class LightAudioPlayer internal constructor(
              return
          }
          player = connectedPlayer
@@ -77,38 +66,10 @@ index 0304e2a..80f032d 100644
          connectedPlayer.addListener(object : Player.Listener {
              override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                  _currentMediaItemIndex.value = if (mediaItem == null) {
-@@ -101,6 +144,15 @@ class LightAudioPlayer internal constructor(
-                 } else {
-                     connectedPlayer.currentMediaItemIndex
-                 }
-+                // SDK PATCH (additive, upstreamable): surface the repeat wrap.
-+                // [currentMediaItemIndex] can't carry it — the index doesn't
-+                // change — yet a tool playing server-seeked streams needs it:
-+                // the media item is a remainder starting mid-track, so a
-+                // repeat-one wrap replays the remainder instead of the track
-+                // unless the tool gets a chance to rebuild it.
-+                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
-+                    onItemRepeated?.invoke()
-+                }
-             }
- 
-             // Editing the queue can move the current item without transitioning to
-@@ -131,6 +183,28 @@ class LightAudioPlayer internal constructor(
+@@ -131,6 +163,16 @@ class LightAudioPlayer internal constructor(
              override fun onPlayerErrorChanged(error: PlaybackException?) {
                  _error.value = error?.toLightAudioError(connectedPlayer)
              }
-+
-+            /**
-+             * SDK PATCH (additive, upstreamable): surface playback failures.
-+             *
-+             * The [error] flow carries a mapped [LightAudioError]; this callback
-+             * hands over the raw [PlaybackException], whose `errorCode` and cause
-+             * (the HTTP status) the tool's fallback logic reads. Fold into the
-+             * flow when it exposes them.
-+             */
-+            override fun onPlayerError(error: PlaybackException) {
-+                onPlaybackError?.invoke(error)
-+            }
 +
 +            override fun onDeviceVolumeChanged(volume: Int, muted: Boolean) {
 +                updateDeviceVolume()
@@ -122,7 +83,7 @@ index 0304e2a..80f032d 100644
          })
          val state = connectedPlayer.snapshotState()
          _currentMediaItemIndex.value = state.currentMediaItemIndex
-@@ -144,9 +218,31 @@ class LightAudioPlayer internal constructor(
+@@ -144,9 +186,31 @@ class LightAudioPlayer internal constructor(
          } else {
              stopPositionUpdates()
          }
@@ -154,7 +115,7 @@ index 0304e2a..80f032d 100644
      private fun connectDetachedPlayer(context: Context, usage: LightAudioUsage) {
          val token = SessionToken(context, ComponentName(context, LightAudioService::class.java))
          val future = MediaController.Builder(context, token)
-@@ -220,6 +316,32 @@ class LightAudioPlayer internal constructor(
+@@ -220,6 +284,32 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -187,7 +148,7 @@ index 0304e2a..80f032d 100644
      /**
       * Appends [item] to the queue.
       */
-@@ -293,6 +415,32 @@ class LightAudioPlayer internal constructor(
+@@ -293,6 +383,32 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -220,7 +181,7 @@ index 0304e2a..80f032d 100644
      /**
       * Start or resume playback if audio focus is available. An idle player is
       * prepared first, and an ended one restarts its current item.
-@@ -318,6 +466,26 @@ class LightAudioPlayer internal constructor(
+@@ -318,6 +434,14 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -232,22 +193,10 @@ index 0304e2a..80f032d 100644
 +     */
 +    val playWhenReady: Boolean get() = player?.playWhenReady == true
 +
-+    /**
-+     * SDK PATCH (additive, upstreamable): whether the current stream can be
-+     * seeked within.
-+     *
-+     * True for a file or any response with a length and byte ranges; false for
-+     * a live, chunked transcode. Without it a tool has to *guess* — and guessing
-+     * from the requested format is wrong exactly when a server decides not to
-+     * transcode after all, at which point seeking silently restarts the track
-+     * while the clock says otherwise.
-+     */
-+    val isCurrentItemSeekable: Boolean get() = player?.isCurrentMediaItemSeekable == true
-+
      /** Seeks to [ms], clamped to the resolved duration. Unknown duration clamps to zero. */
      fun seekTo(ms: Long) {
          commands.dispatch { player ->
-@@ -347,6 +515,16 @@ class LightAudioPlayer internal constructor(
+@@ -347,6 +471,16 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -264,7 +213,7 @@ index 0304e2a..80f032d 100644
      /** Waits for connection, returning `false` if this player is released first. */
      suspend fun awaitReady(): Boolean = awaitPlayerReady(availability)
  
-@@ -378,6 +556,10 @@ class LightAudioPlayer internal constructor(
+@@ -378,6 +512,10 @@ class LightAudioPlayer internal constructor(
                      updatePosition(it)
                      updateDuration(it)
                  }
@@ -276,10 +225,10 @@ index 0304e2a..80f032d 100644
              }
          }
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt
-index a45f090..e328bfb 100644
+index a45f090..629eb46 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt
-@@ -29,14 +29,27 @@ internal fun buildSdkExoPlayer(
+@@ -29,6 +29,14 @@ internal fun buildSdkExoPlayer(
      cache: LightMediaCache?,
  ): ExoPlayer {
      val builder = ExoPlayer.Builder(context)
@@ -291,20 +240,6 @@ index a45f090..e328bfb 100644
 +        // false, so playback carries on out loud on the phone's speaker, and a
 +        // tool can't do this itself: it needs a BroadcastReceiver.
 +        .setHandleAudioBecomingNoisy(true)
-+    // SDK PATCH (additive, upstreamable): every remote fetch answers to
-+    // LightAudioNetworkPolicy, cached or not. Cached bytes still play when the
-+    // network is off-limits, since reading them uses no network.
      if (cache != null) {
          val network = CacheDataSource.Factory()
              .setCache(mediaCacheStore.open(context, cache))
--            .setUpstreamDataSourceFactory(DefaultHttpDataSource.Factory())
-+            .setUpstreamDataSourceFactory(GatedDataSource.Factory(DefaultHttpDataSource.Factory()))
-             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
-         builder.setMediaSourceFactory(
-             DefaultMediaSourceFactory(DefaultDataSource.Factory(context, network))
-         )
-+    } else {
-+        builder.setMediaSourceFactory(gatedMediaSourceFactory(context))
-     }
-     return builder.build().apply {
-         setAudioAttributes(usage.toMedia3AudioAttributes(), true)

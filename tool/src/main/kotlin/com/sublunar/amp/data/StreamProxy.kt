@@ -48,10 +48,15 @@ import okhttp3.Response
  * HTTP to it. (Until SDK 0.2.0 a store build could not, so the door spoke TLS
  * with a certificate made at launch.)
  *
- * **Fail-safe.** None of this is assumed to work. At start the proxy fetches
- * from itself the way the player will; only if that succeeds does [wrap] hand
- * out loopback addresses. Otherwise the player gets the server's own URL, as
- * it always has, and [state] says why.
+ * **The only way in.** The player is never handed the server's own address.
+ * At start the proxy fetches from itself the way the player will, and only
+ * once that succeeds does [wrap] hand out loopback addresses. Until then, or
+ * if it never does, [wrap] hands out an address that fails at once, so the
+ * player waits rather than streaming around the rule, and [state] says why.
+ *
+ * **What it saw.** The player's own errors carry no HTTP status, and its
+ * notion of seekable is about the item it holds. The door saw the server's
+ * actual answer, so it keeps the last one per track — see [lastOutcome].
  */
 class StreamProxy(
     private val gateOpen: () -> Boolean,
@@ -78,7 +83,7 @@ class StreamProxy(
 
     /**
      * The address to give the player for [url]: through this door when it is
-     * open, else [url] itself.
+     * open, else [UNAVAILABLE_URL], never [url] itself.
      *
      * [group] names what the stream is *of* — the track. The player only ever
      * has one live load per track, so a new request in a group means the
@@ -97,17 +102,42 @@ class StreamProxy(
      * fetches ahead and on its own — the next song while this one plays, a
      * retry — so nothing in front of it can know when that is. Not for the
      * door's own pickups after a break, which continue a request already
-     * settled. A [url] handed back unwrapped has nobody to ask it, so the
-     * caller should only count on it when [isOn].
+     * settled.
      */
     fun wrap(url: String, group: String? = null, prepare: (suspend () -> Unit)? = null): String {
         if (url.isEmpty()) return url
-        val on = _state.value as? State.On ?: return url
+        val on = _state.value as? State.On ?: return UNAVAILABLE_URL
         return "http://$HOST:${on.port}$STREAM_PATH${tokens.tokenFor(url, group, prepare)}"
     }
 
-    /** Whether [wrap] is handing out this door's addresses, rather than the server's own. */
+    /** Whether [wrap] is handing out this door's addresses, and so whether anything can stream. */
     val isOn: Boolean get() = _state.value is State.On
+
+    /** What the door last heard for a track's stream. */
+    sealed interface Outcome {
+        /** The rule was closed: the door answered [GATE_STATUS] itself and asked nothing. */
+        data object Refused : Outcome
+
+        /** The server could not be reached. */
+        data object Unreachable : Outcome
+
+        /** The server answered [status], with a body whose length was known or not. */
+        data class Answered(val status: Int, val lengthKnown: Boolean) : Outcome
+    }
+
+    /** What the door last heard for [group]'s stream, or null if it has fetched none. */
+    fun lastOutcome(group: String): Outcome? = synchronized(outcomes) { outcomes[group] }
+
+    private val outcomes = object : LinkedHashMap<String, Outcome>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Outcome>?): Boolean =
+            size > OUTCOMES_KEPT
+    }
+
+    /** Only the player's own fetches: a HEAD is somebody probing, not the stream. */
+    private fun remember(group: String?, headOnly: Boolean, outcome: Outcome) {
+        if (group == null || headOnly) return
+        synchronized(outcomes) { outcomes[group] = outcome }
+    }
 
     /** Bring the door up and prove it, off the calling thread. Idempotent. */
     fun start(scope: CoroutineScope) {
@@ -225,7 +255,10 @@ class StreamProxy(
     private fun stream(target: Target, range: String?, headOnly: Boolean, output: OutputStream) {
         val url = target.url
         val group = target.group
-        if (!gateOpen()) return respond(output, GATE_STATUS, "Waiting")
+        if (!gateOpen()) {
+            remember(group, headOnly, Outcome.Refused)
+            return respond(output, GATE_STATUS, "Waiting")
+        }
         // Before anything is asked of the server: whatever was still feeding
         // this track is finished. Its upstream is closed *first*, so the
         // request below is the only claim on the server's session for it.
@@ -250,9 +283,13 @@ class StreamProxy(
             // Dropping the connection is the answer — see above — but the
             // player only ever learns "network error", so the cause is said here.
             log("upstream unreachable for ${firstCall.request().url.encodedPath}: $e")
+            remember(group, headOnly, Outcome.Unreachable)
             throw e
         }
-        if (!first.isSuccessful) log("upstream ${first.code} for ${first.request.url.encodedPath}")
+        if (!first.isSuccessful) {
+            log("upstream ${first.code} for ${first.request.url.encodedPath}")
+            remember(group, headOnly, Outcome.Answered(first.code, lengthKnown = false))
+        }
         // The player only ever asks for the body; a HEAD, or a server's "no",
         // gets the status and headers and nothing else — and the upstream
         // body, which was opened all the same, is let go at once.
@@ -267,6 +304,7 @@ class StreamProxy(
             return
         }
         val length = first.body.contentLength()
+        remember(group, headOnly, Outcome.Answered(first.code, lengthKnown = length >= 0))
         val head = StringBuilder("HTTP/1.1 ${first.code} Proxied\r\n")
         for (name in PASSED_ON) first.header(name)?.let { head.append("$name: ${it.printable()}\r\n") }
         if (length >= 0) head.append("Content-Length: $length\r\n") else head.append("Transfer-Encoding: chunked\r\n")
@@ -653,6 +691,16 @@ class StreamProxy(
     companion object {
         /** What the player is told when the rule is closed. Unassigned in HTTP, so it can mean only this. */
         const val GATE_STATUS = 470
+
+        /**
+         * What [wrap] hands out while the door is closed: a file that doesn't
+         * exist. The player fails on it at once, without retrying and without
+         * touching the network, and the server's address never reaches it.
+         */
+        const val UNAVAILABLE_URL = "file:///amp-stream-unavailable"
+
+        /** Tracks whose last answer is kept: a long queue's worth. */
+        private const val OUTCOMES_KEPT = 512
 
         private const val HOST = "127.0.0.1"
         private const val STREAM_PATH = "/s/"

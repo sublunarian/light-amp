@@ -77,7 +77,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.minutes
 import com.sublunar.amp.data.NetworkGate
-import com.thelightphone.sdk.audio.LightAudioNetworkPolicy
 import com.sublunar.amp.data.LinkRules
 import com.sublunar.amp.data.Reachability
 import com.sublunar.amp.data.StreamProxy
@@ -563,8 +562,8 @@ object App {
      * The same answer as [metadataAllowed], enforced rather than consulted.
      * That one is the courtesy: the early return that saves building work
      * which would only be refused. This one is the wall behind it — every
-     * HTTP client is built through NetworkGate, the platform player asks
-     * through the SDK's LightAudioNetworkPolicy, and the raw download and
+     * HTTP client is built through NetworkGate, the platform player streams
+     * only through StreamProxy, which asks, and the raw download and
      * discovery paths ask directly — so a path that never asked is refused
      * all the same. Before this, Wi-Fi Only was a set of courtesy checks,
      * and a stream already in the queue played over cellular.
@@ -604,20 +603,18 @@ object App {
             Connectivity.bind(context, scope)
             // The wall goes up before anything exists to be built behind it:
             // every client below is made through NetworkGate, and the player
-            // — attached or the detached service, same process — asks the
-            // same rule at its own connections.
+            // — attached or the detached service, same process — streams only
+            // through StreamProxy, whose upstream is one of those clients.
             NetworkGate.policy = ::networkAllowed
             // The door the player streams through — see StreamProxy. Started
             // here, before anything builds a queue, and proven before it is
-            // used: until its self-test passes, the player gets the server's
-            // own URLs, which the SDK patch below still stands in front of.
+            // used: until its self-test passes, nothing streams.
             streamProxy.start(scope)
             NetworkGate.isMetered = { Connectivity.network.value.let { !it.isConnected || it.isMetered } }
             // Speakers on the network are reached on a stack of their own,
             // outside the wall above, so each family of outputs is held to
             // the link's rules here — see Outputs.
             Outputs.install(::rulesNow)
-            LightAudioNetworkPolicy.allowsNetwork = ::networkAllowed
             artwork = ArtworkLoader(
                 context.filesDir,
                 serverClient,
