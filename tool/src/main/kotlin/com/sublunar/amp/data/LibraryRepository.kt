@@ -871,9 +871,8 @@ class LibraryRepository(
             _playlists.value = phone.list()
             return
         }
-        if (!metadataAllowed()) return
         val d = daos.value
-        val fetched = runCatching { serverClient.value?.getPlaylists(libraryId.first()) }.getOrNull()
+        val fetched = if (!metadataAllowed()) null else runCatching { serverClient.value?.getPlaylists(libraryId.first()) }.getOrNull()
         if (fetched != null) {
             _playlists.value = fetched
             settings.setCachedPlaylists(sourceId, json.encodeToString(fetched))
