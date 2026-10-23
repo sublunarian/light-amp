@@ -8,9 +8,8 @@ import kotlinx.serialization.Serializable
  * Subsonic has no way to ask a server what it supports. There is no capability
  * call, no "not implemented" error, and the version a server reports is a claim
  * rather than a promise — Bandcamp's says 1.16.1 while lacking calls that have
- * been in the API since 1.8.0. The clients that deal with this (Amperfy's
- * podcast support, Feishin's jukebox) all do the same thing: make the call once,
- * treat a failure as "not supported", and remember the answer per server.
+ * been in the API since 1.8.0. So each call is asked about once and the answer
+ * remembered per server.
  *
  * **The shape of the answer is the evidence, not its content.** Any Subsonic
  * reply, an error included, proves the server has that endpoint; something that
@@ -34,11 +33,8 @@ data class ServerFeatures(
     /** Endpoints this server answered for as "no such endpoint". */
     val missing: List<String> = emptyList(),
     /**
-     * Which set of probes produced this. A build that asks about something new
-     * doesn't know the answer for a server already on file, so a bump here has
-     * every server asked again — the same trick as the track parser's
-     * generation. Zero is what a record written before this field reads as,
-     * which is exactly what it deserves.
+     * Which set of probes produced this — see [GENERATION]. Zero for a record
+     * written before the field existed.
      */
     val generation: Int = 0,
 ) {
@@ -46,12 +42,9 @@ data class ServerFeatures(
 
     companion object {
         /**
-         * Bumped whenever a probe is added or changed, so the answers on file
-         * are asked again rather than being trusted for a question that wasn't
-         * put. 1: ratings, radio, original download. 2: the scan call too.
-         * 3: an answer that isn't JSON (a proxy's page) no longer counts as
-         * missing — so anything recorded under 2 is asked again cleanly.
-         * 4: whether the server takes playback reports — see [REPORT_PLAYBACK].
+         * Bumped whenever a probe is added or changed, so every server on file
+         * is asked again rather than trusted for a question that wasn't put —
+         * the same trick as the track parser's generation.
          */
         const val GENERATION = 4
 

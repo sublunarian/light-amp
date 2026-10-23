@@ -12,16 +12,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
- * What the connection costs, from the SDK's ConnectivityManager hooks.
+ * What the connection costs, from the SDK's [LightConnectivity].
  *
- * This replaces an interface-list heuristic — "a wlan interface with an
- * address means Wi-Fi" — that could be lied to: Android moves traffic to
- * cellular when a Wi-Fi link stops validating, and the interface keeps its
- * address while the bytes ride LTE. That is how a heavy data day happens with
- * every setting right. The SDK's [com.thelightphone.sdk.LightConnectivity]
- * (upstream #163/#166) reads the *active* network, so the answer here is about
- * the route the bytes will actually take — and the callback makes changes land
- * at once rather than on a five-second poll.
+ * It reads the *active* network, the route the bytes will actually take: a
+ * Wi-Fi that stops validating keeps its address while Android moves traffic to
+ * cellular, so "a wlan interface with an address" is no answer. The callback
+ * makes changes land at once.
  *
  * Gates ask about *metered-ness*, not "is it Wi-Fi": a phone-hotspot Wi-Fi is
  * metered and is treated as the cellular it rides on. The settings keep saying
@@ -51,14 +47,12 @@ object Connectivity {
 
     /**
      * [isUnmetered] as of this instant, asked of the system rather than read
-     * from the last callback.
+     * from the last callback, which can arrive after the socket would have.
      *
-     * For the gates that stand in front of a connection — see NetworkGate. A
-     * callback is a report of a change, and a report can arrive after the
-     * socket would have; the wall asks for itself. Two binder reads, so it is
-     * asked once per connection, not once per byte. The flow is brought up to
-     * date on the way, so the courtesy checks see the same answer. Before
-     * [bind] there is nothing to ask, and the cached answer errs metered.
+     * For the gates in front of a connection — see NetworkGate. Two binder
+     * reads, so it is asked once per connection, not once per byte. The flow is
+     * brought up to date on the way, so the courtesy checks see the same answer.
+     * Before [bind] there is nothing to ask, and the cached answer errs metered.
      */
     fun isUnmeteredNow(): Boolean {
         val now = source?.let { runCatching { it.currentStatus }.getOrNull() } ?: return isUnmetered()
@@ -78,12 +72,9 @@ object Connectivity {
     }
 
     /**
-     * Whether there is a local network to speak to at all.
-     *
-     * Distinct from [isUnmetered], and the two must not be confused: a phone
-     * hotspot is Wi-Fi and metered, so it costs money *and* has neighbours.
-     * This is the question a LAN broadcast asks — is anyone there to hear it —
-     * where the gates ask what the bytes cost.
+     * Whether there is a local network to speak to at all — the question a LAN
+     * broadcast asks. Not [isUnmetered]: a phone hotspot is Wi-Fi and metered,
+     * so it costs money *and* has neighbours.
      */
     fun isOnWifi(): Boolean = status.value.isConnected && status.value.isWifi
 
@@ -96,12 +87,9 @@ object Connectivity {
 
     /**
      * Emits whenever the connection becomes something different — coming back
-     * after an outage, or changing what it costs.
-     *
-     * Both matter, and neither alone is enough. Going from cellular to Wi-Fi
-     * never stops being *connected*, so watching connectivity alone would miss
-     * the moment Wi-Fi Only starts allowing things again; watching the price
-     * alone would miss a plane landing with the mode set to Make it Hurt.
+     * after an outage, or changing what it costs. Both: cellular to Wi-Fi never
+     * stops being connected, and a plane landing in Make it Hurt never changes
+     * the price.
      */
     val changed: Flow<Pair<Boolean, Boolean>> =
         status.map { it.isConnected to it.isMetered }.distinctUntilChanged()

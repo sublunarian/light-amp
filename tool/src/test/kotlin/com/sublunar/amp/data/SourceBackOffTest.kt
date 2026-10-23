@@ -7,8 +7,8 @@ import kotlin.test.assertTrue
 
 /**
  * How long a source's downloads wait after its server stops answering, and
- * when the worker stops trying it at all. The rule that matters most is the
- * one from before this existed: one blip must never park downloads.
+ * when the worker stops trying it at all. The rule that matters most: one
+ * blip must never park downloads.
  */
 class SourceBackOffTest {
 

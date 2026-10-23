@@ -20,8 +20,8 @@
 # -dontobfuscate doesn't stop R8 from merging lambdas across classes: some of
 # MediaControllerImplBase's already run inside other libraries' synthetic
 # lambdas. So the check finds the class that runs lambda$release$N as `run`
-# and asks that it still carries media3's controller name, as it did in 0.7.2
-# ($$ExternalSyntheticLambda52) and does now (...Lambda59).
+# and asks that it still carries media3's controller name (a
+# MediaControllerImplBase$$ExternalSyntheticLambdaN).
 #
 # Run it after `./gradlew :tool:assembleRelease` and before tagging, before the
 # APK and its mapping are copied anywhere: the local release build is the one

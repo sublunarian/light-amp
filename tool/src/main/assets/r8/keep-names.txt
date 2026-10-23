@@ -18,7 +18,5 @@
 # posted unbind by class name (playback/LateUnbind.kt), and a renamed build
 # matches nothing, so without it the guard quietly stops working and the crash
 # it absorbs comes back. scripts/release-mapping-check.sh checks a release
-# build's mapping for both names it reads — media3's connection, and the class
-# that runs media3's posted release — run after every local release build, and by
-# scripts/store-build-check.sh on the store build once that compiles.
+# build's mapping for both names it reads; run it after every release build.
 -dontobfuscate

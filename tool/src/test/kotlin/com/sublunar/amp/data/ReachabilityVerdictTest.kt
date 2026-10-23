@@ -45,9 +45,9 @@ class ReachabilityVerdictTest {
     }
 
     /**
-     * A captive portal answers a ping with its login page and a 200. That
-     * used to count as the server answering: a page with no status, or any
-     * status short of a 5xx, read like a refusal from the server itself.
+     * A captive portal answers a ping with its login page and a 200: a page
+     * with no status, or any status short of a 5xx, must not read like a
+     * refusal from the server itself.
      */
     @Test
     fun `a page where the server's JSON should be is not the server`() {

@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import android.util.Log
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -16,18 +17,12 @@ import kotlinx.coroutines.withTimeoutOrNull
  * Whether the browsed server is answering — found out by asking it, cheaply,
  * at the moments the answer can have changed.
  *
- * It used to be inferred: one stream dying without an answer, or one failed
- * sync, marked the server gone, and only a *successful sync* marked it back.
- * Nothing started a sync when the network returned, so a hiccup during a
- * Wi-Fi-to-cellular handover left the library narrowed to downloads, playback
- * pinned to files and downloads held, in every data mode, until the next
- * launch or the half-hourly job. That was the delay after switching networks.
- *
- * Now a failure is a *suspicion*, settled at once by one ping (a single small
- * authenticated request), and every network change asks again. While the
- * server stays silent the ping is retried a few times with a growing gap and
- * then left alone until something else happens — a network change, a press, a
- * sync — so a server that is simply away costs nothing to keep waiting for.
+ * A failure is a *suspicion*, settled at once by one ping (a single small
+ * authenticated request), and every network change asks again; nothing waits
+ * for a sync to prove the server back. While the server stays silent the ping
+ * is retried a few times with a growing gap and then left alone until
+ * something else happens — a network change, a press, a sync — so a server that
+ * is simply away costs nothing to keep waiting for.
  */
 class Reachability(
     private val scope: CoroutineScope,
@@ -84,23 +79,21 @@ class Reachability(
     suspend fun verify(): Boolean? = pinging.withLock {
         if (!mayAsk()) {
             // The rules forbid asking — Wi-Fi Only on cellular, or no link. A
-            // verdict reached on some earlier link says nothing about the next
-            // one, so it is dropped: "not known to be gone" is the honest state,
-            // and the rules already keep anything from being sent. Without this
-            // a "gone" learnt on a dying Wi-Fi survived the switch to a mode
-            // that may use cellular, with nothing left to question it.
+            // verdict reached on an earlier link says nothing about the next
+            // one, so it is dropped: kept, a "gone" learnt on a dying Wi-Fi
+            // would survive the switch to a mode that may use cellular, with
+            // nothing left to question it.
             _reachable.value = true
             return null
         }
         val server = client() ?: return null
-        val askedAtMs = System.nanoTime() / 1_000_000
+        val askedAtMs = monotonicMs()
         var why = "answered"
         val answered: Boolean? = try {
             // Only *this* timeout is an answer ("never came back"). A caller
-            // that stops waiting sooner cancels this coroutine with a timeout
-            // exception of its own, and that must pass straight through: caught
-            // here as "no", a caller's impatience marked a slow server as gone
-            // — the very thing the caller's short wait exists to avoid.
+            // that stops waiting sooner cancels this with a timeout of its own,
+            // which must pass straight through: caught here as "no", a caller's
+            // impatience would mark a slow server as gone.
             withTimeoutOrNull(PING_TIMEOUT_MS) { server.ping(); true } ?: false.also { why = "no answer in ${PING_TIMEOUT_MS}ms" }
         } catch (e: NetworkGateClosedException) {
             why = "rule closed"
@@ -119,12 +112,12 @@ class Reachability(
             why = "${e::class.simpleName}: ${e.message}"
             answeredBy(e)
         }
-        log("ping → ${answered ?: "no verdict"} in ${System.nanoTime() / 1_000_000 - askedAtMs}ms ($why)")
+        log("ping → ${answered ?: "no verdict"} in ${monotonicMs() - askedAtMs}ms ($why)")
         if (answered != null) _reachable.value = answered
         answered
     }
 
-    private fun log(text: String) = android.util.Log.i("AmpNet", "reachability: $text")
+    private fun log(text: String) = Log.i("AmpNet", "reachability: $text")
 
     private companion object {
         const val SETTLE_MS = 400L

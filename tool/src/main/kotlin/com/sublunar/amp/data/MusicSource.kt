@@ -10,40 +10,25 @@ import kotlinx.serialization.Serializable
 fun newSourceId(): String =
     "src-" + System.currentTimeMillis().toString(36) + "-" + (0..0xffff).random().toString(16)
 
-/** One of a Subsonic server's music folders, as last seen. */
+/** One of a server's libraries (a Subsonic music folder, a Plex section…), as last seen. */
 @Serializable
 data class SourceLibrary(val id: String, val name: String)
 
-/** Where a source's music comes from. */
+/**
+ * Where a source's music comes from. Stored by name. What each kind can do
+ * comes from its provider — see [MusicSource.supportsLikes] and its neighbours.
+ */
 enum class SourceKind {
     /** A Subsonic-compatible server: Navidrome, Airsonic, Gonic, … */
     SUBSONIC,
 
-    /**
-     * A Plex Media Server's music library.
-     *
-     * Fewer capabilities than Subsonic — no favourites, no popular songs — see
-     * the flags below, which the UI reads so that what can't sync isn't offered.
-     */
+    /** A Plex Media Server's music library. */
     PLEX,
 
-    /**
-     * A Jellyfin server's music library.
-     *
-     * Closer to Subsonic than Plex is — real favourites, playlists that can be
-     * created empty, a transcoder that produces what it is asked for — but with
-     * no star ratings and no popular songs. See the flags below.
-     */
+    /** A Jellyfin server's music library. */
     JELLYFIN,
 
-    /**
-     * The phone's own music folder — the same files the Light Music app plays.
-     *
-     * There is no server behind it, so everything that lives on one (likes,
-     * ratings, play counts, scrobbles, playlists) is unavailable; see
-     * [MusicSource.supportsLikes] and its neighbours, which the UI reads rather
-     * than testing the kind directly.
-     */
+    /** The phone's own music folder — the same files the Light Music app plays. */
     LOCAL,
 }
 
@@ -70,8 +55,8 @@ data class MusicSource(
     val password: String = "",
     /**
      * What to stream on Wi-Fi. Persisted by id so an unknown value degrades to
-     * the default, not a crash. (Named for what it was before the two split, so
-     * a source saved earlier keeps its choice.)
+     * the default, not a crash. Named for the single format it once was, so the
+     * stored name stays.
      */
     val streamFormatId: String = StreamFormat.DEFAULT.id,
     /** What to stream on cellular. Null follows the Wi-Fi choice. */
@@ -87,7 +72,6 @@ data class MusicSource(
     val downloadFormatId: String? = null,
     /** What gets downloaded without being asked for. */
     val offlineModeName: String? = null,
-    /** How much of this phone this source's downloads may take. */
     /**
      * What this source was allowed on its own, before the budget became one for
      * the whole tool. Kept only so [AppSettings.migrateDownloadLimit] can carry
@@ -121,8 +105,8 @@ data class MusicSource(
      * and ends the old one when the same device signs in again, and because
      * Plex ties a token to the device it was issued to and shows each device
      * as one player. Blank on sources signed in before this existed, which go
-     * on as [JellyfinClient.LEGACY_DEVICE_ID] or [PlexClient.LEGACY_CLIENT_ID]
-     * — the id their tokens were issued to.
+     * on as JellyfinClient.LEGACY_DEVICE_ID or PlexClient.LEGACY_CLIENT_ID —
+     * the id their tokens were issued to.
      */
     val deviceId: String = "",
     /**
@@ -131,21 +115,16 @@ data class MusicSource(
      * A sync only refetches an album whose song count changed, so a fix to how a
      * track is *read* — rather than to what the server holds — would never reach
      * a library that is already cached. Bumping
-     * [LibraryRepository.TRACK_PARSER_GENERATION] makes the next sync fetch every
+     * LibraryRepository.TRACK_PARSER_GENERATION makes the next sync fetch every
      * album once and then record the new number here. Zero is "filled before this
      * existed", so every library synced by an older build refetches once.
-     *
-     * Deliberately not a database version: the Room builder destroys and rebuilds
-     * on a version change, which would take the downloads table with it.
      */
     val parserGeneration: Int = 0,
-    /** Subsonic music folder, or null for all of them. */
+    /** The library being browsed, or null for All Libraries. */
     val libraryId: String? = null,
     /**
-     * The server's music folders, cached from the last successful sync.
-     *
-     * Kept on the record so the Sources page can offer them instantly and
-     * offline, rather than making a request per source every time it opens.
+     * The server's libraries, cached from the last successful sync, so the
+     * Sources page can offer them instantly and offline.
      */
     val libraries: List<SourceLibrary> = emptyList(),
     /**
@@ -165,12 +144,10 @@ data class MusicSource(
     /**
      * Every address Plex advertised for this server, best first.
      *
-     * [baseUrl] is whichever one answered when the server was linked, and that
-     * is usually the LAN address — faster, and it skips Plex's relay. But it is
-     * only reachable from that LAN, so a source linked at home stops working
-     * the moment the phone is on cellular, with no way to recover: nothing
-     * re-resolved it. Keeping the alternatives means a failure can be retried
-     * against the next one instead.
+     * [baseUrl] is whichever one answered when the server was linked, usually
+     * the LAN address, which stops working the moment the phone leaves that
+     * LAN. Keeping the alternatives means a failure can be retried against the
+     * next one.
      */
     val connections: List<String> = emptyList(),
     /**
@@ -200,19 +177,12 @@ data class MusicSource(
 
     /**
      * The formats this source can actually serve, the same list its client
-     * gives — see [MusicServer.streamFormats], where each server answers for
-     * itself. Read from the provider rather than from a live client so the
-     * settings screens can offer the right choices for a source that isn't the
-     * one connected.
+     * gives — see [MusicServer.streamFormats]. Read from the provider rather
+     * than a live client so the settings screens can offer the right choices
+     * for a source that isn't the one connected.
      */
     val streamFormats: List<StreamFormat> get() = provider.streamFormats
 
-    /**
-     * Falls back to the original file, never to something lossier: a source
-     * carrying a format it can't serve (chosen before the list narrowed, or on a
-     * different kind of server) would otherwise be silently downgraded to
-     * whatever the server felt like sending.
-     */
     /**
      * Streaming quality, per connection.
      *
@@ -222,6 +192,7 @@ data class MusicSource(
      */
     val wifiFormat: StreamFormat get() = supported(streamFormatId)
     val cellularFormat: StreamFormat get() = supported(cellularFormatId ?: streamFormatId)
+
     /**
      * Downloading quality — exactly what was chosen, even where this server
      * turns out not to be able to serve it. Quietly reading a stored Original
@@ -256,9 +227,8 @@ data class MusicSource(
      * way to switch to it. Hiding the library being browsed moves the browsing
      * to All Libraries, rather than leaving it on a library that no longer
      * shows — and so does hiding down to one, where All Libraries *is* that one
-     * and the single row left under the source is the one to tick. Older
-     * builds could hide the All Libraries row too, as a null; that is no
-     * longer a choice, so it goes on the next change.
+     * and the single row left under the source is the one to tick. A stored
+     * null (a hidden All Libraries row) goes on the next change.
      */
     fun withLibraryShown(libraryId: String, shown: Boolean): MusicSource {
         val hidden = hiddenLibraryIds.filterNotNull().toMutableList()
@@ -281,7 +251,12 @@ data class MusicSource(
      */
     val showsAllLibraries: Boolean get() = visibleLibraries.size >= 2
 
-
+    /**
+     * Falls back to the original file, never to something lossier: a source
+     * carrying a format it can't serve (chosen before the list narrowed, or on a
+     * different kind of server) would otherwise be silently downgraded to
+     * whatever the server felt like sending.
+     */
     private fun supported(id: String?): StreamFormat {
         val wanted = StreamFormat.fromId(id)
         return if (streamFormats.isEmpty() || wanted in streamFormats) wanted else StreamFormat.RAW
@@ -294,10 +269,9 @@ data class MusicSource(
      */
     fun toClient(): MusicServer? = provider.createClient(this)
 
-    // What this kind of source can actually do, as its provider answers it.
-    // Read by the UI so a feature that can't work is absent rather than present
-    // and broken: a heart on a local file would write a like nothing can store
-    // and nothing can restore.
+    // What this kind of source can do, as its provider answers it. The UI reads
+    // these so a feature that can't work is absent rather than present and broken.
+
     /** A heart that syncs: a favourite of the server's own, which not every kind of server has. */
     val supportsLikes: Boolean get() = capabilities.likes
 
@@ -310,12 +284,12 @@ data class MusicSource(
      * instant mix. The phone's own files have no one to ask.
      */
     val supportsRadio: Boolean get() = capabilities.radio
-    /** The phone keeps its own, as m3u8 files — see [LocalPlaylists]. */
+
+    /** Every kind has playlists: the phone keeps its own, as m3u8 files. */
     val supportsPlaylists: Boolean get() = true
 
     /** Whether a playlist can be started empty and filled later — not on Plex. */
     val supportsEmptyPlaylists: Boolean get() = capabilities.emptyPlaylists
-
 
     /**
      * Downloading only means something when the audio is somewhere else.

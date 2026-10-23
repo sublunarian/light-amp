@@ -45,8 +45,7 @@ import okhttp3.Response
  *
  * **Plain HTTP.** The door never leaves this phone, and the SDK's
  * `cleartext-http` capability, which Amp declares, lets every build speak plain
- * HTTP to it. (Until SDK 0.2.0 a store build could not, so the door spoke TLS
- * with a certificate made at launch.)
+ * HTTP to it.
  *
  * **The only way in.** The player is never handed the server's own address.
  * At start the proxy fetches from itself the way the player will, and only
@@ -91,10 +90,9 @@ class StreamProxy(
      * yet: a seek, a rebuild, a retry. The door keeps one upstream per group
      * and retires the old one first — see [stream]. It matters on Plex, which
      * allows one transcode per playback session and kills the previous holder
-     * when the next request arrives: left alive, the old feeder took that kill
-     * for a broken link and picked its stream up again, which killed the new
-     * one, whose feeder did the same — two streams of one song trading resets
-     * for twenty seconds after every seek.
+     * when the next request arrives: left alive, the old feeder would take that
+     * for a broken link and pick its stream up again, killing the new one, and
+     * so on, the two streams trading resets.
      *
      * [prepare] is asked, and waited for within a limit, each time the player
      * asks for the stream and before the server is: what the server needs
@@ -189,7 +187,7 @@ class StreamProxy(
                 // Closed by stop(): nothing to say. Anything else — out of file
                 // descriptors, say — and the door is shut while still handing
                 // out its address: every track would hang on a port nobody
-                // answers. Say so, and wrap() goes back to the server's URLs.
+                // answers. Say so, and wrap() hands out UNAVAILABLE_URL instead.
                 if (!socket.isClosed) {
                     runCatching { socket.close() }
                     server = null
@@ -295,22 +293,16 @@ class StreamProxy(
         // body, which was opened all the same, is let go at once.
         if (headOnly || !first.isSuccessful) {
             first.use {
-                val head = StringBuilder("HTTP/1.1 ${first.code} Proxied\r\n")
-                for (name in PASSED_ON) first.header(name)?.let { head.append("$name: ${it.printable()}\r\n") }
-                head.append("Content-Length: 0\r\nConnection: close\r\n\r\n")
-                output.write(head.toString().toByteArray(Charsets.ISO_8859_1))
+                output.write(proxiedHead(first, "Content-Length: 0\r\n"))
                 output.flush()
             }
             return
         }
         val length = first.body.contentLength()
         remember(group, headOnly, Outcome.Answered(first.code, lengthKnown = length >= 0))
-        val head = StringBuilder("HTTP/1.1 ${first.code} Proxied\r\n")
-        for (name in PASSED_ON) first.header(name)?.let { head.append("$name: ${it.printable()}\r\n") }
-        if (length >= 0) head.append("Content-Length: $length\r\n") else head.append("Transfer-Encoding: chunked\r\n")
-        head.append("Connection: close\r\n\r\n")
+        val head = proxiedHead(first, if (length >= 0) "Content-Length: $length\r\n" else "Transfer-Encoding: chunked\r\n")
         try {
-            output.write(head.toString().toByteArray(Charsets.ISO_8859_1))
+            output.write(head)
         } catch (e: IOException) {
             first.close()
             throw e
@@ -322,23 +314,19 @@ class StreamProxy(
         val feeding = Thread(feeder::run, "amp-proxy-feed").apply {
             isDaemon = true
             // A plain thread that lets an exception escape takes the whole
-            // process with it — which it did, once, on an interrupt that a
-            // blocking queue turned into a thrown InterruptedException. run()
-            // catches everything now; this is the net under the net.
+            // process with it. run() catches everything; this is the net under
+            // the net.
             setUncaughtExceptionHandler { _, e -> log("feeder died: $e") }
             start()
         }
         try {
+            // A write failing is the player hanging up — a skip, a seek, a
+            // stop — and the finally below lets go of the server.
             while (true) {
                 val chunk = pipe.take() ?: break
-                try {
-                    if (length < 0) output.write("${chunk.size.toString(16)}\r\n".toByteArray(Charsets.ISO_8859_1))
-                    output.write(chunk)
-                    if (length < 0) output.write(CRLF)
-                } catch (e: IOException) {
-                    // The player hung up — a skip, a seek, a stop. Let go of the server.
-                    throw e
-                }
+                if (length < 0) output.write("${chunk.size.toString(16)}\r\n".toByteArray(Charsets.ISO_8859_1))
+                output.write(chunk)
+                if (length < 0) output.write(CRLF)
             }
             if (pipe.failed) throw IOException("upstream lost")
             // A clean end. Without the last chunk the player reads an unknown-
@@ -381,6 +369,22 @@ class StreamProxy(
         @Volatile private var call: Call = firstCall
         @Volatile private var thread: Thread? = null
 
+        /** The response being read; replaced by each pickup, and closed when the feeder ends. */
+        private var response: Response = first
+
+        /** Where in the whole entity this stream began, for picking up after a break. */
+        private val startedAt = first.header("Content-Range")?.let(::rangeStart) ?: 0L
+        private val total = entityLength(first)
+
+        // A weak ETag may not be sent as If-Range (RFC 7233), and a server
+        // compares strongly anyway: it would only ever buy a 200 and a full
+        // re-download where Last-Modified would have resumed.
+        private val validator = first.header("ETag")?.takeUnless { it.startsWith("W/") } ?: first.header("Last-Modified")
+
+        private var pickups = 0
+        private val headOfStream = ByteArrayOutputStream()
+        private val tailOfStream = TailRing(OVERLAP_BYTES)
+
         /**
          * The player has gone: close the socket under whatever read is in
          * progress, and wake a sleep. Nothing here runs a moment longer than
@@ -395,18 +399,7 @@ class StreamProxy(
 
         override fun run() {
             thread = Thread.currentThread()
-            var response = first
-            // Where in the whole entity this stream began, for picking up after a break.
-            val startedAt = first.header("Content-Range")?.let(::rangeStart) ?: 0L
-            val total = entityLength(first)
-            // A weak ETag may not be sent as If-Range (RFC 7233), and a server
-            // compares strongly anyway: it would only ever buy a 200 and a full
-            // re-download where Last-Modified would have resumed.
-            val validator = first.header("ETag")?.takeUnless { it.startsWith("W/") } ?: first.header("Last-Modified")
             var produced = 0L
-            var pickups = 0
-            val headOfStream = ByteArrayOutputStream()
-            val tailOfStream = TailRing(OVERLAP_BYTES)
             val buffer = ByteArray(COPY_BYTES)
             var clean = false
             try {
@@ -416,64 +409,7 @@ class StreamProxy(
                         body.read(buffer)
                     } catch (e: IOException) {
                         if (cancelled) return
-                        val at = startedAt + produced
-                        runCatching { response.close() }
-                        // Each attempt is one pickup spent, whether it is refused
-                        // or fails on its own — the link that just changed is
-                        // often not usable for the first second, and the first
-                        // attempt after a break is the one most likely to throw.
-                        var joined: InputStream? = null
-                        while (joined == null) {
-                            val why = when {
-                                pickups >= MAX_PICKUPS -> "too many breaks"
-                                !gateOpen() -> "rule closed"
-                                total >= 0 && at >= total -> "at the end"
-                                else -> null
-                            }
-                            if (why != null) {
-                                log("upstream broke at $at, not picked up: $why")
-                                return
-                            }
-                            try {
-                                Thread.sleep(PICKUP_WAIT_MS[pickups])
-                            } catch (_: InterruptedException) {
-                                return
-                            }
-                            pickups++
-                            if (cancelled) return
-                            try {
-                                val next = request(url, "bytes=$at-", ifRange = validator)
-                                call = next
-                                if (cancelled) {
-                                    next.cancel()
-                                    return
-                                }
-                                response = next.execute()
-                                val stream = response.body.byteStream()
-                                val ok = when (response.code) {
-                                    206 -> response.header("Content-Range")?.let(::rangeStart) == at
-                                    200 -> (total < 0 || entityLength(response) == total) &&
-                                        skipVerified(stream, at, startedAt, headOfStream.toByteArray(), tailOfStream) { cancelled }
-                                    else -> false
-                                }
-                                if (cancelled) return
-                                if (ok) {
-                                    log("upstream broke at $at, picked up (#$pickups, ${response.code})")
-                                    joined = stream
-                                } else {
-                                    log("upstream broke at $at, pickup #$pickups refused (${response.code})")
-                                    // Refused is final: the same server will say the
-                                    // same thing again. Only a failure is retried.
-                                    runCatching { response.close() }
-                                    return
-                                }
-                            } catch (e: IOException) {
-                                if (cancelled) return
-                                log("upstream broke at $at, pickup #$pickups failed: $e")
-                                runCatching { response.close() }
-                            }
-                        }
-                        body = joined
+                        body = pickUp(startedAt + produced) ?: return
                         continue
                     }
                     if (n < 0) break
@@ -494,6 +430,68 @@ class StreamProxy(
             } finally {
                 runCatching { response.close() }
                 pipe.end(clean)
+            }
+        }
+
+        /**
+         * The stream from byte [at] on, after a break; null when it isn't to
+         * be picked up, or the server refused.
+         *
+         * Each attempt is one pickup spent, whether it is refused or fails on
+         * its own — the link that just changed is often not usable for the
+         * first second, and the first attempt after a break is the one most
+         * likely to throw.
+         */
+        private fun pickUp(at: Long): InputStream? {
+            runCatching { response.close() }
+            while (true) {
+                val why = when {
+                    pickups >= MAX_PICKUPS -> "too many breaks"
+                    !gateOpen() -> "rule closed"
+                    total >= 0 && at >= total -> "at the end"
+                    else -> null
+                }
+                if (why != null) {
+                    log("upstream broke at $at, not picked up: $why")
+                    return null
+                }
+                try {
+                    Thread.sleep(PICKUP_WAIT_MS[pickups])
+                } catch (_: InterruptedException) {
+                    return null
+                }
+                pickups++
+                if (cancelled) return null
+                try {
+                    val next = request(url, "bytes=$at-", ifRange = validator)
+                    call = next
+                    if (cancelled) {
+                        next.cancel()
+                        return null
+                    }
+                    response = next.execute()
+                    val stream = response.body.byteStream()
+                    val ok = when (response.code) {
+                        206 -> response.header("Content-Range")?.let(::rangeStart) == at
+                        200 -> (total < 0 || entityLength(response) == total) &&
+                            skipVerified(stream, at, startedAt, headOfStream.toByteArray(), tailOfStream) { cancelled }
+                        else -> false
+                    }
+                    if (cancelled) return null
+                    if (ok) {
+                        log("upstream broke at $at, picked up (#$pickups, ${response.code})")
+                        return stream
+                    }
+                    log("upstream broke at $at, pickup #$pickups refused (${response.code})")
+                    // Refused is final: the same server will say the same thing
+                    // again. Only a failure is retried.
+                    runCatching { response.close() }
+                    return null
+                } catch (e: IOException) {
+                    if (cancelled) return null
+                    log("upstream broke at $at, pickup #$pickups failed: $e")
+                    runCatching { response.close() }
+                }
             }
         }
     }
@@ -632,6 +630,15 @@ class StreamProxy(
         if (range != null) builder.header("Range", range)
         if (range != null && ifRange != null) builder.header("If-Range", ifRange)
         return upstream().newCall(builder.build())
+    }
+
+    /** The status line and [PASSED_ON] headers of [response], then [framing] and the end of the head. */
+    private fun proxiedHead(response: Response, framing: String): ByteArray {
+        val head = StringBuilder("HTTP/1.1 ${response.code} Proxied\r\n")
+        for (name in PASSED_ON) response.header(name)?.let { head.append("$name: ${it.printable()}\r\n") }
+        head.append(framing)
+        head.append("Connection: close\r\n\r\n")
+        return head.toString().toByteArray(Charsets.ISO_8859_1)
     }
 
     private fun respond(output: OutputStream, code: Int, reason: String, body: String = "") {

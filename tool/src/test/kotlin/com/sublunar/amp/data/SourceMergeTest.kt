@@ -20,8 +20,8 @@ class SourceMergeTest {
 
     @Test
     fun `signing the same Jellyfin account in again updates its source`() {
-        // A fresh sign-in mints a fresh id; without the match it became a second
-        // source over an empty library, and logged the first one out.
+        // A fresh sign-in mints a fresh id; without the match it would become a
+        // second source over an empty library, and log the first one out.
         val again = MusicSource(
             id = "src-new",
             kind = SourceKind.JELLYFIN,

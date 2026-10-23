@@ -4,10 +4,10 @@ package com.sublunar.amp.data
  * One track waiting to be fetched, and the source that can serve it.
  *
  * An offline mode's entries are ids alone, and the row is read from the
- * source's tables when its turn comes: Everything over a large library is
- * the whole library queued, and as tracks that was a second copy of it held
- * for as long as the queue took to drain. One asked for by hand keeps its
- * [track], which may be a song the library doesn't hold — a radio's, say.
+ * source's tables when its turn comes: Everything over a large library queues
+ * the whole library, and as tracks that is a second copy of it in memory. One
+ * asked for by hand keeps its [track], which may be a song the library doesn't
+ * hold — a radio's, say.
  */
 data class QueuedDownload(val sourceId: String, val trackId: String, val track: Track? = null) {
     constructor(sourceId: String, track: Track) : this(sourceId, track.id, track)
@@ -21,11 +21,10 @@ data class QueuedDownload(val sourceId: String, val trackId: String, val track: 
  * its own; [Downloader] owns the transfers and tells this what happened.
  *
  * Two lanes, drained in order: what the user asked for, then what a mode
- * decided to fetch on their behalf. Without the split, tapping Download on an
- * album while "Download everything" was working through a ten-thousand-track
- * library put that album ten thousand tracks back. A manual pick also
- * *promotes* a track already waiting in the automatic lane rather than
- * queueing it twice.
+ * decided to fetch on their behalf, so an album tapped while "Download
+ * everything" works through a large library isn't put behind all of it. A
+ * manual pick also *promotes* a track already waiting in the automatic lane
+ * rather than queueing it twice.
  *
  * Entries are keyed by source *and* track: two servers can hand out the same
  * id for different music, and every source's downloads share this one queue
@@ -69,9 +68,9 @@ class DownloadQueue {
      * is dropped. Re-adding to the same lane keeps the place it had.
      *
      * An automatic add of something already waiting keeps the entry that is
-     * there. Each top-up offers the whole of what its mode wants again, and an
-     * entry swapped for its equal left the lane holding both their ids — over
-     * a library queued whole, every id twice.
+     * there: each top-up offers the whole of what its mode wants again, and
+     * swapping an entry for its equal keeps both copies of its ids (the old
+     * key, the new value) — over a library queued whole, every id twice.
      */
     fun add(entry: QueuedDownload, manual: Boolean) {
         val key = entry.key
@@ -113,12 +112,10 @@ class DownloadQueue {
      * The transfer failed. Back to the front of its own lane — an outage
      * shouldn't cost a track the place it had earned — unless it keeps failing.
      *
-     * A track the server can never serve, a file deleted since the last sync,
-     * went to the front every time and was picked again immediately, so nothing
-     * behind it ever ran. Measured 2026-09-03: one foreign id held 8,303
-     * downloads for as long as the app was open. After [FAILURES_BEFORE_BACK]
-     * tries it goes to the back instead. The outage case is unharmed —
-     * everything is failing, so everything moves and the relative order stays.
+     * After [FAILURES_BEFORE_BACK] tries it goes to the back instead, so a
+     * track the server can never serve (a file deleted since the last sync)
+     * can't be picked again at once forever and hold up everything behind it.
+     * An outage is unharmed: everything fails, so the relative order stays.
      *
      * Returns true when it went to the back.
      */

@@ -20,9 +20,9 @@ import kotlinx.serialization.json.jsonObject
  * [MusicSource.features] is still dropped, and costs nothing, since a newer
  * build asks the server again whenever ServerFeatures.GENERATION has moved.
  *
- * The whole list used to be read in one go, and one record it couldn't read
- * made all of it read as empty: the Welcome screen, and adding a source from
- * there wrote the new one over every other.
+ * One record at a time, because a list read whole reads as empty over one bad
+ * record, and a source then added from the Welcome screen is written over every
+ * other.
  */
 internal class StoredSources private constructor(
     val readable: List<MusicSource>,
@@ -52,9 +52,8 @@ internal class StoredSources private constructor(
         }
 
         /**
-         * Null when [text] isn't a JSON array at all, which is what the caller
-         * falls back from exactly as before. A list with nothing readable in
-         * it is an empty list, as `[]` always was.
+         * Null when [text] isn't a JSON array at all. A list with nothing
+         * readable in it is an empty list, as `[]` is.
          */
         fun decode(json: Json, text: String): StoredSources? {
             val records = runCatching { json.parseToJsonElement(text) }.getOrNull() as? JsonArray ?: return null

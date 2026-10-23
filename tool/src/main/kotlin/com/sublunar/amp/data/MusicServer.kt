@@ -1,9 +1,12 @@
 package com.sublunar.amp.data
 
-import java.time.format.DateTimeFormatter
-import java.time.ZonedDateTime
-import java.time.Instant
 import io.ktor.client.statement.HttpResponse
+import java.time.Instant
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+
+/** A stream's content type, and whether it is served in byte ranges — see [MusicServer.knownStream]. */
+data class KnownStream(val mime: String, val ranges: Boolean)
 
 /**
  * A queue the server is holding, from this client or another one.
@@ -12,33 +15,12 @@ import io.ktor.client.statement.HttpResponse
  * every row the queue names, and the track that was playing has to survive the
  * ones that drop out.
  */
-/** A stream's content type, and whether it is served in byte ranges — see [MusicServer.knownStream]. */
-data class KnownStream(val mime: String, val ranges: Boolean)
-
 data class SavedQueue(
     val trackIds: List<String>,
     val currentId: String?,
     val positionMs: Long,
 )
 
-/**
- * What the app needs from a music server, whichever kind it is.
- *
- * Extracted from [SubsonicClient] so a second backend — Plex — can sit beside
- * it without the library, the downloader or the player knowing which one they
- * are talking to. Everything above this line works in the app's own models
- * ([Track], [Album], [Playlist]); the mapping from whatever the server actually
- * sends lives in the implementations.
- *
- * **Not every server can do everything.** Rather than have each call fail
- * quietly on a backend that doesn't support it, the *source* declares what it
- * can do (see [MusicSource.supportsLikes] and its neighbours) and the UI leaves
- * out what it can't. The reads only some servers implement default to an empty
- * answer, so a server that has no popular songs needn't write a stub saying so.
- * The writes default to [RefusedWrite] instead: a default that did nothing
- * would read as success, and a like the server never heard of would stand on
- * the phone as if it had.
- */
 /**
  * What came of asking a server to scan.
  *
@@ -84,7 +66,7 @@ private const val SHOWN_MESSAGE_MAX = 60
  * that didn't, with one difference: a write that can never land must not count
  * as one that might, so anything not recognised is a refusal. Read as "try
  * again later", a bug that always throws would hold the offline queue shut for
- * good, which is what a refused Subsonic star once did.
+ * good.
  *
  * A 401 is deliberately not called a login problem: Jellyfin answers 401 to a
  * delete the account isn't allowed to make, from a login that works.
@@ -121,6 +103,18 @@ internal suspend fun attemptWrite(block: suspend () -> Unit): WriteResult =
         writeResultOf(e)
     }
 
+/**
+ * What the app needs from a music server, whichever kind it is. Callers work
+ * in the app's own models ([Track], [Album], [Playlist]); the mapping from
+ * whatever the server actually sends lives in the implementations.
+ *
+ * **Not every server can do everything.** The *source* declares what it can do
+ * (see [MusicSource.supportsLikes] and its neighbours) and the UI leaves out
+ * what it can't. The reads only some servers implement default to an empty
+ * answer. The writes default to [RefusedWrite] instead: a default that did
+ * nothing would read as success, and a like the server never heard of would
+ * stand on the phone as if it had.
+ */
 interface MusicServer {
 
     /** Throws if the server isn't reachable or the credentials are wrong. */
@@ -177,9 +171,9 @@ interface MusicServer {
      * A sync re-reads an album's songs when the album is new or its count of
      * songs moved. A song re-tagged in place moves neither, and nor does one
      * whose tags a server only finished reading after the album was first
-     * synced — so without this, both stayed as first seen for ever. The
-     * default is [SongChanges.Unknown]: the server can't say, and the sync
-     * walks the library a little at a time instead.
+     * synced — this is what catches them. The default is [SongChanges.Unknown]:
+     * the server can't say, and the sync walks the library a little at a time
+     * instead.
      */
     suspend fun songChangesSince(mark: String?, libraries: List<String?>): SongChanges =
         SongChanges.Unknown(mark = null)
@@ -201,10 +195,10 @@ interface MusicServer {
      *
      * Navidrome answers from its Last.fm agent — the track's artist and artists
      * like them — Plex from the station it builds for the track, and Jellyfin
-     * from its instant mix. Empty where
-     * the server has no such idea, or nothing to say about this track; the
-     * caller tells the user so rather than playing something else instead. A
-     * [count] of 0 means the server's own default, as for [getTopSongs].
+     * from its instant mix. Empty where the server has no such idea, or nothing
+     * to say about this track; the caller tells the user so rather than playing
+     * something else instead. A [count] of 0 means the server's own default, as
+     * for [getTopSongs].
      */
     suspend fun getSimilarSongs(songId: String, count: Int = 0): List<Track> = emptyList()
 
@@ -226,12 +220,9 @@ interface MusicServer {
     ): String
 
     /**
-     * The same, for a caller that has the whole track.
-     *
-     * Subsonic needs nothing but the id, so this is the id call by default. Plex
-     * keeps the path to the file on the track ([Track.streamPath]) and can only
-     * serve the original bytes when it has it — which is why the overload exists
-     * at all. Prefer it wherever a [Track] is already in hand.
+     * The same, for a caller that has the whole track — prefer it wherever one
+     * is in hand. Plex keeps the path to the file on the track
+     * ([Track.streamPath]) and can only serve the original bytes when it has it.
      */
     fun streamUrl(
         track: Track,
@@ -244,12 +235,10 @@ interface MusicServer {
     /**
      * Where to fetch a *copy* from, as opposed to something to play now.
      *
-     * The same URL for most servers, which serve a whole file either way. Plex
-     * is the exception and the reason this exists: its transcoder has a
-     * streaming mode and a download mode, and asking the streaming one for a
-     * file you mean to keep gets you a live segmented encode with no header
-     * stating how long it is — which the player then has to guess at, wrongly,
-     * for the life of the file. See [PlexClient].
+     * The same URL for most servers, which serve a whole file either way. Plex's
+     * transcoder has a streaming mode and a download mode, and the streaming one
+     * gives a live segmented encode with no header stating how long it is, which
+     * the player then guesses at, wrongly, for the life of the file.
      */
     fun downloadUrl(track: Track, format: StreamFormat): String =
         streamUrl(track, format, estimateContentLength = false)
@@ -302,45 +291,34 @@ interface MusicServer {
 
     /**
      * Whether the server wants one session for a player's whole listening,
-     * changing song as it goes, rather than one per song. Read by the
-     * playback controller, which hands out the ids — see
+     * changing song as it goes, rather than one per song — see
      * PlaybackController.sessionIdFor.
      *
-     * Plex does: its dashboard lists a session per id, and each counts
-     * against a shared user's "remote streams allowed", so an id per song
-     * showed a new entry every song and, at one stream per user, had the
-     * next song refused while the last one's session was still listed.
-     * Jellyfin keeps its PlaySessionId per song, and Subsonic has no
-     * sessions at all.
+     * Plex does: each session counts against a shared user's "remote streams
+     * allowed", so at one stream per user an id per song had the next song
+     * refused while the last one's session was still listed. Jellyfin keeps its
+     * PlaySessionId per song, and Subsonic has no sessions at all.
      */
     val oneSessionPerPlayer: Boolean get() = false
 
     fun coverArtUrl(coverArtId: String?): String?
 
     /**
-     * The same cover, asked for no larger than [maxSizePx] on its long edge.
-     *
-     * Servers keep album art at whatever size it came in at — Plex's is often
-     * three thousand pixels square and several megabytes — and a phone has no
-     * use for any of it beyond the screen's own width. Asking for the original
-     * once per row is a lot of bytes to throw away, and it is felt most exactly
-     * where it hurts most: a grid, on a connection that leaves the house.
+     * The same cover, asked for no larger than [maxSizePx] on its long edge:
+     * servers keep art at whatever size it came in (Plex's is often several
+     * megabytes), and the phone has no use for more than its screen.
      *
      * Defaults to the full-size URL, for a server that can't resize. The caller
-     * is expected to fall back to that anyway if this one doesn't answer — see
+     * falls back to that anyway if this one doesn't answer — see
      * ArtworkLoader.fetch.
      */
     fun coverArtUrl(coverArtId: String?, maxSizePx: Int): String? = coverArtUrl(coverArtId)
 
     /**
-     * The formats this server will actually deliver.
-     *
-     * Declared by each implementation rather than assumed by the app, because
-     * only the code that builds the URLs knows what comes back down them. A
-     * server that is asked for something it cannot produce does not say so — it
-     * sends what it has and lets the client believe it got what it wanted — so
-     * the list of options the user picks from has to come from here, and a
-     * format that is missing from it is one the app must never request.
+     * The formats this server will actually deliver, declared by the code that
+     * builds the URLs. A server asked for something it cannot produce doesn't
+     * say so — it sends what it has — so a format missing from this list is one
+     * the app must never request.
      */
     val streamFormats: List<StreamFormat>
 
@@ -355,8 +333,8 @@ interface MusicServer {
      * Two different statements, and servers treat them as such: the first is
      * what Navidrome shows as now-playing and hands to its agents when a track
      * starts, the second is the play itself and is what reaches a scrobbling
-     * service. A client that only ever sends the second announces nothing while
-     * it plays, and logs a play for every track it was skipped past.
+     * service. A client that only sends the second announces nothing while it
+     * plays.
      *
      * The play throws when the server didn't take it, so the caller can keep it
      * for later — see [writeResultOf]. The now-playing notice is only true now,
@@ -412,6 +390,7 @@ interface MusicServer {
     suspend fun getPlaylist(id: String): Playlist =
         Playlist(id = id, name = "", coverArtId = null, createdAt = 0L, updatedAt = 0L, trackIds = emptyList())
     suspend fun getPlaylistTracks(id: String): List<Track> = emptyList()
+
     /**
      * Make a playlist and return its id.
      *
@@ -428,6 +407,7 @@ interface MusicServer {
     suspend fun renamePlaylist(id: String, name: String): Unit = throw RefusedWrite()
     suspend fun deletePlaylist(id: String): Unit = throw RefusedWrite()
     suspend fun addToPlaylist(id: String, songId: String): Unit = throw RefusedWrite()
+
     /**
      * Remove the entries [at] these positions — in the playlist as the server
      * holds it, all of them read against the list as it stands before any is

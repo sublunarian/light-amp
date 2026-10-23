@@ -13,19 +13,15 @@ import java.io.File
  * transcoder produces every mp3 as a live segmented encode — so the frames
  * arrive, and nothing else.
  *
- * Without that frame every player is left to guess. ExoPlayer divides the
- * file size by the *first* frame's bitrate, which on a variable-rate encode
- * is wrong by however quiet that frame happened to be: a 3:07 song read as
- * 22:57, the player grinding on through a phantom remainder in silence, and
- * every seek landing somewhere other than where the bar said. Three symptoms
- * of one missing frame.
+ * Without that frame ExoPlayer divides the file size by the *first* frame's
+ * bitrate, which on a variable-rate encode can be wrong several times over: a
+ * wrong duration, silence played past the real end, and every seek landing
+ * somewhere other than where the bar said.
  *
- * This is the encoder's last step, done by the one party that has the whole
- * file. Walk the frames, count them, note where each percent begins, and put
- * the frame LAME would have written in front. Not one audio byte moves. What
- * results is what any decoder expects an MP3 to be — this app's player, a car
- * stereo, `vbrfix` twenty years ago, all read it the same way. A file that
- * already carries an index is recognised from its first frame and left alone.
+ * So this does the encoder's last step: walk the frames, count them, note
+ * where each percent begins, and put the frame LAME would have written in
+ * front. Not one audio byte moves. A file that already carries an index is
+ * recognised from its first frame and left alone.
  *
  * Layer III only; the tables are the MPEG audio frame header as ExoPlayer's
  * MpegAudioUtil reads it and LAME's VbrTag.c writes it.
@@ -49,9 +45,8 @@ object Mp3VbrIndex {
     /**
      * Index [file] in place.
      *
-     * An indexed file is recognised from its opening frame alone, so the
-     * launch-time pass over a whole library reads a few kilobytes per file
-     * rather than the files. Only one that needs the work is read whole.
+     * An indexed file is recognised from its opening frame alone, so checking
+     * one reads a few kilobytes; only a file that needs the work is read whole.
      * Written through a temporary file and renamed, so an interruption leaves
      * the original as it was rather than half-rewritten.
      */

@@ -44,11 +44,8 @@ class DownloadStore(private val filesDir: File) {
         // Sweep partials left by a download the process didn't live to finish;
         // they're never resumable and would otherwise count against the budget.
         // Filtered in Kotlin rather than via a File(name)Filter lambda, whose SAM
-        // overload resolution is easy to get silently wrong.
-        //
-        // Legacy layout: downloads used to sit directly in the folder that now
-        // holds one directory per source. Anything left there is moved into the
-        // first source's folder by [adoptLegacyFiles].
+        // overload resolution is easy to get silently wrong. The top folder too,
+        // for the pre-sources layout — see [adoptLegacyFiles].
         val downloads = downloadsDir.apply { mkdirs() }
         (downloads.listFiles().orEmpty().toList() + allRoots().flatMap { it.listFiles().orEmpty().toList() })
             .filter { it.isFile && it.name.endsWith(PART_SUFFIX) }
@@ -56,11 +53,9 @@ class DownloadStore(private val filesDir: File) {
     }
 
     /**
-     * Move pre-sources downloads into [sourceId]'s folder.
-     *
-     * Called once for the source that inherits the old single-server setup; the
-     * files are the durable artefact, and re-fetching gigabytes because the
-     * layout changed underneath them is not an acceptable upgrade.
+     * Move pre-sources downloads, which sat directly in the downloads folder,
+     * into [sourceId]'s folder — the source that inherits the old single-server
+     * setup.
      */
     fun adoptLegacyFiles(sourceId: String) {
         val target = rootFor(sourceId)
@@ -70,12 +65,9 @@ class DownloadStore(private val filesDir: File) {
     }
 
     /**
-     * Everything [sourceId] has on disk, as (trackId, format) pairs.
-     *
-     * The download index lives in Room, and the SDK drops every table whenever the
-     * schema version moves — so a bump would otherwise strand gigabytes of audio
-     * as unreferenced files and re-fetch the lot. The files are named
-     * `<trackId>.<suffix>`, which is enough to rebuild the index from.
+     * Everything [sourceId] has on disk, as (trackId, format) pairs, to rebuild
+     * the download index from — see Downloader.reindexFromDisk. The files are
+     * named `<trackId>.<suffix>`, which is enough.
      */
     fun onDisk(sourceId: String): List<Pair<String, StreamFormat>> =
         rootFor(sourceId).listFiles().orEmpty().mapNotNull { file ->
@@ -107,12 +99,9 @@ class DownloadStore(private val filesDir: File) {
             val partial = File(target.parentFile, "${target.name}$PART_SUFFIX")
             try {
                 val startedMs = System.currentTimeMillis()
-                // Through the wall, like every other byte — see NetworkGate. This
-                // used to be a bare URLConnection with a check in front of it and
-                // one between reads, which left the connect, the TLS handshake, any
-                // redirect and any silent retry ungated, on a stack whose socket
-                // nothing here could close. The gated client asks at each of
-                // those, cuts the body when the rule closes, and can be slammed.
+                // Through the wall, like every other byte — see NetworkGate: it
+                // asks at the connect, the handshake, each redirect and retry,
+                // cuts the body when the rule closes, and can be slammed.
                 val call = http.newCall(Request.Builder().url(url).build())
                 // A cancelled download lets go of the socket instead of reading
                 // on to the end of a file nobody wants any more. A completion
@@ -217,57 +206,14 @@ class DownloadStore(private val filesDir: File) {
         }
 
     /**
-     * TEMPORARY MIGRATION — DELETE BEFORE SUBMITTING THE TOOL FOR COMMUNITY
-     * REVIEW.
+     * TEMPORARY: index every mp3 on disk that lacks one — mp3s downloaded before
+     * Downloader indexed each one as it landed. Runs once per install.
      *
-     * ## What this is
-     *
-     * Index every mp3 on disk that lacks one — see [Mp3VbrIndex] for what an
-     * index is and why a streamed mp3 arrives without one. Amp downloaded mp3s
-     * without writing that index until 2026-09-03. This repairs the files
-     * already on people's phones, once, so that a fix shipped in an update does
-     * not require re-fetching a library to take effect.
-     *
-     * ## Why it is temporary
-     *
-     * Everything downloaded since that date is indexed as it lands, by the call
-     * in [Downloader]'s download loop. That is the real mechanism and it is
-     * permanent. This walk exists only for files that predate it, so it is
-     * dead weight the moment those files are gone — and it is not free: it
-     * reads the first frame of every downloaded mp3 in every source's folder,
-     * which for a large offline library is tens of megabytes of disk at
-     * startup to discover there is nothing to do. It is gated to run once per
-     * install ([AppSettings.mp3IndexRepairNeeded]) so that cost is paid once,
-     * but the code should not outlive the installs that need it.
-     *
-     * ## How to remove it (all of it)
-     *
-     * 1. This function.
-     * 2. Its caller in `App.boot` — the `scope.launch(Dispatchers.IO)` block
-     *    marked TEMPORARY, which claims the flag and calls this.
-     * 3. [AppSettings.mp3IndexRepairNeeded], [AppSettings.markMp3IndexRepaired]
-     *    and their `MP3_INDEX_REPAIRED` key.
-     *
-     * Keep [Mp3VbrIndex] itself and the call in [Downloader]. Those are not
-     * part of this migration — without them, every mp3 downloaded from a
-     * server that transcodes as a stream goes back to reporting a length that
-     * can be wrong by a factor of seven, playing silence past its end, and
-     * seeking to the wrong place.
-     *
-     * ## When it is safe to remove
-     *
-     * When it is reasonable to expect that anyone still using downloads made
-     * before 2026-09-03 has launched a version carrying this at least once.
-     * Nothing breaks for a straggler who has not: their old files keep the
-     * wrong duration until re-downloaded, which is the state they were already
-     * in. No data is lost either way.
-     *
-     * ## One detail, if you are reading this to change it
-     *
-     * The downloads table's `bytes` for a repaired file is left as it was, a
-     * few hundred bytes short of the truth. That is deliberate: the storage
-     * figure the user sees is read off the disk rather than the table, and the
-     * table lives in one source's database while this covers every source.
+     * To remove it: this function, its TEMPORARY caller in `App.boot`, and
+     * [AppSettings.mp3IndexRepairNeeded], [AppSettings.markMp3IndexRepaired]
+     * and their `MP3_INDEX_REPAIRED` key. Keep [Mp3VbrIndex] and Downloader's
+     * per-download call. A straggler's old files keep their wrong duration
+     * until re-downloaded; nothing is lost.
      */
     fun indexMp3s(): Int {
         var written = 0
@@ -291,19 +237,14 @@ class DownloadStore(private val filesDir: File) {
     /**
      * The largest limit the user may choose.
      *
-     * The SDK imposes no quota of its own — downloads go to ordinary app-private
-     * storage — so the real constraint is leaving the phone usable: a fraction
-     * of what the tool could occupy, with an absolute ceiling on top.
+     * The SDK imposes no quota of its own, so the real constraint is leaving the
+     * phone usable: a share of what the tool could occupy, with an absolute
+     * ceiling on top. What it *could* occupy is the free space **plus what it is
+     * already holding** — against free space alone, a phone with 56 GB
+     * downloaded and 10 GB spare offered at most 7 GB.
      *
-     * What it *could* occupy is the free space **plus what it is already
-     * holding**, because that space is its own — filling it is what put it
-     * there. Measured against free space alone, a phone with 56GB downloaded
-     * and 10GB spare offered a maximum of 7GB: an invitation to delete almost
-     * everything, on a screen that never mentions deleting anything.
-     *
-     * Never below what is already downloaded, either. A cap under the current
-     * usage cannot be shown as the state the user is in, and choosing it would
-     * silently mean "throw away the difference".
+     * Never below what is already downloaded, either: choosing a cap under the
+     * current usage would silently mean "throw away the difference".
      */
     fun maxSelectableBytes(): Long {
         val used = usedBytesEverywhere()
@@ -319,11 +260,9 @@ class DownloadStore(private val filesDir: File) {
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 30_000
         private const val PART_SUFFIX = ".part"
-        /** Content types that are an answer *about* a track, never the track. */
-        // 64 GB is reachable on the LP3's 128 GB of storage only if we're willing
-        // to claim more than half of what's free, so the share goes up with the
-        // ceiling; a quarter of free space still stays behind for the OS and the
-        // rest of the phone.
+
+        // 64 GB is reachable on the LP3's 128 GB only by claiming more than half
+        // of what's free; a quarter still stays behind for the rest of the phone.
         private const val FREE_SPACE_SHARE = 0.75
         private const val ABSOLUTE_CEILING = 64L * 1024 * 1024 * 1024
     }
@@ -349,16 +288,16 @@ val StreamFormat.qualityRank: Int
         StreamFormat.RAW -> 4
     }
 
-/** "1.4 GB", "820 MB" — sizes as the settings screens show them. */
 /**
- * Always in GB, for the used/allowed pair on the Downloads page — mixing "740 MB"
- * against "50.3 GB" makes the two halves hard to compare at a glance.
+ * Always in GB, for a used/allowed pair — "740 MB" against "50.3 GB" is hard to
+ * compare at a glance.
  */
 fun formatGb(bytes: Long): String {
     val gb = bytes / 1024.0 / 1024.0 / 1024.0
     return if (gb >= 100) "${gb.toInt()} GB" else String.format("%.1f GB", gb)
 }
 
+/** "1.4 GB", "820 MB" — sizes as the settings screens show them. */
 fun formatBytes(bytes: Long): String {
     val gb = bytes / 1024.0 / 1024.0 / 1024.0
     if (gb >= 1.0) {

@@ -14,12 +14,12 @@
 # SDK baked into an image, into which their extractor copies only
 # tool/lighttool.toml, tool/build.gradle.kts and tool/src/main/{kotlin,java,res,
 # assets}, followed by `:tool:assembleRelease -DlightSdk.unsigned=true
-# -DlightSdk.toolOnly=true -DlightSdk.abiFilters=arm64-v8a`. Since SDK 0.2.0
-# that build fetches what the warmed cache lacks through a Maven proxy; without
-# the proxy it runs --offline. None of light-sdk-patch/ and neither variant
-# manifest overlay gets there. This
-# script repeats those steps here — with Light's own extractor, so its rules are
-# theirs and not a copy — and sums up the compile errors by file and by symbol.
+# -DlightSdk.toolOnly=true -DlightSdk.abiFilters=arm64-v8a`. That build
+# fetches what the warmed cache lacks through a Maven proxy; without the
+# proxy it runs --offline. None of light-sdk-patch/ and neither variant
+# manifest overlay gets there. This script repeats those steps here — with
+# Light's own extractor, so its rules are theirs and not a copy — and sums up
+# the compile errors by file and by symbol.
 #
 # --offline repeats the image's warm-up too: the pristine SDK's sample tool is
 # built into a Gradle home of its own, and Amp is then built against that home

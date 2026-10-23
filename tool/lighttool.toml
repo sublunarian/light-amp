@@ -16,12 +16,12 @@ permissions = [
     # through LightOS the first time a code is scanned.
     "android.permission.CAMERA",
 ]
-# Official background audio (SDK 0.1.1+): the plugin wires LightAudioService
-# and its foreground permissions into this tool's manifest.
-# Plain http:// (SDK 0.2.0+): a self-hosted server on a home network usually
-# speaks it, and without this Android refuses every such request.
+# detached-audio: the plugin wires LightAudioService and its foreground
+# permissions into this tool's manifest.
+# cleartext-http: a self-hosted server on a home network usually speaks plain
+# http://, and without this Android refuses every such request.
 capabilities = ["detached-audio", "cleartext-http"]
 # Real LP3 hardware binds to the LightOS system app.
 # Use "com.thelightphone.sdk.emulator" for the LightOS emulator instead, and
-# build with -DlightSdk.allowAltServerPackage=true (SDK 0.2.0 refuses it otherwise).
+# build with -DlightSdk.allowAltServerPackage=true, which the SDK requires for it.
 serverPackage = "com.lightos"

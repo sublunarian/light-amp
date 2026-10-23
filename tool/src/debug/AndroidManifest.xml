@@ -2,8 +2,8 @@
 <!--
   Debug/side-load overlay. The plugin only forbids src/main/AndroidManifest.xml,
   so this variant overlay is allowed and merges into the generated manifest.
-  Plain http:// is no longer here: lighttool.toml declares the SDK's
-  cleartext-http capability, which reaches every build.
+  Plain http:// needs nothing here: lighttool.toml's cleartext-http capability
+  covers every build.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">

@@ -50,9 +50,8 @@ android {
         }
     }
 
-    // So the About screen can read the version out of lighttool.toml rather
-    // than repeating it in a string that drifts — which is how it came to claim
-    // 1.0.0 through an entire rename.
+    // So the About screen reads the version out of lighttool.toml rather than
+    // repeating it in a string that drifts.
     buildFeatures {
         buildConfig = true
     }
@@ -116,7 +115,7 @@ dependencies {
     // rather than taken from material-icons-extended: that artifact is on Light's
     // allow-list but not in their store builder's offline cache.
 
-    // Networking (Subsonic API over ktor + okhttp engine)
+    // Networking: every server client, over ktor's OkHttp engine
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)
     implementation(libs.ktor.client.content.negotiation)

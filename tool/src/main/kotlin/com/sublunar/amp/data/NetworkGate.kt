@@ -29,11 +29,10 @@ import okio.buffer
  * right now?
  *
  * The rule itself is App.networkAllowed — false only in Wi-Fi Only on a
- * metered link. This is where it is *enforced*, rather than consulted. The
- * data modes used to be a set of courtesy checks, each code path asking
- * before it started work, and a path that didn't ask (a stream already in the
- * queue, a reconnect, a redirect) used cellular data in the mode whose whole
- * promise is that it never does. Now the question is put at the transport:
+ * metered link. This is where it is *enforced* rather than consulted, at the
+ * transport, so a path that never asks (a stream already in the queue, a
+ * reconnect, a redirect) still can't use cellular in the mode that promises it
+ * never does. The question is put:
  *
  * - **before each request leaves the client** (the ktor hook) — the cheap
  *   early-out, so nothing is built that would only be refused;
@@ -53,15 +52,14 @@ import okio.buffer
  * carry a whole sync after the switch to Wi-Fi Only — so entering that mode
  * slams, as does any check that finds the rule closed.
  *
- * What this cannot do: bind a socket to the Wi-Fi network. That needs the
- * platform's ConnectivityManager, which a sandboxed tool is not given. So if
- * the default network moves between the socket check and `connect()`, one
- * handshake can leave on the wrong link before the interceptor refuses the
- * request — a few kilobytes, in a race measured in milliseconds, and never a
+ * What this cannot do: bind a socket to the Wi-Fi network, which needs the
+ * platform's ConnectivityManager. So if the default network moves between the
+ * socket check and `connect()`, one handshake can leave on the wrong link
+ * before the interceptor refuses the request — a few kilobytes, and never a
  * request or a byte of a response. See tool/docs/SDK-GAPS.md.
  *
- * The platform player is outside this wall — it fetches with its own stack.
- * See App.networkAllowed for what stands in front of it.
+ * The platform player fetches with its own stack, outside this wall; it is
+ * only ever handed StreamProxy's addresses, and StreamProxy fetches through here.
  *
  * Refused means an [IOException], the same failure a dead network produces,
  * so every caller that survives an outage survives the rule — only sooner.
@@ -88,7 +86,7 @@ object NetworkGate {
         // The newest live answer always wins over the cached one the body
         // reads use — see isOpenRecently.
         recentAnswer = open
-        recentAtMs = System.nanoTime() / 1_000_000
+        recentAtMs = monotonicMs()
         if (!open) {
             slam()
             throw NetworkGateClosedException()
@@ -108,6 +106,12 @@ object NetworkGate {
     /** Every raw socket handed out and possibly still open. Weak: a closed, dropped socket just leaves. */
     private val sockets: MutableSet<Socket> =
         Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap()))
+
+    /** The subset of [sockets] opened while the link was metered. */
+    private val meteredSockets: MutableSet<Socket> =
+        Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap()))
+
+    @Volatile private var lastSlamAtMs = Long.MIN_VALUE
 
     /**
      * One pool for every client built here, so there is one thing to empty.
@@ -138,51 +142,39 @@ object NetworkGate {
     fun slam() {
         val open = synchronized(sockets) { sockets.toList().also { sockets.clear() } }
         synchronized(meteredSockets) { meteredSockets.clear() }
-        if (open.isNotEmpty()) lastSlamAtMs = System.nanoTime() / 1_000_000
+        if (open.isNotEmpty()) lastSlamAtMs = monotonicMs()
         for (socket in open) runCatching { socket.close() }
         val all = synchronized(pools) { pools.toList() }
         for (p in all) runCatching { p.evictAll() }
     }
 
     /**
-     * The phone moved to a different network. Every connection there is
-     * belongs to the old one — a socket never follows the phone across — and
-     * left in the pool it is reused for the next request, which then waits on
-     * a path that is going away: a ping that answers in fifty milliseconds
-     * took six seconds and was read as "the server is gone", three times in a
-     * row, in the half minute after the phone came home to Wi-Fi. Every
-     * caller survives a dropped connection; none survives a stalled one well.
+     * The phone moved to a different network. Every connection belongs to the
+     * old one — a socket never follows the phone across — and left in the pool
+     * it carries the next request onto a path that is going away, where a ping
+     * stalls for seconds and reads as "the server is gone". Every caller
+     * survives a dropped connection; none survives a stalled one well.
      */
     fun linkChanged() {
         slam()
     }
 
     /**
-     * Close only the connections that were opened on a metered link.
-     *
-     * For the moment the mode becomes Wi-Fi Only. A socket opened over
-     * cellular in another mode stays usable for minutes — a socket never
-     * changes network, and the rule only ever answers for the phone's
-     * *default* one — so with Wi-Fi now the default the rule reads open while
-     * a pooled cellular connection carries the next request. Those go. What
-     * was opened on Wi-Fi is free and is left alone: shutting it would fail
-     * the downloads and the sync in flight, and tell the reachability ping
-     * that a server which is plainly there has gone.
+     * Close only the connections that were opened on a metered link, for the
+     * moment the mode becomes Wi-Fi Only: with Wi-Fi the default the rule reads
+     * open while a pooled cellular connection would carry the next request.
+     * What was opened on Wi-Fi is left alone: shutting it would fail the
+     * downloads and the sync in flight, and tell the reachability ping that a
+     * server which is plainly there has gone.
      */
     fun slamMetered() {
         val open = synchronized(meteredSockets) { meteredSockets.toList().also { meteredSockets.clear() } }
-        if (open.isNotEmpty()) lastSlamAtMs = System.nanoTime() / 1_000_000
+        if (open.isNotEmpty()) lastSlamAtMs = monotonicMs()
         for (socket in open) runCatching { socket.close() }
     }
 
     /** Whether sockets were shut by this wall at or after [sinceMs] (monotonic ms) — an I/O failure then is ours. */
     fun slammedSince(sinceMs: Long): Boolean = lastSlamAtMs >= sinceMs
-
-    @Volatile private var lastSlamAtMs = Long.MIN_VALUE
-
-    /** The subset of [sockets] opened while the link was metered. */
-    private val meteredSockets: MutableSet<Socket> =
-        Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap()))
 
     // --- Clients -------------------------------------------------------------
 
@@ -282,7 +274,7 @@ object NetworkGate {
     @Volatile private var recentAtMs = 0L
 
     private fun isOpenRecently(): Boolean {
-        val now = System.nanoTime() / 1_000_000
+        val now = monotonicMs()
         if (now - recentAtMs > RECENT_MS) {
             recentAnswer = policy()
             recentAtMs = now
@@ -335,3 +327,6 @@ object NetworkGate {
  * that surfaces `e.message` says the right thing without knowing the type.
  */
 class NetworkGateClosedException : IOException(NetworkGate.WAITING_FOR_WIFI)
+
+/** Milliseconds on a clock that never jumps, for measuring intervals. */
+internal fun monotonicMs(): Long = System.nanoTime() / 1_000_000

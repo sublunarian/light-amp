@@ -2,14 +2,9 @@ package com.sublunar.amp.data
 
 /**
  * What the connection and the data mode allow right now — the one answer the
- * library, the queue, playback, downloads and artwork all read.
- *
- * It used to be several answers held in several places: a metered flag here,
- * the mode there, and a "server reachable" latch that only a finished sync
- * could clear. Each part of the app followed whichever it happened to watch,
- * so after a network switch they disagreed for as long as the slowest of them
- * took — minutes, when that was the sync. One value, recomputed the moment any
- * of its inputs moves, is what makes them change together.
+ * library, the queue, playback, downloads and artwork all read. One value,
+ * recomputed the moment any input moves, so after a network switch every part
+ * of the app changes together instead of each following its own copy.
  *
  * This is the *courtesy* layer: it decides what to offer and what to attempt.
  * What may actually leave the phone is decided at the transport, by
@@ -46,11 +41,8 @@ data class LinkRules(
     /**
      * The cover of the thing in front of the user — what is playing, the album
      * page that is open. Allowed wherever the music itself is: a sleeve is a
-     * fraction of a percent of the album it belongs to, and a player that
-     * streams a song over cellular but won't show its cover is saving nothing
-     * anyone would notice. Library lists stay [mayMoveHeavyBytes]: a scroll
-     * through uncached covers is real data, and the same picture arrives on
-     * Wi-Fi soon enough.
+     * fraction of a percent of its album. Library lists stay [mayMoveHeavyBytes]:
+     * a scroll through uncached covers is real data.
      */
     val mayFetchFocusedArt: Boolean
         get() = mayTalkToServer
@@ -63,8 +55,7 @@ data class LinkRules(
     val waitingFor: String?
         get() = when {
             mayStream -> null
-            connected && mode == DataMode.WIFI_ONLY && !unmetered -> NetworkGate.WAITING_FOR_WIFI
-            !connected && mode == DataMode.WIFI_ONLY -> NetworkGate.WAITING_FOR_WIFI
+            mode == DataMode.WIFI_ONLY && (!connected || !unmetered) -> NetworkGate.WAITING_FOR_WIFI
             !connected -> WAITING_FOR_CONNECTION
             else -> WAITING_FOR_SERVER
         }

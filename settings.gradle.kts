@@ -10,8 +10,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // The LP3 keyboard, which the SDK pulls from JitPack since 0.1.x —
-        // no credentials needed (it lived on GitHub Packages before).
+        // The LP3 keyboard, which the SDK pulls from JitPack; no credentials needed.
         maven {
             name = "JitPack"
             url = uri("https://jitpack.io")
