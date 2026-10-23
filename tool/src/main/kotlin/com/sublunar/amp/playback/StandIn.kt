@@ -1,6 +1,7 @@
 package com.sublunar.amp.playback
 
 import android.os.SystemClock
+import android.util.Log
 import androidx.media3.common.Player
 import com.sublunar.amp.data.Track
 import com.thelightphone.sdk.audio.LightAudioItem
@@ -19,18 +20,17 @@ import kotlinx.coroutines.withContext
 /**
  * The phone's own player while something else has the sound.
  *
- * The media session belongs to the phone's player, and the session is what a
- * launcher's playback controls, Bluetooth buttons and LightOS read. Left
- * paused while casting, it told all of them the phone was stopped at 0:00 on
- * whatever song casting began with, and their buttons went to a player that
- * makes no sound. So while an output plays, the player plays silence instead:
- * one item, named and timed like the output's song, kept at the output's
- * position and play state. Whatever reaches it that Amp didn't do itself is a
- * press, and is handed back through [press] to go where the sound is.
+ * The media session belongs to the phone's player, and it is what a
+ * launcher's controls, Bluetooth buttons and LightOS read: left paused, it
+ * told them the phone was stopped at 0:00, and their buttons reached a player
+ * making no sound. So while an output plays, the player plays silence: one
+ * item, named and timed like the output's song, kept at the output's position
+ * and play state. Whatever reaches it that Amp didn't do itself is a press,
+ * handed back through [press] to go where the sound is.
  *
  * Playing, it also keeps media3's service in the foreground. Without that,
- * Android froze Amp ten seconds after it left the screen, and the speaker
- * played out its song and stopped with nobody to give it the next one.
+ * Android froze Amp seconds after it left the screen, and the speaker played
+ * out its song with nobody to give it the next one.
  *
  * Main thread only, like the player.
  */
@@ -109,7 +109,7 @@ internal class StandIn(
         held = p
         wantedId = null
         current()?.let { put(p, it) }
-        watch(p)
+        watchForPresses(p)
     }
 
     /** The handle is gone. The next one gets [bind]. */
@@ -136,7 +136,7 @@ internal class StandIn(
         val p = held
         unbind()
         p?.pause()
-        android.util.Log.i(TAG, "stood down")
+        Log.i(TAG, "stood down")
     }
 
     private fun current(): Track? = queue.value.getOrNull(index.value)
@@ -167,7 +167,7 @@ internal class StandIn(
         trackId = null
         wantedId = null
         p.setMediaQueue(emptyList())
-        android.util.Log.i(TAG, "nothing to stand in for")
+        Log.i(TAG, "nothing to stand in for")
     }
 
     private fun onPlaying(playing: Boolean) {
@@ -202,7 +202,7 @@ internal class StandIn(
             val file = try {
                 Silence.fileFor(dir, length)
             } catch (e: Exception) {
-                android.util.Log.w(TAG, "no silence for ${track.id}: $e")
+                Log.w(TAG, "no silence for ${track.id}: $e")
                 return@launch
             }
             withContext(Dispatchers.Main.immediate) {
@@ -217,7 +217,7 @@ internal class StandIn(
                 p.repeatMode = Player.REPEAT_MODE_OFF
                 p.setMediaQueueAt(listOf(item(track, LightAudioSource.FileSource(file))), 0, at)
                 if (outputPlaying) p.play() else p.pause()
-                android.util.Log.i(TAG, "standing in for ${track.id} at=$at playing=$outputPlaying")
+                Log.i(TAG, "standing in for ${track.id} at=$at playing=$outputPlaying")
                 // Only now: until the new item was in, the player could still
                 // reopen the old file.
                 scope.launch(Dispatchers.IO) { if (gen == generation) Silence.prune(dir, keep = file) }
@@ -225,7 +225,7 @@ internal class StandIn(
         }
     }
 
-    private fun watch(p: LightAudioPlayer) {
+    private fun watchForPresses(p: LightAudioPlayer) {
         watching?.cancel()
         watching = scope.launch(Dispatchers.Main) {
             combine(p.isPlaying, p.positionMs) { playing, pos -> playing to pos }.collect { (playing, pos) ->
@@ -235,7 +235,7 @@ internal class StandIn(
                 if (presses.isEmpty()) return@collect
                 graceUntil = now + PRESS_GRACE_MS
                 for (it in presses) {
-                    android.util.Log.i(TAG, "press $it")
+                    Log.i(TAG, "press $it")
                     press(it)
                 }
             }

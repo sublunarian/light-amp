@@ -36,7 +36,7 @@ class LateUnbindTest {
     private fun illegalArgument(vararg frames: StackTraceElement, text: String? = message): Throwable =
         IllegalArgumentException(text).apply { stackTrace = arrayOf(*frames) }
 
-    /** dist/crash-repro-2026-10-09.txt, frame for frame: R8 has folded the lambda body into its synthetic class. */
+    /** The release-build crash, frame for frame: R8 has folded the lambda body into its synthetic class. */
     @Test
     fun `the release-build crash from the phone is absorbed`() {
         assertTrue(isLateMediaUnbind(illegalArgument(*unbind, wrapper, releaseLambda, *looper)))
@@ -64,7 +64,7 @@ class LateUnbindTest {
     /**
      * Fails closed: a build that renamed its classes can't be recognised, and
      * the crash comes back rather than something else being swallowed. This
-     * is what the 0.7.1 crashes looked like, before keep-names.txt.
+     * is what a build without keep-names.txt throws.
      */
     @Test
     fun `a renamed build is not recognised`() {
