@@ -149,7 +149,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     private var job: Job? = null
 
-    // "rendererId|format" -> stream format actually sent + its MIME type.
+    // formatChoiceKey -> stream format actually sent + its MIME type.
     // Concurrent: a source switch clears it from wherever stop was called,
     // while a cast job on its way out may still be writing it.
     private val formats = ConcurrentHashMap<String, Pair<StreamFormat, String>>()
@@ -972,6 +972,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      * as long as the renderer can decode what the *server* will send.
      *  - The format name doesn't fix the container (a "flac" transcode can
      *    arrive as Ogg-FLAC), so the MIME type is probed from the server.
+     *    Original is each file's own container, so it is probed per track: a
+     *    FLAC after an MP3 must not go out as audio/mpeg.
      *  - An unsupported format doesn't error, the renderer just stalls, so it
      *    falls back to MP3 when the sink list doesn't cover that MIME.
      * If the device won't list its formats, the user's choice wins.
@@ -981,7 +983,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         track: Track,
     ): Pair<StreamFormat, String> {
         val desired = host.streamFormat()
-        val key = "${renderer.id}|${desired.id}"
+        val key = formatChoiceKey(renderer.id, desired, track.id)
         formats[key]?.let { return it }
 
         val sink = runCatching { DlnaCast.sinkFormats(renderer) }.getOrDefault(emptySet())

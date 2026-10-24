@@ -13,6 +13,13 @@ internal fun assumedMime(format: StreamFormat): String = when (format) {
 }
 
 /**
+ * What a renderer's choice of format and MIME type is remembered under: per
+ * format, and per track for Original, which is each file's own container.
+ */
+internal fun formatChoiceKey(rendererId: String, format: StreamFormat, trackId: String): String =
+    if (format == StreamFormat.RAW) "$rendererId|${format.id}|$trackId" else "$rendererId|${format.id}"
+
+/**
  * Whether the renderer's advertised sink covers [mime]. Compared through
  * alias groups because devices and servers spell the same container
  * differently (`audio/mp4` vs `audio/m4a`, `audio/mpeg` vs `audio/mp3`).
