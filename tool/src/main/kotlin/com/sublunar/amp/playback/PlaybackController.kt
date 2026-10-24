@@ -1525,7 +1525,6 @@ class PlaybackController(
         settleRestartCopy()
         val source = queuedSources.getOrNull(_index.value)
         val fromFile = source is LightAudioSource.FileSource
-        val network = error.kind == LightAudioErrorKind.Source
         val outcome = _queue.value.getOrNull(_index.value)?.let { App.streamProxy.lastOutcome(it.id) }
         val status = (outcome as? StreamProxy.Outcome.Answered)?.status
         Log.i(
@@ -1533,30 +1532,31 @@ class PlaybackController(
             "player error ${error.diagnostic}${status?.let { " (HTTP $it)" }.orEmpty()} " +
                 "at idx=${_index.value} (${if (fromFile) "file" else "stream"})",
         )
-        val serverAnswered = error.diagnostic == BAD_HTTP_STATUS
-        if (fromFile || !network) {
-            // A file on the phone, or audio that arrived and wouldn't decode:
-            // nothing about the link or the server can change it, so it is
-            // neither retried nor blamed on them. It says what it is, and
-            // playback moves on if it was moving.
-            blockedAtCurrent(because = if (fromFile) CANT_PLAY_FILE else CANT_PLAY_FORMAT)
-        } else if (
-            outcome == StreamProxy.Outcome.Refused ||
-            !App.streamProxy.isOn ||
-            (source as? LightAudioSource.UrlSource)?.url == StreamProxy.UNAVAILABLE_URL
-        ) {
-            // The app's own rule at the door, or no door yet: the server isn't
-            // unreachable, it is unasked, so there is nothing to fall back to
-            // or latch.
-            blockedAtCurrent()
-        } else if (serverAnswered && status in 500..599 && playOriginalElsewhere(p)) {
+        val failure = playFailure(
+            fromFile = fromFile,
+            networkError = error.kind == LightAudioErrorKind.Source,
+            badHttpStatus = error.diagnostic == BAD_HTTP_STATUS,
+            status = status,
+            doorRefused = outcome == StreamProxy.Outcome.Refused ||
+                !App.streamProxy.isOn ||
+                (source as? LightAudioSource.UrlSource)?.url == StreamProxy.UNAVAILABLE_URL,
+        )
+        when (failure) {
+            // Neither retried nor blamed on the link or the server. It says what
+            // it is, and playback moves on if it was moving.
+            PlayFailure.FILE -> blockedAtCurrent(because = CANT_PLAY_FILE)
+            PlayFailure.FORMAT -> blockedAtCurrent(because = CANT_PLAY_FORMAT)
+            // The server isn't unreachable, it is unasked, so there is nothing
+            // to fall back to or latch.
+            PlayFailure.UNASKED -> blockedAtCurrent()
             // Rebuilt on the server's other address for the same file. Only a
-            // failure there as well comes down to the path below.
-        } else {
+            // failure there as well comes down to the fallback.
+            PlayFailure.SERVER_ERROR -> if (!playOriginalElsewhere(p)) fallBackOffline(serverAnswered = true)
             // A bad HTTP status proves the server is there: it isn't taken as
             // unreachable, which would put the whole library on downloads only
             // over one bad URL.
-            fallBackOffline(serverAnswered = serverAnswered)
+            PlayFailure.BAD_STATUS -> fallBackOffline(serverAnswered = true)
+            PlayFailure.NO_ANSWER -> fallBackOffline(serverAnswered = false)
         }
     }
 
