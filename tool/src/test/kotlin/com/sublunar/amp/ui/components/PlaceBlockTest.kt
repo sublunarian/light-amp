@@ -12,14 +12,9 @@ class PlaceBlockTest {
     /** A row: [key], and whether it is shown. */
     private data class Row(val key: String, val shown: Boolean = true)
 
-    /** What the playlist page does with a drop: [indices] and [insertAt] are among the shown rows. */
-    private fun drop(full: List<Row>, indices: Set<Int>, insertAt: Int): List<Row> {
-        val shown = full.filter { it.shown }
-        val moving = shown.filterIndexed { i, _ -> i in indices }.mapTo(HashSet()) { it.key }
-        val remaining = shown.filterNot { it.key in moving }
-        val before = remaining.getOrNull(insertAt.coerceIn(0, remaining.size))?.key
-        return placeBlock(full, { it.key }, moving, before, remaining.last().key)
-    }
+    /** A drop on the playlist page: [indices] and [insertAt] are among the shown rows. */
+    private fun drop(full: List<Row>, indices: Set<Int>, insertAt: Int): List<Row> =
+        moveShownBlock(full, { it.key }, { it.shown }, indices, insertAt)
 
     private fun keys(rows: List<Row>) = rows.joinToString("") { it.key }
 

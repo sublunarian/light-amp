@@ -46,9 +46,8 @@ import com.sublunar.amp.ui.components.SelectionState
 import com.sublunar.amp.ui.components.Selections
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.dragReorderContainer
-import com.sublunar.amp.ui.components.dragRowTarget
-import com.sublunar.amp.ui.components.dropInsertIndex
-import com.sublunar.amp.ui.components.placeBlock
+import com.sublunar.amp.ui.components.dropTarget
+import com.sublunar.amp.ui.components.moveShownBlock
 import com.sublunar.amp.ui.components.rememberDragReorderState
 import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.components.rememberSelection
@@ -197,18 +196,7 @@ class PlaylistDetailScreen(
         val headerCount = if (editing) 0 else 2
         val listState = rememberListAnchor("playlist:$playlistId", headerCount)
         val orderedKeys = remember(list) { list.map { it.key } }
-        // Where the drag would land right now; null beforeKey means "at the very bottom".
-        val dropTarget: DropTarget? = drag.draggingIndex?.let { from ->
-            val target = dragRowTarget(list.size, from, drag.dragOffsetY, rowPx)
-            val movingIndices = drag.draggingKeys.mapNotNull { orderedKeys.indexOf(it).takeIf { i -> i >= 0 } }.toSet()
-            // Keyed on the row-granular target, not dragOffsetY, so it only recomputes
-            // when the drag crosses into a new row.
-            remember(list, from, drag.draggingKeys, target) {
-                val insertAt = dropInsertIndex(list.size, from, movingIndices, target)
-                val remaining = list.filterIndexed { i, _ -> i !in movingIndices }
-                DropTarget(remaining.getOrNull(insertAt)?.key)
-            }
-        }
+        val dropTarget = drag.dropTarget(orderedKeys, rowPx)
 
         drag.AutoScroll(listState, rowPx)
 
@@ -336,8 +324,6 @@ class PlaylistDetailScreen(
         }
     }
 
-    private data class DropTarget(val beforeKey: String?)
-
     /**
      * Show an edit now and write it behind the screen's back.
      *
@@ -400,18 +386,13 @@ class PlaylistDetailScreen(
 
     /**
      * Move the shown rows at [indices], in their order, as a block to [insertAt] among
-     * the rest shown. Rows that aren't shown keep their places (see [placeBlock]).
+     * the rest shown. Rows that aren't shown keep their places (see [moveShownBlock]).
      */
     private fun reorderGroup(indices: Set<Int>, insertAt: Int) {
         // A partial order would be an instruction to lose everything it omits.
         if (!canEdit()) return
         val current = entries.value ?: return
-        val shown = current.filter { it.shown }
-        val moving = shown.filterIndexed { i, _ -> i in indices }.mapTo(HashSet()) { it.key }
-        if (moving.isEmpty() || moving.size == shown.size) return
-        val remaining = shown.filterNot { it.key in moving }
-        val before = remaining.getOrNull(insertAt.coerceIn(0, remaining.size))?.key
-        val newList = placeBlock(current, { it.key }, moving, before, remaining.last().key)
+        val newList = moveShownBlock(current, { it.key }, { it.shown }, indices, insertAt)
         if (newList == current) return
         edit(newList) { App.playlists.reorderPlaylist(playlistId, newList.map { it.track.id }) }
     }

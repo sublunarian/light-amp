@@ -70,6 +70,7 @@ import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppProgressBar
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.AutoScroll
+import com.sublunar.amp.ui.components.DRAG_HANDLE_PX
 import com.sublunar.amp.ui.components.DropIndicatorLine
 import com.sublunar.amp.ui.components.HEADER_BAR_PX
 import com.sublunar.amp.ui.components.HeaderAction
@@ -90,8 +91,7 @@ import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.TitleCard
 import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.dragReorderContainer
-import com.sublunar.amp.ui.components.dragRowTarget
-import com.sublunar.amp.ui.components.dropInsertIndex
+import com.sublunar.amp.ui.components.dropTarget
 import com.sublunar.amp.ui.components.formatTime
 import com.sublunar.amp.ui.components.rememberArtwork
 import com.sublunar.amp.ui.components.rememberDragReorderState
@@ -109,12 +109,6 @@ import kotlinx.coroutines.launch
 
 /** Where the active synced-lyric line sits in the pane, as a fraction of its height. */
 private const val LYRIC_ANCHOR = 0.38f
-
-/**
- * Shared width for the trailing control on a queue row, so the drag handles line
- * up down the right edge of the list.
- */
-private const val QUEUE_TRAILING_SLOT_PX = 51
 
 /** Where every other list's covers start: its edge and the download mark's slot. */
 private const val QUEUE_START_PX = LIST_EDGE_PX + ROW_LEAD_PX
@@ -332,20 +326,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val minIndex = index + 1
         val orderedKeys = remember(queue) { queue.mapIndexed(::queueKey) }
         val indexOfKey = remember(orderedKeys) { orderedKeys.withIndex().associate { (i, key) -> key to i } }
-        // takeIf on the condition that gates dragging at all: the track can end
-        // while a drag is held, and once the playing row is the last there is no
-        // upcoming range left. dragRowTarget would then clamp into an empty range
-        // and throw, before the pointerInput restart that ends the drag has had a
-        // composition to take effect.
-        val dropTarget: DropTarget? = drag.draggingIndex?.takeIf { queue.size > minIndex }?.let { from ->
-            val target = dragRowTarget(queue.size, from, drag.dragOffsetY, rowPx, minIndex)
-            val movingIndices = drag.draggingKeys.mapNotNull { indexOfKey[it] }.toSet()
-            remember(queue, from, drag.draggingKeys, target) {
-                val insertAt = dropInsertIndex(queue.size, from, movingIndices, target)
-                val remaining = orderedKeys.filterIndexed { i, _ -> i !in movingIndices }
-                DropTarget(remaining.getOrNull(insertAt))
-            }
-        }
+        val dropTarget = drag.dropTarget(orderedKeys, rowPx, minIndex)
 
         // The playing track stays at the top. Opening the page jumps there
         // outright, while a track ending animates, so the list is seen to move.
@@ -422,10 +403,8 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                             if (!isPast && !isCurrent) {
                                 AppIcon(
                                     AppIcons.Dehaze,
-                                    size = px(51),
-                                    modifier = Modifier
-                                        .width(px(QUEUE_TRAILING_SLOT_PX))
-                                        .onGloballyPositioned { drag.iconCoords[rowKey] = it },
+                                    size = px(DRAG_HANDLE_PX),
+                                    modifier = Modifier.onGloballyPositioned { drag.iconCoords[rowKey] = it },
                                 )
                             }
                         }
@@ -443,8 +422,6 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             }
         }
     }
-
-    private data class DropTarget(val beforeKey: String?)
 
     /** A queue row's cover and lines, shared by the list and the floating copy being dragged. */
     @Composable
@@ -512,7 +489,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 QueueRowContent(track, isCurrent = false, selection, artworkHidden)
-                Spacer(Modifier.width(px(QUEUE_TRAILING_SLOT_PX)))
+                Spacer(Modifier.width(px(DRAG_HANDLE_PX)))
             }
         }
     }

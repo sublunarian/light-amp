@@ -107,13 +107,58 @@ fun dropInsertIndex(size: Int, from: Int, movingIndices: Set<Int>, target: Int):
     return (0 until anchorIndex).count { it !in movingIndices }
 }
 
+/** Where a drag would land if dropped now: just before [beforeKey], or at the very bottom when it is null. */
+data class DropTarget<K>(val beforeKey: K?)
+
+/**
+ * Where the rows being dragged would land if dropped now, or null with no drag.
+ * [orderedKeys] and [minIndex] are what the container was given. Worked out again
+ * only when the drag crosses into another row, not on every frame of it.
+ */
+@Composable
+fun <K> DragReorderState<K>.dropTarget(orderedKeys: List<K>, rowPx: Float, minIndex: Int = 0): DropTarget<K>? {
+    val from = draggingIndex ?: return null
+    // The list can shrink under a held drag (the queue's playing track ends) until
+    // no row from minIndex on is left: dragRowTarget would then clamp into an empty
+    // range and throw, before the restart that ends the drag has had a composition
+    // to take effect.
+    if (orderedKeys.size <= minIndex) return null
+    val target = dragRowTarget(orderedKeys.size, from, dragOffsetY, rowPx, minIndex)
+    return remember(orderedKeys, from, draggingKeys, target) {
+        val moving = orderedKeys.indices.filterTo(HashSet()) { orderedKeys[it] in draggingKeys }
+        val insertAt = dropInsertIndex(orderedKeys.size, from, moving, target)
+        DropTarget(orderedKeys.filterIndexed { i, _ -> i !in moving }.getOrNull(insertAt))
+    }
+}
+
+/**
+ * [full] after a drop on a list showing only some of its rows: the shown rows at
+ * [indices] (places among the rows [shown] keeps) move as one block to [insertAt]
+ * among the shown rows left. The rows not shown keep their order and places, and
+ * none is dropped. [full] itself when there is nothing to move.
+ */
+fun <T, K> moveShownBlock(
+    full: List<T>,
+    key: (T) -> K,
+    shown: (T) -> Boolean,
+    indices: Set<Int>,
+    insertAt: Int,
+): List<T> {
+    val rows = full.filter(shown)
+    val moving = rows.filterIndexed { i, _ -> i in indices }.mapTo(HashSet(), key)
+    if (moving.isEmpty() || moving.size == rows.size) return full
+    val remaining = rows.filterNot { key(it) in moving }
+    val before = remaining.getOrNull(insertAt.coerceIn(0, remaining.size))?.let(key)
+    return placeBlock(full, key, moving, before, key(remaining.last()))
+}
+
 /**
  * [full] with the [moving] rows taken out and put back as one block, in their order:
  * just before [beforeKey], or, when that is null, just after [afterKey]. Both are rows
  * on screen, and [full] may hold rows that aren't; those keep their order and places,
  * and none is dropped.
  */
-fun <T, K> placeBlock(full: List<T>, key: (T) -> K, moving: Set<K>, beforeKey: K?, afterKey: K?): List<T> {
+private fun <T, K> placeBlock(full: List<T>, key: (T) -> K, moving: Set<K>, beforeKey: K?, afterKey: K?): List<T> {
     val block = full.filter { key(it) in moving }
     val rest = full.filterNot { key(it) in moving }
     val at = when {
