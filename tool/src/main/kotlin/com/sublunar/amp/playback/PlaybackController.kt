@@ -1131,48 +1131,25 @@ class PlaybackController(
 
     fun togglePlayPause() {
         forgetPausedSpeaker()
-        remote?.let { out ->
-            val wasPlaying = _isPlaying.value
-            _isPlaying.value = !wasPlaying
-            if (wasPlaying) {
-                cancelPendingStart()
-                out.pause()
-            } else {
-                // A resume carries on a stream the far end has open. Where
-                // nothing has played yet (the queue ran out there, or holds
-                // nothing), play is a start, and says so.
-                if (!hasPlayed) markStartingElsewhere()
-                out.play()
-            }
-            reports.timeline(if (wasPlaying) TimelineState.PAUSED else TimelineState.PLAYING)
-            return
+        val playing = when {
+            remote != null -> _isPlaying.value
+            player == null -> return
+            // Parked: a play on the player as it stands is silence — see [play].
+            parked -> false
+            // "Playing" includes a start that hasn't sounded yet: a press while a
+            // stream buffers means stop trying, not try again.
+            else -> _isPlaying.value || _buffering.value
         }
-        val p = player ?: return
-        // Parked: a play on the player as it stands is silence — see [play].
-        if (parked) {
-            play()
-            return
-        }
-        // "Playing" includes a start that hasn't sounded yet: a press while a
-        // stream buffers means stop trying, not try again.
-        val wasPlaying = _isPlaying.value || _buffering.value
-        // A resume waits for the server's decision, as [play] does, and starts
-        // whichever handle holds the service when the answer comes.
-        if (wasPlaying) {
-            cancelPendingStart()
-            p.pause()
-        } else {
-            markStarting(_index.value)
-            withStreamDecision { player?.play() }
-        }
-        reports.timeline(if (wasPlaying) TimelineState.PAUSED else TimelineState.PLAYING)
+        if (playing) pause() else play()
     }
 
     private fun play() {
         forgetPausedSpeaker()
         remote?.let { out ->
             _isPlaying.value = true
-            // A start rather than a resume — see togglePlayPause.
+            // A resume carries on a stream the far end has open. Where nothing
+            // has played yet (the queue ran out there, or holds nothing), play
+            // is a start, and says so.
             if (!hasPlayed) markStartingElsewhere()
             out.play()
             reports.timeline(TimelineState.PLAYING)
@@ -1190,9 +1167,7 @@ class PlaybackController(
             resumeAfterWait(play = true)
             return
         }
-        // The decision first, then the sound — see withStreamDecision.
-        markStarting(_index.value)
-        withStreamDecision { player?.play() }
+        startWhenDecided(_index.value)
         reports.timeline(TimelineState.PLAYING)
     }
 
@@ -1501,6 +1476,16 @@ class PlaybackController(
         }
     }
 
+    /**
+     * Start the track at [index], the current one: the server's decision
+     * first, then the sound, on whichever handle holds the service when the
+     * answer comes — see [withStreamDecision].
+     */
+    private fun startWhenDecided(index: Int) {
+        markStarting(index)
+        withStreamDecision { player?.play() }
+    }
+
     /** Play [p] from [index] if [play], marked as a start, otherwise leave it paused. Main only. */
     private fun playOrCue(p: LightAudioPlayer, index: Int, play: Boolean) {
         if (play) {
@@ -1724,12 +1709,7 @@ class PlaybackController(
         if (index != _index.value) landedOn(p, index, startMs = 0L)
         val wanted = p.playWhenReady
         rebuildQueueAt(p, _queue.value, index, _positionMs.value)
-        if (wanted) {
-            markStarting(index)
-            withStreamDecision { player?.play() }
-        } else {
-            p.pause()
-        }
+        if (wanted) startWhenDecided(index) else p.pause()
         return true
     }
 
@@ -2104,10 +2084,7 @@ class PlaybackController(
             blockedAtCurrent()
             return
         }
-        // The decision first, then the sound, on the handle current when the
-        // answer comes — see withStreamDecision.
-        markStarting(startIndex)
-        withStreamDecision { player?.play() }
+        startWhenDecided(startIndex)
     }
 
     /**
