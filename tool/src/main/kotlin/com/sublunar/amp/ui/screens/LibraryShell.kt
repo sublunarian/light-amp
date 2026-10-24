@@ -588,7 +588,7 @@ private fun RandomAlbumRow(albums: LatestList<Album>, actions: ShellActions) {
         App.scope.launch {
             // The database read off Main, the player call on it: the player's
             // looper is Main — see PlaybackController.
-            val queue = App.library.albumQueue(listOf(album.id))
+            val queue = App.library.albumQueue(album.id)
             if (queue.isEmpty()) return@launch
             withContext(Dispatchers.Main) {
                 App.playback.playQueue(queue, 0)

@@ -547,11 +547,9 @@ class LibraryRepository(
         return tracks.filter { it.id in downloaded }
     }
 
-    /** These albums' songs from the cache, album after album, each in its running order. */
-    suspend fun albumQueue(albumIds: List<String>): List<Track> =
-        albumIds.flatMap { id ->
-            dao.tracksForAlbum(id).sortedWith(TRACK_ORDER)
-        }
+    /** An album's songs from the cache, in running order. */
+    suspend fun albumQueue(albumId: String): List<Track> =
+        dao.tracksForAlbum(albumId).sortedWith(TRACK_ORDER)
 
     /** Tracks for the given ids, preserving id order (used by playlists/queue restore). */
     suspend fun getTracksByIds(ids: List<String>): List<Track> {
