@@ -154,30 +154,11 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
         }
     }
 
-    /**
-     * Switch the library over. Playback keeps going: the queue holds whole tracks
-     * rather than lookups into the cache, so it stays valid across the swap.
-     */
+    /** Switch the library over — see App.useSource. */
     private fun switchTo(source: MusicSource, libraryId: String?) {
         // The results on screen were the old source's, and the switch drops them.
         LibraryNav.closeSearch()
-        val changingLibrary = source.libraryId != libraryId
-        App.scope.launch {
-            // The library is saved before the switch, so the sync reads it.
-            if (changingLibrary) {
-                App.settings.setSourceLibraryId(source.id, libraryId)
-            }
-            App.settings.setActiveSource(source.id)
-
-            // Only after the writes: the root screen syncs as it appears, reading
-            // which library from the store, and unwound earlier it fetched the
-            // previous library again over the one just chosen.
-            withContext(Dispatchers.Main) { backToRoot() }
-
-            if (source.id == App.source.value.id && changingLibrary) {
-                App.library.switchLibrary(libraryId)
-            }
-        }
+        App.useSource(source, libraryId) { withContext(Dispatchers.Main) { backToRoot() } }
     }
 }
 
@@ -534,18 +515,7 @@ class SourceDetailScreen(
                                 },
                                 resultCallback = { confirmed ->
                                     if (confirmed == true) {
-                                        // Stop first: the queue plays from the
-                                        // server about to be forgotten.
-                                        if (source.id == App.source.value.id) App.playback.stop()
-                                        // Ended on the server too, on its own, so
-                                        // nothing waits on a server that may be gone.
-                                        App.scope.launch { source.provider.signOut(source) }
-                                        App.scope.launch {
-                                            // Wipe while the source still exists to
-                                            // name its database and its download folder.
-                                            App.forgetSource(source)
-                                            App.settings.removeSource(source.id)
-                                        }
+                                        App.removeSource(source)
                                         goBack()
                                     }
                                 },

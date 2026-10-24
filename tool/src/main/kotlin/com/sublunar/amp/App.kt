@@ -203,8 +203,43 @@ object App {
         return (loaded + read).sortedBy { it.id }
     }
 
+    /**
+     * Take [source] out of Amp (Log Out, or Remove Source). Playback stops
+     * first when it plays from it; then it is signed out on its server, on its
+     * own, so nothing waits on a server that may be gone; then its library and
+     * downloads go, while it still exists to name its database and its folder.
+     */
+    fun removeSource(source: MusicSource) {
+        if (source.id == this.source.value.id) playback.stop()
+        scope.launch { source.provider.signOut(source) }
+        scope.launch {
+            forgetSource(source)
+            settings.removeSource(source.id)
+        }
+    }
+
+    /**
+     * Browse [source], on [libraryId] (null for All Libraries). Playback keeps
+     * going: the queue holds whole tracks rather than lookups into the cache.
+     *
+     * The library and the active source are written first, then [afterSaving]
+     * runs (the screens unwind to the root): the root syncs as it appears,
+     * reading which library from the store, and unwound earlier it fetched the
+     * previous library again over the one just chosen. Then a new library of
+     * the source already browsed is switched to.
+     */
+    fun useSource(source: MusicSource, libraryId: String?, afterSaving: suspend () -> Unit) {
+        val changingLibrary = source.libraryId != libraryId
+        scope.launch {
+            if (changingLibrary) settings.setSourceLibraryId(source.id, libraryId)
+            settings.setActiveSource(source.id)
+            afterSaving()
+            if (source.id == this@App.source.value.id && changingLibrary) library.switchLibrary(libraryId)
+        }
+    }
+
     /** Drop a removed source's cached library and downloaded audio: its storage goes with it. */
-    suspend fun forgetSource(source: MusicSource) {
+    private suspend fun forgetSource(source: MusicSource) {
         // Whatever it still had queued goes first, so nothing below is undone
         // by a transfer landing a moment later.
         downloader.forget(source.id)
