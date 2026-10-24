@@ -1,5 +1,6 @@
 package com.sublunar.amp.playback
 
+import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.playback.output.QueueEdit
 import com.thelightphone.sdk.audio.NO_MEDIA_ITEM
@@ -89,17 +90,15 @@ internal fun rowAfterBlockMove(row: Int, fromIndices: Set<Int>, landsAt: Int): I
     return if (amongRest < landsAt) amongRest else amongRest + block.size
 }
 
-/** How many of the queue's ids are saved for the next launch; AppSettings keeps no more than this. */
-internal const val SAVED_QUEUE_ROWS = 1_000
-
 /**
  * The rows of a queue of [queueSize] saved for the next launch: up to
- * [SAVED_QUEUE_ROWS], centred on the playing [row], so a restore lands on
- * it however long the queue.
+ * [AppSettings.MAX_SAVED_QUEUE], centred on the playing [row], so a restore
+ * lands on it however long the queue.
  */
 internal fun savedRows(queueSize: Int, row: Int): IntRange {
-    val start = (row - SAVED_QUEUE_ROWS / 2).coerceIn(0, maxOf(0, queueSize - SAVED_QUEUE_ROWS))
-    return start until minOf(queueSize, start + SAVED_QUEUE_ROWS)
+    val most = AppSettings.MAX_SAVED_QUEUE
+    val start = (row - most / 2).coerceIn(0, maxOf(0, queueSize - most))
+    return start until minOf(queueSize, start + most)
 }
 
 /**

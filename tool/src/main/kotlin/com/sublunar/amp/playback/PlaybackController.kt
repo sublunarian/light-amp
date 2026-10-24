@@ -14,7 +14,6 @@ import com.sublunar.amp.data.LinkRules
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.RepeatMode
-import com.sublunar.amp.data.SavedQueue
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.TimelineState
@@ -1064,19 +1063,12 @@ class PlaybackController(
         withTimeoutOrNull(PROXY_READY_TIMEOUT_MS) {
             App.streamProxy.state.first { it !is StreamProxy.State.Starting }
         }
-        val localIds = settings.savedQueueIds.first()
-        val saved = if (localIds.isNotEmpty()) {
-            SavedQueue(
-                localIds,
-                localIds.getOrNull(settings.savedQueueIndex.first()),
-                settings.savedPositionMs.first(),
-            )
-        } else {
+        val saved = settings.savedQueue()
             // Nothing saved here (a fresh install, a cleared cache): the server
             // may hold what this account last played elsewhere. Never asked
             // over a queue this phone has.
-            serverClient.value?.let { runCatching { it.getPlayQueue() }.getOrNull() }
-        } ?: return
+            ?: serverClient.value?.let { runCatching { it.getPlayQueue() }.getOrNull() }
+            ?: return
         val byId = library().associateBy { it.id }
         val tracks = saved.trackIds.mapNotNull { byId[it] }
         if (tracks.isEmpty()) return

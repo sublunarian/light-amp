@@ -1,5 +1,6 @@
 package com.sublunar.amp.playback
 
+import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.playback.output.QueueEdit
 import kotlin.test.Test
@@ -204,6 +205,6 @@ class QueueWindowTest {
         assertEquals(0 until 10, savedRows(10, 7))
         assertEquals(4_500 until 5_500, savedRows(20_000, 5_000))
         assertEquals(19_000 until 20_000, savedRows(20_000, 19_990))
-        assertEquals(0 until SAVED_QUEUE_ROWS, savedRows(20_000, -1))
+        assertEquals(0 until AppSettings.MAX_SAVED_QUEUE, savedRows(20_000, -1))
     }
 }

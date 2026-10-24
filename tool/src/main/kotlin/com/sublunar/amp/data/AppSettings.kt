@@ -407,24 +407,14 @@ class AppSettings(
     // --- Saved state ---------------------------------------------------------
 
     /**
-     * The queue as it stood when the app last went away: track ids, the index into
-     * them, and roughly where the current one had got to.
+     * The queue as it stood when the app last went away, as [saveQueue] wrote
+     * it, in one read; null when it holds no tracks.
      *
      * Ids rather than rows — the library cache already holds the tracks, and a
      * long queue of full records has no business in DataStore. Capped at
      * [MAX_SAVED_QUEUE] so "play everything" can't write a megabyte of ids on
      * every track change.
      */
-    val savedQueueIds: Flow<List<String>> =
-        dataStore.data.map { p -> savedIds(p) }.distinctUntilChanged()
-
-    val savedQueueIndex: Flow<Int> =
-        dataStore.data.map { it[SAVED_INDEX] ?: 0 }.distinctUntilChanged()
-
-    val savedPositionMs: Flow<Long> =
-        dataStore.data.map { it[SAVED_POSITION] ?: 0L }.distinctUntilChanged()
-
-    /** What [saveQueue] last wrote, in one read; null when it holds no tracks. */
     suspend fun savedQueue(): SavedQueue? {
         val p = dataStore.data.first()
         val ids = savedIds(p)
@@ -435,6 +425,12 @@ class AppSettings(
     private fun savedIds(p: Preferences): List<String> =
         p[SAVED_QUEUE]?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
 
+    /**
+     * Save [ids], the playing one at [index] among them, and roughly where it
+     * had got to. A longer queue is saved as a slice of at most
+     * [MAX_SAVED_QUEUE] ids around the playing one, and [index] points into
+     * that slice.
+     */
     suspend fun saveQueue(ids: List<String>, index: Int, positionMs: Long) {
         dataStore.edit { p ->
             p[SAVED_QUEUE] = ids.take(MAX_SAVED_QUEUE).joinToString(",")
@@ -533,8 +529,8 @@ class AppSettings(
         private val SAVED_INDEX = intPreferencesKey("state.queueIndex")
         private val SAVED_POSITION = longPreferencesKey("state.positionMs")
 
-        /** Plenty for an album or a long playlist, short of a whole library. */
-        private const val MAX_SAVED_QUEUE = 1000
+        /** How many queue ids are saved for the next launch: plenty for an album or a long playlist. */
+        const val MAX_SAVED_QUEUE = 1000
 
         /** 2 GB — a few hundred albums as MP3, and well inside any device. */
         const val DEFAULT_DOWNLOAD_LIMIT = 2L * 1024 * 1024 * 1024
