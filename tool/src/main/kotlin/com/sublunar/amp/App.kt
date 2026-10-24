@@ -493,6 +493,7 @@ object App {
                 settings = settings,
                 scope = scope,
                 browsed = { _source.value },
+                clientFor = ::clientFor,
             )
             downloader = Downloader(
                 activeSource = { _source.value },

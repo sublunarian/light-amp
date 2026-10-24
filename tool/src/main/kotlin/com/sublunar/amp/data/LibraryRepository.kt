@@ -122,6 +122,8 @@ class LibraryRepository(
     private val scope: CoroutineScope,
     /** The source being browsed — App.source, which changes over last on a switch. */
     private val browsed: () -> MusicSource,
+    /** The pooled client for a source record — App.clientFor. See [repoint]. */
+    private val clientFor: (MusicSource) -> MusicServer?,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -1206,15 +1208,21 @@ class LibraryRepository(
 
     /**
      * Try the active source's other addresses for the same server, and keep one
-     * that answers — see SourceProvider.relocate. True when the address changed;
-     * saving the source rebuilds the client, and playback and downloads follow.
+     * that answers — see SourceProvider.relocate. Saving the source rebuilds the
+     * client, and playback and downloads follow; the answer is the moved
+     * address's client, null when nothing moved.
+     *
+     * Asked of the pool rather than read from [serverClient], which App swaps
+     * only once the saved source reaches its collector: read now, it is still the
+     * client of the address that just failed. The pool is keyed on the record, so
+     * App's swap then takes this same client.
      */
-    private suspend fun repoint(): Boolean {
-        val source = settings.activeSource.first() ?: return false
-        val moved = source.provider.relocate(source) ?: return false
+    private suspend fun repoint(): MusicServer? {
+        val source = settings.activeSource.first() ?: return null
+        val moved = source.provider.relocate(source) ?: return null
         android.util.Log.i("AmpSync", "${source.kind.name.lowercase()} moved: ${source.baseUrl} -> ${moved.baseUrl}")
         settings.saveSource(moved)
-        return true
+        return clientFor(moved)
     }
 
     /**
@@ -1231,7 +1239,7 @@ class LibraryRepository(
      * would turn away every later sync for the life of the process.
      * runLocalScan owns the flag across its whole run.
      */
-    private suspend fun runSync(musicFolderId: String?, allowRepoint: Boolean = true) {
+    private suspend fun runSync(musicFolderId: String?, repointed: MusicServer? = null) {
         val source = settings.activeSource.first()
         val dao = daos.value ?: return releaseSyncClaim()
         // The phone's own music has no server to ask; it is read off the disk.
@@ -1246,7 +1254,7 @@ class LibraryRepository(
         // MusicSource.parserGeneration.
         val refillForParser =
             source != null && source.parserGeneration != TRACK_PARSER_GENERATION
-        val client = serverClient.value ?: return releaseSyncClaim()
+        val client = repointed ?: serverClient.value ?: return releaseSyncClaim()
         _syncState.update { it.copy(syncing = true, error = null, phase = "Connecting") }
         syncingDao.value = dao
         // What the run wrote, so the re-read at its end covers that and no more.
@@ -1447,9 +1455,11 @@ class LibraryRepository(
             android.util.Log.w("AmpSync", "sync failed: ${e::class.simpleName}: ${e.message}", e)
             // The address may simply have moved — see repoint. Only once, so a
             // dead server can't loop.
-            if (allowRepoint && repoint()) {
-                runSync(musicFolderId, allowRepoint = false)
-                return
+            if (repointed == null) {
+                repoint()?.let { moved ->
+                    runSync(musicFolderId, repointed = moved)
+                    return
+                }
             }
             _syncState.update { it.copy(syncing = false, error = syncErrorMessage(e)) }
             onSyncFailed?.invoke(isAuthFailure(e))
