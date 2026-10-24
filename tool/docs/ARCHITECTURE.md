@@ -12,34 +12,41 @@ source/                one folder per kind of library, and what they share
   SourceProvider.kt    what a kind of source fills in (SourceUi.kt: the part screens read)
   Providers.kt         the registry: one line per kind
   PhoneLibrary.kt      what the app asks of music that is files on the phone
+  ServerHttp.kt        each server client's two HTTP clients, its JSON, URL and query building
   SignInOutcome.kt, PendingServer.kt, ServerAddress.kt   shared sign-in pieces
-  subsonic/            Navidrome, gonic, Airsonic, Bandcamp…: client, wire types, sign-in form
+  subsonic/            Navidrome, gonic, Airsonic, Bandcamp…: client, wire types, sign-in, form
   plex/                client, wire types, plex.tv account, link screens
     companion/         Plex Companion: casting to Plex players, an output the provider offers
   jellyfin/            client, wire types, sign-in, link screen
-  local/               the phone's own files: scan, m3u playlists, ReplayGain tags
+  local/               the phone's own files: LocalLibrary, m3u playlists, ReplayGain tags
 
-data/                  the app's own models, settings, storage, downloads, the network wall
+data/                  the app's own models, settings, the library, downloads, the network wall
   db/                  Room: one database file per source
 
-playback/              the player and the queue: this phone's own playback
+playback/              this phone's own playback: the controller, and what it hands off
   output/              the slot every control talks to while the sound is elsewhere
     dlna/              DLNA speakers: discovery, the SOAP calls, the cast
-art/                   artwork fetching, decoding and caching
+art/                   artwork fetching, decoding and caching; the cover sync
 ui/components/         the shared kit — rows, headers, scroll furniture
 ui/screens/            one file per screen, plus the tabbed shell
 ```
 
+Each kind's wire types and their mappers to the app's models sit together, in
+its `*Dtos.kt`.
+
 ## The spine
 
 **`App`** is the composition root and the only global. It owns the settings, the
-repository, the downloader, the player and the artwork loader, and it holds the
+library, the downloader, the player and the artwork loader, and it holds the
 active source. It is also where a **source switch** is handled, and that is worth
 reading before anything else: switching swaps the database under every flow at
 once, and a surprising amount of state has to be dropped with it — the playback
 queue, playlists, popular songs, the search index, which tabs were showing their
 liked list. Anything keyed by name rather than by source will answer for the
-wrong server if you forget it.
+wrong server if you forget it. What a screen does to a source in several steps
+is on `App` too, in the order that matters: `removeSource` stops playback first
+when it plays from that source, and `useSource` writes the library and the
+active source before the screens unwind, then switches library.
 
 The one thing a switch does *not* drop is the download queue. Selecting a source
 is a browsing choice, not a download scope: every queued track names its own
@@ -47,29 +54,50 @@ source, and `Downloader` resolves the client, the tables, the folder and the
 format per track from that — so a Plex library set to download everything keeps
 arriving while you browse Navidrome or the phone's own files. `App` keeps one
 client per source for that reason, closed only when the source is removed, and
-the top-up reads every source's tables rather than the repository's lists.
-`DownloadQueue` is the pure part — two lanes, per-source keys, where a failure
-goes back to — and has tests.
+the top-up (`Downloader.topUp`) reads every source's tables rather than the
+library's lists. A source whose downloads wait has one `Downloader.Hold` —
+refused by its server, or parked while it doesn't answer — lifted when its
+record changes; one download comes to a `DownloadStore.Fetched` (saved,
+refused, failed), so each failure carries its own words. `DownloadQueue` is the
+pure part — two lanes, per-source keys, where a failure goes back to — and has
+tests.
 
-**`LibraryRepository`** is the library. Room-backed lists come out as eagerly
-shared `StateFlow`s so a screen never renders an empty list on its way to a full
-one; the sync pulls albums, then each album's tracks, and reconciles favourites.
-Playlists are the exception — they have no table and live in memory, which is why
-they need clearing by hand on a switch.
+**The library** is three siblings App builds over the active source's database.
+`LibraryRepository` has the lists, reads, likes and search: Room-backed lists
+come out as eagerly shared `StateFlow`s so a screen never renders an empty list
+on its way to a full one, and the chosen library's songs are one `Indexed` read
+whose maps (by id, the badge counts) are worked out on first use and let go with
+it. `LibrarySync` keeps the cache in step with the server: the one `SyncState`
+the screens show, `runSync` as an outline of named steps (albums, then the songs
+of the albums that need them, then favourites), Sync Now's scan, and the repoint
+of a server that moved address. Its policy is pure and tested, in files of its
+own: `SongRereads.kt` (which albums' songs to read again, and whether songs
+changed) and `SyncFailure.kt` (turned away or not there, and the words for it).
+`LibraryPlaylists` has the playlists, which songs each holds and the writes. Its
+list has no table — it is cached in the settings and held in memory — which is
+why it needs clearing by hand on a switch.
 
 **`MusicServer`** is the seam between the app and whatever it is talking to.
 `SubsonicClient`, `PlexClient` and `JellyfinClient` implement it, each in its
 folder under `source/`; the phone's own files (`source/local`) have no client.
 Everything above this line works in the app's own models (`Track`, `Album`,
-`Playlist`).
+`Playlist`). A like is one `setLiked(target, id, liked)`. What came of a write
+is a `WriteResult`, in `data/ServerException.kt` beside the failure types and
+the one wording for a server that is down: a server that never answered is
+sent the write again later, one that answered no is not. `PendingActions.attempt`
+is the one way a write that may have to wait is sent — likes, ratings and plays.
+Signing in is one shape for every server: `inspectSubsonicServer`
+(`SubsonicSignIn.kt`), `JellyfinSignIn.signIn` and `inspectPlexServer` each
+answer a `SignInOutcome`.
 
 Two rules make that seam work:
 
 - **A server declares what it can do.** Methods only some backends support have
   no-op defaults; each kind's provider says what it can do, which `MusicSource`
-  passes on as the capability flags the UI reads; and `MusicServer.streamFormats`
-  says which formats a server will *actually* deliver. A feature a server can't
-  support is absent, not present and broken.
+  passes on as the capability flags the UI reads, and lists the formats its
+  servers will *actually* deliver (`streamFormats`, read through
+  `MusicSource.streamFormats`). A feature a server can't support is absent, not
+  present and broken.
 - **No silent substitution.** If a chosen format can't be served, the app doesn't
   quietly send something else — it doesn't offer the choice in the first place.
 
@@ -78,23 +106,53 @@ do, how to build its client, how it is added, its Connection row, Log Out's word
 to the server. `Providers` lists one per kind, and shared code asks a source's
 provider (`source.provider`, or `Providers.of(kind)`) rather than testing its
 kind. The phone's own files have no server, so their provider hands out a
-`PhoneLibrary` instead — the scan, the m3u playlists, the permission — and
-that is the only way the app reaches them. Their track ids name the file
-(`PhoneFiles`, in `data/`), because playback, covers and downloads have to tell
-a phone file from a server's track whichever source is being browsed.
+`PhoneLibrary` instead (`LocalLibrary` is that library: the scan, the m3u
+playlists, the permission), and that is the only way the app reaches them.
+Their track ids name the file (`PhoneFiles`, in `data/`), because playback,
+covers and downloads have to tell a phone file from a server's track whichever
+source is being browsed.
 
-**`PlaybackController`** owns the player, the queue, position and duration.
+**`PlaybackController`** owns the player, the queue, position and duration,
+and keeps that state on Main. Amp keeps the whole queue; the player holds a
+window of it (`playback/QueueWindow.kt`: at most `PLAYER_WINDOW` rows,
+`WINDOW_BEHIND` of them before the playing one), which slides with `replaceRange` as
+playback nears an edge (`keepWindowAround`) and is rebuilt around a jump outside
+it. The queue index is the window's start plus the player's. An edit applies to
+the whole queue, and to the player only where it falls in the window.
+Repeat-queue loops in the player only when the window is the whole queue;
+otherwise the controller wraps, rebuilding at the start. The queue saved for the
+next launch is a slice of it centred on the playing track (`savedRows`, at most
+`AppSettings.MAX_SAVED_QUEUE` ids), and the saved index points into that slice.
+Beside the controller: `ServerReports` (what the server is told — sessions, the
+timeline, now-playing, plays, the queue saved on the server), `TrackSources`
+(file, download or stream, in which format from which address, and what
+failed), `QueueMath.kt` (the pure queue arithmetic) and `PlayFailure.kt` (a
+player failure sorted by what happens next).
+
+Plays follow Last.fm's rule and every major client's: a play begins at each
+track start (a repeat, a song queued twice, a restart), now-playing goes out
+once per play, and the play counts once half the song or four minutes has been
+heard, sent or queued through `PendingActions.attempt`. A song that ends into
+itself starts a new play only while playback is under way: a one-song queue
+that runs out is rewound and waits for a play.
+
 While the sound is somewhere else, every control goes to the current **output**
 instead (`playback/output/Output.kt`); none means this phone. An `Output` steers
 one far end and keeps the controller's state true through `OutputHost`, so the
-screens read the same flows whoever is playing. DLNA is one, in
-`playback/output/dlna` — discovery, the SOAP calls (`DlnaCast`) and the cast —
-listed in `Outputs`, Amp's own code rather than an SDK patch. Plex Companion is
-the other, in `source/plex/companion` — discovery, the listener and the cast —
-offered by the Plex provider (`SourceProvider.outputFamilies`), so only a Plex
-source lists its players; its calls stay on `PlexClient`, which holds the token
-and the lock they need. The Output page lists `OutputFamilies` — the source's
-and the phone's — without naming any of them.
+screens read the same flows whoever is playing. Its `OutputFamily` carries the
+constants (log tag, whether the far end reports its own plays, whether it needs
+the LAN), so nothing builds an output to ask. DLNA is one, in
+`playback/output/dlna` — discovery, the SOAP calls (`DlnaCast`), the cast
+(`DlnaOutput`) and its poll's pure decision (`CastWatch`) — listed in
+`Outputs`, Amp's own code rather than an SDK patch. A cast remembers its format
+choice per renderer and format, and per track for Original, which is each file's
+own container (`formatChoiceKey`). Plex Companion is the other, in
+`source/plex/companion` — discovery, the listener, the cast and its calls
+(`PlexCompanionCalls.kt`, extensions on `PlexClient`, which holds the token and
+the lock they need) — offered by the Plex provider
+(`SourceProvider.outputFamilies`), so only a Plex source lists its players. The
+Output page lists `OutputFamilies` — the source's and the phone's — without
+naming any of them.
 
 While an output has the sound, the phone's own player plays a **stand-in**
 (`playback/StandIn.kt`): one silent MP3, named and timed like the output's song
@@ -105,11 +163,19 @@ it also keeps the media service in the foreground, so Android doesn't freeze Amp
 while it casts with its screen closed. The queue stays the controller's alone
 until the sound comes back, when it goes back into the player.
 
-**`ui/screens`** is one file per screen. `LibraryShell` is the tabbed root;
-`BootScreen` hosts it and decides what to show while the library loads.
-`LibraryNav` holds the navigation state screens share, because the tab bar is
-visible on nested pages and a screen three levels deep still has to be able to
-select a tab.
+**`ui/screens`** is one file per screen, named after what it holds
+(`ArtistScreens.kt`, `PlaylistDetailScreen.kt`, `AlbumArtworkScreen.kt`).
+`LibraryShell` is the tabbed root, drawn by `BootScreen` (as
+`SimpleLightScreen<*>.LibraryShell()`), which decides what to show while the
+library loads; its tab bar is `Navbar.kt` and its search `LibrarySearch.kt`.
+`LibraryNav` holds the navigation state screens share, because
+the tab bar is visible on nested pages and a screen three levels deep still has
+to be able to select a tab; opening search or a new playlist goes through
+`Nav.kt` too. Every pushed page is an `AmpScreen`, which sends the volume keys
+to the speaker while casting (`BootScreen` does its own). The player keeps its
+queue and lyrics in `NowPlayingQueue.kt` and `NowPlayingLyrics.kt`; every
+format choice is one `FormatPickerScreen` (its `FormatSlot`: Wi-Fi, cellular,
+download), and every sort menu one `SortScreen`.
 
 ## Adding a kind of source
 
@@ -131,7 +197,10 @@ at?" is a question `LibraryNav` has to answer explicitly.
 
 **ExoPlayer only tolerates the main thread.** `PlaybackController.stop()` places
 itself there because it is called from a background collector as well as from
-the UI. `restoreState` carries the same guard.
+the UI. `restoreState` carries the same guard. The controller's own state lives
+on Main too, but its collectors are posted rather than immediate: the SDK sets
+its flows in the middle of its own commands, and an immediate collector would
+run inside them. The outputs still call the host from their own threads.
 
 **Full-table `Flow` queries need `@Transaction`.** A result that size spans
 several cursor-window fills, each its own snapshot; a sync writing between two of
@@ -139,8 +208,12 @@ them throws `Couldn't read row N from CursorWindow` and takes the app down.
 
 **Settings read straight from the store arrive late.** `collectAsState(initial =
 …)` means the first frame uses the placeholder and then re-renders — visible as a
-list sorting itself twice. Anything on a hot path is held in an eagerly shared
-`StateFlow` on `App` instead.
+list sorting itself twice. So each setting in `AppSettings` is a `Pref` (a
+read-only one a `Stored`): a Flow, read from the store, for code that has just
+written, and an eager `state` that starts from what was stored at launch, for
+screens. A screen reads `.state`. `App` holds only what several settings work
+out together (`hideArtwork`, `albumGrid`, `artistAlbumGrid`, `hideArtistImages`,
+the tag filters).
 
 **Two writes are visible between each other.** Clearing likes and re-applying
 them as separate statements leaves a moment where nothing is liked, and every
@@ -156,7 +229,12 @@ all read that. Anything that keeps its own copy of part of it — a metered flag
 a "reachable" latch — will disagree with the rest after a network switch for as
 long as its own update takes. A failure is a *suspicion*: `Reachability` settles
 it with one ping, at once and on every network change, never by waiting for a
-sync.
+sync; `askServer` is the one verdict on a ping, for the browsed server and for a
+parked download server alike. Every reaction to the rules moving is in one
+collector in `App.boot`, in one order (`NetworkGate.rulesMoved`, then
+`App.rulesMoved`, which passes the edges on to their owners), and a change of
+link has one collector of its own: drop every connection, ask the server again,
+then the parked download servers.
 
 **The player never talks to the music server; `StreamProxy` does.** The
 platform player fetches with its own HTTP stack, outside `NetworkGate`, preloads
@@ -166,11 +244,10 @@ addresses, and the proxy — in the app's process scope — fetches the real byt
 through the gated client, deciding per request under the rules in force at that
 moment. That is why a network or data-mode change never needs the player's
 queue edited. Plain HTTP, which the SDK's `cleartext-http` capability permits
-in every build (before SDK 0.2.0 it was TLS with a certificate made at
-launch, because a store build allowed no cleartext even to this phone). It proves itself
-at start by fetching from itself; if that fails, `wrap()` returns the server's
-own URL and the About page says why. Anything that hands the player a URL must
-go through `App.streamProxy.wrap()` — there are three such places today.
+in every build. It proves itself at start by fetching from itself; if that
+fails, `wrap()` returns the server's own URL and the About page says why.
+Anything that hands the player a URL must go through `App.streamProxy.wrap()`,
+which `TrackSources.playerUrl` does for every stream.
 Between server and player sits a bounded read-ahead pipe fed by its own thread;
 a link change under a stream is re-fetched and spliced behind that slack — by
 range where the server honours ranges, otherwise re-encoded from the top with
@@ -182,32 +259,36 @@ dry.
 **Background work steps aside for a starting stream.** `PlaybackController.buffering`
 is true from a stream being asked for until its first sound; the sync, playlist
 priming and the downloader call `App.yieldToPlayback()` between requests. The
-reachability ping and the stream decision use each client's separate `quick`
-client, so they never queue behind bulk requests.
+reachability ping and the stream decision use each client's `quick` HTTP client
+(`ServerHttp`), so they never queue behind bulk requests.
 
 **The artwork cache is a copy of the libraries, not a history of them.** One
 panel-sized file per cover in `files/artwork`, named by a hash of source and
 cover id — so a file can only be found through an id, and whoever removes an id
 has to name it. Three rules keep it honest. A cover goes when the library lets
 go of it: a sync names the ids its database held before and doesn't now
-(`LibraryRepository.onCoversDropped` → `ArtworkLoader.drop`), which covers a
+(`LibrarySync`'s `onCoversDropped` → `ArtworkLoader.drop`), which covers a
 changed sleeve as well as a deleted album, since Navidrome's and Plex's cover
 ids carry the date the art last changed. A file no library names, unread for a
 month, is deleted at launch (`expireUnclaimed`) — the month is for covers that
 are legitimately nobody's, like a playlist track from a library never synced.
 And the whole is held to a budget, least recently read first, never at the
 expense of a downloaded album's sleeve (`trimToBudget`). Filling it is
-`App.syncCovers`: after a library sync, on an unmetered link only, the chosen
-library's missing covers are fetched one at a time, stepping aside for a
-starting stream. The decisions are in `CoverSync`, which touches nothing and is
-tested against fakes.
+`CoverUpkeep.sync` (`art/CoverUpkeep.kt`, which also works out what the budget
+and the expiry must leave alone): after a library sync, on an unmetered link
+only, the chosen library's missing covers are fetched one at a time, hidden
+libraries skipped, stepping aside for a starting stream. The decisions are in
+`CoverSync`, which touches nothing and is tested against fakes.
 
 **Every socket goes through `NetworkGate`.** Wi-Fi Only is a wall at the
 transport, not a set of checks: HTTP clients are built with
 `NetworkGate.httpClient`, the player streams only through `StreamProxy`, whose
-upstream is one of those clients, and the raw paths ask `NetworkGate.check()`. A bare `HttpClient(OkHttp)` or
-`URL.openConnection()` anywhere else is a hole in that wall — the courtesy
-checks (`metadataAllowed`, `heavyDataAllowed`) only save work, they stop nothing.
+upstream is one of those clients, and the raw paths ask `NetworkGate.isOpen()`.
+A bare `HttpClient(OkHttp)` or `URL.openConnection()` anywhere else is a hole in
+that wall — the courtesy checks (`metadataAllowed`, `heavyDataAllowed`) only
+save work, they stop nothing. DLNA speakers are reached outside it, so
+`DlnaCast.allowsNetwork` stands in front of every call there: closed until
+`DlnaFamily.create` wires it to the link's rules.
 
 **A protocol's folder is fenced.** `SourceBoundaryTest` fails when anything
 outside `source/<kind>/` names that package, except `Providers.kt` (its provider

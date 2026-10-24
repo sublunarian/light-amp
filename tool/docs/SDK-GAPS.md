@@ -7,12 +7,12 @@ exists. Checked against SDK 0.2.1 (`3a6b204`, 20 Oct 2026), which is where the
 Data modes below), and 0.2.1 brought single-item queue edits; the rest stand.
 
 Built the way Light's store builder builds it (a pristine SDK, via
-`scripts/store-build-check.sh`), Amp stops at 42 compile errors on 0.2.1
-(checked 20 Oct), every one a call into our patches. It was 164 on 21 Sep.
-Most used first:
+`scripts/store-build-check.sh`), Amp stops at 45 compile errors on 0.2.1
+(checked 23 Oct; three of them follow from one missing `deviceVolume`), every
+one a call into our patches. It was 164 on 21 Sep. Most used first:
 `playWhenReady`, `repeatMode`, `replaceRange`, `playbackGain`,
 `deviceVolume`/`setSystemVolume`, `setMediaQueueAt`, `hasRuntimePermission`,
-the transfer service, `addItems` and `LightDisplayColor`.
+the transfer service and `LightDisplayColor`.
 
 ## Workarounds we would drop
 
