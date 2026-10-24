@@ -2,7 +2,6 @@ package com.sublunar.amp.playback.output.dlna
 
 import android.os.SystemClock
 import android.util.Log
-import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.playback.output.Disconnect
@@ -495,9 +494,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val wanted = if (ms > 1_000L) ms else 0L
         if (url != null && castOffsetMs == 0L) {
             val (format, _) = castFormatFor(renderer, track)
-            val seekKey = "${track.id}|${format.id}"
-            val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
-            if (seekable == true) {
+            if (seekable(track, format) == true) {
                 if (DlnaCast.seek(renderer, wanted)) {
                     log("seek in place → $wanted")
                     host.showPosition(wanted)
@@ -591,25 +588,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val offset = when {
             askServer -> wanted
             wanted == 0L -> 0L
-            else -> {
-                val seekKey = "${track.id}|${format.id}"
-                val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
-                if (seekable == false) wanted else 0L
-            }
+            else -> if (seekable(track, format) == false) wanted else 0L
         }
-        // No estimated length: a server estimates from duration x the cap
-        // bitrate, an ABR transcode comes in under it, and a renderer stops
-        // where the declared length says, seconds early. Chunked plays to the
-        // end, and the shown duration comes from the DIDL metadata anyway.
-        val url = host.streamUrl(
-            track,
-            format,
-            estimateContentLength = false,
-            timeOffsetSeconds = (offset / 1000).toInt(),
-            // The renderer fetches for itself, with no door to decide it
-            // first — see OutputHost.ownStreamSession.
-            sessionId = host.ownStreamSession(track.id),
-        )?.let { if (fresh) freshAddress(it) else it } ?: return false
+        val url = castUrl(track, format, offset)?.let { if (fresh) freshAddress(it) else it } ?: return false
         val started = if (offset == 0L && wanted > 0L) {
             when (playFrom(renderer, track, url, mime, wanted)) {
                 Start.PLAYING -> true
@@ -619,15 +600,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 Start.UNSEEKABLE -> return startCastTrack(renderer, wanted, askServer = true, fresh = fresh)
             }
         } else {
-            DlnaCast.play(
-                renderer = renderer,
-                url = url,
-                title = track.title,
-                artist = track.artist,
-                album = track.album,
-                durationMs = track.durationMs,
-                mimeType = mime,
-            )
+            DlnaCast.play(renderer, url, track, mime)
         }
         if (!started) return false
         // A start cancelled while its unmute was out still comes back PLAYING
@@ -697,9 +670,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         wantedMs: Long,
     ): Start {
         seekedBeforePlay = null
-        if (!DlnaCast.setUri(renderer, url, track.title, track.artist, track.album, track.durationMs, mime)) {
-            return Start.FAILED
-        }
+        if (!DlnaCast.setUri(renderer, url, track, mime)) return Start.FAILED
         if (seeksBeforePlay[renderer.id] != false) {
             if (DlnaCast.seek(renderer, wantedMs)) {
                 seekedBeforePlay = url
@@ -763,7 +734,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      * tried, and false once one refused it, or took it and played from the
      * top anyway — see [playFrom] and [verifyCastSeek].
      */
-    private val seeksBeforePlay = mutableMapOf<String, Boolean>()
+    private val seeksBeforePlay = ConcurrentHashMap<String, Boolean>()
 
     /** The stream last started by a seek before play, which [verifyCastSeek] judges that way of starting by. */
     private var seekedBeforePlay: String? = null
@@ -838,18 +809,40 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     }
 
     /**
-     * Ask the server whether this track's stream can be seeked, and remember it.
+     * The address the renderer fetches [track] in [format] from, [offsetMs]
+     * into it.
+     *
+     * No estimated length: a server estimates from duration x the cap bitrate,
+     * an ABR transcode comes in under it, and a renderer stops where the
+     * declared length says, seconds early. Chunked plays to the end, and the
+     * shown duration comes from the DIDL metadata anyway.
+     *
+     * A session id of its own: the renderer fetches for itself, with no door
+     * to decide it first, and during a hand-off both tracks' transcodes are in
+     * flight at once, where Plex tears down whichever shares an identifier
+     * with the other — see OutputHost.ownStreamSession.
+     */
+    private fun castUrl(track: Track, format: StreamFormat, offsetMs: Long = 0L): String? =
+        host.streamUrl(
+            track,
+            format,
+            estimateContentLength = false,
+            timeOffsetSeconds = (offsetMs / 1000).toInt(),
+            sessionId = host.ownStreamSession(track.id),
+        )
+
+    /**
+     * Whether [track]'s stream in [format] can be seeked: remembered, else
+     * asked of the server and remembered.
      *
      * **Not** with the URL the renderer plays: a second request with the same
      * session id has Plex tear the first down, stopping the music. Without one
      * the probe gets a transcode of its own, closed at once, and the answer is
      * the same: whether the server transcodes depends on the file and format.
      */
-    private suspend fun probeSeekable(
-        track: Track,
-        format: StreamFormat,
-        key: String,
-    ): Boolean? {
+    private suspend fun seekable(track: Track, format: StreamFormat): Boolean? {
+        val key = "${track.id}|${format.id}"
+        castSeekable[key]?.let { return it }
         // Known without a fetch, which would take the very transcode the
         // speaker is about to ask for — see MusicServer.knownStream.
         host.knownStream(track, format)?.let {
@@ -904,29 +897,14 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         // hand-off is recognised by until the SOAP call comes back.
         if (castNextArmedFor == after) return
         val (format, mime) = castFormatFor(renderer, track)
-        // Its own id, not the current track's: both transcodes are in flight
-        // at once during the hand-off, and Plex tears down whichever one
-        // shares an identifier with the other — see OutputHost.ownStreamSession.
-        val url = host.streamUrl(
-            track,
-            format,
-            estimateContentLength = false,
-            sessionId = host.ownStreamSession(track.id),
-        ) ?: return
+        // Its own session id, not the current track's — see castUrl.
+        val url = castUrl(track, format) ?: return
         if (url == castNextUrl) return
         castNextArmedFor = after
         castNextUrl = null
         castNextOffered = url
         castNextTrackId = track.id
-        val queued = DlnaCast.setNext(
-            renderer = renderer,
-            url = url,
-            title = track.title,
-            artist = track.artist,
-            album = track.album,
-            durationMs = track.durationMs,
-            mimeType = mime,
-        )
+        val queued = DlnaCast.setNext(renderer, url, track, mime)
         // Renderers without it fault, and the stop-and-restart path carries the
         // queue. An offer never answered is still looked for — see castNextOffered.
         if (queued) castNextUrl = url
@@ -987,7 +965,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         castFormats[key]?.let { return it }
 
         val sink = runCatching { DlnaCast.sinkFormats(renderer) }.getOrDefault(emptySet())
-        // Same as probeSeekable: this asks the music server; DlnaCast's own
+        // Same as seekable: this asks the music server; DlnaCast's own
         // switch stands in front of it. Not where the server already says.
         val mime = host.knownStream(track, desired)?.mime
             ?: host.streamUrl(track, desired)?.let { DlnaCast.probeMime(it) }
@@ -1254,18 +1232,10 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     private suspend fun cueAt(renderer: DlnaRenderer, atMs: Long): Boolean {
         val track = host.queue.value.getOrNull(host.index.value) ?: return false
         val (format, mime) = castFormatFor(renderer, track)
-        val seekKey = "${track.id}|${format.id}"
-        val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
-        val byRenderer = seekable == true && seeksBeforePlay[renderer.id] != false
+        val byRenderer = seekable(track, format) == true && seeksBeforePlay[renderer.id] != false
         val offset = if (byRenderer) 0L else atMs / 1000 * 1000
-        val url = host.streamUrl(
-            track,
-            format,
-            estimateContentLength = false,
-            timeOffsetSeconds = (offset / 1000).toInt(),
-            sessionId = host.ownStreamSession(track.id),
-        ) ?: return false
-        if (!DlnaCast.setUri(renderer, url, track.title, track.artist, track.album, track.durationMs, mime)) return false
+        val url = castUrl(track, format, offset) ?: return false
+        if (!DlnaCast.setUri(renderer, url, track, mime)) return false
         // Held now, whatever happens next: its readings are this track's, and
         // a play from its own remote is followed from wherever it starts.
         castCurrentUrl = url
@@ -1282,12 +1252,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     /** Move to the next queue entry on the renderer; false when the queue ends. */
     private suspend fun advanceCast(renderer: DlnaRenderer): Boolean {
-        val next = when (host.repeatMode.value) {
-            RepeatMode.TRACK -> host.index.value
-            RepeatMode.QUEUE -> (host.index.value + 1) % host.queue.value.size.coerceAtLeast(1)
-            RepeatMode.OFF -> host.index.value + 1
-        }
-        if (next !in host.queue.value.indices) {
+        val next = nextIndex()?.takeIf { it in host.queue.value.indices }
+        if (next == null) {
             log("queue finished")
             // Nothing left to resume — see waitingForPlay. The controller winds
             // back to the top, as it does for the phone.
