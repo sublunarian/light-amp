@@ -165,12 +165,12 @@ fun SimpleLightScreen<*>.go(factory: (SealedLightActivity) -> SimpleLightScreen<
 fun SimpleLightScreen<*>.openSelectionActions(
     tracks: List<Track>,
     selection: SelectionState,
-    showAddToQueue: Boolean = true,
-    showDownload: Boolean = true,
+    /** See [SelectionActionsScreen.fromQueue]. */
+    fromQueue: Boolean = false,
 ) {
     if (tracks.isEmpty()) return
     navigateTo<Boolean>(
-        { SelectionActionsScreen(it, tracks, showAddToQueue, showDownload) },
+        { SelectionActionsScreen(it, tracks, fromQueue) },
         resultCallback = { acted -> if (acted) selection.clear() },
     )
 }

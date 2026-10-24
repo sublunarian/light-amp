@@ -26,25 +26,18 @@ class TrackActionsScreen(
     /** Set from the queue: adds "Remove from Queue". */
     private val queueIndex: Int? = null,
     /**
-     * Set from the player: the sheet follows whatever is playing now, so a song
-     * ending while it is up doesn't leave every row acting on the previous one.
+     * Opened from the player. The sheet follows whatever is playing now, so a song
+     * ending while it is up doesn't leave every row acting on the previous one,
+     * and it leaves out liking, rating and playlists: the player's "+" holds those.
      */
-    private val followCurrent: Boolean = false,
+    private val fromPlayer: Boolean = false,
     /** Set from the player: the lyrics row toggles the player's own overlay. */
     private val onToggleLyrics: (() -> Unit)? = null,
     private val lyricsShowing: Boolean = false,
-    /** Cleared by the player, where liking has its own control on screen. */
-    private val showLike: Boolean = true,
-    /** Cleared by the player and the queue: managing storage is a library job. */
-    private val showDownload: Boolean = true,
-    /** Cleared by the player, where rating and playlists live behind its "+" button. */
-    private val showRating: Boolean = true,
-    /** Cleared by the player, as [showRating]. */
-    private val showAddToPlaylist: Boolean = true,
     /** Set by the player: a cover at full width is only about what's playing. */
     private val onShowArtwork: (() -> Unit)? = null,
     /**
-     * The cover already fills the screen (Controls on Cover, which keeps this sheet
+     * The cover already fills the screen (Cover Only, which keeps this sheet
      * reachable), so the artwork row is the way back out of it.
      */
     private val artworkShowing: Boolean = false,
@@ -74,7 +67,7 @@ class TrackActionsScreen(
         val tracks by App.library.tracks.collectAsState()
         val cached by App.library.cachedTracks.collectAsState()
         val playing by App.playback.currentTrack.collectAsState()
-        val id = if (followCurrent) playing?.id ?: trackId else trackId
+        val id = if (fromPlayer) playing?.id ?: trackId else trackId
         // The library row before the queue's copy: liked and rating are edited
         // here, and the library row is the one that gets updated.
         val track = remember(tracks, cached, playing, id) {
@@ -92,6 +85,8 @@ class TrackActionsScreen(
         val playsNext = queueIndexOf == App.playback.index.collectAsState().value + 1
         // Queueing the song already playing says nothing, so those rows go.
         val isCurrent = playing?.id == id
+        // Managing storage is a library job, not the player's or the queue's.
+        val showDownload = !fromPlayer && queueIndex == null
 
         ListScreen(onBack = { goBack() }, title = track?.title ?: "Track", subtitle = track?.artist) {
             if (track == null) {
@@ -172,7 +167,7 @@ class TrackActionsScreen(
                         }
                     }
                 }
-                if (showAddToPlaylist) AddToPlaylistRow(listOf(track.id)) { goBack() }
+                if (!fromPlayer) AddToPlaylistRow(listOf(track.id)) { goBack() }
                 if (showDownload) DownloadRow(source, listOf(track), downloaded, "Add to Downloads")
                 // Lyrics and the full cover are only offered by the player: they are
                 // things to look at while the track plays.
@@ -190,8 +185,8 @@ class TrackActionsScreen(
                     }
                 }
                 // Beside the rating: both say what you think of the track.
-                if (showLike && source.supportsLikes) LikeTrackRow(track)
-                if (showRating && source.supportsRatings) {
+                if (!fromPlayer && source.supportsLikes) LikeTrackRow(track)
+                if (!fromPlayer && source.supportsRatings) {
                     RatingRow(track.id, track.title, track.rating, isAlbum = false)
                 }
                 // Opened from anywhere, so neither destination has a parent on the

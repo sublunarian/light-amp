@@ -18,10 +18,11 @@ import com.thelightphone.sdk.SealedLightActivity
 class SelectionActionsScreen(
     sealed: SealedLightActivity,
     private val tracks: List<Track>,
-    /** Cleared from the queue, where they are all queued already. */
-    private val showAddToQueue: Boolean = true,
-    /** Cleared from the queue: storage is a library job. */
-    private val showDownload: Boolean = true,
+    /**
+     * Opened from the queue: no Add to Queue, where every song is queued already,
+     * and no download, which is a library job.
+     */
+    private val fromQueue: Boolean = false,
 ) : AmpScreen<Boolean>(sealed) {
 
     @Composable
@@ -37,13 +38,13 @@ class SelectionActionsScreen(
                     App.playback.playNext(tracks)
                     goBack(true)
                 }
-                if (showAddToQueue) {
+                if (!fromQueue) {
                     TextRow(title = "Add to Queue") {
                         App.playback.addToQueue(tracks)
                         goBack(true)
                     }
                 }
-                if (showDownload && source.mayDownload) {
+                if (!fromQueue && source.mayDownload) {
                     TextRow(title = "Add to Downloads") {
                         App.downloader.enqueue(tracks)
                         goBack(true)

@@ -665,10 +665,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         openSelectionActions(
                             selection.pick(queue) { it.id },
                             selection,
-                            // Everything here is in the queue already, and
-                            // downloads are a library job.
-                            showAddToQueue = false,
-                            showDownload = false,
+                            fromQueue = true,
                         )
                     },
                 )
@@ -1102,11 +1099,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             TrackActionsScreen(
                 it,
                 trackId,
-                followCurrent = true,
-                showLike = false,
-                showDownload = false,
-                showRating = false,
-                showAddToPlaylist = false,
+                fromPlayer = true,
                 // Only with a cover to enlarge. In Cover Only it is the way back
                 // out too: the hold on the cover is invisible, the menu isn't.
                 onShowArtwork = if (artworkMode == ArtworkMode.SMALL) {
@@ -1135,7 +1128,6 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 it,
                 track.id,
                 queueIndex = index,
-                showDownload = false,
                 onSelect = { selection.begin(track.id) },
             )
         }
