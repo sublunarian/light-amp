@@ -7,7 +7,6 @@ import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.Lyrics
 import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicServer
-import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.RADIO_LENGTH
 import com.sublunar.amp.data.ScanRequest
@@ -21,6 +20,9 @@ import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.isReorderOf
 import com.sublunar.amp.data.placementMoves
 import com.sublunar.amp.data.serverClock
+import com.sublunar.amp.source.ServerHttp
+import com.sublunar.amp.source.serverJson
+import com.sublunar.amp.source.serverUrl
 import io.ktor.client.HttpClient
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -34,7 +36,6 @@ import io.ktor.http.isSuccess
 import java.net.URLEncoder
 import java.time.Duration
 import java.time.Instant
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -74,39 +75,19 @@ class JellyfinClient(
     private val deviceId: String = LEGACY_DEVICE_ID,
 ) : MusicServer {
 
-    private val http = NetworkGate.httpClient { expectSuccess = false }
+    private val http = ServerHttp()
 
-    /**
-     * A second client for the calls a person is waiting on — the reachability
-     * ping and the stream decision — with a request queue of its own: behind a
-     * launch sync's hundreds of requests on the shared one, a ping that waited
-     * its turn read as the server gone. Built on first use.
-     */
-    private val quickClient = lazy { NetworkGate.httpClient(isolated = true) { expectSuccess = false } }
-    private val quick get() = quickClient.value
-
-    private val json = Json {
-        ignoreUnknownKeys = true
-        coerceInputValues = true
-        isLenient = true
-    }
-
-    override fun close() {
-        http.close()
-        if (quickClient.isInitialized()) quick.close()
-    }
+    override fun close() = http.close()
 
     // --- Requests ------------------------------------------------------------
 
-    private fun url(path: String, params: List<Pair<String, String>> = emptyList()): String {
-        val query = params.joinToString("&") { (k, v) -> "$k=${enc(v)}" }
-        return baseUrl.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
-    }
+    private fun url(path: String, params: List<Pair<String, String>> = emptyList()): String =
+        serverUrl(baseUrl, path, params)
 
     private suspend fun body(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
-        via: HttpClient = http,
+        via: HttpClient = http.bulk,
     ): String {
         val response = via.get(url(path, params)) { jellyfinHeaders() }
         if (!response.status.isSuccess()) {
@@ -118,7 +99,7 @@ class JellyfinClient(
     private suspend inline fun <reified T> fetch(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
-    ): T = json.decodeFromString(body(path, params))
+    ): T = serverJson.decodeFromString(body(path, params))
 
     /**
      * A change the user is waiting to see land: returns when the server took
@@ -133,15 +114,15 @@ class JellyfinClient(
     ) {
         val target = url(path, params)
         val response = when (method) {
-            "POST" -> http.post(target) {
+            "POST" -> http.bulk.post(target) {
                 jellyfinHeaders()
                 if (payload != null) {
                     contentType(ContentType.Application.Json)
-                    setBody(json.encodeToString(JsonObject.serializer(), payload))
+                    setBody(serverJson.encodeToString(JsonObject.serializer(), payload))
                 }
             }
-            "DELETE" -> http.delete(target) { jellyfinHeaders() }
-            else -> http.get(target) { jellyfinHeaders() }
+            "DELETE" -> http.bulk.delete(target) { jellyfinHeaders() }
+            else -> http.bulk.get(target) { jellyfinHeaders() }
         }
         if (!response.status.isSuccess()) {
             throw JellyfinException("Jellyfin says ${response.status.value} for $path", response.status.value)
@@ -210,7 +191,7 @@ class JellyfinClient(
     override suspend fun ping() {
         // Proves the address, the token and the user in one call: an expired
         // token answers 401 here rather than an empty library later.
-        body("/Users/$userId", via = quick)
+        body("/Users/$userId", via = http.quick)
     }
 
     // --- Browsing ------------------------------------------------------------
@@ -291,14 +272,14 @@ class JellyfinClient(
     override suspend fun songChangesSince(mark: String?, libraries: List<String?>): SongChanges {
         val since = mark?.let { runCatching { Instant.parse(it) }.getOrNull() }
         if (since == null) {
-            val now = serverClock(http.get(url("/System/Info/Public")) { jellyfinHeaders() })
+            val now = serverClock(http.bulk.get(url("/System/Info/Public")) { jellyfinHeaders() })
             return SongChanges.Everything(now.toString())
         }
         val albumIds = mutableSetOf<String>()
         var now: Instant? = null
         var start = 0
         while (true) {
-            val response = http.get(
+            val response = http.bulk.get(
                 url(
                     "/Items",
                     listOf(
@@ -319,7 +300,7 @@ class JellyfinClient(
                 throw JellyfinException("Jellyfin says ${response.status.value} for /Items", response.status.value)
             }
             if (now == null) now = serverClock(response)
-            val page = json.decodeFromString<JellyfinItems>(response.bodyAsText())
+            val page = serverJson.decodeFromString<JellyfinItems>(response.bodyAsText())
             page.items.mapNotNullTo(albumIds) { it.albumId }
             start += page.items.size
             if (!page.continuesAfter(start)) break
@@ -657,17 +638,17 @@ class JellyfinClient(
                 buildJsonArray { songIds.forEach { add(JsonPrimitive(it)) } },
             )
         }
-        val response = http.post(url("/Playlists")) {
+        val response = http.bulk.post(url("/Playlists")) {
             jellyfinHeaders()
             contentType(ContentType.Application.Json)
-            setBody(json.encodeToString(JsonObject.serializer(), payload))
+            setBody(serverJson.encodeToString(JsonObject.serializer(), payload))
         }
         if (!response.status.isSuccess()) {
             throw JellyfinException("Jellyfin says ${response.status.value} for /Playlists", response.status.value)
         }
         // Made, whatever the body says: an answer this can't read is still a playlist on the server.
         return runCatching {
-            json.decodeFromString<JellyfinNamed>(response.bodyAsText()).id.takeIf { it.isNotBlank() }
+            serverJson.decodeFromString<JellyfinNamed>(response.bodyAsText()).id.takeIf { it.isNotBlank() }
         }.getOrNull()
     }
 
@@ -763,8 +744,6 @@ class JellyfinClient(
     private suspend fun movesLandWhereAsked(): Boolean = movesExact
         ?: (movesLandWhereAsked(fetch<JellyfinPublicInfo>("/System/Info/Public").version) ?: false)
             .also { movesExact = it }
-
-    private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
 
     companion object {
         /**

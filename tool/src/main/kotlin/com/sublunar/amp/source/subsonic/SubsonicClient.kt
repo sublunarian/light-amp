@@ -8,7 +8,6 @@ import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.Lyrics
 import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicServer
-import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.RADIO_LENGTH
 import com.sublunar.amp.data.SavedQueue
@@ -25,6 +24,9 @@ import com.sublunar.amp.data.WriteResult
 import com.sublunar.amp.data.isReorderOf
 import com.sublunar.amp.data.md5Hex
 import com.sublunar.amp.source.ServerAddress
+import com.sublunar.amp.source.ServerHttp
+import com.sublunar.amp.source.queryOf
+import com.sublunar.amp.source.serverJson
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -34,11 +36,9 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import java.net.URLEncoder
 import java.time.Instant
 import kotlin.random.Random
 import kotlinx.serialization.SerializationException
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -172,53 +172,30 @@ class SubsonicClient(
     internal val reportsPlayback: Boolean = false,
 ) : MusicServer {
 
-    private val http = NetworkGate.httpClient {
-        expectSuccess = false
-    }
-
-    /**
-     * A second client for the calls a person is waiting on — the reachability
-     * ping and the stream decision — with a request queue of its own: behind a
-     * launch sync's hundreds of requests on the shared one, a ping that waited
-     * its turn read as the server gone. Built on first use.
-     */
-    private val quickClient = lazy { NetworkGate.httpClient(isolated = true) { expectSuccess = false } }
-    private val quick get() = quickClient.value
-
-    private val json = Json {
-        ignoreUnknownKeys = true
-        coerceInputValues = true
-        isLenient = true
-    }
+    private val http = ServerHttp()
 
     private val authQuery: String = run {
         val salt = randomSalt()
-        val token = md5Hex(config.password + salt)
-        buildString {
-            append("u=").append(enc(config.username))
-            append("&t=").append(token)
-            append("&s=").append(salt)
-            append("&v=").append(API_VERSION)
-            append("&c=").append(enc(config.clientName?.ifBlank { null } ?: CLIENT_NAME))
-            append("&f=json")
-        }
+        queryOf(
+            listOf(
+                "u" to config.username,
+                "t" to md5Hex(config.password + salt),
+                "s" to salt,
+                "v" to API_VERSION,
+                "c" to (config.clientName?.ifBlank { null } ?: CLIENT_NAME),
+                "f" to "json",
+            ),
+        )
     }
 
-    override fun close() {
-        http.close()
-        if (quickClient.isInitialized()) quick.close()
-    }
+    override fun close() = http.close()
 
     // --- URL builders --------------------------------------------------------
 
-    private fun restUrl(endpoint: String, params: List<Pair<String, String>>): String =
-        buildString {
-            append(config.baseUrl).append("/rest/").append(endpoint).append(".view?")
-            append(authQuery)
-            for ((key, value) in params) {
-                append('&').append(key).append('=').append(enc(value))
-            }
-        }
+    private fun restUrl(endpoint: String, params: List<Pair<String, String>>): String {
+        val query = if (params.isEmpty()) authQuery else authQuery + "&" + queryOf(params)
+        return "${config.baseUrl}/rest/$endpoint.view?$query"
+    }
 
     /**
      * A copy to keep, rather than something to play.
@@ -288,7 +265,7 @@ class SubsonicClient(
     private suspend fun request(
         endpoint: String,
         params: List<Pair<String, String>> = emptyList(),
-        via: HttpClient = http,
+        via: HttpClient = http.bulk,
     ): SubsonicBody {
         val response = via.get(restUrl(endpoint, params))
         if (!response.status.isSuccess()) {
@@ -312,12 +289,12 @@ class SubsonicClient(
         // envelope this client can't read is the server answering in a shape we
         // didn't expect (envelope).
         val parsed = try {
-            json.decodeFromString<SubsonicEnvelope>(text)
+            serverJson.decodeFromString<SubsonicEnvelope>(text)
         } catch (e: SerializationException) {
             // A bare top-level value ("Forbidden", "OK") parses as a JSON
             // literal, but it is plain text from something in front of the
             // server — a page in all but name — not a JSON reply.
-            val tree = runCatching { json.parseToJsonElement(text) }.getOrNull()
+            val tree = runCatching { serverJson.parseToJsonElement(text) }.getOrNull()
                 ?.takeUnless { it is JsonPrimitive }
             val hasEnvelope = (tree as? JsonObject)?.containsKey("subsonic-response") == true
             throw SubsonicException(
@@ -342,7 +319,7 @@ class SubsonicClient(
 
     /** Verify credentials by pinging the server. Throws on failure. */
     override suspend fun ping() {
-        request("ping", via = quick)
+        request("ping", via = http.quick)
     }
 
     /**
@@ -367,7 +344,7 @@ class SubsonicClient(
         // The guard the whole thing rests on: the address and login work right
         // now, so an endpoint answering "no such thing" below is the server
         // saying so, not a dead link.
-        val server = request("ping", via = quick)
+        val server = request("ping", via = http.quick)
         val tag = listOfNotNull(server.version, server.type, server.serverVersion)
             .joinToString("/")
             .ifBlank { "unknown" }
@@ -428,7 +405,7 @@ class SubsonicClient(
      */
     private suspend fun listsExtension(extension: String): Boolean? =
         try {
-            extension in request("getOpenSubsonicExtensions", via = quick).extensionNames
+            extension in request("getOpenSubsonicExtensions", via = http.quick).extensionNames
         } catch (e: SubsonicException) {
             when {
                 e.envelope && e.code != null -> false
@@ -445,7 +422,7 @@ class SubsonicClient(
      */
     private suspend fun answers(endpoint: String, params: List<Pair<String, String>>): Boolean? =
         try {
-            request(endpoint, params, via = quick)
+            request(endpoint, params, via = http.quick)
             true
         } catch (e: SubsonicException) {
             when {
@@ -465,7 +442,7 @@ class SubsonicClient(
      * without one is Bandcamp saying it has no such call. A page proves nothing.
      */
     private suspend fun implementsDownload(trackId: String): Boolean? =
-        quick.prepareGet(restUrl("download", listOf("id" to trackId))) {
+        http.quick.prepareGet(restUrl("download", listOf("id" to trackId))) {
             header(HttpHeaders.Range, "bytes=0-0")
         }.execute { response ->
             val type = response.contentType()
@@ -473,7 +450,7 @@ class SubsonicClient(
                 response.status.value == 404 || response.status.value == 501 -> false
                 !response.status.isSuccess() -> null
                 type?.match(ContentType.Application.Json) == true -> {
-                    val tree = runCatching { json.parseToJsonElement(response.bodyAsText()) }
+                    val tree = runCatching { serverJson.parseToJsonElement(response.bodyAsText()) }
                         .getOrNull() as? JsonObject
                     val envelope = tree?.get("subsonic-response") as? JsonObject
                     val code = ((envelope?.get("error") as? JsonObject)?.get("code") as? JsonPrimitive)
@@ -966,8 +943,6 @@ class SubsonicClient(
         private const val CLIENT_NAME = "amp"
         private const val API_VERSION = "1.16.1"
         private const val ALBUM_PAGE_SIZE = 500
-
-        private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
 
         private fun randomSalt(): String {
             val chars = "0123456789abcdef"

@@ -10,11 +10,11 @@ import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import com.sublunar.amp.data.NetworkGate
+import com.sublunar.amp.source.serverJson
 
 /** A signed-in Jellyfin session, and a client already holding it. */
 data class JellyfinSession(
@@ -52,12 +52,6 @@ sealed interface JellyfinSignInResult {
  * is the request that has no token.
  */
 object JellyfinSignIn {
-
-    private val json = Json {
-        ignoreUnknownKeys = true
-        coerceInputValues = true
-        isLenient = true
-    }
 
     /**
      * Exchange an account for an access token.
@@ -97,7 +91,7 @@ object JellyfinSignIn {
                         .takeIf { it.endsWith(PUBLIC_INFO) }
                         ?.let { root = it.removeSuffix(PUBLIC_INFO) }
                 }
-                runCatching { json.decodeFromString<JellyfinPublicInfo>(response.bodyAsText()) }.getOrNull()
+                runCatching { serverJson.decodeFromString<JellyfinPublicInfo>(response.bodyAsText()) }.getOrNull()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -116,13 +110,13 @@ object JellyfinSignIn {
                     header("Authorization", JellyfinClient.authorization(deviceId = deviceId))
                     header("Accept", "application/json")
                     contentType(ContentType.Application.Json)
-                    setBody(json.encodeToString(JsonObject.serializer(), payload))
+                    setBody(serverJson.encodeToString(JsonObject.serializer(), payload))
                 }
                 when (val status = response.status.value) {
                     401, 403 -> return JellyfinSignInResult.Refused(root)
                     !in 200..299 -> return JellyfinSignInResult.Failed(status, root)
                 }
-                runCatching { json.decodeFromString<JellyfinAuthResult>(response.bodyAsText()) }.getOrNull()
+                runCatching { serverJson.decodeFromString<JellyfinAuthResult>(response.bodyAsText()) }.getOrNull()
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
