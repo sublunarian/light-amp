@@ -78,10 +78,11 @@ data class AlbumEntity(
     val rating: Int = 0,
     val genre: String = "",
     /**
-     * Which of the server's libraries this album came from, or null where the
-     * server has only one (or the row predates the column). Recorded so choosing
-     * a library is a filter over the cache, which works offline, rather than a
-     * fetch — see LibraryRepository.allAlbums.
+     * Which of the server's libraries this album came from, or null where there
+     * is none to name (a server that lists none, the phone's own files) or the
+     * row predates the column. Recorded so choosing a library is a filter over
+     * the cache, which works offline, rather than a fetch — see
+     * LibraryRepository.allAlbums.
      */
     val libraryId: String? = null,
 )
@@ -277,17 +278,6 @@ interface LibraryDao {
     /** How many tracks are actually cached per album, for sync reconciliation. */
     @Query("SELECT albumId AS albumId, COUNT(*) AS tracks FROM tracks WHERE albumId IS NOT NULL GROUP BY albumId")
     suspend fun trackCountsByAlbum(): List<AlbumTrackCount>
-
-    /** Albums with no library recorded — see LibraryRepository's retag pass. */
-    @Query("SELECT COUNT(*) FROM albums WHERE libraryId IS NULL")
-    suspend fun untaggedAlbumCount(): Int
-
-    @Query("SELECT id FROM albums WHERE libraryId IS NULL")
-    suspend fun untaggedAlbumIds(): List<String>
-
-    /** Stamp these albums as belonging to [libraryId]; answers how many rows took it. */
-    @Query("UPDATE albums SET libraryId = :libraryId WHERE id IN (:ids)")
-    suspend fun tagAlbums(libraryId: String, ids: List<String>): Int
 
     @Query("DELETE FROM tracks")
     suspend fun clearTracks()

@@ -1230,42 +1230,6 @@ class LibraryRepository(
         try {
             // Read before the first write — see reportDroppedCovers.
             val coversBefore = coverIdsOrNull(dao)
-            // Rows with no library recorded show in *every* library (see
-            // allAlbums), and a scoped sync can tag only the folder it fetched.
-            // So while untagged rows exist on a server with several libraries,
-            // each folder's album list (cheap, no songs) stamps the rows it names.
-            val untagged = dao.untaggedAlbumCount()
-            if (untagged > 0) {
-                val folders = client.getMusicFolders()
-                if (folders.size >= 2) {
-                    _syncState.update { it.copy(phase = "Sorting libraries") }
-                    var stamped = 0
-                    var named = 0
-                    for (folder in folders) {
-                        val ids = client.getAllAlbums(folder.id).map { it.id }
-                        named += ids.size
-                        ids.chunked(500).forEach { chunk -> stamped += dao.tagAlbums(folder.id, chunk) }
-                    }
-                    if (stamped > 0) wrote.albums = true
-                    // Still untagged after every folder has spoken: an album the
-                    // server has nowhere (its id gone or changed, as a re-import
-                    // does), which no scoped prune would ever reach. The lists just
-                    // read are the whole server, so it goes — unless they were
-                    // empty, the main prune's rule.
-                    val dead = if (named > 0) dao.untaggedAlbumIds() else emptyList()
-                    if (dead.isNotEmpty()) {
-                        dead.forEach { dao.deleteTracksForAlbum(it) }
-                        dao.deleteAlbums(dead)
-                        wrote.tracks = true
-                        wrote.albums = true
-                    }
-                    android.util.Log.i(
-                        "AmpSync",
-                        "retagged $stamped album rows across ${folders.size} libraries; " +
-                            "$untagged had no library, ${dead.size} of them exist nowhere and were dropped",
-                    )
-                }
-            }
             // "All libraries" is fanned out per folder and merged: an unscoped
             // getAlbumList2 returns only the server's default library. A hidden
             // library is left out — not wanted on this phone, data included.
