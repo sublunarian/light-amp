@@ -5,7 +5,7 @@ import com.sublunar.amp.data.Lyrics
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlinx.serialization.json.Json
+import com.sublunar.amp.source.serverJson
 import org.junit.Test
 
 /**
@@ -18,11 +18,7 @@ import org.junit.Test
  */
 class JellyfinParseTest {
 
-    private val json = Json {
-        ignoreUnknownKeys = true
-        coerceInputValues = true
-        isLenient = true
-    }
+    private val json = serverJson
 
     private fun item(body: String): JellyfinItem = json.decodeFromString(body)
 

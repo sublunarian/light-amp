@@ -3,7 +3,6 @@ package com.sublunar.amp.source.jellyfin
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.ArtistRef
 import com.sublunar.amp.data.LikeTarget
-import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.Lyrics
 import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicServer
@@ -24,13 +23,14 @@ import com.sublunar.amp.source.ServerHttp
 import com.sublunar.amp.source.serverJson
 import com.sublunar.amp.source.serverUrl
 import io.ktor.client.HttpClient
-import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
-import io.ktor.client.request.post
+import io.ktor.client.request.request
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import java.net.URLEncoder
@@ -84,22 +84,54 @@ class JellyfinClient(
     private fun url(path: String, params: List<Pair<String, String>> = emptyList()): String =
         serverUrl(baseUrl, path, params)
 
-    private suspend fun body(
+    private suspend fun get(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
         via: HttpClient = http.bulk,
-    ): String {
-        val response = via.get(url(path, params)) { jellyfinHeaders() }
-        if (!response.status.isSuccess()) {
-            throw JellyfinException("Jellyfin says ${response.status.value} for $path", response.status.value)
-        }
-        return response.bodyAsText()
-    }
+    ): HttpResponse = via.get(url(path, params)) { jellyfinHeaders() }.orThrow(path)
 
     private suspend inline fun <reified T> fetch(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
-    ): T = serverJson.decodeFromString(body(path, params))
+    ): T = serverJson.decodeFromString(get(path, params).bodyAsText())
+
+    private fun HttpResponse.orThrow(path: String): HttpResponse {
+        if (!status.isSuccess()) throw JellyfinException("Jellyfin says ${status.value} for $path", status.value)
+        return this
+    }
+
+    /**
+     * Everything [path] lists, a page at a time to the end, so each round trip
+     * stays small rather than one body holding a whole library. [onPage] sees
+     * each page with the response it came in.
+     */
+    private suspend fun forEachPage(
+        path: String,
+        params: List<Pair<String, String>>,
+        onPage: (HttpResponse, JellyfinItems) -> Unit,
+    ) {
+        var start = 0
+        do {
+            val response = get(path, params + listOf("StartIndex" to start.toString(), "Limit" to PAGE_SIZE.toString()))
+            val page = serverJson.decodeFromString<JellyfinItems>(response.bodyAsText())
+            onPage(response, page)
+            start += page.items.size
+        } while (page.continuesAfter(start))
+    }
+
+    private suspend fun pages(path: String, params: List<Pair<String, String>>): List<JellyfinItem> {
+        val items = mutableListOf<JellyfinItem>()
+        forEachPage(path, params) { _, page -> items += page.items }
+        return items
+    }
+
+    /**
+     * Whether there is a page after this one. A short page is the end; a full
+     * one goes on unless the server's total says otherwise. A total it left
+     * out reads as 0, which must not stop the paging at one page.
+     */
+    private fun JellyfinItems.continuesAfter(start: Int): Boolean =
+        items.size >= PAGE_SIZE && (totalRecordCount == 0 || start < totalRecordCount)
 
     /**
      * A change the user is waiting to see land: returns when the server took
@@ -107,54 +139,52 @@ class JellyfinClient(
      * apart — see [writeResultOf].
      */
     private suspend fun write(
-        method: String,
+        method: HttpMethod,
         path: String,
         params: List<Pair<String, String>> = emptyList(),
         payload: JsonObject? = null,
-    ) {
-        val target = url(path, params)
-        val response = when (method) {
-            "POST" -> http.bulk.post(target) {
-                jellyfinHeaders()
-                if (payload != null) {
-                    contentType(ContentType.Application.Json)
-                    setBody(serverJson.encodeToString(JsonObject.serializer(), payload))
-                }
-            }
-            "DELETE" -> http.bulk.delete(target) { jellyfinHeaders() }
-            else -> http.bulk.get(target) { jellyfinHeaders() }
+    ): HttpResponse = http.bulk.request(url(path, params)) {
+        this.method = method
+        jellyfinHeaders()
+        if (payload != null) {
+            contentType(ContentType.Application.Json)
+            setBody(serverJson.encodeToString(JsonObject.serializer(), payload))
         }
-        if (!response.status.isSuccess()) {
-            throw JellyfinException("Jellyfin says ${response.status.value} for $path", response.status.value)
-        }
-    }
+    }.orThrow(path)
 
     /** A call whose answer doesn't matter, and whose failure mustn't propagate. */
     private suspend fun send(
-        method: String,
+        method: HttpMethod,
         path: String,
         params: List<Pair<String, String>> = emptyList(),
         payload: JsonObject? = null,
     ): Boolean = runCatching { write(method, path, params, payload) }.isSuccess
 
-    @Volatile private var userRoutes: Boolean? = null
-    @Volatile private var movesExact: Boolean? = null
+    @Volatile private var version: String? = null
+
+    /** The server's version, read once per client. A read that fails throws, and is tried again next time. */
+    private suspend fun serverVersion(): String =
+        version ?: fetch<JellyfinPublicInfo>("/System/Info/Public").version.also { version = it }
 
     /**
      * Whether this server has the per-user routes that take the user as a
      * query parameter (`/UserViews`, `/UserFavoriteItems`, `/UserPlayedItems`)
      * rather than in the path: 10.9 added them and keeps the old ones only for
-     * backwards compatibility. Read once per client from the version, since a
-     * 404 can't tell a missing route from a missing song. A version read that
-     * fails throws; one that can't be parsed keeps to the old routes, which
-     * every server still answers.
+     * backwards compatibility. Decided by the version, since a 404 can't tell a
+     * missing route from a missing song; one that can't be parsed keeps to the
+     * old routes, which every server still answers.
      */
-    private suspend fun usesUserRoutes(): Boolean = userRoutes
-        ?: (hasUserRoutes(fetch<JellyfinPublicInfo>("/System/Info/Public").version) ?: false)
-            .also { userRoutes = it }
+    private suspend fun usesUserRoutes(): Boolean = hasUserRoutes(serverVersion()) ?: false
+
+    /**
+     * Whether Move puts an entry at the index it is given. 10.10.2 to 10.10.7 put
+     * one moved down a place further, so those are only ever moved up. A version
+     * that can't be read is treated as one of them.
+     */
+    private suspend fun movesLandWhereAsked(): Boolean = movesLandWhereAsked(serverVersion()) ?: false
 
     /** A [write] to one of the per-user routes, by whichever spelling this server has — see [usesUserRoutes]. */
-    private suspend fun writeForUser(method: String, current: String, legacy: String) {
+    private suspend fun writeForUser(method: HttpMethod, current: String, legacy: String) {
         if (usesUserRoutes()) write(method, current, listOf("userId" to userId)) else write(method, legacy)
     }
 
@@ -172,7 +202,7 @@ class JellyfinClient(
      * id, whoever's it is — another person's Amp mid-song on the same server.
      */
     suspend fun signOut(): Boolean =
-        deviceId != LEGACY_DEVICE_ID && send("POST", "/Sessions/Logout")
+        deviceId != LEGACY_DEVICE_ID && send(HttpMethod.Post, "/Sessions/Logout")
 
     /**
      * The one thing about a Jellyfin server that depends on who is asking
@@ -191,7 +221,7 @@ class JellyfinClient(
     override suspend fun ping() {
         // Proves the address, the token and the user in one call: an expired
         // token answers 401 here rather than an empty library later.
-        body("/Users/$userId", via = http.quick)
+        get("/Users/$userId", via = http.quick)
     }
 
     // --- Browsing ------------------------------------------------------------
@@ -214,8 +244,7 @@ class JellyfinClient(
         paged(musicFolderId, ALBUM_TYPE).map { it.toAlbum() }.distinctBy { it.id }
 
     /**
-     * Everything of one type, following the pages to the end, so each round
-     * trip stays small rather than one body holding a whole library.
+     * Everything of one type in a library, or in all of them.
      *
      * The explicit sort is not cosmetic: a page is an offset into a result set,
      * and without an ordering the server may arrange the rows differently for
@@ -226,37 +255,22 @@ class JellyfinClient(
         musicFolderId: String?,
         itemType: String,
         extra: List<Pair<String, String>> = emptyList(),
-    ): List<JellyfinItem> {
-        val items = mutableListOf<JellyfinItem>()
-        var start = 0
-        while (true) {
-            val params = buildList {
-                add("userId" to userId)
-                add("IncludeItemTypes" to itemType)
-                add("Recursive" to "true")
-                add("SortBy" to "SortName")
-                add("SortOrder" to "Ascending")
-                add("Fields" to FIELDS)
-                add("StartIndex" to start.toString())
-                add("Limit" to PAGE_SIZE.toString())
-                if (!musicFolderId.isNullOrBlank()) add("ParentId" to musicFolderId)
-                addAll(extra)
-            }
-            val page = fetch<JellyfinItems>("/Items", params)
-            items += page.items
-            start += page.items.size
-            if (!page.continuesAfter(start)) break
-        }
-        return items
-    }
+    ): List<JellyfinItem> = pages(
+        "/Items",
+        buildList {
+            add("userId" to userId)
+            add("IncludeItemTypes" to itemType)
+            add("Recursive" to "true")
+            add("SortBy" to "SortName")
+            add("SortOrder" to "Ascending")
+            add("Fields" to FIELDS)
+            addAll(libraryParam(musicFolderId))
+            addAll(extra)
+        },
+    )
 
-    /**
-     * Whether there is a page after this one. A short page is the end; a full
-     * one goes on unless the server's total says otherwise. A total it left
-     * out reads as 0, which must not stop the paging at one page.
-     */
-    private fun JellyfinItems.continuesAfter(start: Int): Boolean =
-        items.size >= PAGE_SIZE && (totalRecordCount == 0 || start < totalRecordCount)
+    private fun libraryParam(musicFolderId: String?): List<Pair<String, String>> =
+        if (musicFolderId.isNullOrBlank()) emptyList() else listOf("ParentId" to musicFolderId)
 
     /**
      * The albums whose songs Jellyfin saved since [mark], from every library:
@@ -277,33 +291,21 @@ class JellyfinClient(
         }
         val albumIds = mutableSetOf<String>()
         var now: Instant? = null
-        var start = 0
-        while (true) {
-            val response = http.bulk.get(
-                url(
-                    "/Items",
-                    listOf(
-                        "userId" to userId,
-                        "IncludeItemTypes" to TRACK_TYPE,
-                        "Recursive" to "true",
-                        "MinDateLastSaved" to since.minus(MARK_OVERLAP).toString(),
-                        "SortBy" to "SortName",
-                        "SortOrder" to "Ascending",
-                        "EnableImages" to "false",
-                        "EnableUserData" to "false",
-                        "StartIndex" to start.toString(),
-                        "Limit" to PAGE_SIZE.toString(),
-                    ),
-                ),
-            ) { jellyfinHeaders() }
-            if (!response.status.isSuccess()) {
-                throw JellyfinException("Jellyfin says ${response.status.value} for /Items", response.status.value)
-            }
+        forEachPage(
+            "/Items",
+            listOf(
+                "userId" to userId,
+                "IncludeItemTypes" to TRACK_TYPE,
+                "Recursive" to "true",
+                "MinDateLastSaved" to since.minus(MARK_OVERLAP).toString(),
+                "SortBy" to "SortName",
+                "SortOrder" to "Ascending",
+                "EnableImages" to "false",
+                "EnableUserData" to "false",
+            ),
+        ) { response, page ->
             if (now == null) now = serverClock(response)
-            val page = serverJson.decodeFromString<JellyfinItems>(response.bodyAsText())
             page.items.mapNotNullTo(albumIds) { it.albumId }
-            start += page.items.size
-            if (!page.continuesAfter(start)) break
         }
         return SongChanges.Albums(albumIds, (now ?: Instant.now()).toString(), alsoWalk = true)
     }
@@ -349,23 +351,7 @@ class JellyfinClient(
         val favourite = listOf("Filters" to "IsFavorite")
         val songs = paged(musicFolderId, TRACK_TYPE, favourite)
         val albums = paged(musicFolderId, ALBUM_TYPE, favourite)
-        val artists = mutableListOf<JellyfinItem>()
-        var start = 0
-        while (true) {
-            val page = fetch<JellyfinItems>(
-                "/Artists",
-                buildList {
-                    add("userId" to userId)
-                    add("Filters" to "IsFavorite")
-                    add("StartIndex" to start.toString())
-                    add("Limit" to PAGE_SIZE.toString())
-                    if (!musicFolderId.isNullOrBlank()) add("ParentId" to musicFolderId)
-                },
-            )
-            artists += page.items
-            start += page.items.size
-            if (!page.continuesAfter(start)) break
-        }
+        val artists = pages("/Artists", listOf("userId" to userId) + favourite + libraryParam(musicFolderId))
         return Starred(
             songIds = songs.map { it.id }.toSet(),
             albumIds = albums.map { it.id }.toSet(),
@@ -380,7 +366,7 @@ class JellyfinClient(
      * exactly like a scan that ran and found nothing.
      */
     override suspend fun startServerScan(musicFolderId: String?): ScanRequest =
-        if (send("POST", "/Library/Refresh")) ScanRequest.STARTED else ScanRequest.REFUSED
+        if (send(HttpMethod.Post, "/Library/Refresh")) ScanRequest.STARTED else ScanRequest.REFUSED
 
     override suspend fun serverScanning(musicFolderId: String?): Boolean = runCatching {
         fetch<List<JellyfinTask>>("/ScheduledTasks")
@@ -394,28 +380,12 @@ class JellyfinClient(
      * Throws rather than answering empty: an artist like looks its name up in
      * here, and an index that couldn't be read is not one without that artist.
      */
-    override suspend fun getArtistIndex(musicFolderId: String?): List<ArtistRef> {
-        val items = mutableListOf<JellyfinItem>()
-        var start = 0
-        while (true) {
-            val page = fetch<JellyfinItems>(
-                "/Artists",
-                buildList {
-                    add("userId" to userId)
-                    add("SortBy" to "SortName")
-                    add("SortOrder" to "Ascending")
-                    add("StartIndex" to start.toString())
-                    add("Limit" to PAGE_SIZE.toString())
-                    if (!musicFolderId.isNullOrBlank()) add("ParentId" to musicFolderId)
-                },
-            )
-            items += page.items
-            start += page.items.size
-            if (!page.continuesAfter(start)) break
-        }
-        return items.map { ArtistRef(id = it.id, name = it.name, imageId = it.imageId()) }
+    override suspend fun getArtistIndex(musicFolderId: String?): List<ArtistRef> =
+        pages(
+            "/Artists",
+            listOf("userId" to userId, "SortBy" to "SortName", "SortOrder" to "Ascending") + libraryParam(musicFolderId),
+        ).map { ArtistRef(id = it.id, name = it.name, imageId = it.imageId()) }
             .distinctBy { it.id }
-    }
 
     // --- Media ---------------------------------------------------------------
 
@@ -458,7 +428,10 @@ class JellyfinClient(
                 ),
             )
         }
-        val container = CONTAINERS[format] ?: MP3_CONTAINER
+        val codec = format.id
+        // Opus travels in an Ogg container: asking for container=opus gets a
+        // file nothing will open.
+        val container = if (format == StreamFormat.OPUS) "ogg" else codec
         val params = buildList {
             add("UserId" to userId)
             add("DeviceId" to deviceId)
@@ -466,8 +439,8 @@ class JellyfinClient(
             // Container and codec together, which stops the server remuxing to
             // something else: "ogg" alone lets any Ogg file through untouched,
             // Vorbis at its own bitrate when Opus was asked for.
-            add("Container" to "$container|${CODECS[format] ?: container}")
-            add("AudioCodec" to (CODECS[format] ?: container))
+            add("Container" to "$container|$codec")
+            add("AudioCodec" to codec)
             add("TranscodingContainer" to container)
             add("TranscodingProtocol" to "http")
             format.maxBitRate?.let { add("MaxStreamingBitrate" to (it * 1000).toString()) }
@@ -530,7 +503,7 @@ class JellyfinClient(
     override suspend fun scrobble(songId: String, atMs: Long?, submission: Boolean) {
         if (!submission) {
             send(
-                "POST",
+                HttpMethod.Post,
                 "/Sessions/Playing",
                 payload = buildJsonObject {
                     put("ItemId", songId)
@@ -539,7 +512,7 @@ class JellyfinClient(
             )
             return
         }
-        writeForUser("POST", "/UserPlayedItems/$songId", "/Users/$userId/PlayedItems/$songId")
+        writeForUser(HttpMethod.Post, "/UserPlayedItems/$songId", "/Users/$userId/PlayedItems/$songId")
     }
 
     /**
@@ -567,12 +540,12 @@ class JellyfinClient(
             TimelineState.STOPPED -> "/Sessions/Playing/Stopped"
             else -> "/Sessions/Playing/Progress"
         }
-        send("POST", path, payload = payload)
+        send(HttpMethod.Post, path, payload = payload)
     }
 
     /** A favourite is one flag on any item, whatever it is. */
     override suspend fun setLiked(target: LikeTarget, id: String, liked: Boolean) {
-        writeForUser(if (liked) "POST" else "DELETE", "/UserFavoriteItems/$id", "/Users/$userId/FavoriteItems/$id")
+        writeForUser(if (liked) HttpMethod.Post else HttpMethod.Delete, "/UserFavoriteItems/$id", "/Users/$userId/FavoriteItems/$id")
     }
 
     // --- Playlists -----------------------------------------------------------
@@ -582,19 +555,7 @@ class JellyfinClient(
             // A playlist of films or episodes is not one to play here.
             .filter { it.mediaType.isNullOrBlank() || it.mediaType.equals(AUDIO_MEDIA, ignoreCase = true) }
             .distinctBy { it.id }
-            .map {
-                Playlist(
-                    id = it.id,
-                    name = it.name,
-                    coverArtId = it.imageId(),
-                    createdAt = jellyfinDateMs(it.dateCreated),
-                    // When songs were last added, which is what moves a playlist
-                    // up "Recently updated"; Jellyfin keeps no date for a removal,
-                    // a reorder or a rename. Its creation where it has neither.
-                    updatedAt = jellyfinDateMs(it.dateLastMediaAdded ?: it.dateCreated),
-                    trackIds = emptyList(),
-                )
-            }
+            .map { it.toPlaylist() }
 
     override suspend fun getPlaylistTracks(id: String): List<Track> =
         playlistEntries(id).map { it.toTrack() }
@@ -608,25 +569,8 @@ class JellyfinClient(
         allPlaylistEntries(id).filter { it.type == TRACK_TYPE }
 
     /** Everything in a playlist, a page at a time: a large one in a single body is more than the phone can hold. */
-    private suspend fun allPlaylistEntries(id: String): List<JellyfinItem> {
-        val items = mutableListOf<JellyfinItem>()
-        var start = 0
-        while (true) {
-            val page = fetch<JellyfinItems>(
-                "/Playlists/$id/Items",
-                listOf(
-                    "userId" to userId,
-                    "Fields" to FIELDS,
-                    "StartIndex" to start.toString(),
-                    "Limit" to PAGE_SIZE.toString(),
-                ),
-            )
-            items += page.items
-            start += page.items.size
-            if (!page.continuesAfter(start)) break
-        }
-        return items
-    }
+    private suspend fun allPlaylistEntries(id: String): List<JellyfinItem> =
+        pages("/Playlists/$id/Items", listOf("userId" to userId, "Fields" to FIELDS))
 
     override suspend fun createPlaylist(name: String, songIds: List<String>): String? {
         val payload = buildJsonObject {
@@ -638,14 +582,7 @@ class JellyfinClient(
                 buildJsonArray { songIds.forEach { add(JsonPrimitive(it)) } },
             )
         }
-        val response = http.bulk.post(url("/Playlists")) {
-            jellyfinHeaders()
-            contentType(ContentType.Application.Json)
-            setBody(serverJson.encodeToString(JsonObject.serializer(), payload))
-        }
-        if (!response.status.isSuccess()) {
-            throw JellyfinException("Jellyfin says ${response.status.value} for /Playlists", response.status.value)
-        }
+        val response = write(HttpMethod.Post, "/Playlists", payload = payload)
         // Made, whatever the body says: an answer this can't read is still a playlist on the server.
         return runCatching {
             serverJson.decodeFromString<JellyfinNamed>(response.bodyAsText()).id.takeIf { it.isNotBlank() }
@@ -659,15 +596,15 @@ class JellyfinClient(
      * all and refuse, which leaves the name as it was.
      */
     override suspend fun renamePlaylist(id: String, name: String) {
-        write("POST", "/Playlists/$id", payload = renameBody(name))
+        write(HttpMethod.Post, "/Playlists/$id", payload = renameBody(name))
     }
 
     override suspend fun deletePlaylist(id: String) {
-        write("DELETE", "/Items/$id")
+        write(HttpMethod.Delete, "/Items/$id")
     }
 
     override suspend fun addToPlaylist(id: String, songId: String) {
-        write("POST", "/Playlists/$id/Items", listOf("ids" to songId, "userId" to userId))
+        write(HttpMethod.Post, "/Playlists/$id/Items", listOf("ids" to songId, "userId" to userId))
     }
 
     /**
@@ -688,7 +625,7 @@ class JellyfinClient(
         // every copy of a song a playlist holds twice. Unless every copy is
         // what was asked, it is refused rather than taking the others with it.
         if (!takesEveryCopy(entries.map { it.playlistItemId }, entryIds)) return false
-        return send("DELETE", "/Playlists/$id/Items", listOf("entryIds" to entryIds.joinToString(",")))
+        return send(HttpMethod.Delete, "/Playlists/$id/Items", listOf("entryIds" to entryIds.joinToString(",")))
     }
 
     /**
@@ -717,7 +654,7 @@ class JellyfinClient(
             local.remove(entryId)
             local.add(to, entryId)
             moved = true
-            return send("POST", "/Playlists/$id/Items/$entryId/Move/$to")
+            return send(HttpMethod.Post, "/Playlists/$id/Items/$entryId/Move/$to")
         }
         if (movesLandWhereAsked()) {
             for ((entryId, after) in placementMoves(local.toList(), wanted)) {
@@ -735,15 +672,6 @@ class JellyfinClient(
         val landed = runCatching { playlistEntries(id) }.getOrNull() ?: return false
         return landed.map { it.id } == orderedSongIds
     }
-
-    /**
-     * Whether Move puts an entry at the index it is given. 10.10.2 to 10.10.7 put
-     * one moved down a place further, so those are only ever moved up. Read once
-     * per client; a version that can't be read is treated as one of them.
-     */
-    private suspend fun movesLandWhereAsked(): Boolean = movesExact
-        ?: (movesLandWhereAsked(fetch<JellyfinPublicInfo>("/System/Info/Public").version) ?: false)
-            .also { movesExact = it }
 
     companion object {
         /**
@@ -769,7 +697,7 @@ class JellyfinClient(
 
         /** Whether a server of [version] moves an entry to the index asked — see [movesLandWhereAsked]. Null when it doesn't read. */
         internal fun movesLandWhereAsked(version: String): Boolean? {
-            val parts = version.trim().split('.').map { it.takeWhile(Char::isDigit).toIntOrNull() }
+            val parts = versionParts(version)
             val major = parts.getOrNull(0) ?: return null
             val minor = parts.getOrNull(1) ?: return null
             val patch = parts.getOrNull(2) ?: 0
@@ -783,11 +711,15 @@ class JellyfinClient(
          * read as one.
          */
         internal fun hasUserRoutes(version: String): Boolean? {
-            val parts = version.trim().split('.').map { it.takeWhile(Char::isDigit).toIntOrNull() }
+            val parts = versionParts(version)
             val major = parts.getOrNull(0) ?: return null
             val minor = parts.getOrNull(1) ?: return null
             return major > 10 || (major == 10 && minor >= 9)
         }
+
+        /** "10.10.7" as its numbers; a part that doesn't start with a digit is null. */
+        private fun versionParts(version: String): List<Int?> =
+            version.trim().split('.').map { it.takeWhile(Char::isDigit).toIntOrNull() }
 
         /** A rename, and nothing that could touch the playlist's contents — see [renamePlaylist]. */
         internal fun renameBody(name: String): JsonObject = buildJsonObject { put("Name", name) }
@@ -816,25 +748,7 @@ class JellyfinClient(
             "Genres,DateCreated,PremiereDate,ChildCount,AlbumArtists,ArtistItems,People," +
                 "NormalizationGain,DateLastMediaAdded"
 
-        private const val MP3_CONTAINER = "mp3"
         private const val COVER_QUALITY = 90
-
-        /**
-         * What to ask the server to send, and what to call it once it does.
-         *
-         * Opus travels in an Ogg container, so the two names differ — asking for
-         * `container=opus` gets a file nothing will open.
-         */
-        private val CONTAINERS: Map<StreamFormat, String> = mapOf(
-            StreamFormat.MP3 to "mp3",
-            StreamFormat.OPUS to "ogg",
-            StreamFormat.FLAC to "flac",
-        )
-        private val CODECS: Map<StreamFormat, String> = mapOf(
-            StreamFormat.MP3 to "mp3",
-            StreamFormat.OPUS to "opus",
-            StreamFormat.FLAC to "flac",
-        )
 
         /**
          * The device every install of Amp once signed in as, which sources
@@ -880,85 +794,6 @@ class JellyfinClient(
             URLEncoder.encode(value, "UTF-8").replace("+", " ")
     }
 }
-
-/**
- * The cover id for an item, or null when it hasn't got one.
- *
- * Jellyfin serves `/Items/{anything}/Images/Primary` and answers 404 only when
- * the bytes are asked for, so "has a cover" is decided from [JellyfinItem.imageTags].
- * The album's picture comes first where the item has one: a track's embedded
- * art is the same sleeve, and keyed by the track the cover cache held one copy
- * per song.
- */
-fun JellyfinItem.imageId(): String? = when {
-    !albumPrimaryImageTag.isNullOrBlank() && !albumId.isNullOrBlank() -> albumId
-    imageTags.containsKey("Primary") -> id
-    else -> null
-}
-
-/** The music collections among a user's views; a library of films has no place here. */
-internal fun JellyfinItems.musicLibraries(): List<MusicFolder> =
-    items
-        .filter { it.collectionType.equals("music", ignoreCase = true) }
-        .map { MusicFolder(id = it.id, name = it.name) }
-
-/** Timed where the file carried timings, plain where it didn't; null when there are no words. */
-internal fun JellyfinLyrics.toLyrics(): Lyrics? {
-    val lines = lyrics
-        .filter { it.text.isNotBlank() }
-        .map { LyricLine(it.start?.let { ticks -> ticks / TICKS_PER_MS }, it.text.trim()) }
-    if (lines.isEmpty()) return null
-    return Lyrics(lines, synced = lines.any { it.timeMs != null })
-}
-
-/** Jellyfin's own record of an album, as one of the app's. */
-internal fun JellyfinItem.toAlbum(): Album = Album(
-    id = id,
-    title = name,
-    artist = albumArtist ?: albumArtists.firstOrNull()?.name ?: "Unknown Artist",
-    coverArtId = imageId(),
-    durationMs = (runTimeTicks ?: 0L) / TICKS_PER_MS,
-    songCount = childCount ?: 0,
-    year = productionYear,
-    releaseDate = jellyfinDateNumber(premiereDate),
-    createdMs = jellyfinDateMs(dateCreated),
-    playCount = userData?.playCount ?: 0,
-    lastPlayedMs = jellyfinDateMs(userData?.lastPlayedDate),
-    liked = userData?.isFavorite ?: false,
-    genre = genres.firstOrNull().orEmpty(),
-)
-
-internal fun JellyfinItem.toTrack(): Track = Track(
-    id = id,
-    title = name,
-    // The track's own performers, not the record's: on a compilation the
-    // album artist is "Various Artists" for every row, and reading that
-    // here would put a shelf of songs by nobody in the songs list.
-    artist = artists.firstOrNull()
-        ?: artistItems.firstOrNull()?.name
-        ?: albumArtist
-        ?: "Unknown Artist",
-    album = album ?: "Unknown Album",
-    albumArtist = albumArtist ?: albumArtists.firstOrNull()?.name ?: "Unknown Artist",
-    albumId = albumId,
-    coverArtId = imageId(),
-    durationMs = (runTimeTicks ?: 0L) / TICKS_PER_MS,
-    trackNumber = indexNumber,
-    discNumber = parentIndexNumber,
-    year = productionYear,
-    playCount = userData?.playCount ?: 0,
-    lastPlayedMs = jellyfinDateMs(userData?.lastPlayedDate),
-    liked = userData?.isFavorite ?: false,
-    genre = genres.firstOrNull().orEmpty(),
-    // Jellyfin files a composer as a credited person rather than a tag, so the
-    // Composers page is built out of People — see JellyfinItem.people. Joined
-    // with the separator the tag lists already split on.
-    composer = people.filter { it.type.equals("Composer", ignoreCase = true) }
-        .joinToString("; ") { it.name }
-        .trim(),
-    // The track's own gain first; a file tagged only album-wise still evens out.
-    gainDb = normalizationGain ?: albumNormalizationGain,
-)
 
 /** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */
 class JellyfinException(message: String, status: Int? = null) : ServerException(message, status)

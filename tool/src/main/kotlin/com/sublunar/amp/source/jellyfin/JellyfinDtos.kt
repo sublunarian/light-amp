@@ -1,5 +1,11 @@
 package com.sublunar.amp.source.jellyfin
 
+import com.sublunar.amp.data.Album
+import com.sublunar.amp.data.LyricLine
+import com.sublunar.amp.data.Lyrics
+import com.sublunar.amp.data.MusicFolder
+import com.sublunar.amp.data.Playlist
+import com.sublunar.amp.data.Track
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -187,3 +193,98 @@ private fun yearMonthDay(value: String?): Triple<Int, Int, Int>? {
     val day = text.substring(8, 10).toIntOrNull() ?: return null
     return Triple(year, month, day)
 }
+
+/**
+ * The cover id for an item, or null when it hasn't got one.
+ *
+ * Jellyfin serves `/Items/{anything}/Images/Primary` and answers 404 only when
+ * the bytes are asked for, so "has a cover" is decided from [JellyfinItem.imageTags].
+ * The album's picture comes first where the item has one: a track's embedded
+ * art is the same sleeve, and keyed by the track the cover cache held one copy
+ * per song.
+ */
+fun JellyfinItem.imageId(): String? = when {
+    !albumPrimaryImageTag.isNullOrBlank() && !albumId.isNullOrBlank() -> albumId
+    imageTags.containsKey("Primary") -> id
+    else -> null
+}
+
+/** The music collections among a user's views; a library of films has no place here. */
+internal fun JellyfinItems.musicLibraries(): List<MusicFolder> =
+    items
+        .filter { it.collectionType.equals("music", ignoreCase = true) }
+        .map { MusicFolder(id = it.id, name = it.name) }
+
+/** Timed where the file carried timings, plain where it didn't; null when there are no words. */
+internal fun JellyfinLyrics.toLyrics(): Lyrics? {
+    val lines = lyrics
+        .filter { it.text.isNotBlank() }
+        .map { LyricLine(it.start?.let { ticks -> ticks / TICKS_PER_MS }, it.text.trim()) }
+    if (lines.isEmpty()) return null
+    return Lyrics(lines, synced = lines.any { it.timeMs != null })
+}
+
+/** Jellyfin's own record of an album, as one of the app's. */
+internal fun JellyfinItem.toAlbum(): Album = Album(
+    id = id,
+    title = name,
+    artist = recordArtist,
+    coverArtId = imageId(),
+    durationMs = (runTimeTicks ?: 0L) / TICKS_PER_MS,
+    songCount = childCount ?: 0,
+    year = productionYear,
+    releaseDate = jellyfinDateNumber(premiereDate),
+    createdMs = jellyfinDateMs(dateCreated),
+    playCount = userData?.playCount ?: 0,
+    lastPlayedMs = jellyfinDateMs(userData?.lastPlayedDate),
+    liked = userData?.isFavorite ?: false,
+    genre = genres.firstOrNull().orEmpty(),
+)
+
+/** The record's artist, by whichever of its two spellings the server filled in. */
+private val JellyfinItem.recordArtist: String
+    get() = albumArtist ?: albumArtists.firstOrNull()?.name ?: "Unknown Artist"
+
+internal fun JellyfinItem.toTrack(): Track = Track(
+    id = id,
+    title = name,
+    // The track's own performers, not the record's: on a compilation the
+    // album artist is "Various Artists" for every row, and reading that
+    // here would put a shelf of songs by nobody in the songs list.
+    artist = artists.firstOrNull()
+        ?: artistItems.firstOrNull()?.name
+        ?: albumArtist
+        ?: "Unknown Artist",
+    album = album ?: "Unknown Album",
+    albumArtist = recordArtist,
+    albumId = albumId,
+    coverArtId = imageId(),
+    durationMs = (runTimeTicks ?: 0L) / TICKS_PER_MS,
+    trackNumber = indexNumber,
+    discNumber = parentIndexNumber,
+    year = productionYear,
+    playCount = userData?.playCount ?: 0,
+    lastPlayedMs = jellyfinDateMs(userData?.lastPlayedDate),
+    liked = userData?.isFavorite ?: false,
+    genre = genres.firstOrNull().orEmpty(),
+    // Jellyfin files a composer as a credited person rather than a tag, so the
+    // Composers page is built out of People — see JellyfinItem.people. Joined
+    // with the separator the tag lists already split on.
+    composer = people.filter { it.type.equals("Composer", ignoreCase = true) }
+        .joinToString("; ") { it.name }
+        .trim(),
+    // The track's own gain first; a file tagged only album-wise still evens out.
+    gainDb = normalizationGain ?: albumNormalizationGain,
+)
+
+internal fun JellyfinItem.toPlaylist(): Playlist = Playlist(
+    id = id,
+    name = name,
+    coverArtId = imageId(),
+    createdAt = jellyfinDateMs(dateCreated),
+    // When songs were last added, which is what moves a playlist up "Recently
+    // updated"; Jellyfin keeps no date for a removal, a reorder or a rename. Its
+    // creation where it has neither.
+    updatedAt = jellyfinDateMs(dateLastMediaAdded ?: dateCreated),
+    trackIds = emptyList(),
+)

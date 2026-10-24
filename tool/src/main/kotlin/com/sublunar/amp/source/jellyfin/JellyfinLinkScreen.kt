@@ -10,14 +10,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.MusicSource
-import com.sublunar.amp.data.SourceKind
-import com.sublunar.amp.data.SourceLibrary
-import com.sublunar.amp.data.newSourceId
-import com.sublunar.amp.source.PendingServer
 import com.sublunar.amp.source.SignInOutcome
 import com.sublunar.amp.source.firstAnsweringSpelling
-import com.sublunar.amp.source.unavailableReason
-import com.sublunar.amp.source.unreachedReason
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
@@ -123,7 +117,7 @@ class JellyfinLinkScreen(
             // devices were per source moves off the id every install shared.
             val deviceId = again?.deviceId?.ifBlank { null } ?: JellyfinClient.newDeviceId()
             val outcome = firstAnsweringSpelling(address) { uri ->
-                inspectJellyfinServer(uri = uri, username = username.trim(), password = password, deviceId = deviceId)
+                JellyfinSignIn.signIn(uri = uri, username = username.trim(), password = password, deviceId = deviceId)
             }
             // Back on Main, and only if this page is still up: App.scope is
             // Default, and finishing the sign-in navigates — which, after the
@@ -195,68 +189,5 @@ class JellyfinLinkScreen(
             { TextEntryScreen(it, title = title, initial = initial) },
             resultCallback = { text -> if (text != null) onResult(text) },
         )
-    }
-}
-
-/**
- * Everything about a Jellyfin server that has to be settled before it becomes a
- * source: that it answers, who we are on it, what it calls itself, and what
- * music libraries that account can see.
- *
- * Better found here than by a sync that fails after the source is already
- * saved — and said in a way that tells a wrong address from a wrong account.
- */
-suspend fun inspectJellyfinServer(
-    uri: String,
-    username: String,
-    password: String,
-    deviceId: String,
-): SignInOutcome {
-    val signIn = when (val result = JellyfinSignIn.authenticate(uri, username, password, deviceId = deviceId)) {
-        is JellyfinSignInResult.SignedIn -> result.session
-        is JellyfinSignInResult.Unreached ->
-            return SignInOutcome.Missed(unreachedReason(result.error), answered = false)
-        JellyfinSignInResult.NotJellyfin -> return SignInOutcome.Missed(
-            "That address answered, but it isn't a Jellyfin server. Check the address and port.",
-            answered = true,
-        )
-        is JellyfinSignInResult.Unavailable ->
-            return SignInOutcome.Missed(unavailableReason(result.status), answered = true)
-        is JellyfinSignInResult.Refused ->
-            return SignInOutcome.Settled(result.baseUrl, "Jellyfin didn't accept that username and password.")
-        is JellyfinSignInResult.Failed -> return SignInOutcome.Settled(
-            result.baseUrl,
-            when (val status = result.status) {
-                null -> "The sign-in didn't finish. Try again."
-                // Followed for the address check but not for the sign-in: a
-                // redirect to another host, which isn't followed with a password.
-                in 300..399 -> "That address sends the sign-in somewhere else. Type the address it leads to."
-                else -> "Jellyfin couldn't sign that account in (error $status). Try again."
-            },
-        )
-    }
-    val client = signIn.client
-    try {
-        val sections = runCatching { client.getMusicFolders() }.getOrNull()
-            ?: return SignInOutcome.Settled(signIn.baseUrl, "Signed in, but the server didn't list its libraries. Try again.")
-        val source = MusicSource(
-            id = newSourceId(),
-            kind = SourceKind.JELLYFIN,
-            // The server's own name where it gave one, so the Sources page
-            // reads as the server rather than as its IP address.
-            name = signIn.serverName.ifBlank { MusicSource.nameFor(signIn.baseUrl) },
-            baseUrl = signIn.baseUrl,
-            username = username,
-            token = signIn.token,
-            userId = signIn.userId,
-            deviceId = deviceId,
-            // Remembered on the source so the Sources page can offer the same
-            // switch a Navidrome's music folders get, without waiting for a
-            // sync to discover what we already know here.
-            libraries = sections.map { SourceLibrary(it.id, it.name) },
-        )
-        return SignInOutcome.Found(PendingServer(source, sections))
-    } finally {
-        client.close()
     }
 }

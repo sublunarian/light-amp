@@ -9,7 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-import kotlinx.serialization.json.Json
+import com.sublunar.amp.source.serverJson
 
 /**
  * OpenSubsonic's reportPlayback: what one report says, and that only a
@@ -49,11 +49,7 @@ class ReportPlaybackTest {
     }
 
     // As SubsonicClient reads every reply.
-    private val json = Json {
-        ignoreUnknownKeys = true
-        coerceInputValues = true
-        isLenient = true
-    }
+    private val json = serverJson
 
     @Test
     fun `the extension list is read by name`() {
