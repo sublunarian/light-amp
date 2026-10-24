@@ -77,8 +77,8 @@ class ServerAddressTest {
     fun `Subsonic drops the rest suffix before the same rule`() {
         assertEquals(
             listOf("https://192.168.1.10:4533", "http://192.168.1.10:4533"),
-            SubsonicConfig.candidates("192.168.1.10:4533/rest/"),
+            ServerAddress.candidates(SubsonicConfig.withoutRest("192.168.1.10:4533/rest/")),
         )
-        assertEquals(listOf("https://music.example.com"), SubsonicConfig.candidates("music.example.com/REST"))
+        assertEquals(listOf("https://music.example.com"), ServerAddress.candidates(SubsonicConfig.withoutRest("music.example.com/REST")))
     }
 }

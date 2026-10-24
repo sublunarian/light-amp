@@ -41,7 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerializationException
-import com.sublunar.amp.ui.screens.TextEntryScreen
+import com.sublunar.amp.ui.screens.editText
 import com.sublunar.amp.ui.screens.adoptServer
 
 /**
@@ -388,9 +388,6 @@ class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
         // and with the keyboard over it, it would close the keyboard instead
         // and leave this page up to be signed in from a second time.
         if (checking) return
-        navigateTo<String?>(
-            { TextEntryScreen(it, title = title, initial = initial) },
-            resultCallback = { text -> if (text != null) onResult(text) },
-        )
+        editText(title, initial, onResult)
     }
 }

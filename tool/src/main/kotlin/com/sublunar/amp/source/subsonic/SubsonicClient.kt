@@ -23,7 +23,6 @@ import com.sublunar.amp.data.UNREACHABLE
 import com.sublunar.amp.data.WriteResult
 import com.sublunar.amp.data.isReorderOf
 import com.sublunar.amp.data.md5Hex
-import com.sublunar.amp.source.ServerAddress
 import com.sublunar.amp.source.ServerHttp
 import com.sublunar.amp.source.queryOf
 import com.sublunar.amp.source.serverJson
@@ -50,15 +49,9 @@ data class SubsonicConfig(
     val clientName: String? = null,
 ) {
     companion object {
-        /**
-         * Base URLs to try for a raw input, in order — see [ServerAddress] for
-         * when http:// follows https://. Drops a trailing slash and a `/rest`
-         * suffix.
-         */
-        fun candidates(raw: String): List<String> =
-            ServerAddress.candidates(
-                raw.trim().trimEnd('/').replace(Regex("/rest$", RegexOption.IGNORE_CASE), ""),
-            )
+        /** A typed address without a trailing `/rest`, which is where the API sits rather than the server. */
+        fun withoutRest(raw: String): String =
+            raw.trim().trimEnd('/').replace(Regex("/rest$", RegexOption.IGNORE_CASE), "")
     }
 }
 

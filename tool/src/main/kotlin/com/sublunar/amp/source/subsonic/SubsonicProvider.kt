@@ -67,10 +67,10 @@ private object SubsonicUi : SourceUi {
         AddEntry(
             "Bandcamp",
             AddIcon.ADD,
-            AddAction.OpenScreen { ServerScreen(it, sourceId = null, adding = true, bandcamp = true) },
+            AddAction.OpenScreen { ServerScreen(it, sourceId = null, bandcamp = true) },
             selfHosted = false,
         ),
-        AddEntry("Subsonic Server", AddIcon.ADD, AddAction.OpenScreen { ServerScreen(it, sourceId = null, adding = true) }),
+        AddEntry("Subsonic Server", AddIcon.ADD, AddAction.OpenScreen { ServerScreen(it, sourceId = null) }),
     )
 
     // Named because "Subsonic" is the protocol, not the thing most people
@@ -81,11 +81,7 @@ private object SubsonicUi : SourceUi {
     override fun connection(source: MusicSource) = ConnectionRow(open = { ServerScreen(it, sourceId = source.id) })
 }
 
-/**
- * Null unless this is a Subsonic server with somewhere to point. The kind is
- * checked here rather than left to the caller: ServerScreen falls back to the
- * active source when the one it edits isn't listed, and that can be any kind.
- */
+/** Null unless this is a Subsonic server with somewhere to point; another kind of source is null too. */
 fun MusicSource.toSubsonicConfig(): SubsonicConfig? =
     if (kind == SourceKind.SUBSONIC && baseUrl.isNotBlank()) {
         SubsonicConfig(baseUrl, username, password, playerName.ifBlank { null })
