@@ -101,11 +101,25 @@ internal class ServerReports(
      */
     private val sessions = SessionHandOver(::queueTimeline)
 
-    /** The track whose play was last submitted — see [maybeSubmitPlay]. */
-    private var lastScrobbledId: String? = null
+    /**
+     * The plays begun so far, one per run of a song from its start — see
+     * [songStarted]. Now-playing and the submission are each sent once per
+     * play, so a song heard again counts again: under repeat-one, queued
+     * twice, or tapped again in the same queue.
+     */
+    private var play = 0
 
-    /** The track last announced as playing now — see [announceNowPlaying]. */
-    private var nowPlayingId: String? = null
+    /** Where the current play is — see [startsAPlay]. */
+    private var playAt: PlayAt? = null
+
+    /** The last play announced as playing now — see [announceNowPlaying]. */
+    private var announcedPlay = -1
+
+    /** The last play submitted — see [maybeSubmitPlay]. */
+    private var countedPlay = -1
+
+    /** The play and position last heard — see [heard]. */
+    private var lastHeard: Pair<Int, Long>? = null
 
     /** The sources a refused play has been said for this run — see [maybeSubmitPlay]. */
     private val playRefusalSaid: MutableSet<String> = ConcurrentHashMap.newKeySet()
@@ -130,8 +144,7 @@ internal class ServerReports(
 
     /** Start following playback for the server, on [bound]: the plays that count, the heartbeat and the song. */
     fun follow(bound: Job) {
-        // A play counts part-way through — see maybeSubmitPlay.
-        scope.launch(bound) { positionMs.collect { maybeSubmitPlay(it) } }
+        scope.launch(bound) { positionMs.collect { heard(it) } }
         // The heartbeat: Plex drops a session nothing pings for a while. Only
         // while playing, and only with a handle connected: without one nothing
         // here sees what the service plays, and a heartbeat would go on
@@ -241,11 +254,19 @@ internal class ServerReports(
      * follower in [follow]. Says nothing unless what the server shows has to
      * change. Main only: the queue, the index and the player's intent are
      * read together. [atMs] is where in the song playback is, when that is
-     * the song's own reading rather than the last song's.
+     * the song's own reading rather than the last song's. A change of song
+     * also starts a play — see [songStarted].
      */
     fun followCurrentSong(atMs: Long = 0L) {
+        val q = queue.value
+        val i = index.value
+        val track = q.getOrNull(i)
+        when {
+            track == null -> playAt = null
+            startsAPlay(playAt, q, i, track) -> songStarted()
+            else -> playAt = PlayAt(q, i, track)
+        }
         if (reportsElsewhere()) return
-        val track = queue.value.getOrNull(index.value)
         if (track == null || PhoneFiles.isPhoneFile(track.id)) {
             // Nothing of the server's plays any more: an emptied queue, or the
             // last song taken out of it.
@@ -299,15 +320,33 @@ internal class ServerReports(
 
     // --- Now-playing and plays -----------------------------------------------
 
-    /** A new queue: its songs' plays count afresh. */
-    fun queueReplaced() {
-        lastScrobbledId = null
+    /**
+     * The current song starts a play, from its beginning: a new queue, a
+     * restart, a row tapped, a song that ended into itself. It is announced,
+     * and counts again once enough of it is heard. A change of song is seen
+     * by [followCurrentSong], which calls this.
+     */
+    fun songStarted() {
+        play++
+        val q = queue.value
+        val i = index.value
+        playAt = q.getOrNull(i)?.let { PlayAt(q, i, it) }
+        announceNowPlaying()
     }
 
-    /** A queue saved by an earlier run is back: nothing of it has been announced or counted yet. */
-    fun queueRestored() {
-        lastScrobbledId = null
-        nowPlayingId = null
+    /**
+     * A new position for the song playing. A song that ended into its own
+     * start (repeat-one, or a speaker repeating it) never changes the index,
+     * so this is where it is seen: the last reading near the end and this
+     * one near the start, in the same play.
+     */
+    private fun heard(positionMs: Long) {
+        val before = lastHeard
+        lastHeard = play to positionMs
+        if (before != null && before.first == play && endedIntoItself(before.second, positionMs, durationMs.value)) {
+            songStarted()
+        }
+        maybeSubmitPlay(positionMs)
     }
 
     /**
@@ -321,9 +360,9 @@ internal class ServerReports(
         val track = queue.value.getOrNull(index.value) ?: return
         // A phone file: no server to tell.
         if (PhoneFiles.isPhoneFile(track.id)) return
-        if (track.id == nowPlayingId) return
+        if (announcedPlay == play) return
         if (!metadataAllowed()) return
-        nowPlayingId = track.id
+        announcedPlay = play
         val client = serverClient.value ?: return
         scope.launch { runCatching { client.scrobble(track.id, submission = false) } }
     }
@@ -341,9 +380,9 @@ internal class ServerReports(
     private fun maybeSubmitPlay(positionMs: Long) {
         val track = queue.value.getOrNull(index.value) ?: return
         if (PhoneFiles.isPhoneFile(track.id)) return
-        if (track.id == lastScrobbledId) return
+        if (countedPlay == play) return
         if (positionMs < submitAfterMs(durationMs.value)) return
-        lastScrobbledId = track.id
+        countedPlay = play
         // Stamped now, sent whenever: a play made offline still belongs at the
         // time it happened.
         val at = System.currentTimeMillis()
@@ -426,3 +465,26 @@ internal class ServerReports(
         const val MAX_SAVED_QUEUE = 100
     }
 }
+
+/** Where a play is: its queue, its place there and its track. */
+internal class PlayAt(val queue: List<Track>, val index: Int, val track: Track)
+
+/**
+ * Whether playback on [track], at [index] of [queue], is a new play after
+ * [last]. The same track where an edit moved it is the same play; another
+ * track, or playback moving along the same list (a song queued twice in a
+ * row), is a new one.
+ */
+internal fun startsAPlay(last: PlayAt?, queue: List<Track>, index: Int, track: Track): Boolean =
+    last == null || track !== last.track || (queue === last.queue && index != last.index)
+
+/** How near its end, then its start, a song is read when it has ended into itself — see [endedIntoItself]. */
+private const val WRAP_SLACK_MS = 3_000L
+
+/**
+ * Whether a song read at [beforeMs] and then at [nowMs] ended into its own
+ * start: from near its end, [lengthMs], to near its beginning. Unknowable
+ * without a length.
+ */
+internal fun endedIntoItself(beforeMs: Long, nowMs: Long, lengthMs: Long): Boolean =
+    lengthMs > 0L && beforeMs >= lengthMs - WRAP_SLACK_MS && nowMs < WRAP_SLACK_MS

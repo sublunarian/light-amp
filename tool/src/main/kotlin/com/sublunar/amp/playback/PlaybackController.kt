@@ -889,7 +889,6 @@ class PlaybackController(
                 } else if (idx >= 0 && idx != _index.value) {
                     landedOn(p, idx, startMs = 0L)
                 }
-                reports.announceNowPlaying()
             }
         }
     }
@@ -1071,7 +1070,6 @@ class PlaybackController(
             val p = player ?: return@withContext
             _queue.value = tracks
             preShuffleOrder = null
-            reports.queueRestored()
             // The track the user left on: if it can't be had now it waits here
             // rather than being skipped. The position goes in with the rebuild,
             // as a seek this early would clamp to 0.
@@ -1239,8 +1237,12 @@ class PlaybackController(
             val moves = restarts || _index.value - 1 in _queue.value.indices
             if (_isPlaying.value && moves) markStartingElsewhere()
             out.previous()
-            // Back to the start is a seek to it, and said as one.
-            if (restarts) reports.seeked(0L)
+            // Back to the start is a seek to it, and said as one, and the song
+            // starting over.
+            if (restarts) {
+                reports.seeked(0L)
+                reports.songStarted()
+            }
             return
         }
         settleRestartCopy()
@@ -1251,6 +1253,7 @@ class PlaybackController(
         pickedIndex = if (_positionMs.value > PREVIOUS_RESTARTS_AFTER_MS) _index.value else wrapped(_index.value - 1)
         val p = player ?: return
         if (_positionMs.value > PREVIOUS_RESTARTS_AFTER_MS) {
+            reports.songStarted()
             // The controller's seek, not the player's: a server-seeked stream
             // begins mid-track, so the player's 0 is the offset, and every press
             // would restart it without ever reaching the previous track.
@@ -1280,6 +1283,8 @@ class PlaybackController(
         pickedIndex = index
         p.seekToDefaultPosition(index)
         _index.value = index
+        // From its start, the playing row too.
+        reports.songStarted()
         if (cannotStreamNow(index)) {
             blockedAtCurrent()
             return
@@ -2044,7 +2049,6 @@ class PlaybackController(
         _queue.value = tracks
         // The order shuffle would go back to is the last queue's, not this one's.
         preShuffleOrder = null
-        reports.queueReplaced()
         // Into the player unless it holds the stand-in: the queue goes back in
         // with the sound — see takeOverHere. Each source is resolved once and
         // handed on, not again per item, on Main.
@@ -2052,6 +2056,7 @@ class PlaybackController(
         queuedSources = resolved
         queuePlayer?.setMediaQueue(itemsFrom(tracks, resolved), startIndex)
         _index.value = startIndex
+        reports.songStarted()
         // A new queue plays from the start of whatever it opens on. A leftover
         // offset would be added to a clock starting at 0:00, and the index
         // collector won't clear it when the new queue opens on the same index.
