@@ -25,7 +25,6 @@ import com.sublunar.amp.data.UNREACHABLE
 import com.sublunar.amp.data.WriteResult
 import com.sublunar.amp.data.attemptWrite
 import com.sublunar.amp.data.db.LibraryDao
-import com.sublunar.amp.data.qualityRank
 import com.sublunar.amp.playback.output.ActiveOutput
 import com.sublunar.amp.playback.output.Disconnect
 import com.sublunar.amp.playback.output.Output
@@ -41,12 +40,10 @@ import com.sublunar.amp.playback.output.Refound
 import com.thelightphone.sdk.audio.LightAudio
 import com.thelightphone.sdk.audio.LightAudioError
 import com.thelightphone.sdk.audio.LightAudioErrorKind
-import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayback
 import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioPlayerAvailability
 import com.thelightphone.sdk.audio.LightAudioSource
-import com.thelightphone.sdk.audio.LightMediaMetadata
 import com.thelightphone.sdk.audio.LightPlayerSpec
 import java.io.File
 import java.util.UUID
@@ -93,7 +90,7 @@ class PlaybackController(
     private val serverClient: StateFlow<MusicServer?>,
     /** Unused; goes when App stops passing it. */
     daoProvider: () -> LibraryDao,
-    private val downloads: DownloadStore,
+    downloads: DownloadStore,
     private val scope: CoroutineScope,
     /**
      * Whether the server may be spoken to at all — see App.metadataAllowed.
@@ -315,37 +312,8 @@ class PlaybackController(
 
     // --- Track source state --------------------------------------------------
 
-    /** Copied from App.rules by the rules collector in [bind]. */
-    @Volatile
-    private var unmetered = false
-
-    /** Downloaded tracks' files and formats, kept current as downloads land, so queue items build synchronously. */
-    private var localFiles: Map<String, Pair<File, StreamFormat>> = emptyMap()
-
-    /**
-     * Latched by [fallBackOffline]: downloads play from disk even where the
-     * stream is better, until the server answers again.
-     */
-    @Volatile
-    private var forceOffline = false
-
-    /** The track [fallBackOffline] last picked up, so it tries each one once. */
-    private var retriedTrackId: String? = null
-
-    /**
-     * Tracks whose stream failed, which play from their download instead.
-     * Narrower than [forceOffline]: for a server that is plainly there but
-     * won't serve this one song.
-     */
-    private val streamFailed = mutableSetOf<String>()
-
-    /**
-     * Songs whose original the server failed on its usual address, fetched
-     * from its other address from then on — see [playOriginalElsewhere]. By
-     * source and id, since two servers can share an id. Kept for the process:
-     * a file refused once is refused on the next queue too.
-     */
-    private val originalElsewhere = mutableSetOf<Pair<String, String>>()
+    /** Where each track plays from, and what has failed — see [TrackSources]. */
+    private val sources = TrackSources(serverClient, downloads, ::streamSessionIdFor)
 
     // --- Output state --------------------------------------------------------
 
@@ -362,7 +330,6 @@ class PlaybackController(
         index = _index,
         isPlaying = _isPlaying,
         positionMs = _positionMs,
-        item = { track, source -> track.toAudioItem(source) },
     ) { press ->
         // Only while there is somewhere to send it: one arriving as the sound
         // comes back is the stand-in being put away.
@@ -581,11 +548,7 @@ class PlaybackController(
         // The server answering again ends the pins to local files.
         scope.launch(bound) {
             App.serverReachable.collect { reachable ->
-                if (reachable) {
-                    forceOffline = false
-                    retriedTrackId = null
-                    streamFailed.clear()
-                }
+                if (reachable) sources.forgetFailures()
             }
         }
         // The connectivity callback misses the default moving from a weak Wi-Fi
@@ -629,16 +592,10 @@ class PlaybackController(
         // it — see LinkRules.
         scope.launch(bound) {
             App.rules.collect { rules ->
-                unmetered = rules.unmetered
-                if (rules.mayStream) {
-                    // Nothing learnt while streaming wasn't allowed outlives
-                    // that. Cleared here, not only when the server answers
-                    // again: "reachable" never changes while a ping keeps
-                    // succeeding.
-                    forceOffline = false
-                    retriedTrackId = null
-                    streamFailed.clear()
-                }
+                // Nothing learnt while streaming wasn't allowed outlives that.
+                // Cleared here, not only when the server answers again:
+                // "reachable" never changes while a ping keeps succeeding.
+                if (rules.mayStream) sources.forgetFailures()
                 reresolveQueue()
                 val out = remote
                 if (!rules.mayUseLan) {
@@ -677,11 +634,7 @@ class PlaybackController(
         // The library's read of the active source's downloads, shared.
         scope.launch(bound) {
             App.library.downloadFiles.collect { rows ->
-                localFiles = rows.mapNotNull { row ->
-                    downloads.existing(App.source.value.id, row.fileName)?.let { file ->
-                        row.trackId to (file to StreamFormat.fromId(row.format))
-                    }
-                }.toMap()
+                sources.downloadsChanged(rows)
                 reresolveQueue()
             }
         }
@@ -940,7 +893,7 @@ class PlaybackController(
                 // The library's length, real before a byte has arrived.
                 val current = _queue.value.getOrNull(_index.value)
                 val known = current?.durationMs ?: 0L
-                val fromFile = current?.id?.let { localFiles.containsKey(it) } == true
+                val fromFile = current?.id?.let(sources::hasDownload) == true
                 // Never on the restart copy: read as an ignored offset below, it
                 // sent the copy to the seek point and repeat-one played the tail
                 // twice.
@@ -1078,7 +1031,7 @@ class PlaybackController(
                     scope.launch(Dispatchers.Main.immediate) {
                         // A handle that replaced this one steers the same queue.
                         val cur = player ?: return@launch
-                        cur.replaceMediaItem(stubIdx, original.toAudioItem())
+                        cur.replaceMediaItem(stubIdx, sources.item(original))
                     }
                 }
             }
@@ -1632,8 +1585,8 @@ class PlaybackController(
         awaitedDecision = generation
         // Under the id the queued stream carries. Where the door decides each
         // stream itself (see playerUrl) this is asked twice, harmlessly.
-        val format = effectiveFormat()
-        val sid = streamSessionIdFor(track.id, decidesAtDoor(client, track, format))
+        val format = sources.effectiveFormat()
+        val sid = streamSessionIdFor(track.id, sources.decidesAtDoor(client, track, format))
         scope.launch {
             withTimeoutOrNull(STREAM_DECISION_TIMEOUT_MS) {
                 client.prepareStream(track.id, format, sid)
@@ -1763,9 +1716,9 @@ class PlaybackController(
     /** The next queue position after [from] whose track can play; wraps only under repeat-queue. */
     private fun nextPlayableAfter(from: Int, rules: LinkRules): Int? {
         val tracks = _queue.value
-        val ahead = (from + 1..tracks.lastIndex).firstOrNull { isPlayable(tracks[it], rules) }
+        val ahead = (from + 1..tracks.lastIndex).firstOrNull { sources.isPlayable(tracks[it], rules) }
         if (ahead != null || _repeatMode.value != RepeatMode.QUEUE) return ahead
-        return (0 until from).firstOrNull { isPlayable(tracks[it], rules) }
+        return (0 until from).firstOrNull { sources.isPlayable(tracks[it], rules) }
     }
 
     /**
@@ -1784,7 +1737,7 @@ class PlaybackController(
         }
         val track = tracks[index]
         val rules = App.rulesNow()
-        if (!isPlayable(track, rules) || (!hasLocalCopy(track) && !NetworkGate.isOpen())) {
+        if (!sources.isPlayable(track, rules) || (!sources.hasLocalCopy(track) && !NetworkGate.isOpen())) {
             // Still not allowed: say why as of now, and leave the player alone.
             _waitingFor.value = rules.waitingFor ?: _waitingFor.value
             return
@@ -1792,7 +1745,7 @@ class PlaybackController(
         // On the phone, but the stream would be preferred and can't be had:
         // play the copy, or source() hands out the URL again and the track
         // parks with its file on disk.
-        if (!rules.mayStream && localFiles.containsKey(track.id)) streamFailed += track.id
+        if (!rules.mayStream && sources.hasDownload(track.id)) sources.preferDownload(track.id)
         _waitingFor.value = null
         // Asked for, by a press or by the rules opening on the track the user
         // waited on: refused after all, it parks again rather than skipping.
@@ -1860,9 +1813,7 @@ class PlaybackController(
         val index = p.currentMediaItemIndex.value
         val track = _queue.value.getOrNull(index) ?: return false
         if (queuedSources.getOrNull(index) !is LightAudioSource.UrlSource) return false
-        if (effectiveFormat() != StreamFormat.RAW || track.originalKey() in originalElsewhere) return false
-        if (serverClient.value?.alternateOriginalUrl(track) == null) return false
-        originalElsewhere += track.originalKey()
+        if (!sources.moveOriginal(track)) return false
         Log.i(
             "AmpNet",
             "server failed the original at idx=$index — playing it from its other address from now on",
@@ -1887,14 +1838,14 @@ class PlaybackController(
      * the server is asked whether it is still there before the track is given
      * up on.
      *
-     * [forceOffline] latches when the server didn't answer, as the next track
-     * would otherwise resolve to a URL and fail the same way.
+     * [TrackSources.forceOffline] latches when the server didn't answer, as
+     * the next track would otherwise resolve to a URL and fail the same way.
      */
     private fun fallBackOffline(serverAnswered: Boolean) {
         val p = player ?: return
         val track = _queue.value.getOrNull(_index.value) ?: return
         val resumeAt = _positionMs.value
-        if (!localFiles.containsKey(track.id)) {
+        if (!sources.hasDownload(track.id)) {
             // Nothing local to fall back to. A bad status is the server's own
             // answer about this track, and stands. Silence is what a Wi-Fi to
             // cellular handover sounds like from here, so the server is asked,
@@ -1907,13 +1858,12 @@ class PlaybackController(
                 blockedAtCurrent(because = CANT_PLAY_THIS)
                 return
             }
-            if (retriedTrackId == track.id) {
+            if (!sources.firstRetryOf(track.id)) {
                 // Picked up once and died again: it waits, and playback moves
                 // on if it can.
                 blockedAtCurrent()
                 return
             }
-            retriedTrackId = track.id
             scope.launch {
                 // Bounded: the ping may queue behind one already out on the
                 // dead link while the player sits silent. Three answers: yes,
@@ -1945,16 +1895,15 @@ class PlaybackController(
             return
         }
         // Once per track, so a file that won't decode can't spin here.
-        if (retriedTrackId == track.id) return
-        retriedTrackId = track.id
-        streamFailed += track.id
+        if (!sources.firstRetryOf(track.id)) return
+        sources.preferDownload(track.id)
         // Only a server that never answered pins everything to local files,
         // and only until it is asked and answers.
         if (!serverAnswered) {
-            forceOffline = true
+            sources.forceOffline = true
             scope.launch {
                 if (withTimeoutOrNull(VERIFY_WAIT_MS) { App.reachability.verify() } == true) {
-                    forceOffline = false
+                    sources.forceOffline = false
                     reresolveQueue()
                 } else {
                     // Keep asking; the rules collector lifts the pin when the
@@ -1967,7 +1916,7 @@ class PlaybackController(
             // Read before the rebuild: a stream can die while paused (the player
             // buffers regardless), which is no reason to start the copy playing.
             val wanted = p.playWhenReady
-            p.setMediaQueueAt(_queue.value.map { it.toAudioItem() }, _index.value, resumeAt)
+            p.setMediaQueueAt(_queue.value.map(sources::item), _index.value, resumeAt)
             if (wanted) p.play() else p.pause()
         }
     }
@@ -2043,11 +1992,11 @@ class PlaybackController(
 
     /** Whether the player can't be trusted to seek within this track's stream, so the server must. */
     private fun needsServerSeek(track: Track, askDoor: Boolean = true): Boolean {
-        if (track.source() is LightAudioSource.FileSource) return false
+        if (sources.source(track) is LightAudioSource.FileSource) return false
         if (track.id in seekNeedsReload) return true
         // A queue being rebuilt is about to fetch afresh: what the door saw was
         // the stream it held before.
-        if (!askDoor) return effectiveFormat() != StreamFormat.RAW
+        if (!askDoor) return sources.effectiveFormat() != StreamFormat.RAW
         // Ask the door what arrived. Asked for mp3 and given it with a length,
         // the server sent the file untouched, with byte ranges, and ignores
         // timeOffset as it isn't transcoding. "Not RAW, so a transcode" would
@@ -2057,7 +2006,7 @@ class PlaybackController(
         val answered = App.streamProxy.lastOutcome(track.id) as? StreamProxy.Outcome.Answered
         if (answered != null && answered.status in 200..299 && answered.lengthKnown) return false
         // Nothing fetched yet to ask about: go by the request.
-        return effectiveFormat() != StreamFormat.RAW
+        return sources.effectiveFormat() != StreamFormat.RAW
     }
 
     /**
@@ -2100,10 +2049,10 @@ class PlaybackController(
     private fun serverSeek(p: LightAudioPlayer, track: Track, ms: Long) {
         if (serverClient.value == null) return
         val target = ms.coerceAtLeast(0L)
-        // No estimated length, as for every stream (see playerUrl): here it
-        // would also have ExoPlayer take the transcode as range-seekable and
-        // probe its end, which Navidrome answers with 416.
-        val url = playerUrl(track, effectiveFormat(), timeOffsetSeconds = (target / 1000).toInt())
+        // No estimated length, as for every stream (see TrackSources.playerUrl):
+        // here it would also have ExoPlayer take the transcode as
+        // range-seekable and probe its end, which Navidrome answers with 416.
+        val url = sources.playerUrl(track, timeOffsetSeconds = (target / 1000).toInt())
         streamOffsetMs = target
         offsetItemTrackId = track.id.takeIf { target > 0L }
         _positionMs.value = target
@@ -2146,7 +2095,7 @@ class PlaybackController(
     /** Main only. Queue the whole song after the remainder at [at], with the player's repeat off — see [restartCopyAt]. */
     private fun armRestartCopy(p: LightAudioPlayer, at: Int, track: Track) {
         p.repeatMode = Player.REPEAT_MODE_OFF
-        p.addMediaItem(at + 1, track.toAudioItem())
+        p.addMediaItem(at + 1, sources.item(track))
         restartCopyAt = at + 1
     }
 
@@ -2224,17 +2173,16 @@ class PlaybackController(
         // Into the player unless it holds the stand-in: the queue goes back in
         // with the sound — see takeOverHere. Each source is resolved once and
         // handed on, not again per item, on Main.
-        val sources = tracks.map { it.source() }
-        queuedSources = sources
-        queuePlayer?.setMediaQueue(tracks.mapIndexed { i, track -> track.toAudioItem(sources[i]) }, startIndex)
+        val resolved = tracks.map(sources::source)
+        queuedSources = resolved
+        queuePlayer?.setMediaQueue(tracks.mapIndexed { i, track -> track.toAudioItem(resolved[i]) }, startIndex)
         _index.value = startIndex
         // A new queue plays from the start of whatever it opens on. A leftover
         // offset would be added to a clock starting at 0:00, and the index
         // collector won't clear it when the new queue opens on the same index.
         streamOffsetMs = 0
         offsetItemTrackId = null
-        // Something new to play is reason enough to try the server again.
-        streamFailed.clear()
+        sources.forgetStreamFailures()
         // A new queue is prepared afresh: a park on the old one is over, and
         // where it starts is where the user asked it to.
         _waitingFor.value = null
@@ -2276,7 +2224,7 @@ class PlaybackController(
         settleRestartCopy()
         val track = tracks[index]
         val at = positionMs.coerceAtLeast(0L)
-        queuedSources = tracks.map { it.source() }
+        queuedSources = tracks.map(sources::source)
         // Set before the player moves: the index collector would read the move
         // as a new track and clear the offset set below. That is also why the
         // duration is seeded here.
@@ -2286,19 +2234,19 @@ class PlaybackController(
         val client = serverClient.value
         if (at > 1_000L && client != null && needsServerSeek(track, askDoor = false)) {
             // No estimated length — see serverSeek.
-            val url = playerUrl(track, effectiveFormat(), timeOffsetSeconds = (at / 1000).toInt())
+            val url = sources.playerUrl(track, timeOffsetSeconds = (at / 1000).toInt())
             streamOffsetMs = at
             offsetItemTrackId = track.id
             p.setMediaQueue(
                 tracks.mapIndexed { i, it ->
-                    if (i == index) it.toAudioItem(LightAudioSource.UrlSource(url)) else it.toAudioItem()
+                    if (i == index) it.toAudioItem(LightAudioSource.UrlSource(url)) else sources.item(it)
                 },
                 index,
             )
         } else {
             streamOffsetMs = 0
             offsetItemTrackId = null
-            p.setMediaQueueAt(tracks.map { it.toAudioItem() }, index, at)
+            p.setMediaQueueAt(tracks.map(sources::item), index, at)
             if (at > 0L) verifyNativeSeek(p, track, at, awaitStream = true)
         }
         rearmSoon()
@@ -2327,7 +2275,7 @@ class PlaybackController(
         val current = _index.value.coerceIn(0, tracks.lastIndex)
         // Nothing to do unless an answer moved: this runs on every finished
         // download, and most change nothing.
-        val rebuilt = tracks.map { it.source() }
+        val rebuilt = tracks.map(sources::source)
         val held = queuedSources
         if (rebuilt == held) return
         queuedSources = rebuilt
@@ -2347,13 +2295,13 @@ class PlaybackController(
             }
             settleRestartCopy()
             if (current > 0) {
-                p.replaceRange(0, current, tracks.subList(0, current).map { it.toAudioItem() })
+                p.replaceRange(0, current, tracks.subList(0, current).map(sources::item))
             }
             if (current + 1 <= tracks.lastIndex) {
                 p.replaceRange(
                     current + 1,
                     tracks.size,
-                    tracks.subList(current + 1, tracks.size).map { it.toAudioItem() },
+                    tracks.subList(current + 1, tracks.size).map(sources::item),
                 )
             }
             rearmSoon()
@@ -2371,7 +2319,7 @@ class PlaybackController(
         }
         settleRestartCopy()
         _queue.value = _queue.value + tracks
-        queuePlayer?.addItems(tracks.map { it.toAudioItem() })
+        queuePlayer?.addItems(tracks.map(sources::item))
         remote?.queueEdited(QueueEdit.Appended(tracks.map { it.id }))
         rearmSoon()
     }
@@ -2399,7 +2347,7 @@ class PlaybackController(
             if (from < 0) {
                 val at = slot.coerceIn(0, _queue.value.size)
                 _queue.value = _queue.value.toMutableList().apply { add(at, track) }
-                queuePlayer?.addMediaItem(at, track.toAudioItem())
+                queuePlayer?.addMediaItem(at, sources.item(track))
                 added += track.id
                 slot = at + 1
                 continue
@@ -2432,7 +2380,7 @@ class PlaybackController(
             return
         }
         val droppedIds = q.drop(cur + 1).map { it.id }
-        queuePlayer?.replaceRange(cur + 1, q.size, tracks.map { it.toAudioItem() })
+        queuePlayer?.replaceRange(cur + 1, q.size, tracks.map(sources::item))
         _queue.value = q.take(cur + 1) + tracks
         _queueName.value = name
         remote?.queueEdited(QueueEdit.UpcomingReplaced(droppedIds, tracks.map { it.id }))
@@ -2564,7 +2512,7 @@ class PlaybackController(
         // One replace rather than a move per track: a few hundred moves are a
         // timeline update each, which locks Main and, with artwork, exhausts
         // the heap.
-        queuePlayer?.replaceRange(head.size, q.size, newTail.map { it.toAudioItem() })
+        queuePlayer?.replaceRange(head.size, q.size, newTail.map(sources::item))
         remote?.queueEdited(QueueEdit.Reordered)
         rearmSoon()
     }
@@ -2589,6 +2537,12 @@ class PlaybackController(
         queuePlayer?.repeatMode = mode.forPlayer()
         if (mode == RepeatMode.TRACK) rearmSoon()
         remote?.repeatChanged(mode)
+    }
+
+    private fun RepeatMode.forPlayer(): Int = when (this) {
+        RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+        RepeatMode.TRACK -> Player.REPEAT_MODE_ONE
+        RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
     }
 
     /**
@@ -2970,9 +2924,9 @@ class PlaybackController(
 
         override fun mayTalkToServer(): Boolean = metadataAllowed()
 
-        override fun streamFormat(): StreamFormat = effectiveFormat()
+        override fun streamFormat(): StreamFormat = sources.effectiveFormat()
 
-        // The server's own address, never playerUrl's: the door is on this
+        // The server's own address, never the player's: the door is on this
         // phone's loopback, where a speaker can't reach it.
         override fun streamUrl(
             track: Track,
@@ -2980,7 +2934,7 @@ class PlaybackController(
             timeOffsetSeconds: Int,
             estimateContentLength: Boolean,
             sessionId: String?,
-        ): String? = serverClient.value?.playableUrl(track, format, timeOffsetSeconds, estimateContentLength, sessionId)
+        ): String? = sources.serverUrl(track, format, timeOffsetSeconds, estimateContentLength, sessionId)
 
         override fun knownStream(track: Track, format: StreamFormat): KnownStream? =
             serverClient.value?.knownStream(track, format)
@@ -3038,11 +2992,11 @@ class PlaybackController(
     /**
      * The id a stream of this song carries. On a server with one session per
      * player, the listening session's own id, but only on a stream the
-     * loopback door decides first ([decidedFirst]; see [playerUrl]): Plex
-     * refuses a transcode under a session it tracks unless a decision for that
-     * very song came first. Anything else that fetches on its own (a speaker,
-     * the player while the door is down) gets an id of its own that no
-     * timeline names. That also keeps apart two transcodes in flight at once,
+     * loopback door decides first ([decidedFirst]; see
+     * [TrackSources.playerUrl]): Plex refuses a transcode under a session it
+     * tracks unless a decision for that very song came first. Anything else
+     * that fetches on its own (a speaker, the player while the door is down)
+     * gets an id of its own that no timeline names. That also keeps apart two transcodes in flight at once,
      * as a speaker's next song is: Plex keeps one per id and tears the other
      * down.
      */
@@ -3247,122 +3201,6 @@ class PlaybackController(
         if (!force && key == lastSavedQueueKey) return
         lastSavedQueueKey = key
         runCatching { client.savePlayQueue(ids, currentId, _positionMs.value) }
-    }
-
-    // --- Where each track plays from -----------------------------------------
-
-    /**
-     * The format to ask for: the source's Wi-Fi format on an unmetered link,
-     * its cellular format otherwise. Two stated choices, never a mode quietly
-     * capping one: asked for lossless on cellular, lossless is what comes.
-     */
-    private fun effectiveFormat(): StreamFormat {
-        val source = App.source.value
-        return if (unmetered) source.wifiFormat else source.cellularFormat
-    }
-
-    /** Whether [track] can play under [rules]: from the phone, or streamed through the door. */
-    private fun isPlayable(track: Track, rules: LinkRules): Boolean =
-        hasLocalCopy(track) || (rules.mayStream && App.streamProxy.isOn)
-
-    /** A phone file or a download: playable with no server. */
-    private fun hasLocalCopy(track: Track): Boolean =
-        PhoneFiles.isPhoneFile(track.id) || localFiles.containsKey(track.id)
-
-    /** Whether the door will ask the server's decision for this stream right before fetching it — see [playerUrl]. */
-    private fun decidesAtDoor(client: MusicServer, track: Track, format: StreamFormat): Boolean =
-        client.oneSessionPerPlayer && App.streamProxy.isOn && client.streamNeedsDecision(track, format)
-
-    /** This song's entry in [originalElsewhere]: the source playing it, and its id there. */
-    private fun Track.originalKey(): Pair<String, String> = App.source.value.id to id
-
-    /**
-     * [MusicServer.streamUrl], except for a song moved to its server's other
-     * address for the original — see [playOriginalElsewhere]. Every URL this
-     * controller plays, casts or probes is made here, so a moved song stays
-     * moved however it is reached next.
-     */
-    private fun MusicServer.playableUrl(
-        track: Track,
-        format: StreamFormat,
-        timeOffsetSeconds: Int,
-        estimateContentLength: Boolean,
-        sessionId: String?,
-    ): String {
-        val moved = format == StreamFormat.RAW && track.originalKey() in originalElsewhere
-        return (if (moved) alternateOriginalUrl(track) else null)
-            ?: streamUrl(track, format, timeOffsetSeconds, estimateContentLength, sessionId)
-    }
-
-    /**
-     * Where to play a track from. A download wins, and is passed over only
-     * when the chosen streaming format is better than the copy and the bytes
-     * are free: an unmetered link, whatever the mode. Even Make it Hurt plays
-     * a download from its file.
-     */
-    private fun Track.source(): LightAudioSource {
-        // A phone file is the file, always: no stream to prefer, no server to ask.
-        PhoneFiles.fileOf(id)?.let { return LightAudioSource.FileSource(it) }
-        val local = localFiles[id]
-        if (local != null) {
-            val (file, downloadedFormat) = local
-            val streamed = effectiveFormat()
-            val preferStream = !forceOffline && id !in streamFailed && unmetered &&
-                streamed.qualityRank > downloadedFormat.qualityRank
-            if (!preferStream) return LightAudioSource.FileSource(file)
-        }
-        return LightAudioSource.UrlSource(playerUrl(this, effectiveFormat()))
-    }
-
-    /**
-     * The address the player is handed for [track] in [format]: through the
-     * loopback door when it is up (see StreamProxy), so the player only ever
-     * holds this phone's address.
-     *
-     * Where the server keeps one session per player, the door also asks the
-     * server's decision for this very song right before fetching it, under
-     * that session's id: Plex holds a session it tracks to a decision per
-     * song, and the player fetches ahead and on its own, so nothing in front
-     * of it can know when to ask. Without the door the stream gets an id of
-     * its own — see [streamSessionIdFor].
-     */
-    private fun playerUrl(track: Track, format: StreamFormat, timeOffsetSeconds: Int = 0): String {
-        val client = serverClient.value ?: return ""
-        val decideFirst = decidesAtDoor(client, track, format)
-        val sid = streamSessionIdFor(track.id, decideFirst)
-        val url = client.playableUrl(
-            track,
-            format,
-            timeOffsetSeconds = timeOffsetSeconds,
-            // No estimated Content-Length: declaring one for a transcode makes
-            // the server finish the encode first, so a long track took minutes
-            // to start. Seeks go through the server, not by byte, so nothing
-            // needs it. Only Subsonic reads the flag.
-            estimateContentLength = false,
-            sessionId = sid,
-        )
-        // Asked of whichever client is current at fetch time: one rebuilt for
-        // the same source since (a new address, a renewed token) is the one
-        // that can still be heard.
-        val decision: (suspend () -> Unit)? =
-            if (decideFirst) ({ serverClient.value?.prepareStream(track.id, format, sid) }) else null
-        return App.streamProxy.wrap(url, group = track.id, prepare = decision)
-    }
-
-    private fun Track.toAudioItem(from: LightAudioSource = source()): LightAudioItem = LightAudioItem(
-        source = from,
-        metadata = LightMediaMetadata(
-            title = title,
-            artist = artist,
-            album = album,
-            durationMs = durationMs,
-        ),
-    )
-
-    private fun RepeatMode.forPlayer(): Int = when (this) {
-        RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-        RepeatMode.TRACK -> Player.REPEAT_MODE_ONE
-        RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
     }
 
     companion object {

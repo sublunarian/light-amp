@@ -4,7 +4,6 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.Player
 import com.sublunar.amp.data.Track
-import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioSource
 import java.io.File
@@ -41,7 +40,6 @@ internal class StandIn(
     private val index: StateFlow<Int>,
     private val isPlaying: StateFlow<Boolean>,
     private val positionMs: StateFlow<Long>,
-    private val item: (Track, LightAudioSource) -> LightAudioItem,
     private val press: (StandInPress) -> Unit,
 ) {
     /**
@@ -215,7 +213,7 @@ internal class StandIn(
                 // The output repeats, not this. A wrap here would read as a
                 // press back to the top.
                 p.repeatMode = Player.REPEAT_MODE_OFF
-                p.setMediaQueueAt(listOf(item(track, LightAudioSource.FileSource(file))), 0, at)
+                p.setMediaQueueAt(listOf(track.toAudioItem(LightAudioSource.FileSource(file))), 0, at)
                 if (outputPlaying) p.play() else p.pause()
                 Log.i(TAG, "standing in for ${track.id} at=$at playing=$outputPlaying")
                 // Only now: until the new item was in, the player could still
