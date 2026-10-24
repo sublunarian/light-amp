@@ -80,17 +80,16 @@ object LocalLibrary : PhoneLibrary {
      *
      * The grant, asked of this process, decides. LightOS answers from its own
      * policy before it looks at the grant, so its word counts only when the
-     * process can't say, or to tell a block from a missing grant. Both are
-     * logged side by side for a report where they disagree.
+     * process can't say, or to tell a block from a missing grant.
      */
     override suspend fun access(): PhoneAccess {
         val held = hasRuntimePermission(permission)
+        if (held == true) return PhoneAccess.GRANTED
         val lightOs = checkPermission(permission).asKotlinResult
             .map { it.permissionResult }
             .getOrNull()
         Log.i(TAG, "Music access: grant=${held ?: "unknown"} lightos=${lightOs ?: "no answer"}")
         return when {
-            held == true -> PhoneAccess.GRANTED
             held == null && lightOs == LightServiceMethod.GetPermission.Result.Granted -> PhoneAccess.GRANTED
             lightOs == LightServiceMethod.GetPermission.Result.BlockedByServer -> PhoneAccess.BLOCKED_BY_LIGHTOS
             else -> PhoneAccess.NOT_GRANTED

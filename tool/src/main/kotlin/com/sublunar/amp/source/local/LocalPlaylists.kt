@@ -94,13 +94,15 @@ object LocalPlaylists : PhonePlaylists {
     /**
      * Whether the playlist has the name now. False when another playlist
      * already has it: the name is the file, and taking it would replace that one.
+     * The phone's storage ignores case, so a name that differs only in case
+     * finds this playlist's own file, and isn't another's.
      */
     override suspend fun rename(id: String, name: String): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
         if (!file.isFile) return@withContext false
         val target = File(file.parentFile, fileNameFor(name))
-        if (target.absolutePath == file.absolutePath) return@withContext true
-        if (target.exists()) return@withContext false
+        if (target.name == file.name) return@withContext true
+        if (!target.name.equals(file.name, ignoreCase = true) && target.exists()) return@withContext false
         file.renameTo(target).also { if (!it) Log.w(TAG, "couldn't rename ${file.name}") }
     }
 
