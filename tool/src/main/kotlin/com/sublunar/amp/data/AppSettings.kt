@@ -406,21 +406,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     val downloadsPaused: Flow<Boolean> = boolFlow(DOWNLOADS_PAUSED, false)
     suspend fun setDownloadsPaused(value: Boolean) = putBool(DOWNLOADS_PAUSED, value)
 
-    /**
-     * Whether the one-time repair of downloaded mp3s still has to run.
-     * TEMPORARY — see DownloadStore.indexMp3s for the removal list.
-     */
-    suspend fun mp3IndexRepairNeeded(): Boolean =
-        dataStore.data.first()[MP3_INDEX_REPAIRED] != true
-
-    /**
-     * Record that the repair finished — called *after* the walk, never before,
-     * so a repair killed half-way runs again rather than counting as done.
-     */
-    suspend fun markMp3IndexRepaired() {
-        dataStore.edit { it[MP3_INDEX_REPAIRED] = true }
-    }
-
     // --- Saved state ---------------------------------------------------------
 
     /**
@@ -529,9 +514,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val ALBUMS_COMPOSER = stringPreferencesKey("pref.albumsComposer")
         private val SONGS_GENRE = stringPreferencesKey("pref.songsGenre")
         private val SONGS_COMPOSER = stringPreferencesKey("pref.songsComposer")
-
-        /** TEMPORARY — see [mp3IndexRepairNeeded]; goes with it. */
-        private val MP3_INDEX_REPAIRED = booleanPreferencesKey("pref.mp3IndexRepaired")
 
         private val LIKED_ALBUMS_ONLY = booleanPreferencesKey("pref.likedAlbumsOnly")
         private val LIKED_SONGS_ONLY = booleanPreferencesKey("pref.likedSongsOnly")

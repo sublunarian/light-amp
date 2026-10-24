@@ -41,27 +41,14 @@ class DownloadStore(private val filesDir: File) {
         downloadsDir.listFiles().orEmpty().filter { it.isDirectory }
 
     init {
-        // Sweep partials left by a download the process didn't live to finish;
-        // they're never resumable and would otherwise count against the budget.
-        // Filtered in Kotlin rather than via a File(name)Filter lambda, whose SAM
-        // overload resolution is easy to get silently wrong. The top folder too,
-        // for the pre-sources layout — see [adoptLegacyFiles].
-        val downloads = downloadsDir.apply { mkdirs() }
-        (downloads.listFiles().orEmpty().toList() + allRoots().flatMap { it.listFiles().orEmpty().toList() })
+        // Sweep partials left by a download the process didn't live to finish:
+        // they're never resumable, and only take space. Filtered in Kotlin
+        // rather than via a File(name)Filter lambda, whose SAM overload
+        // resolution is easy to get silently wrong.
+        downloadsDir.mkdirs()
+        allRoots().flatMap { it.listFiles().orEmpty().toList() }
             .filter { it.isFile && it.name.endsWith(PART_SUFFIX) }
             .forEach { it.delete() }
-    }
-
-    /**
-     * Move pre-sources downloads, which sat directly in the downloads folder,
-     * into [sourceId]'s folder — the source that inherits the old single-server
-     * setup.
-     */
-    fun adoptLegacyFiles(sourceId: String) {
-        val target = rootFor(sourceId)
-        downloadsDir.listFiles().orEmpty()
-            .filter { it.isFile }
-            .forEach { it.renameTo(File(target, it.name)) }
     }
 
     /**
@@ -204,35 +191,6 @@ class DownloadStore(private val filesDir: File) {
                 .filter { it.isFile && !it.name.endsWith(PART_SUFFIX) }
                 .sumOf { it.length() }
         }
-
-    /**
-     * TEMPORARY: index every mp3 on disk that lacks one — mp3s downloaded before
-     * Downloader indexed each one as it landed. Runs once per install.
-     *
-     * To remove it: this function, its TEMPORARY caller in `App.boot`, and
-     * [AppSettings.mp3IndexRepairNeeded], [AppSettings.markMp3IndexRepaired]
-     * and their `MP3_INDEX_REPAIRED` key. Keep [Mp3VbrIndex] and Downloader's
-     * per-download call. A straggler's old files keep their wrong duration
-     * until re-downloaded; nothing is lost.
-     */
-    fun indexMp3s(): Int {
-        var written = 0
-        allRoots().forEach { root ->
-            root.listFiles().orEmpty()
-                .filter { it.isFile && it.name.endsWith(".${StreamFormat.MP3.suffix}") }
-                .forEach { file ->
-                    runCatching { Mp3VbrIndex.index(file) }
-                        .onSuccess {
-                            if (it is Mp3VbrIndex.Outcome.Written) {
-                                written++
-                                Log.i("AmpMp3", "indexed ${file.name}: ${it.frames} frames")
-                            }
-                        }
-                        .onFailure { Log.w("AmpMp3", "couldn't index ${file.name}", it) }
-                }
-        }
-        return written
-    }
 
     /**
      * The largest limit the user may choose.

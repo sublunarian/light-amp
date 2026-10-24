@@ -61,22 +61,9 @@ class DownloadNamingTest {
     fun `a download that never finished is swept at the next start`() {
         val folder = File(downloads, "s").apply { mkdirs() }
         val partial = File(folder, "t.opus.part").apply { writeText("") }
-        val loose = File(downloads, "u.mp3.part").apply { writeText("") }
         val done = File(folder, "t.mp3").apply { writeText("") }
         DownloadStore(tmp.root)
         assertFalse(partial.exists())
-        assertFalse(loose.exists())
         assertTrue(done.exists())
-    }
-
-    @Test
-    fun `downloads from before sources move into the first server's folder`() {
-        downloads.mkdirs()
-        File(downloads, "t.mp3").writeText("")
-        val store = DownloadStore(tmp.root)
-        store.adoptLegacyFiles("server")
-        assertFalse(File(downloads, "t.mp3").exists())
-        assertTrue(File(downloads, "server/t.mp3").exists())
-        assertEquals(listOf("t" to StreamFormat.MP3), store.onDisk("server"))
     }
 }

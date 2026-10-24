@@ -559,9 +559,6 @@ object App {
             _source.value = first
             _dao.value = databaseFor(first).libraryDao()
             downloads = DownloadStore(context.filesDir)
-            // One-time: audio downloaded before sources existed sits in the old
-            // flat folder, and belongs to whichever source inherited that server.
-            if (first.id == AppSettings.LEGACY_SOURCE_ID) downloads.adoptLegacyFiles(first.id)
             pending = PendingActions(settings)
             library = LibraryRepository(
                 daos = _dao,
@@ -830,19 +827,6 @@ object App {
                 claimedCoverFiles()?.let { artwork.expireUnclaimed(it) }
                 artwork.trimToBudget(protectedCoverFiles())
                 syncCovers()
-            }
-            // TEMPORARY, REMOVE BEFORE COMMUNITY REVIEW — the one-time repair
-            // of mp3s downloaded before Amp wrote their index. Runs once per
-            // install and never again; everything downloaded since is indexed
-            // as it lands, in Downloader. Delete this block together with
-            // DownloadStore.indexMp3s and AppSettings.mp3IndexRepairNeeded /
-            // markMp3IndexRepaired — see the removal list on indexMp3s.
-            scope.launch(Dispatchers.IO) {
-                if (!settings.mp3IndexRepairNeeded()) return@launch
-                val n = downloads.indexMp3s()
-                // Only now: see markMp3IndexRepaired for why not before.
-                settings.markMp3IndexRepaired()
-                Log.i("AmpMp3", "one-time repair: indexed $n downloaded mp3(s) that had none")
             }
             // A source's downloads yield to its sync, hundreds of small requests
             // that a saturated transcoder turns into a crawl. Only the browsed
