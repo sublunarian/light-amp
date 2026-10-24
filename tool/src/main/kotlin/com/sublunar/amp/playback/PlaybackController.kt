@@ -150,13 +150,6 @@ class PlaybackController(
     val volume: StateFlow<Float> = _volume
 
     /**
-     * Loudness normalisation on or off, fed from settings by App. While on, the
-     * playing track's [Track.gainDb] becomes the player's own volume — see the
-     * gain collector in [collectHandle].
-     */
-    val replayGain = MutableStateFlow(true)
-
-    /**
      * Parked: the current track can't play now, because it needs the server
      * and may not have it (the mode, no link, a server not answering) or
      * because it won't play at all. The value is the reason in the screen's
@@ -854,8 +847,8 @@ class PlaybackController(
                 }
             }
         }
-        // ReplayGain: the playing track's gain becomes the player's volume,
-        // attenuate-only (clamped at unity), so nothing is boosted into
+        // ReplayGain, while the setting is on: the playing track's gain becomes
+        // the player's volume, attenuate-only (clamped at unity), so nothing is boosted into
         // clipping. While casting the stand-in is item 0 and its silence gets
         // the gain of the window's first track, which is harmless.
         //
@@ -863,7 +856,7 @@ class PlaybackController(
         // player, reads -1, and unity for it would overwrite the gain the
         // handle was seeded with.
         scope.launch(onMain) {
-            combine(p.currentMediaItemIndex, _queue, replayGain) { idx, q, on ->
+            combine(p.currentMediaItemIndex, _queue, settings.replayGain.state) { idx, q, on ->
                 if (idx < 0) return@combine null
                 // The restart copy is the song in the slot before it.
                 val slot = if (restartCopyAt in 0..idx) idx - 1 else idx

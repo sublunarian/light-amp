@@ -697,8 +697,6 @@ object App {
                         scope.launch { topUpDownloads() }
                     }
             }
-            // Once per process, like the rest: per boot, each activity would add another.
-            scope.launch { settings.replayGain.collect { playback.replayGain.value = it } }
             coreReady = true
             // Periodic background library refresh (min 15 min on WorkManager).
             LightWork.enqueuePeriodic(context, SYNC_JOB_KEY, 30.minutes)
