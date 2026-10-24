@@ -4,6 +4,11 @@
 
 ### Changed
 
+- Playing your whole library plays all of it, not only the 500 songs around
+  the one you picked.
+- Recently Added for songs lists the newest albums first, each in track order.
+- Synced lyrics follow the timing offset their server or file gives them.
+- Every play counts toward your scrobbles, repeats included.
 - Playlists follow the library you pick. On Navidrome a playlist shows that
   library's songs; on Plex and Jellyfin you see the playlists with songs from
   it, as in their own apps. Editing never touches another library's songs.
@@ -32,6 +37,9 @@
   could remove the wrong song.
 - A song's menu in a playlist could say "Track not found", plus several
   playlist, sign-in and offline fixes.
+- While casting, the volume buttons control the speaker on every page.
+- Several fixes to settings pages, A–Z jumps, sync notices, sign-in and
+  downloads.
 
 ## 0.8.2
 
