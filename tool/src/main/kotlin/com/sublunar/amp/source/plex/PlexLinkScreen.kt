@@ -225,6 +225,7 @@ class PlexLinkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             clientIdentifier = clientId,
             // An account already knows the server's id; only the typed-in path asks for it.
             machineIdentifier = server.clientIdentifier,
+            fromAccount = true,
         )
         if (outcome !is SignInOutcome.Found) return outcome
         val pending = outcome.server
@@ -250,6 +251,8 @@ suspend fun inspectPlexServer(
     /** The new link's own identifier, kept on the source — see MusicSource.deviceId. */
     clientIdentifier: String,
     machineIdentifier: String? = null,
+    /** The token came with the user's Plex account rather than typed in, and a refusal is worded so. */
+    fromAccount: Boolean = false,
 ): SignInOutcome {
     val client = PlexClient(uri, token, machineIdentifier.orEmpty(), clientIdentifier = clientIdentifier)
     try {
@@ -269,7 +272,7 @@ suspend fun inspectPlexServer(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return SignInOutcome.Settled(uri, librariesFailed(e))
+            return SignInOutcome.Settled(uri, librariesFailed(e, fromAccount))
         }
         val source = MusicSource(
             id = newSourceId(),
@@ -297,11 +300,13 @@ private fun identityMissed(e: Exception): SignInOutcome.Missed {
     }
 }
 
-private fun librariesFailed(e: Exception): String {
+private fun librariesFailed(e: Exception, fromAccount: Boolean): String {
     val status = e.plexStatus()
     return when {
-        status in REFUSED_STATUSES -> PLEX_TOKEN_REFUSED
+        status in REFUSED_STATUSES && fromAccount -> "That server didn't accept your Plex account."
+        status in REFUSED_STATUSES -> "Plex didn't accept that token."
         status != null -> "Plex couldn't list its libraries (error $status). Try again."
+        fromAccount -> "That server answered, then stopped before it could check your account. Try again."
         else -> "That address answered, then stopped before the token could be checked. Try again."
     }
 }
@@ -310,8 +315,6 @@ private fun Throwable.plexStatus(): Int? =
     causes().filterIsInstance<PlexException>().firstOrNull()?.status
 
 private val REFUSED_STATUSES = setOf(401, 403)
-
-private const val PLEX_TOKEN_REFUSED = "Plex didn't accept that token."
 
 private const val NOT_PLEX = "That address answered, but it isn't a Plex server. Check the address and port."
 
