@@ -1733,33 +1733,42 @@ class LibraryRepository(
         _syncState.update { it.copy(syncing = true, error = null, phase = "Scanning server") }
         val previous = syncJob
         syncJob = scope.launch {
-            previous?.cancelAndJoin()
-            val client = serverClient.value
-            val folder = libraryId.first()
-            // A server known to have no scan call isn't asked — see
-            // MusicSource.supportsServerScan; the sync still runs.
-            val canScan = settings.activeSource.first()?.supportsServerScan ?: true
-            val outcome = if (client != null && canScan) {
-                runCatching { client.startServerScan(folder) }
-                    .getOrDefault(ScanRequest.REFUSED)
-            } else {
-                ScanRequest.ABSENT
+            try {
+                previous?.cancelAndJoin()
+                askForScan()
+                sync()
+            } catch (e: Throwable) {
+                // As in syncInBackground: a claim left standing turns every later sync away.
+                _syncState.update { it.copy(syncing = false) }
+                throw e
             }
-            val asked = outcome == ScanRequest.STARTED
-            // Said plainly rather than looking like an empty scan (a library
-            // shared with you on Plex: scanning is the owner's). A server with no
-            // such call has refused nothing.
-            scanRefused = outcome == ScanRequest.REFUSED
-            if (asked) {
-                var waited = 0L
-                while (waited < SCAN_WAIT_MS) {
-                    delay(SCAN_POLL_MS)
-                    waited += SCAN_POLL_MS
-                    val busy = runCatching { client?.serverScanning(folder) }.getOrDefault(false) == true
-                    if (!busy) break
-                }
-            }
-            sync()
+        }
+    }
+
+    /** The scan half of Sync Now: asked, and waited on for at most [SCAN_WAIT_MS]. */
+    private suspend fun askForScan() {
+        val client = serverClient.value
+        val folder = libraryId.first()
+        // A server known to have no scan call isn't asked — see
+        // MusicSource.supportsServerScan; the sync still runs.
+        val canScan = settings.activeSource.first()?.supportsServerScan ?: true
+        val outcome = if (client != null && canScan) {
+            runCatching { client.startServerScan(folder) }
+                .getOrDefault(ScanRequest.REFUSED)
+        } else {
+            ScanRequest.ABSENT
+        }
+        // Said plainly rather than looking like an empty scan (a library
+        // shared with you on Plex: scanning is the owner's). A server with no
+        // such call has refused nothing.
+        scanRefused = outcome == ScanRequest.REFUSED
+        if (outcome != ScanRequest.STARTED) return
+        var waited = 0L
+        while (waited < SCAN_WAIT_MS) {
+            delay(SCAN_POLL_MS)
+            waited += SCAN_POLL_MS
+            val busy = runCatching { client?.serverScanning(folder) }.getOrDefault(false) == true
+            if (!busy) break
         }
     }
 
