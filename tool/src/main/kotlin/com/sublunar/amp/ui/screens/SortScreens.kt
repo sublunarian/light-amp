@@ -88,10 +88,10 @@ class TagFilterScreen(
     private fun choose(value: String) {
         App.scope.launch {
             when {
-                tab == LibraryTab.ALBUMS && byComposer -> App.settings.setAlbumsComposer(value)
-                tab == LibraryTab.ALBUMS -> App.settings.setAlbumsGenre(value)
-                tab == LibraryTab.SONGS && byComposer -> App.settings.setSongsComposer(value)
-                tab == LibraryTab.SONGS -> App.settings.setSongsGenre(value)
+                tab == LibraryTab.ALBUMS && byComposer -> App.settings.albumsComposer.set(value)
+                tab == LibraryTab.ALBUMS -> App.settings.albumsGenre.set(value)
+                tab == LibraryTab.SONGS && byComposer -> App.settings.songsComposer.set(value)
+                tab == LibraryTab.SONGS -> App.settings.songsGenre.set(value)
                 else -> Unit
             }
         }
@@ -163,8 +163,8 @@ class AlbumsSortScreen(
 
     @Composable
     override fun Content() {
-        val current by App.settings.albumSort.collectAsState(initial = AlbumSort.TITLE)
-        val reversed by App.settings.albumSortReversed.collectAsState(initial = false)
+        val current by App.settings.albumSort.state.collectAsState()
+        val reversed by App.settings.albumSortReversed.state.collectAsState()
         // No Rating where nothing can be rated (all zeros order nothing), except
         // while it is the current sort, so a source switch can't hide the order
         // in effect.
@@ -180,8 +180,8 @@ class AlbumsSortScreen(
             isRandom = { it == AlbumSort.RANDOM },
             onSelect = { option ->
                 App.scope.launch {
-                    App.settings.setAlbumSort(option)
-                    App.settings.setAlbumSortReversed(false)
+                    App.settings.albumSort.set(option)
+                    App.settings.albumSortReversed.set(false)
                 }
                 // A new order makes the old position meaningless: the list opens
                 // at the top.
@@ -194,7 +194,7 @@ class AlbumsSortScreen(
                         // A shuffle has no direction: the second tap deals again.
                         App.settings.bumpShuffleNonce()
                     } else {
-                        App.settings.setAlbumSortReversed(!reversed)
+                        App.settings.albumSortReversed.set(!reversed)
                     }
                 }
                 ScrollAnchors.clear("tab:albums")
@@ -209,8 +209,8 @@ class AlbumsSortScreen(
 class SongsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val current by App.settings.songSort.collectAsState(initial = SongSort.TITLE)
-        val reversed by App.settings.songSortReversed.collectAsState(initial = false)
+        val current by App.settings.songSort.state.collectAsState()
+        val reversed by App.settings.songSortReversed.state.collectAsState()
         // Same gate as the albums menu (see AlbumsSortScreen).
         val supportsRatings = App.source.collectAsState().value.supportsRatings
         SortOptions(
@@ -223,15 +223,15 @@ class SongsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
             naturallyDescending = { it.descendingByNature },
             onSelect = { option ->
                 App.scope.launch {
-                    App.settings.setSongSort(option)
-                    App.settings.setSongSortReversed(false)
+                    App.settings.songSort.set(option)
+                    App.settings.songSortReversed.set(false)
                 }
                 // A new order makes the old position meaningless.
                 ScrollAnchors.clear("tab:songs")
                 goBack(Unit)
             },
             onFlip = {
-                App.scope.launch { App.settings.setSongSortReversed(!reversed) }
+                App.scope.launch { App.settings.songSortReversed.set(!reversed) }
                 ScrollAnchors.clear("tab:songs")
                 goBack(Unit)
             },
@@ -244,8 +244,8 @@ class SongsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
 class ArtistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val current by App.settings.artistSort.collectAsState(initial = ArtistSort.NAME)
-        val reversed by App.settings.artistSortReversed.collectAsState(initial = false)
+        val current by App.settings.artistSort.state.collectAsState()
+        val reversed by App.settings.artistSortReversed.state.collectAsState()
         SortOptions(
             options = ARTIST_SORT_OPTIONS,
             current = current,
@@ -254,15 +254,15 @@ class ArtistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(s
             naturallyDescending = { it.descendingByNature },
             onSelect = { option ->
                 App.scope.launch {
-                    App.settings.setArtistSort(option)
-                    App.settings.setArtistSortReversed(false)
+                    App.settings.artistSort.set(option)
+                    App.settings.artistSortReversed.set(false)
                 }
                 // A new order makes the old position meaningless.
                 ScrollAnchors.clear("tab:artists")
                 goBack(Unit)
             },
             onFlip = {
-                App.scope.launch { App.settings.setArtistSortReversed(!reversed) }
+                App.scope.launch { App.settings.artistSortReversed.set(!reversed) }
                 ScrollAnchors.clear("tab:artists")
                 goBack(Unit)
             },
@@ -275,8 +275,8 @@ class ArtistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(s
 class PlaylistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val current by App.settings.playlistSort.collectAsState(initial = PlaylistSort.RECENTLY_UPDATED)
-        val reversed by App.settings.playlistSortReversed.collectAsState(initial = false)
+        val current by App.settings.playlistSort.state.collectAsState()
+        val reversed by App.settings.playlistSortReversed.state.collectAsState()
         SortOptions(
             options = PLAYLIST_SORT_OPTIONS,
             current = current,
@@ -285,15 +285,15 @@ class PlaylistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>
             naturallyDescending = { it.descendingByNature },
             onSelect = { option ->
                 App.scope.launch {
-                    App.settings.setPlaylistSort(option)
-                    App.settings.setPlaylistSortReversed(false)
+                    App.settings.playlistSort.set(option)
+                    App.settings.playlistSortReversed.set(false)
                 }
                 // A new order makes the old position meaningless.
                 ScrollAnchors.clear("tab:playlists")
                 goBack(Unit)
             },
             onFlip = {
-                App.scope.launch { App.settings.setPlaylistSortReversed(!reversed) }
+                App.scope.launch { App.settings.playlistSortReversed.set(!reversed) }
                 ScrollAnchors.clear("tab:playlists")
                 goBack(Unit)
             },

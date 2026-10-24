@@ -24,7 +24,7 @@ class StoredSourcesTest {
     /** A phone holding [prefs], and the settings that read it. */
     private class Phone(vararg prefs: Preferences.Pair<*>) {
         val store = MemoryDataStore(preferencesOf(*prefs))
-        val settings = AppSettings(store)
+        val settings = store.settings()
         val stored: String? get() = store.raw("pref.sources")
     }
 

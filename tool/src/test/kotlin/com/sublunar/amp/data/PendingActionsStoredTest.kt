@@ -22,7 +22,7 @@ class PendingActionsStoredTest {
     /** A phone holding [queue] as its stored offline queue. */
     private class Phone(vararg queue: String) {
         val store = MemoryDataStore(preferencesOf(stringPreferencesKey(KEY) to queue.joinToString(",", "[", "]")))
-        val pending = PendingActions(AppSettings(store))
+        val pending = PendingActions(store.settings())
         val stored: String? get() = store.raw(KEY)
     }
 
@@ -154,7 +154,7 @@ class PendingActionsStoredTest {
     @Test
     fun `text that isn't a list is no queue`() = runBlocking {
         val store = MemoryDataStore(preferencesOf(stringPreferencesKey(KEY) to "not json"))
-        val pending = PendingActions(AppSettings(store))
+        val pending = PendingActions(store.settings())
         pending.forget(PendingAction(Kind.STAR_SONG, "x", atMs = 9L, sourceId = "a"))
         assertEquals("not json", store.raw(KEY))
     }

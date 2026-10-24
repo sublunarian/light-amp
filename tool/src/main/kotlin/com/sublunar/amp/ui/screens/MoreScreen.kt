@@ -15,7 +15,6 @@ import com.sublunar.amp.App
 import com.sublunar.amp.BuildConfig
 import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.LayoutMode
-import com.sublunar.amp.data.PlaylistSort
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.descendingByNature
 import com.sublunar.amp.ui.LightType
@@ -53,15 +52,15 @@ class MoreScreen(
 
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
-        val active by App.settings.activeSource.collectAsState(initial = null)
+        val sources by App.settings.sources.state.collectAsState()
+        val active by App.settings.activeSource.state.collectAsState()
         // Read here rather than at the row: a list's items are built outside
         // composition, where a @Composable can't be called.
         val view = viewOf(page)
         val sort = sortOf(page)
         // Under Simplified the liked lists are entries on the library index
         // rather than a filter over a tab.
-        val simplified = App.layoutMode.collectAsState().value == LayoutMode.SIMPLIFIED
+        val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
         val likedTab = if (simplified) null else likedFilterTab(page)
         val liked = likedTab != null && likedOnly(likedTab)
         // Under both layouts, unlike the liked filter: these narrowings have no
@@ -192,8 +191,8 @@ private fun viewOf(page: LibraryPage): PageSetting {
 @Composable
 private fun sortOf(page: LibraryPage): PageSetting = when (page) {
     LibraryPage.ALBUMS -> {
-        val sort by App.albumSort.collectAsState()
-        val reversed by App.albumSortReversed.collectAsState()
+        val sort by App.settings.albumSort.state.collectAsState()
+        val reversed by App.settings.albumSortReversed.state.collectAsState()
         sortable(
             albumSortLabel(sort),
             sort.descendingByNature,
@@ -206,24 +205,24 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
     }
 
     LibraryPage.SONGS -> {
-        val sort by App.songSort.collectAsState()
-        val reversed by App.songSortReversed.collectAsState()
+        val sort by App.settings.songSort.state.collectAsState()
+        val reversed by App.settings.songSortReversed.state.collectAsState()
         sortable(songSortLabel(sort), sort.descendingByNature, reversed) {
             SongsSortScreen(it)
         }
     }
 
     LibraryPage.ARTISTS -> {
-        val sort by App.artistSort.collectAsState()
-        val reversed by App.artistSortReversed.collectAsState()
+        val sort by App.settings.artistSort.state.collectAsState()
+        val reversed by App.settings.artistSortReversed.state.collectAsState()
         sortable(artistSortLabel(sort), sort.descendingByNature, reversed) {
             ArtistsSortScreen(it)
         }
     }
 
     LibraryPage.PLAYLISTS -> {
-        val sort by App.settings.playlistSort.collectAsState(initial = PlaylistSort.RECENTLY_UPDATED)
-        val reversed by App.settings.playlistSortReversed.collectAsState(initial = false)
+        val sort by App.settings.playlistSort.state.collectAsState()
+        val reversed by App.settings.playlistSortReversed.state.collectAsState()
         sortable(playlistSortLabel(sort), sort.descendingByNature, reversed) {
             PlaylistsSortScreen(it)
         }

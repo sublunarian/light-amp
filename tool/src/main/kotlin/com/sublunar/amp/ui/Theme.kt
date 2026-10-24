@@ -22,7 +22,7 @@ import com.thelightphone.sdk.ui.LightThemeTokens
  */
 @Composable
 fun PlayerTheme(content: @Composable () -> Unit) {
-    val invert by App.settings.invertColors.collectAsState(initial = false)
+    val invert by App.settings.invertColors.state.collectAsState()
     val colors = if (invert) LightThemeColors.Light else LightThemeColors.Dark
     LightTheme(colors = colors) {
         val scale = rememberScale()

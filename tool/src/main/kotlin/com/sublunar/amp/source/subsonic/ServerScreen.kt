@@ -79,7 +79,7 @@ class ServerScreen(
 
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
         val config = source?.toSubsonicConfig()
 

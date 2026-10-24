@@ -4,6 +4,8 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -27,6 +29,12 @@ internal class MemoryDataStore(initial: Preferences = emptyPreferences()) : Data
 
     /** The stored string under [key], as the phone would hold it. */
     fun raw(key: String): String? = state.value[stringPreferencesKey(key)]
+
+    /**
+     * [AppSettings] over this store. Its states are held on whichever thread
+     * writes, so each has caught up by the time a write returns.
+     */
+    fun settings(): AppSettings = AppSettings(this, CoroutineScope(Dispatchers.Unconfined))
 
     /** Everything stored, by key name, each value as the type it is stored as. */
     fun all(): Map<String, Any> = state.value.asMap().mapKeys { it.key.name }

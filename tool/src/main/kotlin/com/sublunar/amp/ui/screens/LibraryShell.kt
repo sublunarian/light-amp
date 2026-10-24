@@ -215,7 +215,7 @@ private fun SearchView(
             onEdit = {
                 // Simplified never raises the inline keyboard: its search is the
                 // SDK's own screen.
-                if (App.layoutMode.value == LayoutMode.SIMPLIFIED) {
+                if (App.settings.layoutMode.value == LayoutMode.SIMPLIFIED) {
                     actions.editSearch(live)
                 } else {
                     LibraryNav.typing.value = true
@@ -384,7 +384,7 @@ private const val SEARCH_GLYPH_PX = ROW_ACTION_ICON_PX
  */
 @Composable
 private fun TabHeader(tab: LibraryTab, actions: ShellActions) {
-    val simplified = App.layoutMode.collectAsState().value == LayoutMode.SIMPLIFIED
+    val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
     AppHeader(
         title = tabTitle(tab, likedOnly(tab), tagFilter(tab)),
         onBack = if (simplified) ({ LibraryNav.openLibraryIndex() }) else null,
@@ -425,9 +425,9 @@ fun tagFilter(tab: LibraryTab): TagFilter = when (tab) {
 /** Whether this tab is currently showing only liked items. */
 @Composable
 fun likedOnly(tab: LibraryTab): Boolean = when (tab) {
-    LibraryTab.ALBUMS -> App.likedAlbumsOnly.collectAsState().value
-    LibraryTab.SONGS -> App.likedSongsOnly.collectAsState().value
-    LibraryTab.ARTISTS -> App.likedArtistsOnly.collectAsState().value
+    LibraryTab.ALBUMS -> App.settings.likedAlbumsOnly.state.collectAsState().value
+    LibraryTab.SONGS -> App.settings.likedSongsOnly.state.collectAsState().value
+    LibraryTab.ARTISTS -> App.settings.likedArtistsOnly.state.collectAsState().value
     // Nothing likes a playlist.
     LibraryTab.PLAYLISTS -> false
 }
@@ -514,7 +514,7 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
     val sorted = view.items
     val rows = rememberLatest(sorted)
     val letters = view.letters
-    val reversed by App.settings.albumSortReversed.collectAsState(initial = false)
+    val reversed by App.settings.albumSortReversed.state.collectAsState()
     val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
     val needsAccess = !rememberLocalAccess()
     val sync = App.library.syncState.collectAsState().value
@@ -649,7 +649,7 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
     val sorted = view.items
     val rows = rememberLatest(sorted)
     val letters = view.letters
-    val reversed by App.settings.songSortReversed.collectAsState(initial = false)
+    val reversed by App.settings.songSortReversed.state.collectAsState()
     val downloadedIds by App.library.downloadedTrackIds.collectAsState()
     val selection = rememberSelection("songs")
     val needsAccess = !rememberLocalAccess()
@@ -718,7 +718,7 @@ private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
     val sorted = view.items
     val rows = rememberLatest(sorted)
     val letters = view.letters
-    val reversed by App.settings.artistSortReversed.collectAsState(initial = false)
+    val reversed by App.settings.artistSortReversed.state.collectAsState()
     val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
     // One request for the server's own artist records, which is where their
     // pictures are: the library's artists come from track tags and have none.
@@ -758,7 +758,7 @@ private fun PlaylistsTab(actions: ShellActions, header: Boolean = true) {
     val view by App.sortedPlaylists.collectAsState()
     val playlists = view.items
     val letters = view.letters
-    val reversed by App.settings.playlistSortReversed.collectAsState(initial = false)
+    val reversed by App.settings.playlistSortReversed.state.collectAsState()
     val downloadedPlaylists by App.library.downloadedPlaylistIds.collectAsState()
     // The playlist list carries no membership, so the downloaded badge has
     // nothing to go on until each playlist's tracks are fetched once. Keyed on
@@ -876,9 +876,9 @@ private fun LikedRow(tab: LibraryTab) {
 
 suspend fun setLikedOnly(tab: LibraryTab, value: Boolean) {
     when (tab) {
-        LibraryTab.ALBUMS -> App.settings.setLikedAlbumsOnly(value)
-        LibraryTab.SONGS -> App.settings.setLikedSongsOnly(value)
-        LibraryTab.ARTISTS -> App.settings.setLikedArtistsOnly(value)
+        LibraryTab.ALBUMS -> App.settings.likedAlbumsOnly.set(value)
+        LibraryTab.SONGS -> App.settings.likedSongsOnly.set(value)
+        LibraryTab.ARTISTS -> App.settings.likedArtistsOnly.set(value)
         LibraryTab.PLAYLISTS -> Unit
     }
 }
@@ -904,7 +904,7 @@ fun Navbar(
 ) {
     // The eager state rather than the preference Flow: the bar is on every
     // screen, and a fresh collect draws a frame of the wrong bar.
-    val simplified = App.layoutMode.collectAsState().value == LayoutMode.SIMPLIFIED
+    val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
     if (simplified) {
         SimplifiedNavbar(onSearch, onNowPlaying, onBrowse, searchActive)
     } else {

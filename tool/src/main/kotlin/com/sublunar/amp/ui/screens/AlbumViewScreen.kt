@@ -33,7 +33,7 @@ class AlbumViewScreen(
     @Composable
     override fun Content() {
         val setting = if (forArtist) App.settings.artistAlbumGrid else App.settings.albumGrid
-        val grid by setting.collectAsState(initial = false)
+        val grid by setting.state.collectAsState()
 
         // Named, because the two pickers look identical and are separate settings.
         ListScreen(
@@ -59,7 +59,7 @@ class AlbumViewScreen(
 
     private fun choose(grid: Boolean) {
         App.scope.launch {
-            if (forArtist) App.settings.setArtistAlbumGrid(grid) else App.settings.setAlbumGrid(grid)
+            if (forArtist) App.settings.artistAlbumGrid.set(grid) else App.settings.albumGrid.set(grid)
         }
         // Reported, so the More that pushed this closes with it (see MoreScreen).
         goBack(Unit)

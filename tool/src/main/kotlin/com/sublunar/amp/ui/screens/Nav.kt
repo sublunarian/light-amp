@@ -95,7 +95,7 @@ object LibraryNav {
      */
     internal fun record(section: LastSection) {
         if (!App.isReady) return
-        App.scope.launch { App.settings.setLastSection(section) }
+        App.scope.launch { App.settings.lastSection.set(section) }
     }
 
     /**
@@ -119,7 +119,7 @@ object LibraryNav {
         Selections.clearAll()
         // The tab keeps its scroll position. Asking for the top is [tapTab]'s job.
         currentTab.value = tab
-        if (App.isReady) App.scope.launch { App.settings.setLastTab(tab.name) }
+        if (App.isReady) App.scope.launch { App.settings.lastTab.set(tab.name) }
     }
 }
 

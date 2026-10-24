@@ -14,7 +14,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
-import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.DataMode
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.OfflineMode
@@ -85,8 +84,8 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val progress by App.downloader.progress.collectAsState()
         var bySource by remember { mutableStateOf<List<Pair<String, List<Track>>>>(emptyList()) }
-        val sort by App.songSort.collectAsState()
-        val reversed by App.songSortReversed.collectAsState()
+        val sort by App.settings.songSort.state.collectAsState()
+        val reversed by App.settings.songSortReversed.state.collectAsState()
         val sorted = remember(bySource, sort, reversed) {
             bySource.map { (name, list) -> name to sortSongs(list, sort, reversed) }
         }
@@ -103,11 +102,9 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
             bySource = read.first
             bytes = read.second
         }
-        val limit by App.settings.downloadLimit.collectAsState(
-            initial = AppSettings.DEFAULT_DOWNLOAD_LIMIT,
-        )
-        val paused by App.settings.downloadsPaused.collectAsState(initial = false)
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val limit by App.settings.downloadLimit.state.collectAsState()
+        val paused by App.settings.downloadsPaused.state.collectAsState()
+        val sources by App.settings.sources.state.collectAsState()
         // The running download names its server only when there are several.
         val severalServers = sources.count { it.supportsDownloads } > 1
         // Why nothing is arriving, read from the settings and the downloader: servers
@@ -266,7 +263,7 @@ class OfflineModeScreen(
 ) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
         val current = sources.firstOrNull { it.id == sourceId }?.offlineMode ?: OfflineMode.MANUAL
         ListScreen(onBack = { goBack() }, title = "Auto-Download") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
@@ -290,7 +287,7 @@ class OfflineModeScreen(
 class DataModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val current by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
+        val current by App.settings.dataMode.state.collectAsState()
         ListScreen(onBack = { goBack() }, title = "Data Mode") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
                 items(DataMode.entries.toList()) { mode ->
@@ -299,7 +296,7 @@ class DataModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                         subtitle = dataModeDetail(mode),
                         subtitleLines = MODE_DETAIL_LINES,
                         onClick = {
-                            App.scope.launch { App.settings.setDataMode(mode) }
+                            App.scope.launch { App.settings.dataMode.set(mode) }
                             goBack()
                         },
                         trailing = { if (mode == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
@@ -317,9 +314,7 @@ class DataModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
 class SizeLimitScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val current by App.settings.downloadLimit.collectAsState(
-            initial = AppSettings.DEFAULT_DOWNLOAD_LIMIT,
-        )
+        val current by App.settings.downloadLimit.state.collectAsState()
         val max = remember { App.downloads.maxSelectableBytes() }
         val free = remember { App.downloads.freeBytes() }
         val used = remember { App.downloads.usedBytesEverywhere() }
@@ -341,7 +336,7 @@ class SizeLimitScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                         title = formatBytes(bytes),
                         subtitle = if (bytes == max) "Maximum" else null,
                         onClick = {
-                            App.scope.launch { App.settings.setDownloadLimit(bytes) }
+                            App.scope.launch { App.settings.downloadLimit.set(bytes) }
                             goBack()
                         },
                         trailing = { if (bytes == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },

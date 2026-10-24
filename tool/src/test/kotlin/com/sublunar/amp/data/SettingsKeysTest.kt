@@ -16,7 +16,7 @@ import kotlinx.coroutines.runBlocking
 class SettingsKeysTest {
 
     private val store = MemoryDataStore()
-    private val settings = AppSettings(store)
+    private val settings = store.settings()
 
     @Test
     fun `the sources`() = runBlocking {
@@ -33,21 +33,21 @@ class SettingsKeysTest {
 
     @Test
     fun `the library lists`() = runBlocking {
-        settings.setAlbumSort(AlbumSort.YEAR)
-        settings.setSongSort(SongSort.ARTIST)
-        settings.setArtistSort(ArtistSort.MOST_PLAYED)
-        settings.setPlaylistSort(PlaylistSort.NAME)
-        settings.setAlbumSortReversed(true)
-        settings.setSongSortReversed(true)
-        settings.setArtistSortReversed(true)
-        settings.setPlaylistSortReversed(true)
-        settings.setLikedAlbumsOnly(true)
-        settings.setLikedSongsOnly(true)
-        settings.setLikedArtistsOnly(true)
-        settings.setAlbumsGenre("Jazz")
-        settings.setAlbumsComposer("Bach")
-        settings.setSongsGenre("Folk")
-        settings.setSongsComposer("Satie")
+        settings.albumSort.set(AlbumSort.YEAR)
+        settings.songSort.set(SongSort.ARTIST)
+        settings.artistSort.set(ArtistSort.MOST_PLAYED)
+        settings.playlistSort.set(PlaylistSort.NAME)
+        settings.albumSortReversed.set(true)
+        settings.songSortReversed.set(true)
+        settings.artistSortReversed.set(true)
+        settings.playlistSortReversed.set(true)
+        settings.likedAlbumsOnly.set(true)
+        settings.likedSongsOnly.set(true)
+        settings.likedArtistsOnly.set(true)
+        settings.albumsGenre.set("Jazz")
+        settings.albumsComposer.set("Bach")
+        settings.songsGenre.set("Folk")
+        settings.songsComposer.set("Satie")
         settings.bumpShuffleNonce()
         assertEquals(
             mapOf(
@@ -74,17 +74,17 @@ class SettingsKeysTest {
 
     @Test
     fun `display and playback`() = runBlocking {
-        settings.setInvertColors(true)
-        settings.setKaraokeLyrics(false)
-        settings.setReplayGain(false)
-        settings.setLayoutMode(LayoutMode.SIMPLIFIED)
-        settings.setLastSection(LastSection.NOW_PLAYING)
-        settings.setLastTab("SONGS")
-        settings.setAlbumGrid(true)
-        settings.setArtistAlbumGrid(true)
-        settings.setHideArtistImages(false)
-        settings.setHideDownloadIcons(true)
-        settings.setArtwork(ArtworkMode.NONE)
+        settings.invertColors.set(true)
+        settings.karaokeLyrics.set(false)
+        settings.replayGain.set(false)
+        settings.layoutMode.set(LayoutMode.SIMPLIFIED)
+        settings.lastSection.set(LastSection.NOW_PLAYING)
+        settings.lastTab.set("SONGS")
+        settings.albumGrid.set(true)
+        settings.artistAlbumGrid.set(true)
+        settings.hideArtistImages.set(false)
+        settings.hideDownloadIcons.set(true)
+        settings.artwork.set(ArtworkMode.NONE)
         assertEquals(
             mapOf(
                 "pref.invertColors" to true,
@@ -105,9 +105,9 @@ class SettingsKeysTest {
 
     @Test
     fun `network and downloads`() = runBlocking {
-        settings.setDataMode(DataMode.WIFI_ONLY)
-        settings.setDownloadLimit(5L shl 30)
-        settings.setDownloadsPaused(true)
+        settings.dataMode.set(DataMode.WIFI_ONLY)
+        settings.downloadLimit.set(5L shl 30)
+        settings.downloadsPaused.set(true)
         assertEquals(
             mapOf(
                 "pref.dataMode" to "WIFI_ONLY",

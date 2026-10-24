@@ -54,9 +54,9 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
 
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
-        val active by App.settings.activeSource.collectAsState(initial = null)
-        val activeLibrary by App.settings.libraryId.collectAsState(initial = null)
+        val sources by App.settings.sources.state.collectAsState()
+        val active by App.settings.activeSource.state.collectAsState()
+        val activeLibrary by App.settings.libraryId.state.collectAsState()
         val sync by App.library.syncState.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Sources") {
@@ -203,7 +203,7 @@ class LibraryVisibilityScreen(
 
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
 
         ListScreen(onBack = { leave() }, title = if (adding) "Choose Libraries" else "Shown in Amp") {
@@ -333,7 +333,7 @@ class SourceListScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
 
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Sources") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
@@ -362,7 +362,7 @@ class AddSourceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
 
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Add Source") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
@@ -422,7 +422,7 @@ class SourceDetailScreen(
 
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
         val sync by App.library.syncState.collectAsState()
 

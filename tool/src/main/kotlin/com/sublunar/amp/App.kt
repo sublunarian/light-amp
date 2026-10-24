@@ -13,7 +13,6 @@ import com.sublunar.amp.data.Connectivity
 import com.sublunar.amp.data.DataMode
 import com.sublunar.amp.data.DownloadStore
 import com.sublunar.amp.data.Downloader
-import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.LibraryRepository
 import com.sublunar.amp.data.LinkRules
 import com.sublunar.amp.data.MusicServer
@@ -80,7 +79,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -285,8 +283,8 @@ object App {
         synchronized(this) {
             coverSync?.cancel()
             coverSync = scope.launch {
-                // The stored setting, not [hideArtwork]: at launch that flow
-                // still holds its placeholder, and "off" has to mean not one.
+                // Read from the store, not the held state: "off" has to mean
+                // not one, even just after it was switched.
                 if (settings.artwork.first() == ArtworkMode.NONE) return@launch
                 val source = settings.activeSource.first() ?: return@launch
                 val client = clientFor(source) ?: return@launch
@@ -372,7 +370,7 @@ object App {
      * one state everything reads, so a change reaches all of it at once.
      */
     val rules: StateFlow<LinkRules> by lazy {
-        combine(Connectivity.network, dataMode, reachability.reachable) { net, mode, reachable ->
+        combine(Connectivity.network, settings.dataMode.state, reachability.reachable) { net, mode, reachable ->
             LinkRules(
                 connected = net.isConnected,
                 unmetered = net.isConnected && !net.isMetered,
@@ -409,11 +407,6 @@ object App {
 
     /** How long a new link settles before parked download servers are asked about it. */
     private const val PARKED_PROBE_SETTLE_MS = 2_000L
-
-    /** The mode as it stands, for gates that must answer synchronously. */
-    private val dataMode: StateFlow<DataMode> by lazy {
-        settings.dataMode.stateIn(scope, SharingStarted.Eagerly, DataMode.WIFI_ONLY)
-    }
 
     /**
      * Whether the server may be spoken to at all (sync, playlists, lyrics).
@@ -468,7 +461,7 @@ object App {
         return LinkRules(
             connected = net.isConnected,
             unmetered = net.isConnected && !net.isMetered,
-            mode = dataMode.value,
+            mode = settings.dataMode.value,
             serverReachable = reachability.reachable.value,
             wifi = net.isConnected && net.isWifi,
         )
@@ -502,7 +495,7 @@ object App {
      * and the report can arrive after the socket would.
      */
     private fun networkAllowed(): Boolean =
-        dataMode.value != DataMode.WIFI_ONLY || Connectivity.isUnmeteredNow()
+        settings.dataMode.value != DataMode.WIFI_ONLY || Connectivity.isUnmeteredNow()
 
     /**
      * Whether real bytes may move (downloads, cover art): on an unmetered link,
@@ -526,7 +519,7 @@ object App {
         LateUnbindGuard.install()
         if (!coreReady) {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-            settings = AppSettings(context.dataStore)
+            settings = AppSettings(context.dataStore, scope)
             lightContext = context
             Connectivity.bind(context, scope)
             // The wall goes up before anything exists to be built behind it:
@@ -554,8 +547,7 @@ object App {
                 artworkOff = { hideArtwork.value },
             ) { _source.value.id }
             // The source last in use, resolved first: the DAO has to exist before the repository.
-            val first = runBlocking { settings.activeSource.first() }
-                ?: AppSettings.placeholderSource()
+            val first = settings.activeSource.value ?: AppSettings.placeholderSource()
             _source.value = first
             _dao.value = databaseFor(first).libraryDao()
             downloads = DownloadStore(context.filesDir)
@@ -905,55 +897,22 @@ object App {
     data class SortedView<T>(val items: List<T> = emptyList(), val letters: List<Char> = emptyList())
 
     /**
-     * The sort settings, held as state rather than collected per screen: a
-     * collected setting draws its placeholder for a frame first, and the list
-     * re-sorts under you. The sorted views are built on these.
-     */
-    val songSort: StateFlow<SongSort> by lazy {
-        settings.songSort.stateIn(scope, SharingStarted.Eagerly, SongSort.TITLE)
-    }
-    val songSortReversed: StateFlow<Boolean> by lazy {
-        settings.songSortReversed.stateIn(scope, SharingStarted.Eagerly, false)
-    }
-    val albumSort: StateFlow<AlbumSort> by lazy {
-        settings.albumSort.stateIn(scope, SharingStarted.Eagerly, AlbumSort.TITLE)
-    }
-    val albumSortReversed: StateFlow<Boolean> by lazy {
-        settings.albumSortReversed.stateIn(scope, SharingStarted.Eagerly, false)
-    }
-    val artistSort: StateFlow<ArtistSort> by lazy {
-        settings.artistSort.stateIn(scope, SharingStarted.Eagerly, ArtistSort.NAME)
-    }
-    val artistSortReversed: StateFlow<Boolean> by lazy {
-        settings.artistSortReversed.stateIn(scope, SharingStarted.Eagerly, false)
-    }
-
-    /**
-     * Whether each tab is narrowed to what you have liked, one flag per tab.
-     * Held for the same reason as the sorts.
-     */
-    val likedAlbumsOnly: StateFlow<Boolean> by lazy {
-        settings.likedAlbumsOnly.stateIn(scope, SharingStarted.Eagerly, false)
-    }
-    val likedSongsOnly: StateFlow<Boolean> by lazy {
-        settings.likedSongsOnly.stateIn(scope, SharingStarted.Eagerly, false)
-    }
-    val likedArtistsOnly: StateFlow<Boolean> by lazy {
-        settings.likedArtistsOnly.stateIn(scope, SharingStarted.Eagerly, false)
-    }
-
-    /**
      * Which tag each list is narrowed to, as one value so the views below stay
      * inside `combine`'s five-flow form. Blank means no filter.
      */
     val songsTagFilter: StateFlow<TagFilter> by lazy {
-        combine(settings.songsGenre, settings.songsComposer) { g, c -> TagFilter(g, c) }
-            .stateIn(scope, SharingStarted.Eagerly, TagFilter())
+        held(settings.songsGenre.state, settings.songsComposer.state, ::TagFilter)
     }
     val albumsTagFilter: StateFlow<TagFilter> by lazy {
-        combine(settings.albumsGenre, settings.albumsComposer) { g, c -> TagFilter(g, c) }
-            .stateIn(scope, SharingStarted.Eagerly, TagFilter())
+        held(settings.albumsGenre.state, settings.albumsComposer.state, ::TagFilter)
     }
+
+    /**
+     * [a] and [b] combined by [f], held, starting from what they hold now: the
+     * settings' states start from what is stored, and so do these.
+     */
+    private fun <A, B, R> held(a: StateFlow<A>, b: StateFlow<B>, f: (A, B) -> R): StateFlow<R> =
+        combine(a, b, f).stateIn(scope, SharingStarted.Eagerly, f(a.value, b.value))
 
     /**
      * The albums a tag filter leaves standing, or null when nothing is filtered.
@@ -971,8 +930,13 @@ object App {
     }
 
     val sortedSongs: StateFlow<SortedView<Track>> by lazy {
-        combine(library.tracks, songSort, songSortReversed, likedSongsOnly, songsTagFilter) {
-                list, sort, rev, liked, tags ->
+        combine(
+            library.tracks,
+            settings.songSort.state,
+            settings.songSortReversed.state,
+            settings.likedSongsOnly.state,
+            songsTagFilter,
+        ) { list, sort, rev, liked, tags ->
             val narrowed = list.asSequence()
                 .filter { !liked || it.liked }
                 .filter { tags.admits(it) }
@@ -998,8 +962,9 @@ object App {
      * and a DataStore Flow per row would be a subscription and a read each.
      */
     val hideArtwork: StateFlow<Boolean> by lazy {
-        settings.artwork.map { it == ArtworkMode.NONE }
-            .stateIn(scope, SharingStarted.Eagerly, false)
+        val artwork = settings.artwork.state
+        artwork.map { it == ArtworkMode.NONE }
+            .stateIn(scope, SharingStarted.Eagerly, artwork.value == ArtworkMode.NONE)
     }
 
     /**
@@ -1007,22 +972,12 @@ object App {
      * artwork is off, since the grid is nothing but artwork.
      */
     val albumGrid: StateFlow<Boolean> by lazy {
-        combine(settings.albumGrid, hideArtwork) { grid, hidden -> grid && !hidden }
-            .stateIn(scope, SharingStarted.Eagerly, false)
+        held(settings.albumGrid.state, hideArtwork) { grid, hidden -> grid && !hidden }
     }
 
     /** The same, for an artist's own page — see [AppSettings.artistAlbumGrid]. */
     val artistAlbumGrid: StateFlow<Boolean> by lazy {
-        combine(settings.artistAlbumGrid, hideArtwork) { grid, hidden -> grid && !hidden }
-            .stateIn(scope, SharingStarted.Eagerly, false)
-    }
-
-    /**
-     * Which shape the bottom bar takes — see [AppSettings.layoutMode]. Held,
-     * since the bar is on every screen and a placeholder frame would show.
-     */
-    val layoutMode: StateFlow<LayoutMode> by lazy {
-        settings.layoutMode.stateIn(scope, SharingStarted.Eagerly, LayoutMode.STANDARD)
+        held(settings.artistAlbumGrid.state, hideArtwork) { grid, hidden -> grid && !hidden }
     }
 
     /**
@@ -1031,25 +986,19 @@ object App {
      * wholesale, so the one place that reads it needs only the one answer.
      */
     val hideArtistImages: StateFlow<Boolean> by lazy {
-        // Initial matches the stored default, so the first frame doesn't flash
-        // a row of photos that are about to be hidden.
-        combine(settings.hideArtistImages, hideArtwork) { off, all -> off || all }
-            .stateIn(scope, SharingStarted.Eagerly, true)
-    }
-
-    /**
-     * Rows against the screen's edge, download marks gone — see
-     * [AppSettings.hideDownloadIcons]. Held: it decides a measurement.
-     */
-    val hideDownloadIcons: StateFlow<Boolean> by lazy {
-        settings.hideDownloadIcons.stateIn(scope, SharingStarted.Eagerly, false)
+        held(settings.hideArtistImages.state, hideArtwork) { off, all -> off || all }
     }
 
     val sortedAlbums: StateFlow<SortedView<Album>> by lazy {
         // The three order settings fold into one flow first: combine takes five
         // flows at most, and the reshuffle nonce made six.
-        val order = combine(albumSort, albumSortReversed, settings.shuffleNonce, ::Triple)
-        combine(library.albums, order, likedAlbumsOnly, albumsMatchingTags) {
+        val order = combine(
+            settings.albumSort.state,
+            settings.albumSortReversed.state,
+            settings.shuffleNonce.state,
+            ::Triple,
+        )
+        combine(library.albums, order, settings.likedAlbumsOnly.state, albumsMatchingTags) {
                 list, (sort, rev, nonce), liked, tagged ->
             val narrowed = list.filter { (!liked || it.liked) && (tagged == null || it.id in tagged) }
             val sorted = sortAlbums(narrowed, sort, rev, nonce)
@@ -1067,7 +1016,12 @@ object App {
     }
 
     val sortedArtists: StateFlow<SortedView<Artist>> by lazy {
-        combine(library.artists, artistSort, artistSortReversed, likedArtistsOnly) { list, sort, rev, liked ->
+        combine(
+            library.artists,
+            settings.artistSort.state,
+            settings.artistSortReversed.state,
+            settings.likedArtistsOnly.state,
+        ) { list, sort, rev, liked ->
             val sorted = sortArtists(list.filter { !liked || it.liked }, sort, rev)
             SortedView(
                 sorted,
@@ -1077,7 +1031,7 @@ object App {
     }
 
     val sortedPlaylists: StateFlow<SortedView<Playlist>> by lazy {
-        combine(library.playlists, settings.playlistSort, settings.playlistSortReversed) { list, sort, rev ->
+        combine(library.playlists, settings.playlistSort.state, settings.playlistSortReversed.state) { list, sort, rev ->
             val sorted = sortPlaylists(list, sort, rev)
             SortedView(
                 sorted,

@@ -8,11 +8,16 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -21,7 +26,7 @@ import kotlinx.serialization.json.Json
  *
  * [SMALL] is the default: the cover in its own panel keeps the controls on black
  * where they need no help to be read. A stored value from an older build that
- * named a mode this no longer has falls back to it — see enumFlow.
+ * named a mode this no longer has falls back to it — see AppSettings.pref.
  */
 enum class ArtworkMode {
     /** In the panel between the header and the controls, as a square. */
@@ -96,12 +101,42 @@ enum class LayoutMode {
 }
 
 /**
- * All persisted state — the sources, the preferences and what is restored at
- * launch — in the tool's private Preferences DataStore, exposed as Flows.
+ * One stored value, two ways. As a Flow it is read from the DataStore, so code
+ * that has just written sees its write. As [state] it is held for the life of
+ * the process, starting from what was stored at launch, for screens: a Flow
+ * collected in a composition draws a placeholder for its first frame.
  */
-class AppSettings(private val dataStore: DataStore<Preferences>) {
+open class Stored<T> internal constructor(flow: Flow<T>, val state: StateFlow<T>) : Flow<T> by flow {
+    val value: T get() = state.value
+}
+
+/** A preference: a [Stored] value under one key, and the way to change it. */
+class Pref<T> internal constructor(
+    internal val key: Preferences.Key<*>,
+    flow: Flow<T>,
+    state: StateFlow<T>,
+    private val write: suspend (T) -> Unit,
+) : Stored<T>(flow, state) {
+    suspend fun set(value: T) = write(value)
+}
+
+/**
+ * All persisted state — the sources, the preferences and what is restored at
+ * launch — in the tool's private Preferences DataStore.
+ *
+ * Every key string here is stored on phones: never change one. SettingsKeysTest
+ * pins them, with the type each is stored as.
+ */
+class AppSettings(
+    private val dataStore: DataStore<Preferences>,
+    /** Where each value's [Stored.state] is held: App's, for the life of the process. */
+    private val scope: CoroutineScope,
+) {
 
     private val sourcesJson = Json { ignoreUnknownKeys = true }
+
+    /** The store as it was when this was built: where every [Stored.state] starts. */
+    private val loaded: Preferences = runBlocking { dataStore.data.first() }
 
     // --- Sources -------------------------------------------------------------
 
@@ -113,17 +148,26 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * one record at a time — see [StoredSources]. One this build can't read is
      * left out, and the rest still show.
      */
-    val sources: Flow<List<MusicSource>> = dataStore.data.map { it[SOURCES] }.distinctUntilChanged()
-        .map { stored -> readSources(stored).readable }
-        .distinctUntilChanged()
+    val sources: Stored<List<MusicSource>> = held(
+        dataStore.data.map { it[SOURCES] }.distinctUntilChanged()
+            .map { stored -> readSources(stored).readable }
+            .distinctUntilChanged(),
+        readSources(loaded[SOURCES]).readable,
+    )
 
     /** The source the library is currently showing; the first one until chosen. */
-    val activeSource: Flow<MusicSource?> = combine(
-        sources,
-        dataStore.data.map { it[ACTIVE_SOURCE] }.distinctUntilChanged(),
-    ) { list, id ->
+    val activeSource: Stored<MusicSource?> = held(
+        combine(sources, dataStore.data.map { it[ACTIVE_SOURCE] }.distinctUntilChanged(), ::activeOf)
+            .distinctUntilChanged(),
+        activeOf(sources.value, loaded[ACTIVE_SOURCE]),
+    )
+
+    private fun activeOf(list: List<MusicSource>, id: String?): MusicSource? =
         list.firstOrNull { it.id == id } ?: list.firstOrNull()
-    }.distinctUntilChanged()
+
+    /** Selected library (music folder) id; null means all libraries. */
+    val libraryId: Stored<String?> =
+        held(activeSource.map { it?.libraryId }.distinctUntilChanged(), activeSource.value?.libraryId)
 
     /** Add a source, or update the one it already is — see [mergeSource]. */
     suspend fun saveSource(source: MusicSource): String {
@@ -165,9 +209,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     private suspend fun editSource(sourceId: String, block: (MusicSource) -> MusicSource) {
         editSources { list -> list.map { if (it.id == sourceId) block(it) else it } }
     }
-
-    /** Selected library (music folder) id; null means all libraries. */
-    val libraryId: Flow<String?> = activeSource.map { it?.libraryId }.distinctUntilChanged()
 
     /**
      * Which of a source's libraries is browsed — null for All Libraries —
@@ -229,54 +270,35 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
 
     // --- Library lists -------------------------------------------------------
 
-    val albumSort: Flow<AlbumSort> = enumFlow(ALBUM_SORT, AlbumSort.TITLE)
-    val songSort: Flow<SongSort> = enumFlow(SONG_SORT, SongSort.TITLE)
-    val artistSort: Flow<ArtistSort> = enumFlow(ARTIST_SORT, ArtistSort.NAME)
-    val playlistSort: Flow<PlaylistSort> = enumFlow(PLAYLIST_SORT, PlaylistSort.RECENTLY_UPDATED)
-
-    suspend fun setAlbumSort(value: AlbumSort) = putString(ALBUM_SORT, value.name)
-    suspend fun setSongSort(value: SongSort) = putString(SONG_SORT, value.name)
-    suspend fun setArtistSort(value: ArtistSort) = putString(ARTIST_SORT, value.name)
-    suspend fun setPlaylistSort(value: PlaylistSort) = putString(PLAYLIST_SORT, value.name)
+    val albumSort: Pref<AlbumSort> = enum("pref.albumSort", AlbumSort.TITLE)
+    val songSort: Pref<SongSort> = enum("pref.songSort", SongSort.TITLE)
+    val artistSort: Pref<ArtistSort> = enum("pref.artistSort", ArtistSort.NAME)
+    val playlistSort: Pref<PlaylistSort> = enum("pref.playlistSort", PlaylistSort.RECENTLY_UPDATED)
 
     // Inverts each tab's sort; re-tapping the selected option flips it.
-    val albumSortReversed: Flow<Boolean> = boolFlow(ALBUM_SORT_REV, false)
-    val songSortReversed: Flow<Boolean> = boolFlow(SONG_SORT_REV, false)
-    val artistSortReversed: Flow<Boolean> = boolFlow(ARTIST_SORT_REV, false)
-    val playlistSortReversed: Flow<Boolean> = boolFlow(PLAYLIST_SORT_REV, false)
-
-    suspend fun setAlbumSortReversed(value: Boolean) = putBool(ALBUM_SORT_REV, value)
-    suspend fun setSongSortReversed(value: Boolean) = putBool(SONG_SORT_REV, value)
-    suspend fun setArtistSortReversed(value: Boolean) = putBool(ARTIST_SORT_REV, value)
-    suspend fun setPlaylistSortReversed(value: Boolean) = putBool(PLAYLIST_SORT_REV, value)
+    val albumSortReversed: Pref<Boolean> = bool("pref.albumSortReversed", false)
+    val songSortReversed: Pref<Boolean> = bool("pref.songSortReversed", false)
+    val artistSortReversed: Pref<Boolean> = bool("pref.artistSortReversed", false)
+    val playlistSortReversed: Pref<Boolean> = bool("pref.playlistSortReversed", false)
 
     /**
      * Whether a tab is showing only what you have liked. One flag per tab: the
      * tabs are different lists, visited for different reasons. Playlists have
      * none — nothing likes a playlist.
      */
-    val likedAlbumsOnly: Flow<Boolean> = boolFlow(LIKED_ALBUMS_ONLY, false)
-    val likedSongsOnly: Flow<Boolean> = boolFlow(LIKED_SONGS_ONLY, false)
-    val likedArtistsOnly: Flow<Boolean> = boolFlow(LIKED_ARTISTS_ONLY, false)
-
-    suspend fun setLikedAlbumsOnly(value: Boolean) = putBool(LIKED_ALBUMS_ONLY, value)
-    suspend fun setLikedSongsOnly(value: Boolean) = putBool(LIKED_SONGS_ONLY, value)
-    suspend fun setLikedArtistsOnly(value: Boolean) = putBool(LIKED_ARTISTS_ONLY, value)
+    val likedAlbumsOnly: Pref<Boolean> = bool("pref.likedAlbumsOnly", false)
+    val likedSongsOnly: Pref<Boolean> = bool("pref.likedSongsOnly", false)
+    val likedArtistsOnly: Pref<Boolean> = bool("pref.likedArtistsOnly", false)
 
     /**
      * The tag each list is narrowed to, or blank for all of it. Per tab, as the
      * liked switch is: one shared setting would make each page silently change
      * the other.
      */
-    val albumsGenre: Flow<String> = stringFlow(ALBUMS_GENRE)
-    val albumsComposer: Flow<String> = stringFlow(ALBUMS_COMPOSER)
-    val songsGenre: Flow<String> = stringFlow(SONGS_GENRE)
-    val songsComposer: Flow<String> = stringFlow(SONGS_COMPOSER)
-
-    suspend fun setAlbumsGenre(value: String) = putString(ALBUMS_GENRE, value)
-    suspend fun setAlbumsComposer(value: String) = putString(ALBUMS_COMPOSER, value)
-    suspend fun setSongsGenre(value: String) = putString(SONGS_GENRE, value)
-    suspend fun setSongsComposer(value: String) = putString(SONGS_COMPOSER, value)
+    val albumsGenre: Pref<String> = string("pref.albumsGenre")
+    val albumsComposer: Pref<String> = string("pref.albumsComposer")
+    val songsGenre: Pref<String> = string("pref.songsGenre")
+    val songsComposer: Pref<String> = string("pref.songsComposer")
 
     /**
      * Drop every narrowing of the library lists — the liked switches and the
@@ -285,15 +307,11 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * to the next empties its lists with nothing on screen to say why.
      */
     suspend fun clearLibraryFilters() {
-        dataStore.edit { p ->
-            p.remove(LIKED_ALBUMS_ONLY)
-            p.remove(LIKED_SONGS_ONLY)
-            p.remove(LIKED_ARTISTS_ONLY)
-            p.remove(ALBUMS_GENRE)
-            p.remove(ALBUMS_COMPOSER)
-            p.remove(SONGS_GENRE)
-            p.remove(SONGS_COMPOSER)
-        }
+        val filters = listOf(
+            likedAlbumsOnly, likedSongsOnly, likedArtistsOnly,
+            albumsGenre, albumsComposer, songsGenre, songsComposer,
+        )
+        dataStore.edit { p -> filters.forEach { p.remove(it.key) } }
     }
 
     /**
@@ -301,8 +319,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * whose shuffle is otherwise seeded by the library alone and would hand the
      * same order back forever.
      */
-    val shuffleNonce: Flow<Int> =
-        dataStore.data.map { it[SHUFFLE_NONCE] ?: 0 }.distinctUntilChanged()
+    val shuffleNonce: Stored<Int> = stored { it[SHUFFLE_NONCE] ?: 0 }
 
     suspend fun bumpShuffleNonce() {
         dataStore.edit { it[SHUFFLE_NONCE] = (it[SHUFFLE_NONCE] ?: 0) + 1 }
@@ -310,11 +327,9 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
 
     // --- Display and playback ------------------------------------------------
 
-    val invertColors: Flow<Boolean> = boolFlow(INVERT_COLORS, false)
-    suspend fun setInvertColors(value: Boolean) = putBool(INVERT_COLORS, value)
+    val invertColors: Pref<Boolean> = bool("pref.invertColors", false)
 
-    val karaokeLyrics: Flow<Boolean> = boolFlow(KARAOKE_LYRICS, true)
-    suspend fun setKaraokeLyrics(value: Boolean) = putBool(KARAOKE_LYRICS, value)
+    val karaokeLyrics: Pref<Boolean> = bool("pref.karaokeLyrics", true)
 
     /**
      * Even out the volume between tracks, from the loudness the server
@@ -322,20 +337,16 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * than the record before it. Attenuate-only, so it never adds clipping;
      * a library with no measurements plays exactly as it does today.
      */
-    val replayGain: Flow<Boolean> = boolFlow(REPLAY_GAIN, true)
-    suspend fun setReplayGain(value: Boolean) = putBool(REPLAY_GAIN, value)
+    val replayGain: Pref<Boolean> = bool("pref.replayGain", true)
 
     /** Whether to use the simplified or standard layout mode. */
-    val layoutMode: Flow<LayoutMode> = enumFlow(LAYOUT_MODE, LayoutMode.STANDARD)
-    suspend fun setLayoutMode(value: LayoutMode) = putString(LAYOUT_MODE, value.name)
+    val layoutMode: Pref<LayoutMode> = enum("pref.layoutMode", LayoutMode.STANDARD)
 
     /** Where the app was when it was last closed — see [LastSection]. */
-    val lastSection: Flow<LastSection> = enumFlow(LAST_SECTION, LastSection.LIBRARY)
-    suspend fun setLastSection(value: LastSection) = putString(LAST_SECTION, value.name)
+    val lastSection: Pref<LastSection> = enum("pref.lastSection", LastSection.LIBRARY)
 
     /** The library tab last chosen, by name, so a cold start opens on it; empty before any. */
-    val lastTab: Flow<String> = stringFlow(LAST_TAB)
-    suspend fun setLastTab(name: String) = putString(LAST_TAB, name)
+    val lastTab: Pref<String> = string("pref.lastTab")
 
     /**
      * Show album lists as a wall of covers instead of a column of titles.
@@ -344,16 +355,14 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * it is a property of that list, not of the app. Ignored when artwork is
      * off: a grid of empty tiles is worse than the list it replaced.
      */
-    val albumGrid: Flow<Boolean> = boolFlow(ALBUM_GRID, false)
-    suspend fun setAlbumGrid(value: Boolean) = putBool(ALBUM_GRID, value)
+    val albumGrid: Pref<Boolean> = bool("pref.albumGrid", false)
 
     /**
      * The same choice, kept separately for an artist's own page: a dozen covers
      * read well as a grid where eight thousand don't, and the reverse is just as
      * reasonable.
      */
-    val artistAlbumGrid: Flow<Boolean> = boolFlow(ARTIST_ALBUM_GRID, false)
-    suspend fun setArtistAlbumGrid(value: Boolean) = putBool(ARTIST_ALBUM_GRID, value)
+    val artistAlbumGrid: Pref<Boolean> = bool("pref.artistAlbumGrid", false)
 
     /**
      * Drop the artists' own pictures, keeping every other kind of artwork.
@@ -365,19 +374,16 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * back to the tighter single-line pitch, exactly as they do with artwork
      * switched off altogether. Hidden by default.
      */
-    val hideArtistImages: Flow<Boolean> = boolFlow(HIDE_ARTIST_IMAGES, true)
-    suspend fun setHideArtistImages(value: Boolean) = putBool(HIDE_ARTIST_IMAGES, value)
+    val hideArtistImages: Pref<Boolean> = bool("pref.hideArtistImages", true)
 
     /**
      * Stop marking downloaded rows. The leading slot the mark sat in stays,
      * because it is also what keeps every list's titles on one axis.
      */
-    val hideDownloadIcons: Flow<Boolean> = boolFlow(HIDE_DOWNLOAD_ICONS, false)
-    suspend fun setHideDownloadIcons(value: Boolean) = putBool(HIDE_DOWNLOAD_ICONS, value)
+    val hideDownloadIcons: Pref<Boolean> = bool("pref.hideDownloadIcons", false)
 
     /** How much of the player the cover gets, if any. */
-    val artwork: Flow<ArtworkMode> = enumFlow(ARTWORK, ArtworkMode.SMALL)
-    suspend fun setArtwork(value: ArtworkMode) = putString(ARTWORK, value.name)
+    val artwork: Pref<ArtworkMode> = enum("pref.artworkMode", ArtworkMode.SMALL)
 
     // --- Network and downloads -----------------------------------------------
 
@@ -386,25 +392,17 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * Only as the default meant a first sign-in over cellular synced nothing and
      * the app looked broken, with the reason buried on the settings page.
      */
-    val dataMode: Flow<DataMode> = enumFlow(DATA_MODE, DataMode.LOW_DATA)
-    suspend fun setDataMode(value: DataMode) = putString(DATA_MODE, value.name)
+    val dataMode: Pref<DataMode> = enum("pref.dataMode", DataMode.LOW_DATA)
 
     /**
      * How much of the phone the downloads may take, across the whole tool. One
      * budget, not one per source: three sources set to "20GB" would otherwise
      * take sixty.
      */
-    val downloadLimit: Flow<Long> =
-        dataStore.data.map { it[DOWNLOAD_LIMIT] ?: DEFAULT_DOWNLOAD_LIMIT }
-            .distinctUntilChanged()
-
-    suspend fun setDownloadLimit(bytes: Long) {
-        dataStore.edit { it[DOWNLOAD_LIMIT] = bytes }
-    }
+    val downloadLimit: Pref<Long> = long("pref.downloadLimitBytes", DEFAULT_DOWNLOAD_LIMIT)
 
     /** The user's own hold on downloading, kept across launches. */
-    val downloadsPaused: Flow<Boolean> = boolFlow(DOWNLOADS_PAUSED, false)
-    suspend fun setDownloadsPaused(value: Boolean) = putBool(DOWNLOADS_PAUSED, value)
+    val downloadsPaused: Pref<Boolean> = bool("pref.downloadsPaused", false)
 
     // --- Saved state ---------------------------------------------------------
 
@@ -418,15 +416,24 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * every track change.
      */
     val savedQueueIds: Flow<List<String>> =
-        dataStore.data.map { p ->
-            p[SAVED_QUEUE]?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
-        }.distinctUntilChanged()
+        dataStore.data.map { p -> savedIds(p) }.distinctUntilChanged()
 
     val savedQueueIndex: Flow<Int> =
         dataStore.data.map { it[SAVED_INDEX] ?: 0 }.distinctUntilChanged()
 
     val savedPositionMs: Flow<Long> =
         dataStore.data.map { it[SAVED_POSITION] ?: 0L }.distinctUntilChanged()
+
+    /** What [saveQueue] last wrote, in one read; null when it holds no tracks. */
+    suspend fun savedQueue(): SavedQueue? {
+        val p = dataStore.data.first()
+        val ids = savedIds(p)
+        if (ids.isEmpty()) return null
+        return SavedQueue(ids, ids.getOrNull(p[SAVED_INDEX] ?: 0), p[SAVED_POSITION] ?: 0L)
+    }
+
+    private fun savedIds(p: Preferences): List<String> =
+        p[SAVED_QUEUE]?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
 
     suspend fun saveQueue(ids: List<String>, index: Int, positionMs: Long) {
         dataStore.edit { p ->
@@ -483,61 +490,54 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
 
     // --- helpers -------------------------------------------------------------
 
-    private fun stringFlow(key: Preferences.Key<String>): Flow<String> =
-        dataStore.data.map { it[key].orEmpty() }.distinctUntilChanged()
+    private fun <T> held(flow: Flow<T>, initial: T): Stored<T> =
+        Stored(flow, flow.stateIn(scope, SharingStarted.Eagerly, initial))
 
-    private fun boolFlow(key: Preferences.Key<Boolean>, default: Boolean): Flow<Boolean> =
-        dataStore.data.map { it[key] ?: default }.distinctUntilChanged()
+    private fun <T> stored(read: (Preferences) -> T): Stored<T> =
+        held(dataStore.data.map(read).distinctUntilChanged(), read(loaded))
 
-    private inline fun <reified E : Enum<E>> enumFlow(
-        key: Preferences.Key<String>,
-        default: E,
-    ): Flow<E> = dataStore.data.map { prefs ->
-        prefs[key]?.let { name -> runCatching { enumValueOf<E>(name) }.getOrNull() } ?: default
-    }.distinctUntilChanged()
+    /** A preference under [key]: [default] when unset or unreadable, as a stored value from an older build can be. */
+    private fun <S, T> pref(key: Preferences.Key<S>, default: T, decode: (S) -> T?, encode: (T) -> S): Pref<T> {
+        val read = { p: Preferences -> p[key]?.let(decode) ?: default }
+        val flow = dataStore.data.map(read).distinctUntilChanged()
+        return Pref(key, flow, flow.stateIn(scope, SharingStarted.Eagerly, read(loaded))) { value ->
+            dataStore.edit { it[key] = encode(value) }
+        }
+    }
+
+    private fun bool(name: String, default: Boolean): Pref<Boolean> =
+        pref(booleanPreferencesKey(name), default, { it }, { it })
+
+    private fun long(name: String, default: Long): Pref<Long> =
+        pref(longPreferencesKey(name), default, { it }, { it })
+
+    /** Blank when unset. */
+    private fun string(name: String): Pref<String> =
+        pref(stringPreferencesKey(name), "", { it }, { it })
+
+    /** Stored by name. */
+    private inline fun <reified E : Enum<E>> enum(name: String, default: E): Pref<E> =
+        pref(stringPreferencesKey(name), default, { runCatching { enumValueOf<E>(it) }.getOrNull() }, { it.name })
 
     private suspend fun putString(key: Preferences.Key<String>, value: String) {
         dataStore.edit { it[key] = value }
     }
 
-    private suspend fun putBool(key: Preferences.Key<Boolean>, value: Boolean) {
-        dataStore.edit { it[key] = value }
-    }
-
-    // Every key string below is stored on phones: never change one.
     companion object {
-        private val ALBUM_SORT = stringPreferencesKey("pref.albumSort")
-        private val SONG_SORT = stringPreferencesKey("pref.songSort")
-        private val ARTIST_SORT = stringPreferencesKey("pref.artistSort")
-        private val PLAYLIST_SORT = stringPreferencesKey("pref.playlistSort")
-        private val ALBUMS_GENRE = stringPreferencesKey("pref.albumsGenre")
-        private val ALBUMS_COMPOSER = stringPreferencesKey("pref.albumsComposer")
-        private val SONGS_GENRE = stringPreferencesKey("pref.songsGenre")
-        private val SONGS_COMPOSER = stringPreferencesKey("pref.songsComposer")
-
-        private val LIKED_ALBUMS_ONLY = booleanPreferencesKey("pref.likedAlbumsOnly")
-        private val LIKED_SONGS_ONLY = booleanPreferencesKey("pref.likedSongsOnly")
-        private val LIKED_ARTISTS_ONLY = booleanPreferencesKey("pref.likedArtistsOnly")
-
-        private val ALBUM_SORT_REV = booleanPreferencesKey("pref.albumSortReversed")
-        private val SONG_SORT_REV = booleanPreferencesKey("pref.songSortReversed")
-        private val ARTIST_SORT_REV = booleanPreferencesKey("pref.artistSortReversed")
-        private val PLAYLIST_SORT_REV = booleanPreferencesKey("pref.playlistSortReversed")
-        private val SHUFFLE_NONCE = intPreferencesKey("pref.shuffleNonce")
-
-        private val INVERT_COLORS = booleanPreferencesKey("pref.invertColors")
-        private val KARAOKE_LYRICS = booleanPreferencesKey("pref.karaokeLyrics")
-        private val REPLAY_GAIN = booleanPreferencesKey("pref.replayGain")
-        private val ALBUM_GRID = booleanPreferencesKey("pref.albumGrid")
-        private val ARTIST_ALBUM_GRID = booleanPreferencesKey("pref.artistAlbumGrid")
-        private val HIDE_ARTIST_IMAGES = booleanPreferencesKey("pref.hideArtistImages")
-        private val HIDE_DOWNLOAD_ICONS = booleanPreferencesKey("pref.hideDownloadIcons")
-        private val ARTWORK = stringPreferencesKey("pref.artworkMode")
-        private val LAYOUT_MODE = stringPreferencesKey("pref.layoutMode")
-        private val LAST_SECTION = stringPreferencesKey("pref.lastSection")
-        private val LAST_TAB = stringPreferencesKey("pref.lastTab")
         private val SOURCES = stringPreferencesKey("pref.sources")
         private val ACTIVE_SOURCE = stringPreferencesKey("pref.activeSource")
+        private val SHUFFLE_NONCE = intPreferencesKey("pref.shuffleNonce")
+        private val CACHED_PLAYLISTS = stringPreferencesKey("state.playlists")
+        private val PENDING_ACTIONS = stringPreferencesKey("state.pendingActions")
+        private val SAVED_QUEUE = stringPreferencesKey("state.queueIds")
+        private val SAVED_INDEX = intPreferencesKey("state.queueIndex")
+        private val SAVED_POSITION = longPreferencesKey("state.positionMs")
+
+        /** Plenty for an album or a long playlist, short of a whole library. */
+        private const val MAX_SAVED_QUEUE = 1000
+
+        /** 2 GB — a few hundred albums as MP3, and well inside any device. */
+        const val DEFAULT_DOWNLOAD_LIMIT = 2L * 1024 * 1024 * 1024
 
         /**
          * The id the one server from before sources existed was given. Still
@@ -551,22 +551,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
          * boot has read the saved one, and at boot when nothing is saved yet.
          */
         fun placeholderSource(): MusicSource = MusicSource(LEGACY_SOURCE_ID, SourceKind.SUBSONIC, "Server")
-
-        private val DOWNLOADS_PAUSED = booleanPreferencesKey("pref.downloadsPaused")
-        private val CACHED_PLAYLISTS = stringPreferencesKey("state.playlists")
-        private val PENDING_ACTIONS = stringPreferencesKey("state.pendingActions")
-        private val SAVED_QUEUE = stringPreferencesKey("state.queueIds")
-        private val SAVED_INDEX = intPreferencesKey("state.queueIndex")
-        private val SAVED_POSITION = longPreferencesKey("state.positionMs")
-
-        /** Plenty for an album or a long playlist, short of a whole library. */
-        private const val MAX_SAVED_QUEUE = 1000
-
-        private val DATA_MODE = stringPreferencesKey("pref.dataMode")
-        private val DOWNLOAD_LIMIT = longPreferencesKey("pref.downloadLimitBytes")
-
-        /** 2 GB — a few hundred albums as MP3, and well inside any device. */
-        const val DEFAULT_DOWNLOAD_LIMIT = 2L * 1024 * 1024 * 1024
     }
 }
 

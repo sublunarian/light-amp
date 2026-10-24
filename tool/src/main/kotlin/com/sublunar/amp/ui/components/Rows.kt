@@ -153,7 +153,7 @@ fun TrackRow(
 @Composable
 private fun DownloadMark(downloaded: Boolean) {
     // Read before branching: behind an `if`, collectAsState stops updating.
-    val marks = !App.hideDownloadIcons.collectAsState().value
+    val marks = !App.settings.hideDownloadIcons.state.collectAsState().value
     Box(modifier = Modifier.width(px(ROW_LEAD_PX))) {
         if (downloaded && marks) AppIcon(AppIcons.Downloaded, size = px(ROW_MARK_PX))
     }

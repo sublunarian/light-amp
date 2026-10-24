@@ -12,9 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
-import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.ArtworkMode
-import com.sublunar.amp.data.DataMode
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.StreamFormat
@@ -73,11 +71,9 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
 
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
-        val dataMode by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
-        val downloadLimit by App.settings.downloadLimit.collectAsState(
-            initial = AppSettings.DEFAULT_DOWNLOAD_LIMIT,
-        )
+        val sources by App.settings.sources.state.collectAsState()
+        val dataMode by App.settings.dataMode.state.collectAsState()
+        val downloadLimit by App.settings.downloadLimit.state.collectAsState()
         // Off the disk, once per visit: what the phone actually holds.
         val used = remember { App.downloads.usedBytesEverywhere() }
         val sourceNames = sources.joinToString(", ") { it.name }
@@ -137,7 +133,7 @@ class PlaybackScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
 
     @Composable
     override fun Content() {
-        val replayGain by App.settings.replayGain.collectAsState(initial = true)
+        val replayGain by App.settings.replayGain.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Playback") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
@@ -146,7 +142,7 @@ class PlaybackScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
                     // track down, so it cannot clip. A library with no
                     // measurements plays untouched.
                     ToggleRow("Replay Gain", replayGain) {
-                        App.scope.launch { App.settings.setReplayGain(!replayGain) }
+                        App.scope.launch { App.settings.replayGain.set(!replayGain) }
                     }
                 }
             }
@@ -163,18 +159,18 @@ class AppearanceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
 
     @Composable
     override fun Content() {
-        val invert by App.settings.invertColors.collectAsState(initial = false)
-        val karaoke by App.settings.karaokeLyrics.collectAsState(initial = true)
-        val hideArtistImages by App.settings.hideArtistImages.collectAsState(initial = true)
-        val hideDownloadIcons by App.hideDownloadIcons.collectAsState()
-        val artwork by App.settings.artwork.collectAsState(initial = ArtworkMode.SMALL)
-        val layoutMode by App.settings.layoutMode.collectAsState(initial = LayoutMode.STANDARD)
+        val invert by App.settings.invertColors.state.collectAsState()
+        val karaoke by App.settings.karaokeLyrics.state.collectAsState()
+        val hideArtistImages by App.settings.hideArtistImages.state.collectAsState()
+        val hideDownloadIcons by App.settings.hideDownloadIcons.state.collectAsState()
+        val artwork by App.settings.artwork.state.collectAsState()
+        val layoutMode by App.settings.layoutMode.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Appearance") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
                 item {
                     ToggleRow("Invert Colors", invert) {
-                        App.scope.launch { App.settings.setInvertColors(!invert) }
+                        App.scope.launch { App.settings.invertColors.set(!invert) }
                     }
                 }
                 item {
@@ -183,7 +179,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                     // on does, like its neighbours.
                     ToggleRow("Hide Artwork", artwork == ArtworkMode.NONE) {
                         App.scope.launch {
-                            App.settings.setArtwork(
+                            App.settings.artwork.set(
                                 if (artwork == ArtworkMode.NONE) {
                                     ArtworkMode.SMALL
                                 } else {
@@ -198,7 +194,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                     item {
                         ToggleRow("Hide Artist Photos", hideArtistImages) {
                             App.scope.launch {
-                                App.settings.setHideArtistImages(!hideArtistImages)
+                                App.settings.hideArtistImages.set(!hideArtistImages)
                             }
                         }
                     }
@@ -208,7 +204,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                     // AppSettings.hideDownloadIcons.
                     ToggleRow("Hide Download Icons", hideDownloadIcons) {
                         App.scope.launch {
-                            App.settings.setHideDownloadIcons(!hideDownloadIcons)
+                            App.settings.hideDownloadIcons.set(!hideDownloadIcons)
                         }
                     }
                 }
@@ -218,7 +214,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                     val simplified = layoutMode == LayoutMode.SIMPLIFIED
                     ToggleRow("Simplified Library View", simplified) {
                         App.scope.launch {
-                            App.settings.setLayoutMode(
+                            App.settings.layoutMode.set(
                                 if (simplified) LayoutMode.STANDARD else LayoutMode.SIMPLIFIED,
                             )
                         }
@@ -226,7 +222,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
                 }
                 item {
                     ToggleRow("Karaoke Lyrics", karaoke) {
-                        App.scope.launch { App.settings.setKaraokeLyrics(!karaoke) }
+                        App.scope.launch { App.settings.karaokeLyrics.set(!karaoke) }
                     }
                 }
             }
@@ -250,8 +246,8 @@ class DataScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) 
 
     @Composable
     override fun Content() {
-        val dataMode by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val dataMode by App.settings.dataMode.state.collectAsState()
+        val sources by App.settings.sources.state.collectAsState()
         // The phone's own music never crosses the network.
         val servers = sources.filter { it.hasServer }
 
@@ -320,11 +316,9 @@ class OfflineScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
 
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
         val servers = sources.filter { it.supportsDownloads }
-        val downloadLimit by App.settings.downloadLimit.collectAsState(
-            initial = AppSettings.DEFAULT_DOWNLOAD_LIMIT,
-        )
+        val downloadLimit by App.settings.downloadLimit.state.collectAsState()
         // Again each time the page comes back to the top: the pages this one
         // leads to are the ones that move the number.
         LaunchedEffect(Unit) { used = App.downloads.usedBytesEverywhere() }
@@ -430,7 +424,7 @@ class StreamFormatScreen(
 ) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
         val current = source?.wifiFormat ?: StreamFormat.DEFAULT
         ListScreen(onBack = { goBack() }, title = "On Wi-Fi") {
@@ -459,7 +453,7 @@ class CellularFormatScreen(
 ) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
         val current = source?.cellularFormat ?: StreamFormat.DEFAULT
         ListScreen(onBack = { goBack() }, title = "On cellular") {
@@ -486,7 +480,7 @@ class SourceDownloadFormatScreen(
 ) : SimpleLightScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
         val current = source?.downloadFormat ?: StreamFormat.DEFAULT
         ListScreen(onBack = { goBack() }, title = "Download quality") {
@@ -525,7 +519,7 @@ class SourceStreamingScreen(
 
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Streaming Quality") {
@@ -568,7 +562,7 @@ class SourceOfflineScreen(
 
     @Composable
     override fun Content() {
-        val sources by App.settings.sources.collectAsState(initial = emptyList())
+        val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Offline") {

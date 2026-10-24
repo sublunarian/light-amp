@@ -331,7 +331,7 @@ class Downloader(
      */
     fun setUserPaused(value: Boolean) {
         userPaused = value
-        scope.launch { settings.setDownloadsPaused(value) }
+        scope.launch { settings.downloadsPaused.set(value) }
         scope.launch { lock.withLock { startWorkerLocked() } }
     }
 

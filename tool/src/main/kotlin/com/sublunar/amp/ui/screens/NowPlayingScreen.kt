@@ -56,7 +56,6 @@ import com.sublunar.amp.App
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.Connectivity
-import com.sublunar.amp.data.DataMode
 import com.sublunar.amp.data.LastSection
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.LyricsRepository
@@ -224,7 +223,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
 
     @Composable
     private fun LyricsOverlay(current: Track, modifier: Modifier) {
-        val karaoke by App.settings.karaokeLyrics.collectAsState(initial = true)
+        val karaoke by App.settings.karaokeLyrics.state.collectAsState()
         val position by App.playback.positionMs.collectAsState()
         var outcome by remember(current.id) { mutableStateOf<LyricsRepository.Outcome?>(null) }
         var loading by remember(current.id) { mutableStateOf(true) }
@@ -234,7 +233,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
         // down, so the free copy is never withheld along with the paid one.
         // The rule is App.metadataAllowed's. Collecting what it depends on
         // re-reads it when the link or the mode changes.
-        val dataMode by App.settings.dataMode.collectAsState(initial = DataMode.WIFI_ONLY)
+        val dataMode by App.settings.dataMode.state.collectAsState()
         val unmetered by Connectivity.unmetered.collectAsState(initial = false)
         LaunchedEffect(current.id, dataMode, unmetered) {
             loading = true
@@ -566,7 +565,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
      */
     @Composable
     private fun ArtPlayer(current: Track) {
-        val artwork by App.settings.artwork.collectAsState(initial = ArtworkMode.SMALL)
+        val artwork by App.settings.artwork.state.collectAsState()
         // Parked (see PlaybackController.waitingFor) or buffering: the credit
         // line says so, or the screen looks like a paused player and gets
         // tapped again.

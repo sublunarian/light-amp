@@ -213,7 +213,7 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
                         // belongs to the layout with a magnifier in the header.
                         // Standard goes straight to typing on the page itself.
                         search = {
-                            if (App.layoutMode.value == LayoutMode.SIMPLIFIED) {
+                            if (App.settings.layoutMode.value == LayoutMode.SIMPLIFIED) {
                                 LibraryNav.openSearch()
                                 openSearchEditor("")
                             } else {
