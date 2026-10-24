@@ -43,10 +43,7 @@ class MoreScreen(
     sealed: SealedLightActivity,
     /** The list underneath, whose modifiers this page carries. */
     private val page: LibraryPage,
-    /**
-     * What that list is called, where its name isn't a constant — a record, an
-     * artist, a playlist, a genre. See [defaultTitle] for the rest.
-     */
+    /** What that list is called, where its name isn't a constant — an artist's. See [defaultTitle] for the rest. */
     private val pageTitle: String? = null,
 ) : SimpleLightScreen<Unit>(sealed) {
 
@@ -152,11 +149,9 @@ private fun defaultTitle(page: LibraryPage): String = when (page) {
     LibraryPage.SEARCH -> "Search"
     LibraryPage.LIBRARY -> "Library"
     LibraryPage.ARTIST_POPULAR -> "Popular Songs"
-    // Named after a record, a person, a playlist or a tag, so the page hands
-    // its own title over — see MoreScreen.pageTitle.
-    LibraryPage.ALBUM -> "Album"
+    // Named after the artist, so the page hands its own title over — see
+    // MoreScreen.pageTitle.
     LibraryPage.ARTIST, LibraryPage.ARTIST_SONGS -> "Artist"
-    LibraryPage.PLAYLIST -> "Playlist"
 }
 
 /**
@@ -235,11 +230,9 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
     }
 
     // Fixed orders, named as they actually are — see LibraryRepository.
-    LibraryPage.ALBUM -> PageSetting("Track order")
     LibraryPage.ARTIST -> PageSetting("Date Released")
     LibraryPage.ARTIST_SONGS -> PageSetting("Album")
     LibraryPage.ARTIST_POPULAR -> PageSetting("Frequently Played")
-    LibraryPage.PLAYLIST -> PageSetting("Playlist order")
     LibraryPage.SEARCH -> PageSetting("Library order")
     // A menu of places, in the order the app lists them.
     LibraryPage.LIBRARY -> PageSetting("Fixed")

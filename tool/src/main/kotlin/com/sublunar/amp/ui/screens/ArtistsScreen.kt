@@ -80,7 +80,7 @@ class ArtistDetailScreen(
 
         val grid = App.artistAlbumGrid.collectAsState().value
 
-        LibrarySubPage(LibraryPage.ARTIST, name) {
+        LibrarySubPage {
             AppHeader(
                 onBack = { goBack() },
                 title = name,
@@ -191,7 +191,7 @@ class ArtistTopSongsScreen(
 
         val selection = rememberSelection("artist-top:$name")
 
-        LibrarySubPage(LibraryPage.ARTIST_POPULAR) {
+        LibrarySubPage {
             if (selection.active) {
                 SelectionHeader(selection) {
                     openSelectionActions(selection.pick(songs.orEmpty()) { it.id }, selection)
@@ -276,7 +276,7 @@ class ArtistSongsScreen(
 
         val selection = rememberSelection("artist-songs:$name")
 
-        LibrarySubPage(LibraryPage.ARTIST_SONGS, name) {
+        LibrarySubPage {
             if (selection.active) {
                 SelectionHeader(selection) {
                     openSelectionActions(selection.pick(songs) { it.id }, selection)

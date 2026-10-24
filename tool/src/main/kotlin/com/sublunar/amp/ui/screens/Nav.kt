@@ -143,12 +143,10 @@ enum class LibraryPage {
     /** The simplified layout's index of everything there is to browse. */
     LIBRARY,
 
-    /** Pages whose order is the record's, the playlist's, or the server's. */
-    ALBUM,
+    /** An artist's pages, whose order is the discography's or the server's. */
     ARTIST,
     ARTIST_SONGS,
     ARTIST_POPULAR,
-    PLAYLIST,
 }
 
 /**

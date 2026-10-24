@@ -44,11 +44,7 @@ fun SimpleLightScreen<*>.libraryCornerAction(
  * content with the library's bottom bar kept underneath it.
  */
 @Composable
-fun SimpleLightScreen<*>.LibrarySubPage(
-    page: LibraryPage,
-    pageTitle: String? = null,
-    content: @Composable ColumnScope.() -> Unit,
-) {
+fun SimpleLightScreen<*>.LibrarySubPage(content: @Composable ColumnScope.() -> Unit) {
     PlayerTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {

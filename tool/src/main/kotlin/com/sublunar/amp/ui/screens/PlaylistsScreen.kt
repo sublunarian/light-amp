@@ -127,7 +127,7 @@ class PlaylistDetailScreen(
         val liveName = App.library.allPlaylists.collectAsState().value
             .firstOrNull { it.id == playlistId }?.name ?: playlistName
 
-        LibrarySubPage(LibraryPage.PLAYLIST, liveName) {
+        LibrarySubPage {
             Box(Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize()) {
                     if (selection.active) {

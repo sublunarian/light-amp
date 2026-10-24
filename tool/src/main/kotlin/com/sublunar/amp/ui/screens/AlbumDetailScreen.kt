@@ -80,7 +80,7 @@ class AlbumDetailScreen(
 
         val selection = rememberSelection("album:$albumId")
 
-        LibrarySubPage(LibraryPage.ALBUM, album?.title) {
+        LibrarySubPage {
             if (selection.active) {
                 SelectionHeader(selection) {
                     openSelectionActions(
