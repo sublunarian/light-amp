@@ -49,7 +49,7 @@ class AlbumActionsScreen(
                         goBack()
                     }
                 }
-                if (album != null && album.artist.isNotBlank() && source.supportsRatings) {
+                if (album != null && source.supportsRatings) {
                     RatingRow(album.id, album.title, album.rating, isAlbum = true)
                 }
                 DownloadRow(source, list, fullyDownloaded, "Download Album")
