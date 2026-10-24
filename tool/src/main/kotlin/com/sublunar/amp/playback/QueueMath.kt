@@ -5,34 +5,10 @@ import com.sublunar.amp.playback.output.QueueEdit
 import com.thelightphone.sdk.audio.NO_MEDIA_ITEM
 import kotlin.random.Random
 
-/** The most tracks the player is given at once, and how many before the start are kept — see [capped]. */
-internal const val MAX_QUEUE = 500
-private const val QUEUE_LOOKBACK = 50
-
-/**
- * Trim a queue to what the player can hold, centred on the starting track
- * with a little history behind it. Media3 mirrors the whole timeline into
- * the legacy MediaSession queue, loading artwork for every entry: eight
- * thousand tracks ran the process out of memory there, and building that
- * many stream URLs blocked the tap for seconds.
- *
- * A copy either way, never the caller's list or a view of it: a sublist
- * kept as the queue kept the whole sorted library it came from alive after
- * the library had moved on.
- */
-internal fun capped(tracks: List<Track>, startIndex: Int): Pair<List<Track>, Int> {
-    if (tracks.size <= MAX_QUEUE) return tracks.toList() to startIndex
-    val first = (startIndex - QUEUE_LOOKBACK).coerceIn(0, tracks.size - MAX_QUEUE)
-    return tracks.subList(first, first + MAX_QUEUE).toList() to (startIndex - first)
-}
-
-/**
- * The positions a shuffled queue of [size] tracks plays: [start] first, then
- * the rest in random order, at most [MAX_QUEUE] in all.
- */
+/** The positions a shuffled queue of [size] tracks plays: [start] first, then all the rest in random order. */
 internal fun shuffledFrom(size: Int, start: Int, random: Random = Random): List<Int> {
     val rest = IntArray(size - 1) { if (it < start) it else it + 1 }.apply { shuffle(random) }
-    return listOf(start) + rest.take(MAX_QUEUE - 1)
+    return listOf(start) + rest.asList()
 }
 
 /** [tracks] sorted back into the relative order they had in [original]. */
@@ -193,7 +169,7 @@ internal fun needsRecue(
  * snapshot, so the track starts from the top.
  */
 internal fun connectLanding(
-    playerIndex: Int,
+    playerRow: Int,
     playerPositionMs: Long,
     shownIndex: Int,
     pickedIndex: Int,
@@ -202,7 +178,7 @@ internal fun connectLanding(
     parked: Boolean,
 ): Long? = when {
     recued || casting || parked -> null
-    playerIndex < 0 || playerIndex == shownIndex -> null
-    playerIndex == pickedIndex -> 0L
+    playerRow < 0 || playerRow == shownIndex -> null
+    playerRow == pickedIndex -> 0L
     else -> playerPositionMs
 }
