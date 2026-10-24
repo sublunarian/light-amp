@@ -385,7 +385,7 @@ class LibraryPlaylists(
             if (running != null && running.isActive) {
                 running
             } else {
-                // In the repository's scope, not the caller's, so a screen going
+                // In the app's scope, not the caller's, so a screen going
                 // away mid-fetch doesn't throw the shared download out with it.
                 scope.async { primePlaylistOnce(id) }.also { playlistPrimes[id] = it }
             }

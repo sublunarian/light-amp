@@ -110,9 +110,10 @@ class LibrarySync(
      * library, serialized through [syncMutex].
      *
      * **Nothing is thrown away**: every library stays cached, tagged with where it
-     * came from, and choosing one is a filter — see LibraryRepository.allAlbums. The sync is a
-     * refresh, not what makes the switch work; failing, or never running for want
-     * of a signal, it leaves the library showing what was last cached for it.
+     * came from, and choosing one is a filter — see LibraryRepository.allAlbums.
+     * The sync is a refresh, not what makes the switch work; failing, or never
+     * running for want of a signal, it leaves the library showing what was last
+     * cached for it.
      */
     suspend fun switchLibrary(musicFolderId: String?) {
         syncJob?.cancelAndJoin()

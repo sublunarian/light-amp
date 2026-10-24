@@ -503,7 +503,7 @@ class LibraryRepository(
 
     /** An album's tracks, from cache when present, otherwise fetched and cached. */
     suspend fun getAlbumTracks(albumId: String): List<Track> {
-        // Both ends pinned, and the write dropped if the source changed meanwhile — see runSync.
+        // Both ends pinned, and the write dropped if the source changed meanwhile — see LibrarySync.runSync.
         val pinned = dao
         val client = serverClient.value
         val cached = pinned.tracksForAlbum(albumId)
@@ -524,7 +524,7 @@ class LibraryRepository(
      */
     suspend fun refreshAlbumTracks(albumId: String): List<Track>? {
         if (!metadataAllowed() || offline.value) return null
-        // Both ends pinned, and the write dropped if the source changed meanwhile — see runSync.
+        // Both ends pinned, and the write dropped if the source changed meanwhile — see LibrarySync.runSync.
         val dao = daos.value ?: return null
         val client = serverClient.value ?: return null
         val fresh = runCatching { client.getAlbumTracks(albumId) }.getOrNull()
