@@ -1,6 +1,62 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.data.db.AlbumEntity
 import com.sublunar.amp.data.db.TrackEntity
+
+/** The albums a sync reads the songs of; why, counted; and how many had nothing to compare and were left alone. */
+internal class SongFetch(val albums: List<Album>, val reasons: Map<String, Int>, val untouched: Int)
+
+/**
+ * Which of [serverAlbums] a sync reads the songs of: on a [refill] all of them,
+ * otherwise only new or changed albums — and "changed" includes "its songs
+ * aren't here": albums are written before their songs, so an interrupted sync
+ * leaves complete-looking album rows with no tracks. The real per-album track
+ * count ([cachedTrackCounts]) makes that self-heal. Then whatever [reread]
+ * adds, once each.
+ *
+ * Why each album was chosen is counted for the log: a sync walking the whole
+ * library must be told apart from one that has everything to fetch.
+ */
+internal fun albumsNeedingSongs(
+    serverAlbums: List<Album>,
+    cached: Map<String, AlbumEntity>,
+    cachedTrackCounts: Map<String, Int>,
+    reread: Reread?,
+    refill: Boolean,
+): SongFetch {
+    val reasons = LinkedHashMap<String, Int>()
+    var untouched = 0
+    val changed = if (refill) serverAlbums else serverAlbums.filter { album ->
+        val prev = cached[album.id]
+        val cachedCount = cachedTrackCounts[album.id] ?: 0
+        val why = when {
+            prev == null -> "new album"
+            cachedCount == 0 -> "no songs cached"
+            // A song count of 0 means "not sent" (Plex leaves leafCount
+            // off), not zero: compared as a count, every album looks
+            // changed on every sync. Ask when the server last touched the
+            // album instead (Plex moves updatedAt with its contents). A
+            // server sending neither leaves both at 0, which keeps the
+            // cache; rows from before the column read 0 and walk once.
+            album.songCount == 0 ->
+                if (album.updatedMs != prev.updatedMs) {
+                    "album changed on the server"
+                } else {
+                    untouched++
+                    null
+                }
+            prev.songCount != album.songCount -> "server's count changed"
+            cachedCount != album.songCount -> "cache short of the count"
+            else -> null
+        }
+        if (why != null) reasons[why] = (reasons[why] ?: 0) + 1
+        why != null
+    }
+    val already = changed.mapTo(HashSet()) { it.id }
+    val more = reread?.albums.orEmpty().filter { already.add(it.id) }
+    if (reread != null && more.isNotEmpty()) reasons[reread.why] = more.size
+    return SongFetch(changed + more, reasons, untouched)
+}
 
 /**
  * The next [size] of [ordered] after [after], and where the walk got to — null

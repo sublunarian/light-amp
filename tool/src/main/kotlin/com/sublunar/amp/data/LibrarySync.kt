@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.data.db.AlbumEntity
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.toEntity
 import com.sublunar.amp.source.PhoneAccess
@@ -53,8 +54,6 @@ class LibrarySync(
     private val yieldToPlayback: suspend () -> Unit,
     private val settings: AppSettings,
     private val scope: CoroutineScope,
-    /** The source being browsed — App.source, which changes over last on a switch. */
-    private val browsed: () -> MusicSource,
     /** The pooled client for a source record — App.clientFor. See [repoint]. */
     private val clientFor: (MusicSource) -> MusicServer?,
     /**
@@ -102,28 +101,6 @@ class LibrarySync(
     // concurrently; the job lets a switch cancel the sync in flight.
     private val syncMutex = Mutex()
     private var syncJob: Job? = null
-
-    /** The server's libraries (music folders); empty if unsupported or on error. */
-    suspend fun musicFolders(): List<MusicFolder> =
-        runCatching { serverClient.value?.getMusicFolders().orEmpty() }.getOrDefault(emptyList())
-
-    init {
-        // Whatever folders the server reports, remembered on the source so
-        // the Sources page can list them instantly and offline.
-        scope.launch {
-            syncState.collect { state ->
-                if (state.syncing || state.lastSyncedMs == 0L) return@collect
-                val current = browsed()
-                if (!current.supportsLibraries) return@collect
-                val folders = runCatching { musicFolders() }.getOrNull() ?: return@collect
-                // Empty means "couldn't ask" (a network failure, a client not
-                // up yet) as often as "none", and written through it would
-                // wipe libraries already found. None looks the same anyway.
-                if (folders.isEmpty()) return@collect
-                settings.setSourceLibraries(current.id, folders.map { SourceLibrary(it.id, it.name) })
-            }
-        }
-    }
 
     /** Full incremental sync of the currently selected library. Safe to repeat. */
     suspend fun sync() = syncScoped(libraryId.first())
@@ -237,191 +214,57 @@ class LibrarySync(
         try {
             // Read before the first write — see reportDroppedCovers.
             val coversBefore = coverIdsOrNull(dao)
+            val hidden = source?.hiddenLibraries.orEmpty()
+            // Asked once a run: for the fan-out here, and the libraries remembered at the end.
+            val folders = if (musicFolderId == null) client.getMusicFolders() else null
             // "All libraries" is fanned out per folder and merged: an unscoped
             // getAlbumList2 returns only the server's default library. A hidden
             // library is left out — not wanted on this phone, data included.
-            val hidden = source?.hiddenLibraries.orEmpty()
             val folderIds: List<String?> = if (musicFolderId != null) {
                 listOf(musicFolderId)
             } else {
-                client.getMusicFolders().map { it.id }.filterNot { it in hidden }.ifEmpty { listOf(null) }
+                folders.orEmpty().map { it.id }.filterNot { it in hidden }.ifEmpty { listOf(null) }
             }
-
-            // Null when the server didn't answer: likes then stay as they are,
-            // rather than being reconciled against nothing (unliking everything)
-            // or failing the whole sync over them.
-            val starred = runCatching { folderIds.map { client.getStarred(it) }.mergeStarred() }
-                .noteOom("sync: favourites")
-                .onFailure { android.util.Log.w("AmpSync", "favourites unread, likes kept: $it") }
-                .getOrNull()
+            val starred = readStarred(client, folderIds)
             val cached = dao.allAlbumsSnapshot().associateBy { it.id }
 
             _syncState.update { it.copy(phase = "Fetching albums") }
-            // Each album keeps the folder it came from, written onto its row — see
-            // AlbumEntity.libraryId. An album in two folders keeps the first.
-            val fetched = folderIds
-                .flatMap { folder ->
-                    val list = client.getAllAlbums(folder)
-                    android.util.Log.i("AmpSync", "folder=$folder returned ${list.size} albums")
-                    list.map { it to folder }
-                }
-                .distinctBy { (album, _) -> album.id }
-            val serverAlbums = fetched.map { (album, _) ->
-                album.copy(liked = starred?.let { album.id in it.albumIds } ?: cached[album.id]?.liked ?: album.liked)
-            }
-            val libraryOf = fetched.associate { (album, folder) -> album.id to folder }
-            val serverAlbumById = serverAlbums.associateBy { it.id }
-
+            val (serverAlbums, libraryOf) = fetchAlbums(client, folderIds, starred, cached)
             dao.upsertAlbums(serverAlbums.map { it.toEntity(libraryOf[it.id]) })
             if (serverAlbums.isNotEmpty()) wrote.albums = true
+            pruneGone(dao, cached, serverAlbums, musicFolderId, hidden, wrote)
 
-            // Prune albums (and their tracks) the server no longer has — never on
-            // an empty answer. A stale scope, a 200 with an empty body or a gone
-            // section id look exactly like an emptied library, and pruning on one
-            // deletes the whole cache for good (the next sync asks the same way).
-            if (serverAlbums.isEmpty()) {
-                android.util.Log.w("AmpSync", "returned no albums; keeping ${cached.size} cached")
-            } else {
-                // Only within the library just fetched: one folder's answer says
-                // nothing about the others. A scoped sync leaves untagged rows
-                // alone (no fetch speaks for them), and a hidden library's rows
-                // were never asked about, so they stay for when it is shown again.
-                val inScope = if (musicFolderId == null) {
-                    cached.filterValues { it.libraryId == null || it.libraryId !in hidden }
-                } else {
-                    cached.filterValues { it.libraryId == musicFolderId }
-                }
-                val staleAlbumIds = inScope.keys - serverAlbumById.keys
-                if (staleAlbumIds.isNotEmpty()) {
-                    staleAlbumIds.forEach { dao.deleteTracksForAlbum(it) }
-                    dao.deleteAlbums(staleAlbumIds.toList())
-                    wrote.tracks = true
-                }
-                // And the tracks belonging to no album here at all, which the album
-                // prune can't reach — see LibraryDao.orphanedTrackCount. Under the
-                // same empty-answer rule.
-                val orphans = dao.orphanedTrackCount()
-                if (orphans > 0) {
-                    android.util.Log.w("AmpSync", "dropping $orphans track(s) belonging to no album here")
-                    dao.deleteOrphanedTracks()
-                    wrote.tracks = true
-                }
-            }
-
-            // Only new or changed albums have their songs re-fetched — and "changed"
-            // includes "its songs aren't here": albums are written before their
-            // songs, so an interrupted sync leaves complete-looking album rows with
-            // no tracks. The real per-album track count makes that self-heal.
             val cachedTrackCounts = dao.trackCountsByAlbum().associate { it.albumId to it.tracks }
-            // Why each album was chosen, counted for the log: a sync walking the
-            // whole library must be told apart from one that has everything to fetch.
-            val reasons = mutableMapOf<String, Int>()
-            var unchanged = 0
-            val toFetch = if (refillForParser) serverAlbums else serverAlbums.filter { album ->
-                val prev = cached[album.id]
-                val cachedCount = cachedTrackCounts[album.id] ?: 0
-                val why = when {
-                    prev == null -> "new album"
-                    cachedCount == 0 -> "no songs cached"
-                    // A song count of 0 means "not sent" (Plex leaves leafCount
-                    // off), not zero: compared as a count, every album looks
-                    // changed on every sync. Ask when the server last touched the
-                    // album instead (Plex moves updatedAt with its contents). A
-                    // server sending neither leaves both at 0, which keeps the
-                    // cache; rows from before the column read 0 and walk once.
-                    album.songCount == 0 ->
-                        if (album.updatedMs != prev.updatedMs) {
-                            "album changed on the server"
-                        } else {
-                            unchanged++
-                            null
-                        }
-                    prev.songCount != album.songCount -> "server's count changed"
-                    cachedCount != album.songCount -> "cache short of the count"
-                    else -> null
-                }
-                if (why != null) reasons[why] = (reasons[why] ?: 0) + 1
-                why != null
-            }
-            // And the albums whose songs changed without their count moving (a
-            // re-tag, tags a server finished reading late), as far as the server
-            // can say — see songChangesSince.
             val songCheck = source?.let { settings.songCheck(it.id) }
-            // Asked on a refill too: it hands over the first mark.
-            val changes = if (songCheck == null) {
-                null
-            } else {
-                runCatching { client.songChangesSince(songCheck.mark, folderIds) }
-                    .noteOom("sync: song changes")
-                    .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: $it") }
-                    .getOrNull()
-            }
+            val changes = songChanges(client, songCheck, folderIds)
             val reread = songCheck?.let {
                 rereadFor(
                     changes, it, serverAlbums,
                     whole = musicFolderId == null, bulk = bulkAllowed(), nowMs = System.currentTimeMillis(),
                 )
             }
-            val already = toFetch.mapTo(HashSet()) { it.id }
-            val more = reread?.albums.orEmpty().filter { already.add(it.id) }
-            if (more.isNotEmpty()) reasons[reread!!.why] = more.size
-            val albumsToFetch = toFetch + more
-
-            android.util.Log.i(
-                "AmpSync",
-                if (refillForParser) {
-                    "parser refill: fetching songs for all ${serverAlbums.size} albums"
-                } else {
-                    "fetching songs for ${albumsToFetch.size} of ${serverAlbums.size} albums $reasons" +
-                        (if (unchanged > 0) "; $unchanged uncounted and untouched, cache kept" else "") +
-                        "; song changes: ${changes?.let { it::class.simpleName } ?: "not asked"}"
-                },
-            )
+            val fetch = albumsNeedingSongs(serverAlbums, cached, cachedTrackCounts, reread, refill = refillForParser)
+            logSongFetch(fetch, serverAlbums.size, refillForParser, changes)
 
             // Counted in albums, one request each: labelled as songs it would read
             // as a library being cut short.
-            _syncState.update { it.copy(phase = "Albums 0/${albumsToFetch.size}") }
+            _syncState.update { it.copy(phase = "Albums 0/${fetch.albums.size}") }
             val likedSongs = starred?.songIds ?: dao.likedTrackIds().toHashSet()
-            val unread = fetchAndStoreSongs(dao, client, albumsToFetch, likedSongs, libraryOf, wrote)
+            val unread = fetchAndStoreSongs(dao, client, fetch.albums, likedSongs, libraryOf, wrote)
             // Settled only once every album it covers is read; otherwise the old
             // mark stays, to be asked again next time.
             if (source != null && reread != null && unread == 0 && reread.next != songCheck) {
                 settings.setSongCheck(source.id, reread.next)
             }
-
-            // Reconcile track likes across the whole library — writing only
-            // the ones that moved, see LibraryDao.replaceTrackLikes.
-            if (starred != null) {
-                val moved = dao.replaceTrackLikes(starred.songIds.toList())
-                if (moved > 0) wrote.tracks = true
-                if (dao.replaceLikedArtists(starred.artistNames) > 0) wrote.likedArtists = true
-            }
-
+            if (starred != null) reconcileLikes(dao, starred, wrote)
             // Only now: a run that threw part-way refills again next time.
             if (refillForParser && source != null) {
                 settings.setParserGeneration(source.id, TRACK_PARSER_GENERATION)
             }
 
-            // An album whose art changed has a new cover id, which its songs
-            // (not re-fetched for that) don't carry yet: point them at it, so the
-            // old one is seen to be let go of just below.
-            runCatching { dao.collapseTrackCovers() }.noteOom("sync: cover collapse")
-                .onSuccess { if (it > 0) wrote.tracks = true }
-            reportDroppedCovers(dao, source?.id, coversBefore)
-            if (wrote.tracks || wrote.albums || wrote.likedArtists) rereadLists(tracks = wrote.tracks)
-            // The lists read freely again — after the re-read is asked for, so a
-            // list this wakes sees it is superseded: see LibraryRepository.pacedWhileSyncing.
-            _syncingDao.compareAndSet(dao, null)
-
-            val finishedAt = System.currentTimeMillis()
-            _syncState.value = SyncState(
-                syncing = false,
-                lastSyncedMs = finishedAt,
-            )
-            // The source this ran for, not whichever is active by now.
-            runCatching { source?.id?.let { settings.setLastSyncedMs(it, finishedAt) } }
-            learnServerFeatures(dao, client, source)
+            finishRun(dao, client, source, coversBefore, wrote)
             onSyncSucceeded()
+            rememberLibraries(client, source, folders)
         } catch (e: CancellationException) {
             // A switch cancelled this sync; not an error.
             _syncState.update { it.copy(syncing = false) }
@@ -441,6 +284,161 @@ class LibrarySync(
         } finally {
             _syncingDao.compareAndSet(dao, null)
         }
+    }
+
+    /**
+     * The server's likes, merged across [folderIds]. Null when it didn't answer:
+     * likes then stay as they are, rather than being reconciled against nothing
+     * (unliking everything) or failing the whole sync over them.
+     */
+    private suspend fun readStarred(client: MusicServer, folderIds: List<String?>): Starred? =
+        runCatching { folderIds.map { client.getStarred(it) }.mergeStarred() }
+            .noteOom("sync: favourites")
+            .onFailure { android.util.Log.w("AmpSync", "favourites unread, likes kept: $it") }
+            .getOrNull()
+
+    /** The server's albums across [folderIds], and which folder each came from. */
+    private data class ServerAlbums(val albums: List<Album>, val libraryOf: Map<String, String?>)
+
+    private suspend fun fetchAlbums(
+        client: MusicServer,
+        folderIds: List<String?>,
+        starred: Starred?,
+        cached: Map<String, AlbumEntity>,
+    ): ServerAlbums {
+        // Each album keeps the folder it came from, written onto its row — see
+        // AlbumEntity.libraryId. An album in two folders keeps the first.
+        val fetched = folderIds
+            .flatMap { folder ->
+                val list = client.getAllAlbums(folder)
+                android.util.Log.i("AmpSync", "folder=$folder returned ${list.size} albums")
+                list.map { it to folder }
+            }
+            .distinctBy { (album, _) -> album.id }
+        val albums = fetched.map { (album, _) ->
+            album.copy(liked = starred?.let { album.id in it.albumIds } ?: cached[album.id]?.liked ?: album.liked)
+        }
+        return ServerAlbums(albums, fetched.associate { (album, folder) -> album.id to folder })
+    }
+
+    /**
+     * Prune albums (and their tracks) the server no longer has — never on
+     * an empty answer. A stale scope, a 200 with an empty body or a gone
+     * section id look exactly like an emptied library, and pruning on one
+     * deletes the whole cache for good (the next sync asks the same way).
+     */
+    private suspend fun pruneGone(
+        dao: LibraryDao,
+        cached: Map<String, AlbumEntity>,
+        serverAlbums: List<Album>,
+        musicFolderId: String?,
+        hidden: Set<String>,
+        wrote: SyncWrites,
+    ) {
+        if (serverAlbums.isEmpty()) {
+            android.util.Log.w("AmpSync", "returned no albums; keeping ${cached.size} cached")
+            return
+        }
+        // Only within the library just fetched: one folder's answer says
+        // nothing about the others. A scoped sync leaves untagged rows
+        // alone (no fetch speaks for them), and a hidden library's rows
+        // were never asked about, so they stay for when it is shown again.
+        val inScope = if (musicFolderId == null) {
+            cached.filterValues { it.libraryId == null || it.libraryId !in hidden }
+        } else {
+            cached.filterValues { it.libraryId == musicFolderId }
+        }
+        val staleAlbumIds = inScope.keys - serverAlbums.mapTo(HashSet()) { it.id }
+        if (staleAlbumIds.isNotEmpty()) {
+            staleAlbumIds.forEach { dao.deleteTracksForAlbum(it) }
+            dao.deleteAlbums(staleAlbumIds.toList())
+            wrote.tracks = true
+        }
+        // And the tracks belonging to no album here at all, which the album
+        // prune can't reach — see LibraryDao.orphanedTrackCount. Under the
+        // same empty-answer rule.
+        val orphans = dao.orphanedTrackCount()
+        if (orphans > 0) {
+            android.util.Log.w("AmpSync", "dropping $orphans track(s) belonging to no album here")
+            dao.deleteOrphanedTracks()
+            wrote.tracks = true
+        }
+    }
+
+    /**
+     * The albums whose songs changed without their count moving (a re-tag, tags
+     * a server finished reading late), as far as the server can say — see
+     * songChangesSince. Asked on a refill too: it hands over the first mark.
+     */
+    private suspend fun songChanges(client: MusicServer, check: SongCheck?, folderIds: List<String?>): SongChanges? {
+        if (check == null) return null
+        return runCatching { client.songChangesSince(check.mark, folderIds) }
+            .noteOom("sync: song changes")
+            .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: $it") }
+            .getOrNull()
+    }
+
+    private fun logSongFetch(fetch: SongFetch, albumCount: Int, refill: Boolean, changes: SongChanges?) {
+        android.util.Log.i(
+            "AmpSync",
+            if (refill) {
+                "parser refill: fetching songs for all $albumCount albums"
+            } else {
+                "fetching songs for ${fetch.albums.size} of $albumCount albums ${fetch.reasons}" +
+                    (if (fetch.untouched > 0) "; ${fetch.untouched} uncounted and untouched, cache kept" else "") +
+                    "; song changes: ${changes?.let { it::class.simpleName } ?: "not asked"}"
+            },
+        )
+    }
+
+    /** Track likes across the whole library, writing only the ones that moved — see LibraryDao.replaceTrackLikes. */
+    private suspend fun reconcileLikes(dao: LibraryDao, starred: Starred, wrote: SyncWrites) {
+        if (dao.replaceTrackLikes(starred.songIds.toList()) > 0) wrote.tracks = true
+        if (dao.replaceLikedArtists(starred.artistNames) > 0) wrote.likedArtists = true
+    }
+
+    /** A run's last writes and its end, once everything it fetched is stored. */
+    private suspend fun finishRun(
+        dao: LibraryDao,
+        client: MusicServer,
+        source: MusicSource?,
+        coversBefore: Set<String>?,
+        wrote: SyncWrites,
+    ) {
+        // An album whose art changed has a new cover id, which its songs
+        // (not re-fetched for that) don't carry yet: point them at it, so the
+        // old one is seen to be let go of just below.
+        runCatching { dao.collapseTrackCovers() }.noteOom("sync: cover collapse")
+            .onSuccess { if (it > 0) wrote.tracks = true }
+        reportDroppedCovers(dao, source?.id, coversBefore)
+        if (wrote.tracks || wrote.albums || wrote.likedArtists) rereadLists(tracks = wrote.tracks)
+        // The lists read freely again — after the re-read is asked for, so a
+        // list this wakes sees it is superseded: see LibraryRepository.pacedWhileSyncing.
+        _syncingDao.compareAndSet(dao, null)
+
+        val finishedAt = System.currentTimeMillis()
+        _syncState.value = SyncState(
+            syncing = false,
+            lastSyncedMs = finishedAt,
+        )
+        // The source this ran for, not whichever is active by now.
+        runCatching { source?.id?.let { settings.setLastSyncedMs(it, finishedAt) } }
+        learnServerFeatures(dao, client, source)
+    }
+
+    /**
+     * Whatever folders the server reports, remembered on the source the run was
+     * for, so the Sources page can list them instantly and offline: [folders]
+     * when the run asked already, asked now when it didn't (a sync of one library).
+     */
+    private suspend fun rememberLibraries(client: MusicServer, source: MusicSource?, folders: List<MusicFolder>?) {
+        if (source == null || !source.supportsLibraries) return
+        val reported = folders ?: runCatching { client.getMusicFolders() }.getOrNull() ?: return
+        // Empty means "couldn't ask" (a network failure, a client not up yet)
+        // as often as "none", and written through it would wipe libraries
+        // already found. None looks the same anyway.
+        if (reported.isEmpty()) return
+        runCatching { settings.setSourceLibraries(source.id, reported.map { SourceLibrary(it.id, it.name) }) }
     }
 
     /**

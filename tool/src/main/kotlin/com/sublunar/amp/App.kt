@@ -504,7 +504,6 @@ object App {
                 yieldToPlayback = ::yieldToPlayback,
                 settings = settings,
                 scope = scope,
-                browsed = { _source.value },
                 clientFor = ::clientFor,
                 // A finished sync is proof the server is there. (Its end also tops up
                 // the downloads, through the size collector below.)
