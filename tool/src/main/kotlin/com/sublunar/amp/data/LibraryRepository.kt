@@ -472,18 +472,16 @@ class LibraryRepository(
             .toMap()
     }
 
-    // Eager state, so a page's first frame already knows whether there are any.
-    val likedArtists: StateFlow<List<Artist>> =
-        artists.map { list -> list.filter { it.liked } }
-            .stateIn(scope, SharingStarted.Eagerly, emptyList())
+    // Whether there is anything liked, which is all the library index asks:
+    // eager, so a page's first frame already knows.
+    val hasLikedArtists: StateFlow<Boolean> =
+        artists.map { list -> list.any { it.liked } }.stateIn(scope, SharingStarted.Eagerly, false)
 
-    val likedTracks: StateFlow<List<Track>> =
-        tracks.map { list -> list.filter { it.liked } }
-            .stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val hasLikedTracks: StateFlow<Boolean> =
+        tracks.map { list -> list.any { it.liked } }.stateIn(scope, SharingStarted.Eagerly, false)
 
-    val likedAlbums: StateFlow<List<Album>> =
-        albums.map { list -> list.filter { it.liked } }
-            .stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val hasLikedAlbums: StateFlow<Boolean> =
+        albums.map { list -> list.any { it.liked } }.stateIn(scope, SharingStarted.Eagerly, false)
 
     // Artist name -> server artist id, resolved once and reused for liking.
     private var artistIds: Map<String, String>? = null

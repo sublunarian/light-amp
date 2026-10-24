@@ -814,9 +814,9 @@ private fun LibraryIndex(actions: ShellActions) {
     val source by App.source.collectAsState()
     // The liked lists appear only where there is something in them, and not at
     // all where the source has no likes — see MusicSource.supportsLikes.
-    val likedArtists by App.library.likedArtists.collectAsState()
-    val likedAlbums by App.library.likedAlbums.collectAsState()
-    val likedTracks by App.library.likedTracks.collectAsState()
+    val likedArtists by App.library.hasLikedArtists.collectAsState()
+    val likedAlbums by App.library.hasLikedAlbums.collectAsState()
+    val likedTracks by App.library.hasLikedTracks.collectAsState()
     val likes = source.supportsLikes
 
     // A Column of its own: the shell hands each page a Box.
@@ -834,13 +834,13 @@ private fun LibraryIndex(actions: ShellActions) {
             item { IndexRow(LibraryTab.ALBUMS) }
             item { IndexRow(LibraryTab.SONGS) }
             // The same three again, narrowed, as a block under the plain lists.
-            if (likes && likedArtists.isNotEmpty()) {
+            if (likes && likedArtists) {
                 item { LikedRow(LibraryTab.ARTISTS) }
             }
-            if (likes && likedAlbums.isNotEmpty()) {
+            if (likes && likedAlbums) {
                 item { LikedRow(LibraryTab.ALBUMS) }
             }
-            if (likes && likedTracks.isNotEmpty()) {
+            if (likes && likedTracks) {
                 item { LikedRow(LibraryTab.SONGS) }
             }
         }
