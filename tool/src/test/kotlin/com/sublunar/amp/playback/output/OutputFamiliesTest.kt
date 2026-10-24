@@ -14,6 +14,9 @@ class OutputFamiliesTest {
 
     private fun family(name: String) = object : OutputFamily {
         override val id = name
+        override val logTag = "Amp"
+        override val reportsItself = false
+        override val needsLan = false
         override fun create(host: OutputHost): Output = error("never made here")
     }
 

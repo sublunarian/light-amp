@@ -23,7 +23,6 @@ import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.playback.output.ActiveOutput
 import com.sublunar.amp.playback.output.Disconnect
 import com.sublunar.amp.playback.output.Output
-import com.sublunar.amp.playback.output.OutputControls
 import com.sublunar.amp.playback.output.OutputFamilies
 import com.sublunar.amp.playback.output.OutputFamily
 import com.sublunar.amp.playback.output.OutputHost
@@ -338,7 +337,7 @@ class PlaybackController(
         durationMs = _durationMs,
         isPlaying = _isPlaying,
         buffering = _buffering,
-        reportsElsewhere = { remote?.reportsItself == true },
+        reportsElsewhere = { _active.value?.family?.reportsItself == true },
         playbackWanted = ::playbackWanted,
         handleReady = { player?.availability?.value == LightAudioPlayerAvailability.Ready },
     )
@@ -431,7 +430,7 @@ class PlaybackController(
      * phone. Every control asks this first and falls through to the phone's
      * own code when it is null.
      */
-    private val remote: OutputControls? get() = _active.value?.output
+    private val remote: Output? get() = _active.value?.output
 
     /** The source the player was given for queue [row], or null when it doesn't hold the row. */
     private fun queuedSourceAt(row: Int): LightAudioSource? = window.positionOf(row)?.let(queuedSources::getOrNull)
@@ -546,18 +545,18 @@ class PlaybackController(
                 // "reachable" never changes while a ping keeps succeeding.
                 if (rules.mayStream) sources.forgetFailures()
                 reresolveQueue()
-                val out = remote
+                val active = _active.value
                 if (!rules.mayUseLan) {
                     // A search for a lost speaker waits for the network to come
                     // back again — see rejoinLost.
                     rejoinJob?.cancel()
-                    if (out != null && out.needsLan) {
+                    if (active != null && active.family.needsLan) {
                         // Off Wi-Fi the speaker is out of reach: the cast is let
                         // go and shown paused where it was. Nothing is sent, as
                         // nobody would hear it, and nothing starts on the phone:
                         // leaving the house is not a press of play. With Wi-Fi
                         // back it is taken back.
-                        Log.i(out.logTag, "Wi-Fi gone — cast let go, to be taken back")
+                        Log.i(active.family.logTag, "Wi-Fi gone — cast let go, to be taken back")
                         dropOutput(Disconnect.LinkLost)
                     }
                 } else if (lost != null) {
@@ -2613,9 +2612,6 @@ class PlaybackController(
     /** Every [OutputTarget] [family] can play to right now. Does its own waiting off Main. */
     suspend fun find(family: OutputFamily): List<OutputTarget> = outputOf(family).find()
 
-    /** Whether [family] is reached over the local network only, so finds nothing off Wi-Fi. Main only. */
-    fun needsLan(family: OutputFamily): Boolean = outputOf(family).needsLan
-
     private fun outputOf(family: OutputFamily): Output = outputs.getOrPut(family.id) { family.create(host) }
 
     /**
@@ -2631,7 +2627,7 @@ class PlaybackController(
         val play = _isPlaying.value || _buffering.value
         // No Wi-Fi, no speaker: one found a minute ago is out of reach now, and
         // playback mustn't leave the phone for it.
-        if (next.needsLan && !App.rulesNow().mayUseLan) return false
+        if (family.needsLan && !App.rulesNow().mayUseLan) return false
         if (!next.canSteer()) return false
         forgetLost()
         settleRestartCopy()
@@ -2639,7 +2635,7 @@ class PlaybackController(
         // A far end that reports its own playback does so as a session of its
         // own, and the phone's ends: left open, nothing would report on it and
         // it would sit on the dashboard beside the far end's until it timed out.
-        if (next.reportsItself) reports.close()
+        if (family.reportsItself) reports.close()
         // One route at a time: whatever has the sound hands over quietly, a
         // second speaker of the same kind included.
         val current = _active.value
@@ -2689,7 +2685,7 @@ class PlaybackController(
         if (a.family !in Outputs.phone) return
         val pausedFor = SystemClock.elapsedRealtime() - since
         if (pausedFor < FORGET_PAUSED_SPEAKER_MS) return
-        Log.i(a.output.logTag, "paused ${pausedFor / 60_000} min on ${a.target.name} → back to the phone")
+        Log.i(a.family.logTag, "paused ${pausedFor / 60_000} min on ${a.target.name} → back to the phone")
         playHere()
     }
 
@@ -2716,8 +2712,7 @@ class PlaybackController(
         // steering on the way out: the requeue collector would arm one more
         // track on a renderer being stopped.
         if (!_active.compareAndSet(a, null)) return
-        val out = a.output
-        out.disconnect(a.target, why)
+        a.output.disconnect(a.target, why)
         if (why == Disconnect.Stopped || why == Disconnect.Leaving) return
         // Kept, to be taken back when the link is — see rejoinLost.
         if (why == Disconnect.LinkLost) {
@@ -2733,10 +2728,10 @@ class PlaybackController(
         faderBackToPhone()
         when (why) {
             // The phone carries on as the far end was, playing or paused.
-            Disconnect.HandBack -> takeOverHere(out.logTag, "hand-back", at, play = wasPlaying)
+            Disconnect.HandBack -> takeOverHere(a.family.logTag, "hand-back", at, play = wasPlaying)
             // Shown paused where the speaker was, not "playing" over a silent
             // phone on the song the cast began with.
-            Disconnect.LinkLost -> takeOverHere(out.logTag, "Wi-Fi gone", at, play = false)
+            Disconnect.LinkLost -> takeOverHere(a.family.logTag, "Wi-Fi gone", at, play = false)
             else -> Unit
         }
     }
@@ -2826,14 +2821,15 @@ class PlaybackController(
         val gone = lost ?: return
         if (rejoinJob?.isActive == true) return
         val out = gone.active.output
+        val tag = gone.active.family.logTag
         val name = gone.active.target.name
         if (SystemClock.elapsedRealtime() - gone.atMs > LOST_OUTPUT_KEPT_MS) {
-            Log.i(out.logTag, "Wi-Fi back, but $name went too long ago — left")
+            Log.i(tag, "Wi-Fi back, but $name went too long ago — left")
             lost = null
             return
         }
         rejoinJob = scope.launch {
-            Log.i(out.logTag, "Wi-Fi back — looking for $name")
+            Log.i(tag, "Wi-Fi back — looking for $name")
             // Bounded. A link that goes again meanwhile cancels this and keeps
             // the memory for the next time it comes back.
             val found = withTimeoutOrNull(REJOIN_SEARCH_MS) { out.findAgain(gone.active.target) }
@@ -2841,8 +2837,8 @@ class PlaybackController(
                 if (lost !== gone) return@withContext
                 lost = null
                 when {
-                    found == null -> Log.i(out.logTag, "$name not found, or playing something else — left")
-                    movedOn(gone) -> Log.i(out.logTag, "moved on here since — $name stopped, not taken back")
+                    found == null -> Log.i(tag, "$name not found, or playing something else — left")
+                    movedOn(gone) -> Log.i(tag, "moved on here since — $name stopped, not taken back")
                     else -> rejoin(gone, found)
                 }
             }
@@ -2866,7 +2862,7 @@ class PlaybackController(
     private fun rejoin(gone: Lost, found: Refound) {
         val out = gone.active.output
         Log.i(
-            out.logTag,
+            gone.active.family.logTag,
             "took ${found.target.name} back, paused " +
                 if (found.index >= 0) "at idx=${found.index} ${found.positionMs}" else "where the phone was",
         )
@@ -2974,10 +2970,6 @@ class PlaybackController(
 
         override fun ownStreamSession(trackId: String): String = reports.streamSessionIdFor(trackId, decidedFirst = false)
 
-        override fun announceNowPlaying() {
-            reports.announceNowPlaying()
-        }
-
         override fun queueFinished(output: Output) {
             if (steering(output) == null) return
             this@PlaybackController.queueFinished()
@@ -2995,13 +2987,13 @@ class PlaybackController(
             faderBackToPhone()
             // A far end that reports itself had its own session; this one was
             // the phone's, which the server would go on showing as playing.
-            if (was && !a.output.reportsItself) reports.timeline(TimelineState.PAUSED)
+            if (was && !a.family.reportsItself) reports.timeline(TimelineState.PAUSED)
             // Nothing played there, so what the phone was waiting for before the
             // cast still holds, on the same song.
             waitBeforeCast?.let { (why, at) -> if (_index.value == at) _waitingFor.value = why }
             waitBeforeCast = null
             // The stand-in may already be in the player.
-            takeOverHere(output.logTag, "couldn't cast", _positionMs.value, play = false)
+            takeOverHere(a.family.logTag, "couldn't cast", _positionMs.value, play = false)
         }
 
         override fun couldNotPlay(output: Output) {
@@ -3010,9 +3002,9 @@ class PlaybackController(
         }
 
         override fun endedOnItsOwn(output: Output, target: OutputTarget) {
-            letGo(output, target) ?: return
+            val a = letGo(output, target) ?: return
             faderBackToPhone()
-            takeOverHere(output.logTag, "stopped there", _positionMs.value, play = false)
+            takeOverHere(a.family.logTag, "stopped there", _positionMs.value, play = false)
         }
     }
 

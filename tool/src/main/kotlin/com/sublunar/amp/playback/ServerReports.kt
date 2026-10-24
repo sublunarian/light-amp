@@ -353,7 +353,7 @@ internal class ServerReports(
      * Never kept for a retry: "playing this now" replayed an hour later is
      * false, where a play is true whenever it arrives.
      */
-    fun announceNowPlaying() {
+    private fun announceNowPlaying() {
         // A far end that reports itself tells the server.
         if (reportsElsewhere()) return
         val track = queue.value.getOrNull(index.value) ?: return

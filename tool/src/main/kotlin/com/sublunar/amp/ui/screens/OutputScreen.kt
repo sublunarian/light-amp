@@ -81,8 +81,8 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             for (family in families.searchOrder) found = found + (family.id to App.playback.find(family))
             scanning = false
         }
-        val lanHidden = !lanUsable && families.listOrder.any { App.playback.needsLan(it) }
-        val searchable = families.listOrder.any { lanUsable || !App.playback.needsLan(it) }
+        val lanHidden = !lanUsable && families.listOrder.any { it.needsLan }
+        val searchable = families.listOrder.any { lanUsable || !it.needsLan }
 
         // A fader with nothing to move (an Apple TV feeding a receiver reports a
         // volume it doesn't own) is disabled, and dimmed rather than hidden so
@@ -126,7 +126,7 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
                 item { SectionLabel(if (scanning && searchable) "Network — searching…" else "Network") }
                 for (family in families.listOrder) {
-                    if (!lanUsable && App.playback.needsLan(family)) continue
+                    if (!lanUsable && family.needsLan) continue
                     // What is playing now is listed at once, before any
                     // search has answered, and once, whatever it finds.
                     val playing = active?.takeIf { it.family === family }?.target

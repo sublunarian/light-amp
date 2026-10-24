@@ -35,15 +35,6 @@ import kotlinx.coroutines.withTimeoutOrNull
  * reports the playback to the server, as for its own player.
  */
 internal class DlnaOutput(private val host: OutputHost) : Output {
-    override val family = DlnaFamily
-
-    override val logTag = "AmpCast"
-
-    // A renderer tells the server nothing: the phone reports for it.
-    override val reportsItself = false
-
-    override val needsLan = true
-
     // The fader drives the renderer's own RenderingControl.
     override val volumeControl: StateFlow<VolumeControl> = MutableStateFlow(VolumeControl.Ours)
 
@@ -171,7 +162,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     private fun steered(): DlnaRenderer? = (host.steering(this) as? DlnaTarget)?.renderer
 
     private fun log(message: String) {
-        Log.i(logTag, message)
+        Log.i(DlnaFamily.logTag, message)
     }
 
     /** Renderers on the network, after a few seconds of listening. None off Wi-Fi: see DlnaCast.allowsNetwork. */
@@ -647,7 +638,6 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         // Whether it really went there is checked a moment later — see
         // verifyCastSeek.
         if (offset == 0L && wanted > 0L) verifyCastSeek(renderer, wanted, url)
-        host.announceNowPlaying()
         stream = CastStream(url, offset)
         pendingSeek = null
         // SetAVTransportURI leaves the next slot empty, and it stays that way
@@ -1039,7 +1029,6 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         startedAtMs = 0L
         pendingSeek = null
         host.showDuration(host.queue.value.getOrNull(host.index.value)?.durationMs ?: host.durationMs.value)
-        host.announceNowPlaying()
         // The slot the renderer just consumed is empty again, and is left that
         // way until this track is nearly over.
         nextOffer.forget()

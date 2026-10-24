@@ -13,6 +13,13 @@ import com.sublunar.amp.playback.output.OutputTarget
 object PlexCompanionFamily : OutputFamily {
     override val id = "plex-companion"
 
+    override val logTag = "AmpPlex"
+
+    // The player reports its own plays to the server: the phone adding its own would double them.
+    override val reportsItself = true
+
+    override val needsLan = false
+
     // What a player that doesn't own its volume — an Apple TV feeding a
     // receiver — leaves the fader saying instead of a level.
     override val volumeElsewhere = "on the TV"

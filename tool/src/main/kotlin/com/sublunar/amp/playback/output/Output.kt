@@ -10,8 +10,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * Where every control goes while the sound is somewhere other than this
- * phone: a speaker on the network, or a Plex player across the room.
+ * One family's way of playing somewhere else — a speaker on the network, a
+ * Plex player across the room — steering one target at a time. Made once per
+ * family for the life of the process, by [OutputFamily.create]. Every control
+ * goes here while the sound is elsewhere.
  *
  * The phone's own player is not an output. It is the controller's default,
  * kept up to date as a standby while something else plays, so "no output"
@@ -21,19 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
  * can say for itself before calling (a press of play shows playing at once);
  * the output keeps the rest true as the far end reports.
  */
-interface OutputControls {
-    /** The log tag its lines go under. A constant, never worked out from a class name. */
-    val logTag: String
-
-    /**
-     * The far end reports its own playback to the server, so the phone sends
-     * no timeline and no now-playing: that would be a second listener.
-     */
-    val reportsItself: Boolean
-
-    /** Reached over the local network only: dropped when the link stops allowing that. */
-    val needsLan: Boolean
-
+interface Output {
     /** Play. Playing is already shown, and reported where the phone reports. */
     fun play()
 
@@ -74,14 +64,6 @@ interface OutputControls {
      * mode moved, and has stopped moving for a moment. From a collector, off Main.
      */
     suspend fun upcomingChanged() {}
-}
-
-/**
- * One family's way of playing somewhere else, steering one target at a time.
- * Made once per family for the life of the process, by [OutputFamily.create].
- */
-interface Output : OutputControls {
-    val family: OutputFamily
 
     /** Whether the fader moves the far end's volume — see [VolumeControl]. */
     val volumeControl: StateFlow<VolumeControl>
@@ -152,13 +134,22 @@ interface OutputFamily {
     /** Keys its rows and names it in logs. A constant: never stored, never worked out from a class name. */
     val id: String
 
+    /** The log tag its lines go under. A constant, never worked out from a class name. */
+    val logTag: String
+
+    /**
+     * The far end reports its own playback to the server, so the phone sends
+     * no timeline and no now-playing: that would be a second listener.
+     */
+    val reportsItself: Boolean
+
+    /** Reached over the local network only: dropped when the link stops allowing that. */
+    val needsLan: Boolean
+
     /** What the fader says in place of a level once the volume is [VolumeControl.NotOurs]. */
     val volumeElsewhere: String get() = ""
 
     fun create(host: OutputHost): Output
-
-    /** Hold the family to the link's rules, at boot, before anything can reach the network. */
-    fun install(rules: () -> LinkRules) {}
 }
 
 /** Somewhere a family can play. [id] stays the same from one search to the next. */
@@ -269,9 +260,6 @@ interface OutputHost {
 
     /** The session id for a stream the far end fetches itself: one no timeline names. */
     fun ownStreamSession(trackId: String): String
-
-    /** The song at the index has started: the server hears so, as it does for the phone's own player. */
-    fun announceNowPlaying()
 
     /**
      * [output]'s far end ran out of queue: back to the first track, paused, as

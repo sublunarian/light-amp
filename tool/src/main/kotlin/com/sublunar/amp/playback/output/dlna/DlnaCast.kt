@@ -43,10 +43,11 @@ data class DlnaPosition(
 object DlnaCast {
 
     /**
-     * Whether casting may touch the network right now. The tool wires this to
-     * its own rule; every function here that sends anything asks it first —
-     * discovery, the two probes of the music server, the description fetch and
-     * every SOAP call — and answers as it would had nobody replied.
+     * Whether casting may touch the network right now: closed until
+     * DlnaFamily.create wires it to the link's rules. Every function here
+     * that sends anything asks it first — discovery, the two probes of the
+     * music server, the description fetch and every SOAP call — and answers
+     * as it would had nobody replied.
      *
      * UPnP is a LAN protocol, so the rule a tool wants is "on Wi-Fi": off it,
      * a control call is a connection attempt to a private address sent out
@@ -55,7 +56,7 @@ object DlnaCast {
      * ones a caller forgot included.
      */
     @Volatile
-    var allowsNetwork: () -> Boolean = { true }
+    var allowsNetwork: () -> Boolean = { false }
 
     private const val SSDP_ADDRESS = "239.255.255.250"
     private const val SSDP_PORT = 1900

@@ -37,15 +37,6 @@ import kotlinx.coroutines.launch
  * and its lock.
  */
 internal class PlexCompanionOutput(private val host: OutputHost) : Output {
-    override val family = PlexCompanionFamily
-
-    override val logTag = "AmpPlex"
-
-    // The player reports its own plays to the server: the phone adding its own would double them.
-    override val reportsItself = true
-
-    override val needsLan = false
-
     /**
      * Whether the fader moves the player's volume, judged by evidence rather
      * than the player's word: an Apple TV feeding a receiver over optical says
@@ -100,7 +91,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     }
 
     private fun log(message: String) {
-        Log.i(logTag, message)
+        Log.i(PlexCompanionFamily.logTag, message)
     }
 
     /** Read per call, never kept: a client rebuilt for the same source — a renewed token — is the one that answers. */

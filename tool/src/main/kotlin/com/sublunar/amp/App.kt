@@ -44,7 +44,6 @@ import com.sublunar.amp.data.sortSongs
 import com.sublunar.amp.data.titleKey
 import com.sublunar.amp.playback.LateUnbindGuard
 import com.sublunar.amp.playback.PlaybackController
-import com.sublunar.amp.playback.output.Outputs
 import com.sublunar.amp.ui.components.NOTICE_MS
 import com.sublunar.amp.ui.components.indexLetterOf
 import com.thelightphone.sdk.LightWork
@@ -465,9 +464,6 @@ object App {
             // here, before anything builds a queue, and proven before it is
             // used: until its self-test passes, nothing streams.
             streamProxy.start(scope)
-            // Speakers are reached on a stack of their own, outside the wall
-            // above, so each output family is held to the link's rules here.
-            Outputs.install(::rulesNow)
             artwork = ArtworkLoader(
                 context.filesDir,
                 serverClient,
