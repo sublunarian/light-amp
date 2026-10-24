@@ -250,14 +250,14 @@ class DataScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         TextRow(
                             title = "On Wi-Fi",
                             value = formatLabel(server.wifiFormat),
-                            onClick = { go { StreamFormatScreen(it, server.id) } },
+                            onClick = { go { FormatPickerScreen(it, server.id, FormatSlot.WIFI) } },
                         )
                     }
                     item(key = "${server.id}/cellular") {
                         TextRow(
                             title = "On Cellular",
                             value = formatLabel(server.cellularFormat),
-                            onClick = { go { CellularFormatScreen(it, server.id) } },
+                            onClick = { go { FormatPickerScreen(it, server.id, FormatSlot.CELLULAR) } },
                         )
                     }
                 } else {
@@ -332,7 +332,7 @@ class OfflineScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         TextRow(
                             title = "Download Quality",
                             value = downloadQualityLabel(server),
-                            onClick = { go { SourceDownloadFormatScreen(it, server.id) } },
+                            onClick = { go { FormatPickerScreen(it, server.id, FormatSlot.DOWNLOAD) } },
                         )
                     }
                 } else if (servers.size > 1) {
@@ -393,83 +393,54 @@ class OfflineScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     }
 }
 
-/** Streaming quality on Wi-Fi for one source, which isn't necessarily the active one. */
-class StreamFormatScreen(
-    sealed: SealedLightActivity,
-    private val sourceId: String,
-) : AmpScreen<Unit>(sealed) {
-    @Composable
-    override fun Content() {
-        val sources by App.settings.sources.state.collectAsState()
-        val source = sources.firstOrNull { it.id == sourceId }
-        val current = source?.wifiFormat ?: StreamFormat.DEFAULT
-        ListScreen(onBack = { goBack() }, title = "On Wi-Fi") {
-            ScrollableList {
-                // Only what this server will actually send — see
-                // MusicSource.streamFormats.
-                items(source?.streamFormats ?: StreamFormat.entries.toList()) { format ->
-                    TextRow(
-                        title = formatLabel(format),
-                        onClick = {
-                            App.scope.launch { App.settings.setStreamFormat(sourceId, format) }
-                            goBack()
-                        },
-                        checked = format == current,
-                    )
-                }
-            }
+/** Which of a source's three qualities a [FormatPickerScreen] sets, under the title it carries. */
+enum class FormatSlot(val title: String) {
+    WIFI("On Wi-Fi"),
+    CELLULAR("On cellular"),
+    DOWNLOAD("Download quality"),
+    ;
+
+    fun current(source: MusicSource): StreamFormat = when (this) {
+        WIFI -> source.wifiFormat
+        CELLULAR -> source.cellularFormat
+        DOWNLOAD -> source.downloadFormat
+    }
+
+    /**
+     * Only what this server will actually send — see MusicSource.streamFormats.
+     * Downloads have their own list: a server with no `download` call can still
+     * download, but never the original file — see downloadFormats.
+     */
+    fun choices(source: MusicSource): List<StreamFormat> =
+        if (this == DOWNLOAD) source.downloadFormats else source.streamFormats
+
+    suspend fun set(sourceId: String, format: StreamFormat) {
+        when (this) {
+            WIFI -> App.settings.setStreamFormat(sourceId, format)
+            CELLULAR -> App.settings.setCellularFormat(sourceId, format)
+            DOWNLOAD -> App.settings.setSourceDownloadFormat(sourceId, format)
         }
     }
 }
 
-/** Streaming quality on cellular; the counterpart to [StreamFormatScreen]. */
-class CellularFormatScreen(
+/** One quality of one source, which isn't necessarily the active one. */
+class FormatPickerScreen(
     sealed: SealedLightActivity,
     private val sourceId: String,
+    private val slot: FormatSlot,
 ) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
-        val current = source?.cellularFormat ?: StreamFormat.DEFAULT
-        ListScreen(onBack = { goBack() }, title = "On cellular") {
+        val current = source?.let(slot::current) ?: StreamFormat.DEFAULT
+        ListScreen(onBack = { goBack() }, title = slot.title) {
             ScrollableList {
-                items(source?.streamFormats ?: StreamFormat.entries.toList()) { format ->
+                items(source?.let(slot::choices) ?: StreamFormat.entries.toList()) { format ->
                     TextRow(
                         title = formatLabel(format),
                         onClick = {
-                            App.scope.launch { App.settings.setCellularFormat(sourceId, format) }
-                            goBack()
-                        },
-                        checked = format == current,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** Download quality for one source; the counterpart to [StreamFormatScreen]. */
-class SourceDownloadFormatScreen(
-    sealed: SealedLightActivity,
-    private val sourceId: String,
-) : AmpScreen<Unit>(sealed) {
-    @Composable
-    override fun Content() {
-        val sources by App.settings.sources.state.collectAsState()
-        val source = sources.firstOrNull { it.id == sourceId }
-        val current = source?.downloadFormat ?: StreamFormat.DEFAULT
-        ListScreen(onBack = { goBack() }, title = "Download quality") {
-            ScrollableList {
-                // Not streamFormats: a server with no `download` call can still
-                // download, but never the original file — see downloadFormats.
-                items(source?.downloadFormats ?: StreamFormat.entries.toList()) { format ->
-                    TextRow(
-                        title = formatLabel(format),
-                        onClick = {
-                            App.scope.launch {
-                                App.settings.setSourceDownloadFormat(sourceId, format)
-                            }
+                            App.scope.launch { slot.set(sourceId, format) }
                             goBack()
                         },
                         checked = format == current,
@@ -503,14 +474,14 @@ class SourceStreamingScreen(
                     TextRow(
                         title = "On Wi-Fi",
                         value = formatLabel(source.wifiFormat),
-                        onClick = { go { StreamFormatScreen(it, source.id) } },
+                        onClick = { go { FormatPickerScreen(it, source.id, FormatSlot.WIFI) } },
                     )
                 }
                 item {
                     TextRow(
                         title = "On Cellular",
                         value = formatLabel(source.cellularFormat),
-                        onClick = { go { CellularFormatScreen(it, source.id) } },
+                        onClick = { go { FormatPickerScreen(it, source.id, FormatSlot.CELLULAR) } },
                     )
                 }
             }
@@ -547,7 +518,7 @@ class SourceOfflineScreen(
                     TextRow(
                         title = "Download Quality",
                         value = downloadQualityLabel(source),
-                        onClick = { go { SourceDownloadFormatScreen(it, source.id) } },
+                        onClick = { go { FormatPickerScreen(it, source.id, FormatSlot.DOWNLOAD) } },
                     )
                 }
                 item { SectionLabel("Remove") }

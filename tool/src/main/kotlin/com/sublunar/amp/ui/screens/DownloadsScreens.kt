@@ -199,7 +199,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         title = "${source.name} can't keep original files",
                         subtitle = "Choose another download quality",
                         subtitleLines = 2,
-                        onClick = { go { SourceDownloadFormatScreen(it, source.id) } },
+                        onClick = { go { FormatPickerScreen(it, source.id, FormatSlot.DOWNLOAD) } },
                     )
                 }
             }
