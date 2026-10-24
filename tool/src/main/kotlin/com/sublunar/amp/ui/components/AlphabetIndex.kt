@@ -61,7 +61,7 @@ fun AlphabetIndex(
     val scope = rememberCoroutineScope()
     val rows = remember(letters) { LetterRows(letters) }
     // First row index per letter, so a tap can jump straight there.
-    val firstIndex = remember(letters) { rows.first.mapValues { it.value + headerCount } }
+    val firstIndex = remember(letters, headerCount) { rows.first.mapValues { it.value + headerCount } }
     if (firstIndex.isEmpty()) return
 
     fun jumpTo(letter: Char) {

@@ -447,32 +447,30 @@ internal fun rememberAccessRequest(phone: PhoneLibrary?): () -> Unit {
 }
 
 /**
- * The one row a local library shows when it hasn't been let in yet: without it
- * the tab is simply empty, which reads as "this phone has no music".
+ * The rows a tab list shows above its content when something needs saying:
+ *
+ * - Allow Music Access, for a phone library not let in yet. Without it the tab
+ *   is simply empty, which reads as "this phone has no music".
+ * - Why the last sync gave up. A refused login leaves the cached rows in place,
+ *   so this may sit above a library that looks fine and is no longer being
+ *   updated. Tapping goes to Settings, the way to the source that needs fixing.
+ * - What the sync is doing, while the list it is filling is still [empty]: a
+ *   first sync of a large library takes minutes.
+ *
+ * A list counts them among its header rows, so an A–Z jump and a saved place
+ * land on the right row.
  */
-private fun LazyListScope.localAccessNotice(needed: Boolean, onAsk: () -> Unit) {
-    if (!needed) return
-    item { PlayAllRow(AppIcons.Smartphone, "Allow Music Access", onClick = onAsk) }
-}
-
-/**
- * Why the last sync gave up, at the top of the list it left behind. A refused
- * login leaves the cached rows in place, so this may sit above a library that
- * looks fine and is no longer being updated. Tapping goes to Settings, the way
- * to the source that needs fixing.
- */
-private fun LazyListScope.syncErrorNotice(error: String?, onOpen: () -> Unit) {
-    if (error.isNullOrBlank()) return
-    item { PlayAllRow(AppIcons.CloudOff, error, onClick = onOpen) }
-}
-
-/**
- * What the sync is doing, where the list it is filling would be: a first sync
- * of a large library takes minutes. Only while the list is empty.
- */
-private fun LazyListScope.syncProgressNotice(empty: Boolean, sync: SyncState) {
-    if (!empty || !sync.syncing) return
-    item { SectionLabel(syncProgressText(sync.phase)) }
+@Composable
+private fun SimpleLightScreen<*>.libraryNotices(empty: Boolean): List<@Composable () -> Unit> {
+    val needsAccess = !rememberLocalAccess()
+    val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
+    val sync = App.librarySync.syncState.collectAsState().value
+    val error = sync.error
+    return buildList<@Composable () -> Unit> {
+        if (needsAccess) add { PlayAllRow(AppIcons.Smartphone, "Allow Music Access", onClick = askAccess) }
+        if (!error.isNullOrBlank()) add { PlayAllRow(AppIcons.CloudOff, error) { go { SettingsScreen(it) } } }
+        if (empty && sync.syncing) add { SectionLabel(syncProgressText(sync.phase)) }
+    }
 }
 
 private val ALBUMS_PHASE = Regex("""Albums (\d+)/(\d+)""")
@@ -495,16 +493,13 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
     val letters = view.letters
     val reversed by App.settings.albumSortReversed.state.collectAsState()
     val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
-    val needsAccess = !rememberLocalAccess()
-    val sync = App.librarySync.syncState.collectAsState().value
-    val syncError = sync.error
-    val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
+    val notices = libraryNotices(sorted.isEmpty())
     val grid = App.albumGrid.collectAsState().value
     Column(Modifier.fillMaxSize()) {
         if (header) TabHeader(LibraryTab.ALBUMS)
         if (grid) {
             // Its own anchor, separate from the list's: see rememberGridAnchor.
-            val gridState = rememberGridAnchor("tab:albums/grid", headerCount = 1)
+            val gridState = rememberGridAnchor("tab:albums/grid", headerCount = 1 + notices.size)
             // No strip: the covers take the width, and AlbumGrid adds its own bar
             // once the list is long.
             Box(modifier = Modifier.weight(1f)) {
@@ -517,11 +512,7 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         RandomAlbumRow(rows)
                     }
-                    if (sorted.isEmpty() && sync.syncing) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            SectionLabel(syncProgressText(sync.phase))
-                        }
-                    }
+                    notices.forEach { notice -> item(span = { GridItemSpan(maxLineSpan) }) { notice() } }
                 }
             }
         } else {
@@ -529,16 +520,14 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
                 anchor = "tab:albums",
                 // The index only makes sense while the list is in name order.
                 letters = letters,
-                // The action row, so the A–Z strip lands on the right album.
-                // Counted with or without the page's header: search borrows the
-                // list, row and all.
-                headerCount = 1,
+                // The action row and the notices, so the A–Z strip lands on
+                // the right album. Counted with or without the page's header:
+                // search borrows the list, rows and all.
+                headerCount = 1 + notices.size,
                 reversed = reversed,
             ) {
                 item { RandomAlbumRow(rows) }
-                localAccessNotice(needsAccess, askAccess)
-                syncErrorNotice(syncError) { go { SettingsScreen(it) } }
-                syncProgressNotice(sorted.isEmpty(), sync)
+                notices.forEach { notice -> item { notice() } }
                 items(sorted.size, key = { rows[it]?.id ?: it }) { i ->
                     val album = rows[i] ?: return@items
                     TrackRow(
@@ -630,10 +619,7 @@ private fun SimpleLightScreen<*>.SongsTab(header: Boolean = true) {
     val reversed by App.settings.songSortReversed.state.collectAsState()
     val downloadedIds by App.library.downloadedTrackIds.collectAsState()
     val selection = rememberSelection("songs")
-    val needsAccess = !rememberLocalAccess()
-    val sync = App.librarySync.syncState.collectAsState().value
-    val syncError = sync.error
-    val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
+    val notices = libraryNotices(sorted.isEmpty())
 
     Column(Modifier.fillMaxSize()) {
         if (header) {
@@ -648,7 +634,7 @@ private fun SimpleLightScreen<*>.SongsTab(header: Boolean = true) {
         IndexedList(
             anchor = "tab:songs",
             letters = letters,
-            headerCount = if (selection.active) 0 else 1,
+            headerCount = if (selection.active) 0 else 1 + notices.size,
             reversed = reversed,
         ) {
             if (!selection.active) {
@@ -658,9 +644,7 @@ private fun SimpleLightScreen<*>.SongsTab(header: Boolean = true) {
                         go { NowPlayingScreen(it) }
                     }
                 }
-                localAccessNotice(needsAccess, askAccess)
-                syncErrorNotice(syncError) { go { SettingsScreen(it) } }
-                syncProgressNotice(sorted.isEmpty(), sync)
+                notices.forEach { notice -> item { notice() } }
             }
             // Read through [rows], never captured — see LatestList.
             items(sorted.size, key = { rows[it]?.id ?: it }) { i ->
@@ -703,19 +687,16 @@ private fun SimpleLightScreen<*>.ArtistsTab(header: Boolean = true) {
     // Skipped while the pictures are switched off.
     val artistImages = !App.hideArtistImages.collectAsState().value
     LaunchedEffect(artistImages) { if (artistImages) App.library.primeArtistImages() }
-    val needsAccess = !rememberLocalAccess()
-    val sync = App.librarySync.syncState.collectAsState().value
-    val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
+    val notices = libraryNotices(sorted.isEmpty())
     Column(Modifier.fillMaxSize()) {
         if (header) TabHeader(LibraryTab.ARTISTS)
         IndexedList(
             anchor = "tab:artists",
             letters = letters,
-            headerCount = 0,
+            headerCount = notices.size,
             reversed = reversed,
         ) {
-            localAccessNotice(needsAccess, askAccess)
-            syncProgressNotice(sorted.isEmpty(), sync)
+            notices.forEach { notice -> item { notice() } }
             items(sorted.size, key = { rows[it]?.name ?: it }) { i ->
                 val artist = rows[i] ?: return@items
                 ArtistRow(
