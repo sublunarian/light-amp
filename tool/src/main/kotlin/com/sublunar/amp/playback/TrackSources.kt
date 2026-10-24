@@ -24,7 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 internal class TrackSources(
     private val serverClient: StateFlow<MusicServer?>,
     private val downloads: DownloadStore,
-    /** The id a stream of a song carries — see PlaybackController.streamSessionIdFor. */
+    /** The id a stream of a song carries — see [ServerReports.streamSessionIdFor]. */
     private val streamSessionIdFor: (trackId: String, decidedFirst: Boolean) -> String,
 ) {
     /** Downloaded tracks' files and formats, kept current as downloads land, so queue items build synchronously. */
@@ -187,7 +187,7 @@ internal class TrackSources(
      * that session's id: Plex holds a session it tracks to a decision per
      * song, and the player fetches ahead and on its own, so nothing in front
      * of it can know when to ask. Without the door the stream gets an id of
-     * its own — see PlaybackController.streamSessionIdFor.
+     * its own — see [ServerReports.streamSessionIdFor].
      */
     fun playerUrl(track: Track, timeOffsetSeconds: Int = 0): String {
         val client = serverClient.value ?: return ""
