@@ -608,7 +608,7 @@ class Downloader(
         // Only the libraries kept on the Sources page ("Shown on"): hiding one
         // says you aren't interested in it. Not the browsed library: what to
         // keep is wider than what to look at.
-        val hidden = source.hiddenLibraryIds.filterNotNull().distinct()
+        val hidden = source.hiddenLibraries.toList()
         val noneHidden = hidden.isEmpty()
         if (!dao.hasKeptTracks(hidden, noneHidden)) return
         // Playlists count in both modes (Favorites promises them, Everything

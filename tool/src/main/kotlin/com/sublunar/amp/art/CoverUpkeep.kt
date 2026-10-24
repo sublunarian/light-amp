@@ -59,7 +59,7 @@ class CoverUpkeep(
                 // The chosen library, as the lists show it — see LibraryView —
                 // newest first: those are the covers a run cut short is most
                 // likely to be asked for.
-                val view = LibraryView(source.libraryId, source.hiddenLibraryIds.filterNotNull().toSet())
+                val view = LibraryView(source.libraryId, source.hiddenLibraries)
                 val wanted = runCatching { daoFor(source).allAlbumsSnapshot() }
                     .noteOom("cover sync of ${source.name}")
                     .getOrDefault(emptyList())

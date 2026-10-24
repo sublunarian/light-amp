@@ -207,6 +207,9 @@ data class MusicSource(
             OfflineMode.entries.firstOrNull { it.name == name }
         } ?: OfflineMode.MANUAL
 
+    /** [hiddenLibraryIds] as every reader means it: without the null older builds stored. */
+    val hiddenLibraries: Set<String> get() = hiddenLibraryIds.filterNotNull().toSet()
+
     /** The libraries this source offers on the Sources page, in order. */
     val visibleLibraries: List<SourceLibrary>
         get() = libraries.filterNot { it.id in hiddenLibraryIds }

@@ -313,7 +313,7 @@ class LibraryRepository(
      */
     private val hiddenLibraries: StateFlow<Set<String>> =
         settings.activeSource
-            .map { it?.hiddenLibraryIds?.filterNotNull()?.toSet().orEmpty() }
+            .map { it?.hiddenLibraries.orEmpty() }
             .distinctUntilChanged()
             .stateIn(scope, SharingStarted.Eagerly, emptySet())
 
@@ -825,7 +825,7 @@ class LibraryRepository(
         val songsFollowLibrary = source?.provider?.libraryNarrowsPlaylistSongs ?: true
         val view = LibraryView(
             if (songsFollowLibrary) libraryId.first() else null,
-            source?.hiddenLibraryIds?.filterNotNull()?.toSet().orEmpty(),
+            source?.hiddenLibraries.orEmpty(),
         )
         if (!view.narrows || d == null) return { true }
         val rows = runCatching {
@@ -1265,7 +1265,7 @@ class LibraryRepository(
             // "All libraries" is fanned out per folder and merged: an unscoped
             // getAlbumList2 returns only the server's default library. A hidden
             // library is left out — not wanted on this phone, data included.
-            val hidden = source?.hiddenLibraryIds?.filterNotNull()?.toSet().orEmpty()
+            val hidden = source?.hiddenLibraries.orEmpty()
             val folderIds: List<String?> = if (musicFolderId != null) {
                 listOf(musicFolderId)
             } else {
