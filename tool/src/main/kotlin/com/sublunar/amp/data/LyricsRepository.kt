@@ -88,7 +88,16 @@ object LyricsRepository {
         return if (asked) Outcome.None else Outcome.Unavailable
     }
 
-    /** The `[millis]text` form Downloader.fetchLyrics stores with a download. */
+    /**
+     * [lyrics] in the form stored with a download: a line each, a timed one
+     * prefixed `[millis]`. Read back by [parseStored].
+     */
+    fun encodeStored(lyrics: Lyrics): String =
+        lyrics.lines.joinToString("\n") { line ->
+            if (line.timeMs != null) "[${line.timeMs}]${line.text}" else line.text
+        }
+
+    /** What [encodeStored] wrote. */
     private fun parseStored(raw: String?): Lyrics? {
         if (raw.isNullOrBlank()) return null
         val lines = raw.split('\n').mapNotNull { line ->

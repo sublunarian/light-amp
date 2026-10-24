@@ -635,9 +635,7 @@ class Downloader(
         } else {
             fromServer
         }
-        return best?.lines?.joinToString("\n") { line ->
-            if (line.timeMs != null) "[${line.timeMs}]${line.text}" else line.text
-        }
+        return best?.let(LyricsRepository::encodeStored)
     }
 
     /** Why nothing is moving although something is queued — see [eligible]. */
