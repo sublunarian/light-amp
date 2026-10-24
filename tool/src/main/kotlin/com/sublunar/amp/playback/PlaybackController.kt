@@ -861,7 +861,7 @@ class PlaybackController(
         // ReplayGain: the playing track's gain becomes the player's volume,
         // attenuate-only (clamped at unity), so nothing is boosted into
         // clipping. While casting the stand-in is item 0 and its silence gets
-        // the first track's gain, which is harmless.
+        // the gain of the window's first track, which is harmless.
         //
         // No index is no answer. A handle that hasn't connected, or an empty
         // player, reads -1, and unity for it would overwrite the gain the
@@ -1887,7 +1887,8 @@ class PlaybackController(
      * [queueFinished]. Under repeat the player loops and never ends, except
      * under repeat-queue with a window shorter than the queue ([playerLoops]):
      * that one ends, and is wrapped here, playing on from the first track, if
-     * [stoppedHere] (this handle heard it play). One that ended while no handle
+     * [stoppedHere] (this handle heard it play) and it still wants to play: a
+     * pause in the last second is not the end. One that ended while no handle
      * listened is left where it stopped: opening the app starts nothing.
      *
      * The SDK doesn't surface STATE_ENDED, so this reads the evidence Media3
@@ -1902,7 +1903,7 @@ class PlaybackController(
         if (!hasPlayed) return
         val wraps = _repeatMode.value == RepeatMode.QUEUE && !playerLoops
         if (_repeatMode.value != RepeatMode.OFF && !wraps) return
-        if (wraps && !stoppedHere) return
+        if (wraps && (!stoppedHere || !p.playWhenReady)) return
         val last = _queue.value.lastIndex
         if (last < 0 || _index.value != last) return
         // The player's duration when it has one. A chunked transcode may never
