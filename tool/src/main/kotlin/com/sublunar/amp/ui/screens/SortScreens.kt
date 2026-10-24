@@ -21,8 +21,6 @@ import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.ui.LightIcon
-import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.launch
 
 private val ALBUM_SORT_OPTIONS = AlbumSort.entries.toList()
@@ -60,23 +58,14 @@ class TagFilterScreen(
             subtitle = tab.title,
         ) {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
-                item { Choice("All", chosen = current.isEmpty()) { choose("") } }
+                item { TextRow(title = "All", checked = current.isEmpty()) { choose("") } }
                 items(values) { value ->
-                    Choice(value, chosen = value.equals(current, ignoreCase = true)) {
+                    TextRow(title = value, checked = value.equals(current, ignoreCase = true)) {
                         choose(value)
                     }
                 }
             }
         }
-    }
-
-    @Composable
-    private fun Choice(label: String, chosen: Boolean, onClick: () -> Unit) {
-        TextRow(
-            title = label,
-            onClick = onClick,
-            trailing = { if (chosen) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
-        )
     }
 
     private fun choose(value: String) {

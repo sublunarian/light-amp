@@ -14,8 +14,6 @@ import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.ui.LightIcon
-import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -79,9 +77,7 @@ class RatingScreen(
                                 }
                             }
                         },
-                        trailing = {
-                            if (stars == current) LightIcon(LightIcons.ACCEPT, size = 1.4f)
-                        },
+                        checked = stars == current,
                     )
                 }
             }

@@ -30,8 +30,6 @@ import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
-import com.thelightphone.sdk.ui.LightIcon
-import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
@@ -116,7 +114,7 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             title = name,
             modifier = Modifier.padding(start = px(FOLDER_INDENT_PX)),
             onClick = onClick,
-            trailing = { if (selected) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
+            checked = selected,
         )
     }
 
@@ -190,11 +188,7 @@ class LibraryVisibilityScreen(
                 // see MusicSource.showsAllLibraries.
                 items(source.libraries, key = { it.id }) { library ->
                     val shown = library.id !in source.hiddenLibraryIds
-                    VisibilityRow(
-                        name = library.name,
-                        shown = shown,
-                        onToggle = { toggle(library.id, !shown) },
-                    )
+                    TextRow(title = library.name, checked = shown) { toggle(library.id, !shown) }
                 }
                 if (adding) item { TextRow(title = "Done", onClick = { leave() }) }
             }
@@ -203,15 +197,6 @@ class LibraryVisibilityScreen(
 
     /** A result only while adding: the SDK calls back only when there is one. */
     private fun leave() = if (adding) goBack(Unit) else goBack()
-
-    @Composable
-    private fun VisibilityRow(name: String, shown: Boolean, onToggle: () -> Unit) {
-        TextRow(
-            title = name,
-            onClick = onToggle,
-            trailing = { if (shown) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
-        )
-    }
 
     private fun toggle(libraryId: String, visible: Boolean) {
         App.scope.launch {

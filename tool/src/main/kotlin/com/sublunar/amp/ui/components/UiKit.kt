@@ -40,6 +40,8 @@ import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.delay
@@ -194,6 +196,8 @@ fun TextRow(
     subtitleLines: Int = 1,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    /** The choice in effect on a picker, ticked at the row's end where there is no [trailing]. */
+    checked: Boolean = false,
     /**
      * Null for a row that states something rather than opening it (a setting with
      * only one possible value): it takes no press and its main line is dimmed.
@@ -220,9 +224,15 @@ fun TextRow(
                 if (!subtitle.isNullOrBlank()) MenuLabel(subtitle, maxLines = subtitleLines)
             }
         }
-        if (trailing != null) trailing()
+        when {
+            trailing != null -> trailing()
+            checked -> LightIcon(LightIcons.ACCEPT, size = CHECK_SCALE)
+        }
     }
 }
+
+/** The tick's size, as a multiple of the SDK icon's own. */
+private const val CHECK_SCALE = 1.4f
 
 /** A menu row's main line, in Light's Copy (see [TextRow]). */
 @Composable

@@ -416,7 +416,7 @@ class StreamFormatScreen(
                             App.scope.launch { App.settings.setStreamFormat(sourceId, format) }
                             goBack()
                         },
-                        trailing = { if (format == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
+                        checked = format == current,
                     )
                 }
             }
@@ -443,7 +443,7 @@ class CellularFormatScreen(
                             App.scope.launch { App.settings.setCellularFormat(sourceId, format) }
                             goBack()
                         },
-                        trailing = { if (format == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
+                        checked = format == current,
                     )
                 }
             }
@@ -474,7 +474,7 @@ class SourceDownloadFormatScreen(
                             }
                             goBack()
                         },
-                        trailing = { if (format == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
+                        checked = format == current,
                     )
                 }
             }

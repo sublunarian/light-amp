@@ -34,8 +34,6 @@ import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.ui.LightIcon
-import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -269,7 +267,7 @@ class OfflineModeScreen(
                             App.scope.launch { App.settings.setSourceOfflineMode(sourceId, mode) }
                             goBack()
                         },
-                        trailing = { if (mode == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
+                        checked = mode == current,
                     )
                 }
             }
@@ -292,7 +290,7 @@ class DataModeScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                             App.scope.launch { App.settings.dataMode.set(mode) }
                             goBack()
                         },
-                        trailing = { if (mode == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
+                        checked = mode == current,
                     )
                 }
             }
@@ -332,7 +330,7 @@ class SizeLimitScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                             App.scope.launch { App.settings.downloadLimit.set(bytes) }
                             goBack()
                         },
-                        trailing = { if (bytes == current) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
+                        checked = bytes == current,
                     )
                 }
             }

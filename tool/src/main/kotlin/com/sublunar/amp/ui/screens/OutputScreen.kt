@@ -40,8 +40,6 @@ import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.ui.LightIcon
-import com.thelightphone.sdk.ui.LightIcons
 import kotlin.math.roundToInt
 
 /**
@@ -246,7 +244,7 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             leading = {
                 AppIcon(icon, size = px(56), modifier = if (selected) Modifier else Modifier.alpha(0.5f))
             },
-            trailing = { if (selected) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
+            checked = selected,
             onClick = if (enabled) onClick else null,
         )
     }

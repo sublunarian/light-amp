@@ -10,8 +10,6 @@ import com.sublunar.amp.App
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.ui.LightIcon
-import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.launch
 
 /**
@@ -36,19 +34,10 @@ class AlbumViewScreen(
             subtitle = if (forArtist) "An artist's albums" else "All albums",
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                Choice("List", chosen = !grid) { choose(false) }
-                Choice("Grid", chosen = grid) { choose(true) }
+                TextRow(title = "List", checked = !grid) { choose(false) }
+                TextRow(title = "Grid", checked = grid) { choose(true) }
             }
         }
-    }
-
-    @Composable
-    private fun Choice(label: String, chosen: Boolean, onClick: () -> Unit) {
-        TextRow(
-            title = label,
-            onClick = onClick,
-            trailing = { if (chosen) LightIcon(LightIcons.ACCEPT, size = 1.4f) },
-        )
     }
 
     private fun choose(grid: Boolean) {
