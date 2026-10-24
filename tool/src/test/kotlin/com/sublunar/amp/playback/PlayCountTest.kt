@@ -61,6 +61,12 @@ class PlayCountTest {
     }
 
     @Test
+    fun `a song of a few seconds playing on is not a song ending`() {
+        assertFalse(endedIntoItself(beforeMs = 2_500L, nowMs = 2_750L, lengthMs = 5_000L))
+        assertTrue(endedIntoItself(beforeMs = 4_900L, nowMs = 100L, lengthMs = 5_000L))
+    }
+
+    @Test
     fun `without a length nothing can be said`() {
         assertFalse(endedIntoItself(beforeMs = 239_800L, nowMs = 0L, lengthMs = 0L))
     }

@@ -1452,7 +1452,7 @@ class PlaybackController(
         }
         awaitedDecision = generation
         // Under the id the queued stream carries. Where the door decides each
-        // stream itself (see playerUrl) this is asked twice, harmlessly.
+        // stream itself (see TrackSources.playerUrl) this is asked twice, harmlessly.
         val format = sources.effectiveFormat()
         val sid = reports.streamSessionIdFor(track.id, sources.decidesAtDoor(client, track, format))
         scope.launch {

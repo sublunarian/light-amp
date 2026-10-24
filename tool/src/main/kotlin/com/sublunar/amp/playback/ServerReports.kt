@@ -482,8 +482,9 @@ private const val WRAP_SLACK_MS = 3_000L
 
 /**
  * Whether a song read at [beforeMs] and then at [nowMs] ended into its own
- * start: from near its end, [lengthMs], to near its beginning. Unknowable
- * without a length.
+ * start: back from near its end, [lengthMs], to near its beginning.
+ * Unknowable without a length. Backwards only: in a song of a few seconds
+ * the two windows overlap, and every reading would start a play.
  */
 internal fun endedIntoItself(beforeMs: Long, nowMs: Long, lengthMs: Long): Boolean =
-    lengthMs > 0L && beforeMs >= lengthMs - WRAP_SLACK_MS && nowMs < WRAP_SLACK_MS
+    lengthMs > 0L && nowMs < beforeMs && beforeMs >= lengthMs - WRAP_SLACK_MS && nowMs < WRAP_SLACK_MS
