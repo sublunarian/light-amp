@@ -182,6 +182,15 @@ enum class StreamFormat(val id: String, val maxBitRate: Int?) {
     }
 }
 
+/** Rough audio quality order, used to decide whether streaming beats a download. */
+val StreamFormat.qualityRank: Int
+    get() = when (this) {
+        StreamFormat.MP3 -> 1
+        StreamFormat.OPUS -> 2
+        StreamFormat.FLAC -> 3
+        StreamFormat.RAW -> 4
+    }
+
 enum class RepeatMode { OFF, TRACK, QUEUE }
 
 data class LyricLine(val timeMs: Long?, val text: String)

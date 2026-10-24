@@ -23,6 +23,7 @@ import com.sublunar.amp.data.SourceLibrary
 import com.sublunar.amp.data.newSourceId
 import com.sublunar.amp.source.PendingServer
 import com.sublunar.amp.source.SignInOutcome
+import com.sublunar.amp.source.causes
 import com.sublunar.amp.source.firstAnsweringSpelling
 import com.sublunar.amp.source.unavailableReason
 import com.sublunar.amp.source.unreachedReason
@@ -284,7 +285,7 @@ private fun librariesFailed(e: Exception): String {
 }
 
 private fun Throwable.plexStatus(): Int? =
-    generateSequence(this) { it.cause }.take(8).filterIsInstance<PlexException>().firstOrNull()?.status
+    causes().filterIsInstance<PlexException>().firstOrNull()?.status
 
 private val REFUSED_STATUSES = setOf(401, 403)
 

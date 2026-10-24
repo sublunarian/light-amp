@@ -279,15 +279,6 @@ val StreamFormat.suffix: String
         StreamFormat.RAW -> "audio"
     }
 
-/** Rough audio quality order, used to decide whether streaming beats a download. */
-val StreamFormat.qualityRank: Int
-    get() = when (this) {
-        StreamFormat.MP3 -> 1
-        StreamFormat.OPUS -> 2
-        StreamFormat.FLAC -> 3
-        StreamFormat.RAW -> 4
-    }
-
 /**
  * Always in GB, for a used/allowed pair — "740 MB" against "50.3 GB" is hard to
  * compare at a glance.
