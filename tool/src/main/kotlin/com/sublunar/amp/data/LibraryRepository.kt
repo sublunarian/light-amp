@@ -500,12 +500,16 @@ class LibraryRepository(
         observing(emptyList()) { it.observeLikedArtists() }.map { names -> names.toSet() }
             .stateIn(scope, SharingStarted.Eagerly, emptySet())
 
-    /** Each artist's picture from the server's own record, keyed by name — filled by [primeArtistImages]. */
-    private val _artistImages = MutableStateFlow<Map<String, String>>(emptyMap())
+    /**
+     * Each artist's picture from the server's own record, keyed by name — filled
+     * by [primeArtistImages]. Null until the server has been asked: an empty map
+     * is a server with no artist pictures, not one to ask again.
+     */
+    private val _artistImages = MutableStateFlow<Map<String, String>?>(null)
 
     val artists: StateFlow<List<Artist>> =
         combine(tracks, likedArtistNames, _artistImages) { list, liked, images ->
-            deriveArtists(list, liked, images)
+            deriveArtists(list, liked, images.orEmpty())
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private fun deriveArtists(
@@ -536,7 +540,7 @@ class LibraryRepository(
      * Failure leaves the map as it was, and rows show their placeholder.
      */
     suspend fun primeArtistImages() {
-        if (_artistImages.value.isNotEmpty()) return
+        if (_artistImages.value != null) return
         if (!metadataAllowed()) return
         val client = serverClient.value ?: return
         val refs = runCatching { client.getArtistIndex(libraryId.first()) }.noteOom("artist index").getOrNull() ?: return
@@ -2127,7 +2131,7 @@ class LibraryRepository(
         staleMembership.value = emptySet()
         topSongs.clear()
         artistIds = null
-        _artistImages.value = emptyMap()
+        _artistImages.value = null
         haystack = null
         // Not lastTracksRead: the database hasn't changed over yet, and a write
         // the cancelled sync lands first is read against it; trackRows drops it
