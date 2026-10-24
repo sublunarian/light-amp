@@ -83,10 +83,13 @@ class ArtworkLoader(
 
         return withContext(Dispatchers.IO) {
             // Bytes on disk that aren't a picture are thrown away and asked for
-            // again; kept, one bad answer is a cover broken for good.
+            // again; kept, one bad answer is a cover broken for good. Only
+            // those: with no file read, a delete could take one a writer has
+            // just put there.
             val source = sourceId()
-            val cached = readDisk(source, coverArtId)?.takeIf { looksLikeImage(it) }
-            if (cached == null) diskFile(source, coverArtId).delete()
+            val onDisk = readDisk(source, coverArtId)
+            val cached = onDisk?.takeIf { looksLikeImage(it) }
+            if (onDisk != null && cached == null) diskFile(source, coverArtId).delete()
             val bytes = cached ?: fetch(serverClient.value, coverArtId, need)?.also { writeDisk(source, coverArtId, it) }
                 ?: return@withContext null
             val bitmap = decodeDownsampled(bytes, bucket) ?: return@withContext null
@@ -131,26 +134,26 @@ class ArtworkLoader(
         val startedMs = System.currentTimeMillis()
         // A grid asks for a screenful at once; all in flight together, they all
         // slow down and some time out.
-        return gate.withPermit {
+        val answer = gate.withPermit {
             // The full-size URL is the fallback: a resizer that isn't answering
             // should cost a slower cover, not a missing one.
-            download(sized).bytesOrNull() ?: download(original.takeIf { it != sized }).bytesOrNull()
-        }.also { bytes ->
-            if (need == ArtworkNeed.FOCUSED || bytes == null) {
-                android.util.Log.i(
-                    "AmpArt",
-                    "${need.name.lowercase()} cover ${if (bytes != null) "${bytes.size / 1024} KB" else "FAILED ($lastFailure)"} " +
-                        "in ${System.currentTimeMillis() - startedMs} ms",
-                )
-            }
+            val first = download(sized)
+            if (first is CoverFetch.Got || original == sized) first else download(original)
         }
+        val bytes = (answer as? CoverFetch.Got)?.bytes
+        if (need == ArtworkNeed.FOCUSED || bytes == null) {
+            val outcome = when (answer) {
+                is CoverFetch.Got -> "${answer.bytes.size / 1024} KB"
+                CoverFetch.None -> "FAILED (none)"
+                is CoverFetch.Failed -> "FAILED (${answer.why})"
+            }
+            android.util.Log.i(
+                "AmpArt",
+                "${need.name.lowercase()} cover $outcome in ${System.currentTimeMillis() - startedMs} ms",
+            )
+        }
+        return bytes
     }
-
-    /** Why the most recent download came back empty — for the log line above. */
-    @Volatile
-    private var lastFailure: String = "no answer"
-
-    private fun CoverFetch.bytesOrNull(): ByteArray? = (this as? CoverFetch.Got)?.bytes
 
     /**
      * One request for one picture. The drawing path only wants bytes; the cover
@@ -167,23 +170,18 @@ class ArtworkLoader(
                     val bytes = response.body<ByteArray>()
                     // Whether they are a picture is settled in [writeDisk]: Subsonic
                     // says "not found" with a 200.
-                    if (bytes.isNotEmpty()) CoverFetch.Got(bytes) else none("empty body")
+                    if (bytes.isNotEmpty()) CoverFetch.Got(bytes) else CoverFetch.None
                 }
                 // Refusals about *us* or about the moment, not about the cover.
                 status == 401 || status == 403 || status == 408 || status == 429 || status >= 500 ->
-                    CoverFetch.Failed("HTTP $status").also { lastFailure = it.why }
-                else -> none("HTTP $status")
+                    CoverFetch.Failed("HTTP $status")
+                else -> CoverFetch.None
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            CoverFetch.Failed("${e::class.simpleName}: ${e.message?.take(80)}").also { lastFailure = it.why }
+            CoverFetch.Failed("${e::class.simpleName}: ${e.message?.take(80)}")
         }
-    }
-
-    private fun none(why: String): CoverFetch {
-        lastFailure = why
-        return CoverFetch.None
     }
 
     /** The picture tagged into an audio file; [MediaMetadataRetriever] takes a path, so a tool can use it. */
@@ -214,22 +212,12 @@ class ArtworkLoader(
     }
 
     /**
-     * Drop one source's covers — on Log Out, with its library. Files are named by
-     * a hash, so the caller names the ids, read from the source's database
-     * before it is cleared.
-     */
-    suspend fun forget(sourceId: String, coverArtIds: Collection<String>) {
-        withContext(Dispatchers.IO) {
-            coverArtIds.forEach { File(diskDir, fileNameFor(sourceId, it)).delete() }
-        }
-        memory.snapshot().keys.filter { it.startsWith("$sourceId|") }.forEach { memory.remove(it) }
-    }
-
-    /**
      * Drop covers the library has just stopped pointing at — the other half of
      * [syncCovers]. A sync that removes an album, or sees its art change (a *new*
      * cover id on Navidrome and Plex), names the ids it no longer holds; see
-     * LibraryRepository.reportDroppedCovers.
+     * LibraryRepository.reportDroppedCovers. A source removed names every id its
+     * database held, read before the tables are cleared: files are named by a
+     * hash, so only the ids can find them.
      *
      * Only those covers leave memory, not the source's whole set: this runs
      * after every sync that changed anything, under a list that is on screen.

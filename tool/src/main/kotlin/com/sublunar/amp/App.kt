@@ -220,7 +220,7 @@ object App {
         downloader.cancelSource(source.id)
         val db = databaseFor(source)
         // Named before the tables go: the covers on disk can only be found
-        // through the ids this database holds — see ArtworkLoader.forget.
+        // through the ids this database holds — see ArtworkLoader.drop.
         val covers = runCatching { db.libraryDao().allCoverArtIds() }
             .noteOom("covers of ${source.name}").getOrDefault(emptyList())
         db.libraryDao().apply {
@@ -232,7 +232,7 @@ object App {
             clearAllPlaylistTracks()
         }
         downloads.deleteSource(source.id)
-        artwork.forget(source.id, covers)
+        artwork.drop(source.id, covers)
         backgroundPlaylistTracks.remove(source.id)
         backgroundPlaylistFailedAt.keys.removeAll { it.startsWith("${source.id}/") }
         forgetClient(source.id)
