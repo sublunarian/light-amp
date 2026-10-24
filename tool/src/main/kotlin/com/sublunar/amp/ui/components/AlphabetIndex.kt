@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -24,7 +25,6 @@ import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.ui.LightThemeTokens
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /** Letters offered by the index, with "#" collecting everything non-alphabetic. */
@@ -50,7 +50,6 @@ fun AlphabetIndex(
     /** Bucket letter for each row, in list order, offset by [headerCount]. */
     letters: List<Char>,
     target: ScrollTarget,
-    scope: CoroutineScope,
     modifier: Modifier = Modifier,
     /** Rows above the indexed content (play-all rows and the like). */
     headerCount: Int = 0,
@@ -59,6 +58,7 @@ fun AlphabetIndex(
 ) {
     // The row buckets already follow the list's order, so only the strip flips.
     val strip = remember(reversed) { if (reversed) LETTERS.reversed() else LETTERS }
+    val scope = rememberCoroutineScope()
     val rows = remember(letters) { LetterRows(letters) }
     // First row index per letter, so a tap can jump straight there.
     val firstIndex = remember(letters) { rows.first.mapValues { it.value + headerCount } }

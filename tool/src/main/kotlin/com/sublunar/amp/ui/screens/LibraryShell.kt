@@ -26,7 +26,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -253,7 +252,6 @@ private fun SearchView(
                             // result is a thing in the library, not a menu entry.
                             ArtistRow(
                                 name = artist.name,
-                                subtitle = "",
                                 imageId = artist.imageId,
                                 modifier = Modifier.padding(end = lane),
                                 onClick = {
@@ -524,7 +522,8 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
         if (grid) {
             // Its own anchor, separate from the list's: see rememberGridAnchor.
             val gridState = rememberGridAnchor("tab:albums/grid", headerCount = 1)
-            // No strip and no bar: the covers take the whole screen.
+            // No strip: the covers take the width, and AlbumGrid adds its own bar
+            // once the list is long.
             Box(modifier = Modifier.weight(1f)) {
                 AlbumGrid(
                     albums = sorted,
@@ -613,7 +612,6 @@ private fun ColumnScope.IndexedList(
     content: LazyListScope.() -> Unit,
 ) {
     val listState = rememberListAnchor(anchor, headerCount)
-    val scope = rememberCoroutineScope()
     Box(modifier = Modifier.weight(1f)) {
         val indexed = letters.isNotEmpty()
         LazyColumn(
@@ -632,7 +630,6 @@ private fun ColumnScope.IndexedList(
             AlphabetIndex(
                 letters = letters,
                 target = rememberScrollTarget(listState),
-                scope = scope,
                 headerCount = headerCount,
                 reversed = reversed,
                 modifier = Modifier.align(Alignment.CenterEnd),
@@ -740,7 +737,6 @@ private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
                 val artist = rows[i] ?: return@items
                 ArtistRow(
                     name = artist.name,
-                    subtitle = "${artist.albumCount} albums · ${artist.trackCount} songs",
                     downloaded = artist.name in downloadedArtists,
                     imageId = artist.imageId,
                     onClick = { actions.openArtist(artist.name, Parent.Here) },

@@ -433,7 +433,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         artworkHidden: Boolean,
     ) {
         if (selection.active) {
-            SelectionArtwork(track.coverArtId, track.id in selection.selected, size = px(ROW_ART_PX))
+            SelectionArtwork(track.coverArtId, track.id in selection.selected)
             Spacer(Modifier.width(px(ROW_GAP_PX)))
         } else if (!artworkHidden) {
             AppArtwork(track.coverArtId, size = px(ROW_ART_PX))

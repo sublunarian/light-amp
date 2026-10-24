@@ -77,9 +77,9 @@ private const val EDIT_ARTWORK_ALPHA = 0.55f
 
 /** The artwork every select-mode row wears: a dimmed cover with the check bubble centred on it. */
 @Composable
-fun SelectionArtwork(coverArtId: String?, selected: Boolean, size: Dp = px(ROW_ART_PX)) {
-    Box(Modifier.size(size), contentAlignment = Alignment.Center) {
-        AppArtwork(coverArtId, size = size, modifier = Modifier.alpha(EDIT_ARTWORK_ALPHA))
+fun SelectionArtwork(coverArtId: String?, selected: Boolean) {
+    Box(Modifier.size(px(ROW_ART_PX)), contentAlignment = Alignment.Center) {
+        AppArtwork(coverArtId, size = px(ROW_ART_PX), modifier = Modifier.alpha(EDIT_ARTWORK_ALPHA))
         AppIcon(
             if (selected) AppIcons.Selected else AppIcons.Unselected,
             size = px(66),
@@ -123,7 +123,7 @@ fun TrackRow(
     ) {
         DownloadMark(downloaded)
         if (selected != null) {
-            SelectionArtwork(coverArtId, selected, size = px(ROW_ART_PX))
+            SelectionArtwork(coverArtId, selected)
             Spacer(Modifier.width(px(ROW_GAP_PX)))
         } else if (!artworkHidden) {
             AppArtwork(coverArtId = coverArtId, size = px(ROW_ART_PX), fallback = fallback)
@@ -220,7 +220,6 @@ const val LIST_TOP_PX = 15
 @Composable
 fun ArtistRow(
     name: String,
-    subtitle: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
