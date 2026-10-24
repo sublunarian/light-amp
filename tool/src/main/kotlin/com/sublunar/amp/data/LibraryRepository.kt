@@ -36,6 +36,24 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
+/**
+ * One read of the chosen library's songs and what the badges and the playlist
+ * narrowing work out from it, each on first use and then kept for as long as
+ * this is the library. Held in [LibraryRepository.indexed], so it lets go of
+ * its songs when the next read replaces it.
+ */
+internal class Indexed(val tracks: List<Track>) {
+    /** How many tracks each album has. */
+    val albumSizes: Map<String, Int> by lazy { tracks.mapNotNull { it.albumId }.groupingBy { it }.eachCount() }
+
+    /** How many tracks each album artist has. */
+    val artistSizes: Map<String, Int> by lazy { tracks.flatMap { it.albumArtistNames() }.groupingBy { it }.eachCount() }
+
+    val byId: Map<String, Track> by lazy { tracks.associateBy { it.id } }
+
+    val ids: Set<String> by lazy { tracks.mapTo(HashSet()) { it.id } }
+}
+
 data class SearchResults(
     val artists: List<Artist> = emptyList(),
     val albums: List<Album> = emptyList(),
@@ -305,17 +323,13 @@ class LibraryRepository(
             }
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    // How many tracks each album has, rebuilt only when the library changes, not
-    // on every completed download.
-    //
-    // Each memo holds the list it was worked out from, and with it every song —
-    // so it is dropped wherever that list stops being refreshed: on a source
-    // switch (see forgetDerived), and once there are no downloads to badge.
-    @Volatile private var albumSizes: Pair<List<Track>, Map<String, Int>>? = null
-
-    private fun albumSizes(list: List<Track>): Map<String, Int> =
-        albumSizes?.takeIf { it.first === list }?.second
-            ?: list.mapNotNull { it.albumId }.groupingBy { it }.eachCount().also { albumSizes = list to it }
+    /**
+     * [fullTracks] with what is worked out from it, each part on first use — see
+     * [Indexed]. Built again only when the library changes, so a completed
+     * download costs the downloads, not a pass over the library.
+     */
+    internal val indexed: StateFlow<Indexed> =
+        fullTracks.map(::Indexed).stateIn(scope, SharingStarted.Eagerly, Indexed(emptyList()))
 
     /**
      * Albums whose every cached track is downloaded — drives the download badge.
@@ -323,12 +337,9 @@ class LibraryRepository(
      * costs the number of downloads, not the size of the library.
      */
     val downloadedAlbumIds: StateFlow<Set<String>> =
-        combine(fullTracks, downloadFiles) { list, rows ->
-            if (rows.isEmpty()) {
-                albumSizes = null
-                return@combine emptySet()
-            }
-            val sizes = albumSizes(list)
+        combine(indexed, downloadFiles) { library, rows ->
+            if (rows.isEmpty()) return@combine emptySet()
+            val sizes = library.albumSizes
             val have = HashMap<String, Int>()
             for (row in rows) {
                 val album = row.albumId ?: continue
@@ -339,27 +350,15 @@ class LibraryRepository(
             }
         }.stateIn(scope, SharingStarted.Eagerly, emptySet())
 
-    // How many tracks each artist has, rebuilt only when the library itself
-    // changes — the same memoisation as albumSizes, for the same reason.
-    @Volatile private var artistSizes: Pair<List<Track>, Map<String, Int>>? = null
-
-    private fun artistSizes(list: List<Track>): Map<String, Int> =
-        artistSizes?.takeIf { it.first === list }?.second
-            ?: list.flatMap { it.albumArtistNames() }.groupingBy { it }.eachCount().also { artistSizes = list to it }
-
     /**
      * Artists whose every cached track is downloaded — drives the artist list's
      * download badge, the same way [downloadedAlbumIds] drives the album one.
      */
     val downloadedArtistNames: StateFlow<Set<String>> =
-        combine(fullTracks, downloadFiles) { list, rows ->
-            if (rows.isEmpty()) {
-                artistSizes = null
-                trackIndex = null
-                return@combine emptySet()
-            }
-            val sizes = artistSizes(list)
-            val byId = trackIndex(list)
+        combine(indexed, downloadFiles) { library, rows ->
+            if (rows.isEmpty()) return@combine emptySet()
+            val sizes = library.artistSizes
+            val byId = library.byId
             val have = HashMap<String, Int>()
             for (row in rows) {
                 val credits = byId[row.trackId]?.albumArtistNames() ?: continue
@@ -371,14 +370,6 @@ class LibraryRepository(
                 artist.takeIf { sizes[artist] == n }
             }
         }.stateIn(scope, SharingStarted.Eagerly, emptySet())
-
-    // Track lookup for downloadedArtistNames, memoised on the library list
-    // instance so a completed download doesn't rebuild a ten-thousand-entry map.
-    @Volatile private var trackIndex: Pair<List<Track>, Map<String, Track>>? = null
-
-    private fun trackIndex(list: List<Track>): Map<String, Track> =
-        trackIndex?.takeIf { it.first === list }?.second
-            ?: list.associateBy { it.id }.also { trackIndex = list to it }
 
     /**
      * The tag values this library actually uses, derived from the cache (no server
@@ -879,10 +870,7 @@ class LibraryRepository(
         haystack = null
         // Not lastTracksRead: the database hasn't changed over yet, and a write
         // the cancelled sync lands first is read against it; cachedTracks drops it
-        // when the lists change over. Each of these holds the source being left.
-        albumSizes = null
-        artistSizes = null
-        trackIndex = null
+        // when the lists change over, and [indexed] goes with them.
         // Stopped, these would still offer the last source's — see genres.
         tagValues.forEach { it.value = emptyList() }
     }

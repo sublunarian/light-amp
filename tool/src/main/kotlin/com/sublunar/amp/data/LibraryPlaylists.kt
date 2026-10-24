@@ -183,14 +183,13 @@ class LibraryPlaylists(
 
     /** The chosen library's songs, where it narrows the playlist list instead; null where it doesn't. */
     private val listingLibrary: StateFlow<ListingLibrary?> =
-        combine(library.fullTracks, library.selectedLibrary, library.hiddenLibraries, narrowsPlaylistSongs) {
+        combine(library.indexed, library.selectedLibrary, library.hiddenLibraries, narrowsPlaylistSongs) {
                 inLibrary, selected, hidden, songsRule ->
             val narrows = LibraryView(selected, hidden).narrows
             // Nothing read yet is a library still loading, not one with no songs.
-            if (!songsRule && narrows && inLibrary.isNotEmpty()) {
-                ListingLibrary(inViewIds(inLibrary), chosen = selected != null)
+            if (!songsRule && narrows && inLibrary.tracks.isNotEmpty()) {
+                ListingLibrary(inLibrary.ids, chosen = selected != null)
             } else {
-                if (!narrows) inViewIds = null
                 null
             }
         }.stateIn(scope, SharingStarted.Eagerly, null)
@@ -446,7 +445,7 @@ class LibraryPlaylists(
      */
     private fun playlistShown(): Flow<Set<String>?> =
         combine(
-            combine(library.fullTracks, library.cachedTracks, library.albumRows) { inLibrary, rows, albums ->
+            combine(library.indexed, library.cachedTracks, library.albumRows) { inLibrary, rows, albums ->
                 Triple(inLibrary, rows, albums)
             },
             library.selectedLibrary,
@@ -454,10 +453,9 @@ class LibraryPlaylists(
             narrowsPlaylistSongs,
         ) { (inLibrary, rows, albums), selected, hidden, songsRule ->
             val narrows = LibraryView(selected, hidden).narrows
-            if (!narrows) inViewIds = null
             if (hidden.isEmpty()) unhidden = null
             when {
-                narrows && songsRule -> inViewIds(inLibrary)
+                narrows && songsRule -> inLibrary.ids
                 !songsRule && hidden.isNotEmpty() -> unhiddenIds(rows, albums, hidden)
                 else -> null
             }
@@ -480,13 +478,6 @@ class LibraryPlaylists(
         unhidden = Unhidden(rows, albums, hidden, ids)
         return ids
     }
-
-    // Memoised on the list instance, so a download landing doesn't rebuild it.
-    @Volatile private var inViewIds: Pair<List<Track>, Set<String>>? = null
-
-    private fun inViewIds(list: List<Track>): Set<String> =
-        inViewIds?.takeIf { it.first === list }?.second
-            ?: list.mapTo(HashSet()) { it.id }.also { inViewIds = list to it }
 
     suspend fun createPlaylist(name: String): WriteResult = createPlaylist(name, emptyList())
 
@@ -627,7 +618,6 @@ class LibraryPlaylists(
         _playlists.value = emptyList()
         membership.value = emptyMap()
         staleMembership.value = emptySet()
-        inViewIds = null
         unhidden = null
     }
 
