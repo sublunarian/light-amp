@@ -471,7 +471,7 @@ interface LibraryDao {
 
     // --- download top-up -----------------------------------------------------
     //
-    // What an offline mode wants, as ids, so App.topUpDownloads never holds a
+    // What an offline mode wants, as ids, so Downloader.topUp never holds a
     // source's library as tracks. Each takes the source's hidden libraries (see
     // [KEPT]); in rowid order.
 

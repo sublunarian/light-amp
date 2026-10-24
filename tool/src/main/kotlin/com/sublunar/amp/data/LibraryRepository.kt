@@ -350,7 +350,7 @@ class LibraryRepository(
     /**
      * The chosen library's songs, ignoring the offline narrowing. The download
      * top-up's trigger keys on this, never on [tracks], which offline narrows to
-     * what is downloaded and so moves on the wrong changes — see App.topUpDownloads.
+     * what is downloaded and so moves on the wrong changes — see App.boot.
      */
     val fullTracks: StateFlow<List<Track>> get() = allTracks
 

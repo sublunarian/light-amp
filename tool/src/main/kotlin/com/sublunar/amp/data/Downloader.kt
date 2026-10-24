@@ -4,13 +4,19 @@ import android.util.Log
 import com.sublunar.amp.App
 import com.sublunar.amp.data.db.DownloadEntity
 import com.sublunar.amp.data.db.LibraryDao
+import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.transfer.LightTransferService
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,7 +26,9 @@ import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
@@ -89,6 +97,13 @@ class Downloader(
     private val waitingLabel: () -> String,
     /** Suspends while the player is starting a stream — see App.yieldToPlayback. */
     private val yieldToPlayback: suspend () -> Unit,
+    /** Whether the server may be spoken to at all — see App.metadataAllowed. */
+    private val metadataAllowed: () -> Boolean,
+    /**
+     * Every track id in the browsed source's playlists, from the repository's
+     * cache, which the Playlists tab shares — see [playlistTrackIdsFor].
+     */
+    private val browsedPlaylistTrackIds: suspend () -> Set<String>,
 ) {
     private val _progress = MutableStateFlow(DownloadProgress())
     val progress: StateFlow<DownloadProgress> = _progress
@@ -279,7 +294,7 @@ class Downloader(
                     if (entry.trackId in already) return@forEach
                     // A file on this phone is not something to fetch a copy of.
                     // Belt as well as braces — the UI hides the action, and
-                    // App.topUpDownloads never offers these — because a stray
+                    // the top-up never offers these — because a stray
                     // enqueue here would ask the server for an id it has never
                     // heard of, once per track.
                     if (PhoneFiles.isPhoneFile(entry.trackId)) return@forEach
@@ -363,6 +378,13 @@ class Downloader(
                 _progress.value = DownloadProgress()
             }
         }
+    }
+
+    /** A source removed: its queue goes, and what was learnt of its playlists. */
+    suspend fun forget(sourceId: String) {
+        cancelSource(sourceId)
+        backgroundPlaylistTracks.remove(sourceId)
+        backgroundPlaylistFailedAt.keys.removeAll { it.startsWith("$sourceId/") }
     }
 
     /**
@@ -487,13 +509,173 @@ class Downloader(
         }
     }
 
+    // --- Top-up --------------------------------------------------------------
+
+    /**
+     * One top-up pass at a time, and a burst of requests is one more pass, not
+     * one each: each pass reads every source's tables and asks background
+     * servers for their playlists. A request mid-pass marks the pass to run
+     * again, and whatever it would have found, the rerun finds.
+     */
+    private val topUpRunning = Mutex()
+    private val topUpRequested = AtomicBoolean(false)
+
+    /** When a background source's playlist last failed to answer, by "source/playlist". */
+    private val backgroundPlaylistFailedAt = ConcurrentHashMap<String, Long>()
+
+    /**
+     * Playlist membership for the sources not being browsed, by source id, for
+     * the life of the process: the repository knows only the browsed source's.
+     * The list once per session, and each playlist's songs once they answer,
+     * null until then, so a failing one is asked again alone rather than
+     * taking the others with it. Dropped with the source — see [forget].
+     */
+    private val backgroundPlaylistTracks = ConcurrentHashMap<String, MutableMap<String, List<String>?>>()
+
+    /**
+     * Queue whatever each source's offline mode wants that isn't downloaded
+     * yet, for every source with a mode set, whichever is being browsed.
+     */
+    suspend fun topUp() {
+        topUpRequested.set(true)
+        while (true) {
+            // Someone else is running the pass; the flag tells them to go round
+            // once more when they finish.
+            if (!topUpRunning.tryLock()) return
+            try {
+                while (topUpRequested.get()) {
+                    // After the screen, and once for a burst — see TOP_UP_SETTLE_MS.
+                    delay(TOP_UP_SETTLE_MS)
+                    topUpRequested.set(false)
+                    topUpPass()
+                }
+            } finally {
+                topUpRunning.unlock()
+            }
+            // A request that landed between the last check and the unlock has
+            // nobody running for it — unless this loop picks it up.
+            if (!topUpRequested.get()) return
+        }
+    }
+
+    private suspend fun topUpPass() {
+        for (source in settings.sources.first()) {
+            // Nothing to download for the phone's own music: the files are here.
+            if (!source.mayDownload || source.offlineMode == OfflineMode.MANUAL) continue
+            runCatching { topUp(source) }
+                .noteOom("top-up ${source.name}")
+                .onFailure { Log.w("AmpDl", "top-up failed for ${source.name}", it) }
+        }
+    }
+
+    private suspend fun topUp(source: MusicSource) {
+        val startedMs = System.currentTimeMillis()
+        // This source's own tables, not the repository's lists, which follow
+        // the browsed source. Asked for ids, not read whole: tracks would be a
+        // second copy of the library, held through the playlist fetch below.
+        val dao = daoFor(source)
+        // Only the libraries kept on the Sources page ("Shown on"): hiding one
+        // says you aren't interested in it. Not the browsed library: what to
+        // keep is wider than what to look at.
+        val hidden = source.hiddenLibraryIds.filterNotNull().distinct()
+        val noneHidden = hidden.isEmpty()
+        if (!dao.hasKeptTracks(hidden, noneHidden)) return
+        // Playlists count in both modes (Favorites promises them, Everything
+        // fetches them first), and no server sends membership with the list.
+        val playlistTrackIds = playlistTrackIdsFor(source)
+        // Starred on the server, whatever is on screen — not derived from
+        // the artists list, which narrows with the offline view.
+        val likedArtists = dao.likedArtistNames().toSet()
+        applyAutoMode(
+            source = source,
+            likedTrackIds = dao.likedKeptTrackIds(hidden, noneHidden),
+            playlistTrackIds = playlistTrackIds.toList().chunked(MAX_BOUND_IDS)
+                .flatMap { dao.keptTrackIdsAmong(it, hidden, noneHidden) },
+            // Scoped as the rest are: a liked record in a hidden library is
+            // not fetched, and one in a library not being browsed is.
+            likedAlbumTrackIds = dao.likedAlbumTrackIds(hidden),
+            likedArtistTrackIds = trackIdsCreditedTo(dao, likedArtists, hidden, noneHidden),
+            everyTrackId = { dao.keptTrackIdsNotDownloaded(hidden, noneHidden) },
+        )
+        // One line per source per pass: its cost, which goes on the playlists.
+        Log.i(
+            "AmpDl",
+            "top-up ${source.name} (${source.offlineMode}): " +
+                "${playlistTrackIds.size} in playlists, ${System.currentTimeMillis() - startedMs} ms",
+        )
+    }
+
+    /**
+     * The tracks of [dao]'s library credited to any of [artists], as
+     * Track.albumArtistNames reads a credit — worked out over the distinct
+     * credits rather than over every row, then asked for by the credits that
+     * matched. A blank credit stands for the track artist, as it does there.
+     */
+    private suspend fun trackIdsCreditedTo(
+        dao: LibraryDao,
+        artists: Set<String>,
+        hidden: List<String>,
+        noneHidden: Boolean,
+    ): List<String> {
+        if (artists.isEmpty()) return emptyList()
+        val (blank, credits) = dao.albumArtistCredits().partition { it.isBlank() }
+        val matched = credits.filter { credit -> creditNames(credit).any { it in artists } }
+        val byCredit = matched.chunked(MAX_BOUND_IDS).flatMap { dao.keptTrackIdsCredited(it, hidden, noneHidden) }
+        if (blank.isEmpty()) return byCredit
+        val byArtist = dao.artistsCreditedAs(blank)
+            .filter { artist -> creditNames(artist).any { it in artists } }
+            .chunked(MAX_BOUND_IDS)
+            .flatMap { dao.keptTrackIdsByArtist(blank, it, hidden, noneHidden) }
+        return byCredit + byArtist
+    }
+
+    /** Every track id in any of [source]'s playlists, as far as they can be known. */
+    private suspend fun playlistTrackIdsFor(source: MusicSource): Set<String> {
+        if (source.id == activeSource().id) return browsedPlaylistTrackIds()
+        val client = clientFor(source) ?: return emptySet()
+        // The list, once, behind the metadata gate a sync waits on.
+        val known = backgroundPlaylistTracks[source.id] ?: run {
+            if (!metadataAllowed()) return emptySet()
+            val playlists = runCatching { client.getPlaylists(source.libraryId) }.getOrNull()
+                ?: return emptySet()
+            HashMap<String, List<String>?>()
+                .also { map -> playlists.forEach { map[it.id] = null } }
+                .also { backgroundPlaylistTracks[source.id] = it }
+        }
+        // Then the playlists that haven't answered, bar those that failed
+        // lately, as wide in parallel as the repository runs the sync.
+        val now = System.currentTimeMillis()
+        val missing = known.filterValues { it == null }.keys.filter { id ->
+            now - (backgroundPlaylistFailedAt["${source.id}/$id"] ?: 0L) > PLAYLIST_RETRY_MS
+        }
+        if (missing.isNotEmpty() && metadataAllowed()) {
+            val gate = Semaphore(PLAYLIST_PRIME_CONCURRENCY)
+            val fetched = coroutineScope {
+                missing.map { id ->
+                    async {
+                        gate.withPermit {
+                            id to runCatching { client.getPlaylistTracks(id) }
+                                .noteOom("playlist $id of ${source.name}").getOrNull()?.map { it.id }
+                        }
+                    }
+                }.awaitAll()
+            }
+            // A failed fetch stays null, never cached as empty, and dated so the
+            // next passes skip it for a while.
+            fetched.forEach { (id, ids) ->
+                if (ids != null) known[id] = ids else backgroundPlaylistFailedAt["${source.id}/$id"] = now
+            }
+        }
+        return known.values.flatMapTo(HashSet()) { it.orEmpty() }
+    }
+
     /**
      * Queue whatever [source]'s [OfflineMode] implies, by id — see
      * [QueuedDownload]. Safe to call repeatedly — already-downloaded tracks
      * are skipped, so this just tops up. [everyTrackId] is only asked for in
      * Everything mode.
      */
-    suspend fun applyAutoMode(
+    private suspend fun applyAutoMode(
         source: MusicSource,
         likedTrackIds: List<String>,
         playlistTrackIds: List<String>,
@@ -984,5 +1166,21 @@ class Downloader(
          * foreground — see LightTransferService and [drain].
          */
         const val SERVICE_SETTLE_MS = 5_000L
+
+        /**
+         * How long a top-up pass waits after being asked for: the triggers fire
+         * when the screen is busiest (a source switch refills every list from
+         * the database), and the wait folds a burst of triggers into one pass.
+         */
+        const val TOP_UP_SETTLE_MS = 3_000L
+
+        /**
+         * How long a playlist that would not answer is left alone before being
+         * asked again: one that failed for want of memory would fill the heap
+         * at every pass.
+         */
+        const val PLAYLIST_RETRY_MS = 30 * 60 * 1000L
+
+        const val PLAYLIST_PRIME_CONCURRENCY = 6
     }
 }
