@@ -148,7 +148,14 @@ data class JellyfinTask(
 /** `/Audio/{id}/Lyrics`, present from Jellyfin 10.9. */
 @Serializable
 data class JellyfinLyrics(
+    @SerialName("Metadata") val metadata: JellyfinLyricMetadata? = null,
     @SerialName("Lyrics") val lyrics: List<JellyfinLyricLine> = emptyList(),
+)
+
+@Serializable
+data class JellyfinLyricMetadata(
+    /** Ticks to shift every line by; positive shows the words sooner, as LRC's `[offset:]`. */
+    @SerialName("Offset") val offset: Long? = null,
 )
 
 @Serializable
@@ -215,11 +222,17 @@ internal fun JellyfinItems.musicLibraries(): List<MusicFolder> =
         .filter { it.collectionType.equals("music", ignoreCase = true) }
         .map { MusicFolder(id = it.id, name = it.name) }
 
-/** Timed where the file carried timings, plain where it didn't; null when there are no words. */
+/**
+ * Timed where the file carried timings, shifted by the sheet's offset, and
+ * plain where it didn't; null when there are no words.
+ */
 internal fun JellyfinLyrics.toLyrics(): Lyrics? {
+    val shiftMs = (metadata?.offset ?: 0L) / TICKS_PER_MS
     val lines = lyrics
         .filter { it.text.isNotBlank() }
-        .map { LyricLine(it.start?.let { ticks -> ticks / TICKS_PER_MS }, it.text.trim()) }
+        .map { line ->
+            LyricLine(line.start?.let { ticks -> (ticks / TICKS_PER_MS - shiftMs).coerceAtLeast(0L) }, line.text.trim())
+        }
     if (lines.isEmpty()) return null
     return Lyrics(lines, synced = lines.any { it.timeMs != null })
 }

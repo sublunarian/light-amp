@@ -165,4 +165,23 @@ class JellyfinParseTest {
         assertEquals(Lyrics(listOf(LyricLine(null, "one")), synced = false), plain.toLyrics())
         assertNull(json.decodeFromString<JellyfinLyrics>("""{"Lyrics":[]}""").toLyrics())
     }
+
+    @Test
+    fun `a lyrics offset in ticks shifts every line, positive showing the words sooner`() {
+        val sooner: JellyfinLyrics = json.decodeFromString(
+            """{"Metadata":{"Offset":5000000},""" +
+                """"Lyrics":[{"Start":2000000,"Text":"one"},{"Start":25000000,"Text":"two"}]}""",
+        )
+        assertEquals(listOf(0L, 2000L), sooner.toLyrics()!!.lines.map { it.timeMs })
+
+        val later: JellyfinLyrics = json.decodeFromString(
+            """{"Metadata":{"Offset":-2500000},"Lyrics":[{"Start":10000000,"Text":"one"}]}""",
+        )
+        assertEquals(listOf(1250L), later.toLyrics()!!.lines.map { it.timeMs })
+
+        val none: JellyfinLyrics = json.decodeFromString(
+            """{"Metadata":null,"Lyrics":[{"Start":10000000,"Text":"one"}]}""",
+        )
+        assertEquals(listOf(1000L), none.toLyrics()!!.lines.map { it.timeMs })
+    }
 }
