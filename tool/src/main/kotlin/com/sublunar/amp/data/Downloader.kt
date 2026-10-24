@@ -9,6 +9,7 @@ import com.thelightphone.sdk.transfer.LightTransferService
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
 data class DownloadProgress(
@@ -872,7 +874,7 @@ class Downloader(
         // player that opens it has to guess its length — see
         // Mp3VbrIndex. Written now, before anything records the size.
         if (format == StreamFormat.MP3) {
-            runCatching { Mp3VbrIndex.index(file) }
+            runCatching { withContext(Dispatchers.IO) { Mp3VbrIndex.index(file) } }
                 .onSuccess { if (it is Mp3VbrIndex.Outcome.Written) Log.i("AmpMp3", "indexed ${file.name}: ${it.frames} frames") }
                 .onFailure { Log.w("AmpMp3", "couldn't index ${file.name}", it) }
         }

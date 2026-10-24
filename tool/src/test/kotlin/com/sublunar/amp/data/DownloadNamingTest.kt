@@ -58,12 +58,14 @@ class DownloadNamingTest {
     }
 
     @Test
-    fun `a download that never finished is swept at the next start`() {
+    fun `a download or an mp3 index that never finished is swept at the next start`() {
         val folder = File(downloads, "s").apply { mkdirs() }
         val partial = File(folder, "t.opus.part").apply { writeText("") }
+        val indexing = File(folder, "u.mp3.indexing").apply { writeText("") }
         val done = File(folder, "t.mp3").apply { writeText("") }
         DownloadStore(tmp.root)
         assertFalse(partial.exists())
+        assertFalse(indexing.exists())
         assertTrue(done.exists())
     }
 }

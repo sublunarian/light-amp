@@ -41,13 +41,13 @@ class DownloadStore(private val filesDir: File) {
         downloadsDir.listFiles().orEmpty().filter { it.isDirectory }
 
     init {
-        // Sweep partials left by a download the process didn't live to finish:
-        // they're never resumable, and only take space. Filtered in Kotlin
-        // rather than via a File(name)Filter lambda, whose SAM overload
-        // resolution is easy to get silently wrong.
+        // Sweep partials left by a download or an mp3 index the process didn't
+        // live to finish: they're never resumable, and only take space. Filtered
+        // in Kotlin rather than via a File(name)Filter lambda, whose SAM
+        // overload resolution is easy to get silently wrong.
         downloadsDir.mkdirs()
         allRoots().flatMap { it.listFiles().orEmpty().toList() }
-            .filter { it.isFile && it.name.endsWith(PART_SUFFIX) }
+            .filter { it.isFile && (it.name.endsWith(PART_SUFFIX) || it.name.endsWith(Mp3VbrIndex.INDEXING_SUFFIX)) }
             .forEach { it.delete() }
     }
 

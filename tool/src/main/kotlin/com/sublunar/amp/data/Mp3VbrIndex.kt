@@ -1,6 +1,9 @@
 package com.sublunar.amp.data
 
+import java.io.Closeable
 import java.io.File
+import java.io.OutputStream
+import java.io.RandomAccessFile
 
 /**
  * Writes the index a streaming MP3 encoder cannot.
@@ -43,23 +46,18 @@ object Mp3VbrIndex {
     }
 
     /**
-     * Index [file] in place.
+     * Index [file] in place. Blocking file work: call it off the main thread.
      *
-     * An indexed file is recognised from its opening frame alone, so checking
-     * one reads a few kilobytes; only a file that needs the work is read whole.
-     * Written through a temporary file and renamed, so an interruption leaves
-     * the original as it was rather than half-rewritten.
+     * Read through a small window rather than whole: an indexed file is
+     * recognised from its opening frame alone, and a walk over every frame
+     * reads the file once, front to back. Written through a temporary file and
+     * renamed, so an interruption leaves the original as it was rather than
+     * half-rewritten; one a killed process left behind is swept by
+     * DownloadStore at the next start.
      */
-    fun index(file: File): Outcome {
-        val head = readHead(file, PROBE_BYTES)
-        val tagEnd = id3v2End(head)
-        if (tagEnd + 4 <= head.size) {
-            val first = firstFrame(head, tagEnd) ?: return Outcome.NotMpegAudio
-            if (hasIndex(head, first)) return Outcome.AlreadyIndexed
-        }
-        val data = file.readBytes()
-        val fullTagEnd = id3v2End(data)
-        val first = firstFrame(data, fullTagEnd) ?: return Outcome.NotMpegAudio
+    fun index(file: File): Outcome = FileBytes(file).use { data ->
+        val tagEnd = id3v2End(data)
+        val first = firstFrame(data, tagEnd) ?: return Outcome.NotMpegAudio
         if (hasIndex(data, first)) return Outcome.AlreadyIndexed
         val walk = walk(data, first) ?: return Outcome.Unparseable
         val index = buildIndexFrame(first, walk)
@@ -67,15 +65,15 @@ object Mp3VbrIndex {
         out.outputStream().buffered().use { o ->
             // The ID3v2 tag, if there is one, verbatim; then the index; then
             // every frame and whatever followed them, verbatim.
-            o.write(data, 0, fullTagEnd)
+            data.copyTo(o, 0, tagEnd)
             o.write(index)
-            o.write(data, first, data.size - first)
+            data.copyTo(o, first, data.size)
         }
         if (!out.renameTo(file)) {
             out.delete()
             error("couldn't replace ${file.name}")
         }
-        return Outcome.Written(walk.offsets.size, index.size + (walk.end - first))
+        Outcome.Written(walk.offsets.size, index.size + (walk.end - first))
     }
 
     // --- Frames --------------------------------------------------------------
@@ -110,12 +108,9 @@ object Mp3VbrIndex {
     private fun frameLength(version: Int, bitrateKbps: Int, sampleRate: Int, padding: Int): Int =
         (if (version == 1) 144_000 else 72_000) * bitrateKbps / sampleRate + padding
 
-    private fun headerAt(data: ByteArray, at: Int): Header? {
+    private fun headerAt(data: FileBytes, at: Int): Header? {
         if (at < 0 || at + 4 > data.size) return null
-        val raw = ((data[at].toInt() and 0xFF) shl 24) or
-            ((data[at + 1].toInt() and 0xFF) shl 16) or
-            ((data[at + 2].toInt() and 0xFF) shl 8) or
-            (data[at + 3].toInt() and 0xFF)
+        val raw = (data[at] shl 24) or (data[at + 1] shl 16) or (data[at + 2] shl 8) or data[at + 3]
         return Header(raw).takeIf { it.valid }
     }
 
@@ -124,7 +119,7 @@ object Mp3VbrIndex {
      * often enough; a second frame starting exactly where the first says it
      * ends does not, and that is what counts as finding the stream.
      */
-    private fun firstFrame(data: ByteArray, from: Int): Int? {
+    private fun firstFrame(data: FileBytes, from: Int): Int? {
         val limit = minOf(data.size - 4, from + SYNC_SCAN_BYTES)
         var at = from
         while (at <= limit) {
@@ -138,7 +133,7 @@ object Mp3VbrIndex {
         return null
     }
 
-    private fun hasIndex(data: ByteArray, first: Int): Boolean {
+    private fun hasIndex(data: FileBytes, first: Int): Boolean {
         val h = headerAt(data, first) ?: return false
         val at = first + 4 + h.sideInfo
         return tagAt(data, at, "Xing") || tagAt(data, at, "Info") || tagAt(data, first + 36, "VBRI")
@@ -146,7 +141,7 @@ object Mp3VbrIndex {
 
     private class Walk(val offsets: IntArray, val end: Int, val head: Header)
 
-    private fun walk(data: ByteArray, start: Int): Walk? {
+    private fun walk(data: FileBytes, start: Int): Walk? {
         val head = headerAt(data, start) ?: return null
         val offsets = ArrayList<Int>()
         var at = start
@@ -207,29 +202,63 @@ object Mp3VbrIndex {
 
     // --- Bytes ---------------------------------------------------------------
 
-    private fun readHead(file: File, n: Int): ByteArray {
-        val buf = ByteArray(n)
-        var got = 0
-        file.inputStream().use { s ->
-            while (got < n) {
-                val r = s.read(buf, got, n - got)
+    /**
+     * A file read by position through a window of [WINDOW_BYTES], refilled
+     * wherever a read lands outside it: the frames are read front to back, so
+     * a walk over a whole song reads each byte about once and holds a window's
+     * worth. Positions are ints, as an mp3 is far short of 2 GB.
+     */
+    private class FileBytes(file: File) : Closeable {
+        private val raf = RandomAccessFile(file, "r")
+        val size: Int = raf.length().toInt()
+        private val window = ByteArray(WINDOW_BYTES)
+        private var windowStart = 0
+        private var windowLength = 0
+
+        /** The byte at [at], as 0..255. Callers keep [at] inside [size]. */
+        operator fun get(at: Int): Int {
+            if (at < windowStart || at >= windowStart + windowLength) fill(at)
+            return window[at - windowStart].toInt() and 0xFF
+        }
+
+        private fun fill(at: Int) {
+            raf.seek(at.toLong())
+            var got = 0
+            while (got < window.size) {
+                val r = raf.read(window, got, window.size - got)
                 if (r < 0) break
                 got += r
             }
+            windowStart = at
+            windowLength = got
         }
-        return if (got == n) buf else buf.copyOf(got)
+
+        /** Write the bytes from [from] up to [to] into [out], as they are. */
+        fun copyTo(out: OutputStream, from: Int, to: Int) {
+            raf.seek(from.toLong())
+            val buffer = ByteArray(WINDOW_BYTES)
+            var left = to - from
+            while (left > 0) {
+                val r = raf.read(buffer, 0, minOf(left, buffer.size))
+                if (r < 0) break
+                out.write(buffer, 0, r)
+                left -= r
+            }
+        }
+
+        override fun close() = raf.close()
     }
 
     /** Bytes taken by an ID3v2 tag at the front, or 0. Sizes are 7-bit "syncsafe". */
-    private fun id3v2End(data: ByteArray): Int {
+    private fun id3v2End(data: FileBytes): Int {
         if (!tagAt(data, 0, "ID3") || data.size < 10) return 0
-        val size = (0 until 4).fold(0) { acc, i -> (acc shl 7) or (data[6 + i].toInt() and 0x7F) }
-        val footer = if ((data[5].toInt() and 0x10) != 0) 10 else 0
+        val size = (0 until 4).fold(0) { acc, i -> (acc shl 7) or (data[6 + i] and 0x7F) }
+        val footer = if ((data[5] and 0x10) != 0) 10 else 0
         return minOf(data.size, 10 + size + footer)
     }
 
-    private fun tagAt(data: ByteArray, at: Int, tag: String): Boolean =
-        at >= 0 && at + tag.length <= data.size && tag.indices.all { data[at + it] == tag[it].code.toByte() }
+    private fun tagAt(data: FileBytes, at: Int, tag: String): Boolean =
+        at >= 0 && at + tag.length <= data.size && tag.indices.all { data[at + it] == tag[it].code }
 
     private fun ByteArray.putTag(at: Int, tag: String): Int {
         tag.forEachIndexed { i, c -> this[at + i] = c.code.toByte() }
@@ -257,7 +286,8 @@ object Mp3VbrIndex {
     private const val FLAG_BYTES = 2
     private const val FLAG_TOC = 4
     private const val ID3V1_BYTES = 128
-    private const val PROBE_BYTES = 16 * 1024
+    private const val WINDOW_BYTES = 64 * 1024
     private const val SYNC_SCAN_BYTES = 64 * 1024
-    private const val INDEXING_SUFFIX = ".indexing"
+    /** A rewrite in progress, renamed onto the file when whole. */
+    const val INDEXING_SUFFIX = ".indexing"
 }
