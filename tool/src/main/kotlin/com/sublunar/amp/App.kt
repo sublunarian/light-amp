@@ -3,6 +3,7 @@ package com.sublunar.amp
 import android.util.Log
 import com.sublunar.amp.art.ArtworkLoader
 import com.sublunar.amp.art.ArtworkNeed
+import com.sublunar.amp.art.CoverUpkeep
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.AppSettings
@@ -93,6 +94,7 @@ object App {
         private set
     lateinit var artwork: ArtworkLoader
         private set
+    private lateinit var covers: CoverUpkeep
     lateinit var downloads: DownloadStore
         private set
     lateinit var downloader: Downloader
@@ -224,93 +226,6 @@ object App {
         downloads.deleteSource(source.id)
         artwork.drop(source.id, covers)
         forgetClient(source.id)
-    }
-
-    /**
-     * The cover files the artwork budget must never evict: one per downloaded
-     * song's album, across every source. Removing the downloads frees them.
-     */
-    private suspend fun protectedCoverFiles(): Set<String> =
-        settings.sources.first().flatMap { source ->
-            runCatching { databaseFor(source).libraryDao().downloadedCoverArtIds() }
-                .noteOom("protected covers of ${source.name}")
-                .getOrDefault(emptyList())
-                .map { artwork.fileNameFor(source.id, it) }
-        }.toSet()
-
-    /**
-     * Every cover file some source's library points at, which the monthly
-     * expiry leaves alone — see ArtworkLoader.expireUnclaimed. Null if any
-     * database couldn't be read: unreadable looks like empty from here, and
-     * nothing is expired on a launch that can't tell.
-     */
-    private suspend fun claimedCoverFiles(): Set<String>? {
-        val claimed = HashSet<String>()
-        for (source in settings.sources.first()) {
-            val ids = runCatching { databaseFor(source).libraryDao().allCoverArtIds() }
-                .noteOom("claimed covers of ${source.name}").getOrNull() ?: return null
-            ids.mapTo(claimed) { artwork.fileNameFor(source.id, it) }
-        }
-        return claimed
-    }
-
-    /** The cover sync in flight, if one is — see [syncCovers]. */
-    private var coverSync: Job? = null
-
-    /**
-     * Fetch the covers the library on screen has and the phone doesn't, on an
-     * unmetered link only, in every data mode: nobody asked for these bytes,
-     * and covers still load as they are looked at. Lists on a metered link draw
-     * only covers already here, so this decides how a library looks on cellular.
-     * Run after a sync, when the link becomes free, and at launch.
-     *
-     * One run at a time, replaced rather than queued: a second trigger is the
-     * same library, whose fetched covers are on disk, or a different one.
-     */
-    private fun syncCovers() {
-        synchronized(this) {
-            coverSync?.cancel()
-            coverSync = scope.launch {
-                // Read from the store, not the held state: "off" has to mean
-                // not one, even just after it was switched.
-                if (settings.artwork.first() == ArtworkMode.NONE) return@launch
-                val source = settings.activeSource.first() ?: return@launch
-                val client = clientFor(source) ?: return@launch
-                // The chosen library, as the lists filter it — see
-                // LibraryRepository.allAlbums — newest first: those are the
-                // covers a run cut short is most likely to be asked for.
-                val wanted = runCatching { databaseFor(source).libraryDao().allAlbumsSnapshot() }
-                    .noteOom("cover sync of ${source.name}")
-                    .getOrDefault(emptyList())
-                    .filter { source.libraryId == null || it.libraryId == null || it.libraryId == source.libraryId }
-                    .sortedByDescending { it.createdMs }
-                    .mapNotNull { it.coverArtId }
-                if (wanted.isEmpty()) return@launch
-                val startedMs = System.currentTimeMillis()
-                val result = artwork.syncCovers(
-                    sourceId = source.id,
-                    client = client,
-                    coverArtIds = wanted,
-                    protectedFiles = protectedCoverFiles(),
-                    mayContinue = {
-                        yieldToPlayback()
-                        // Asked of the system, not of the flow: this is the
-                        // last look before bytes that must not cost anything.
-                        val now = rulesNow()
-                        now.unmetered && now.mayStream && _source.value.id == source.id
-                    },
-                )
-                if (result.missing > 0) {
-                    Log.i(
-                        "AmpArt",
-                        "cover sync: ${source.name}: ${result.fetched} of ${result.missing} missing fetched " +
-                            "(${result.wanted} in the library), ${result.fetchedBytes shr 10} KB in " +
-                            "${(System.currentTimeMillis() - startedMs) / 1000} s" +
-                            (result.stopped?.let { " — stopped: $it" } ?: ""),
-                    )
-                }
-            }
-        }
     }
 
     /**
@@ -534,6 +449,16 @@ object App {
                 },
                 artworkOff = { hideArtwork.value },
             ) { _source.value.id }
+            covers = CoverUpkeep(
+                artwork,
+                settings,
+                daoFor = { databaseFor(it).libraryDao() },
+                clientFor = ::clientFor,
+                browsedSourceId = { _source.value.id },
+                rulesNow = ::rulesNow,
+                yieldToPlayback = ::yieldToPlayback,
+                scope = scope,
+            )
             // The source last in use, resolved first: the DAO has to exist before the repository.
             val first = settings.activeSource.value ?: AppSettings.placeholderSource()
             _source.value = first
@@ -590,7 +515,7 @@ object App {
                     runCatching { downloader.refillMissingLyrics() }
                 }
                 // And the covers of whatever the sync just brought in.
-                syncCovers()
+                covers.sync()
             }
             library.onCoversDropped = { sourceId, ids -> artwork.drop(sourceId, ids) }
             // The playlists cached last time, shown before anything is fetched.
@@ -692,7 +617,7 @@ object App {
                 rules.map { it.unmetered && it.mayStream }
                     .distinctUntilChanged()
                     .drop(1)
-                    .collect { free -> if (free) syncCovers() }
+                    .collect { free -> if (free) covers.sync() }
             }
             // Being allowed to ask the server is a reason to ask: a *mode*
             // change isn't a network change, and a server last seen silent on
@@ -794,22 +719,7 @@ object App {
             // schema change with no migration path drops the table, and the
             // audio would be fetched again.
             scope.launch { downloader.reindexFromDisk() }
-            // The artwork cache's launch upkeep. Tracks point at their album's
-            // cover first, so the protected set is one file per downloaded album
-            // and per-song copies fall to the budget. Then the expiry (what no
-            // library names and nobody looked at in a month), the budget — see
-            // ArtworkLoader.trimToBudget — and a cover sync, since a launch
-            // inside the sync floor has no sync to start one.
-            scope.launch {
-                settings.sources.first().forEach { source ->
-                    runCatching { databaseFor(source).libraryDao().collapseTrackCovers() }
-                        .noteOom("cover collapse of ${source.name}")
-                        .onSuccess { if (it > 0) Log.i("AmpArt", "${source.name}: $it tracks now share their album's cover") }
-                }
-                claimedCoverFiles()?.let { artwork.expireUnclaimed(it) }
-                artwork.trimToBudget(protectedCoverFiles())
-                syncCovers()
-            }
+            scope.launch { covers.atLaunch() }
             // A source's downloads yield to its sync, hundreds of small requests
             // that a saturated transcoder turns into a crawl. Only the browsed
             // source syncs, so only its downloads wait.

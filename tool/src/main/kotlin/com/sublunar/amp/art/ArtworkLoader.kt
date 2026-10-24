@@ -257,17 +257,20 @@ class ArtworkLoader(
      * be twenty megabytes).
      *
      * [protectedFiles] are the covers the budget may never take — see
-     * [trimToBudget]. The library being synced is added to them while this runs,
-     * so room for its covers is never made at its own expense.
+     * [trimToBudget] — read only if the budget is reached. The library being
+     * synced is added to them while this runs, so room for its covers is never
+     * made at its own expense.
      */
     suspend fun syncCovers(
         sourceId: String,
         client: MusicServer,
         coverArtIds: List<String>,
-        protectedFiles: Set<String>,
+        protectedFiles: suspend () -> Set<String>,
         mayContinue: suspend () -> Boolean,
     ): CoverSyncResult = withContext(Dispatchers.IO) {
-        val keep by lazy { protectedFiles + coverArtIds.map { fileNameFor(sourceId, it) } }
+        var kept: Set<String>? = null
+        suspend fun keep(): Set<String> =
+            kept ?: (protectedFiles() + coverArtIds.map { fileNameFor(sourceId, it) }).also { kept = it }
         CoverSync(
             isOnDisk = { id -> isOnDisk(sourceId, id) },
             // One fetch slot, so a list scrolled meanwhile still has the rest.
@@ -276,7 +279,7 @@ class ArtworkLoader(
             cacheBytes = { coverFiles().sumOf { it.length() } },
             // Below the line, not to it, or a cache at its ceiling walks the
             // directory again for every cover that follows.
-            makeRoom = { trimToBudget(keep, DISK_BUDGET_BYTES - DISK_BUDGET_BYTES / 10) },
+            makeRoom = { trimToBudget(keep(), DISK_BUDGET_BYTES - DISK_BUDGET_BYTES / 10) },
             budgetBytes = DISK_BUDGET_BYTES,
             // Switched off part-way is switched off: see [artworkOff].
             mayContinue = { !artworkOff() && mayContinue() },
@@ -329,7 +332,7 @@ class ArtworkLoader(
      *
      * [keep] names the files that survive whatever the budget says: the covers of
      * downloaded albums, the offline sleeves, which go when their songs do — see
-     * App.protectedCoverFiles. Answers what the cache comes to afterwards, more
+     * CoverUpkeep.protectedFiles. Answers what the cache comes to afterwards, more
      * than the budget when what must be kept is.
      */
     suspend fun trimToBudget(keep: Set<String>, target: Long = DISK_BUDGET_BYTES): Long = withContext(Dispatchers.IO) {
