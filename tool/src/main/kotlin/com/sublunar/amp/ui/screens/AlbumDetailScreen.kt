@@ -109,13 +109,11 @@ class AlbumDetailScreen(
                 val varied = remember(list) {
                     list.map { it.artist.trim().lowercase() }.distinct().size > 1
                 }
-                LibraryList(
-                    anchor = "album:$albumId",
-                    headerCount = if (selection.active) 0 else 1,
-                ) {
-                    if (!selection.active && album != null) {
-                        item { AlbumCard(album, list) }
-                    }
+                // A row above the tracks only where there is a card: an album opened
+                // from a playlist or a radio track can be missing from the album list.
+                val card = album?.takeIf { !selection.active }
+                LibraryList(anchor = "album:$albumId", headerCount = if (card != null) 1 else 0) {
+                    if (card != null) item { AlbumCard(card, list) }
                     itemsIndexed(list, key = { _, t -> t.id }) { index, track ->
                         NumberedRow(
                             number = track.trackNumber ?: (index + 1),
