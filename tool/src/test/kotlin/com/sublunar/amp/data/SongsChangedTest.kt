@@ -1,6 +1,5 @@
 package com.sublunar.amp.data
 
-import com.sublunar.amp.data.db.TrackEntity
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -12,7 +11,7 @@ import kotlin.test.assertTrue
  */
 class SongsChangedTest {
 
-    private fun row(id: String, title: String = id, plays: Int = 0, playedMs: Long = 0L) = TrackEntity(
+    private fun row(id: String, title: String = id, plays: Int = 0, playedMs: Long = 0L) = Track(
         id = id, title = title, artist = "", album = "", albumArtist = "", albumId = "al",
         coverArtId = null, durationMs = 0, trackNumber = null, discNumber = null, year = null,
         playCount = plays, lastPlayedMs = playedMs, liked = false,

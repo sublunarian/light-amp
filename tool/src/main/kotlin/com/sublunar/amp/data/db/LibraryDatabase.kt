@@ -222,11 +222,11 @@ interface LibraryDao {
     suspend fun allAlbumsSnapshot(): List<AlbumEntity>
 
     @Query("SELECT * FROM tracks WHERE albumId = :albumId")
-    suspend fun tracksForAlbum(albumId: String): List<TrackEntity>
+    suspend fun tracksForAlbum(albumId: String): List<Track>
 
     /** The cached rows of several albums at once — one sync batch's, see LibrarySync.fetchAndStoreSongs. */
     @Query("SELECT * FROM tracks WHERE albumId IN (:albumIds)")
-    suspend fun tracksForAlbums(albumIds: List<String>): List<TrackEntity>
+    suspend fun tracksForAlbums(albumIds: List<String>): List<Track>
 
     /** Straight into [Track], one object a row. At most [MAX_BOUND_IDS] ids at a time. */
     @Query("SELECT * FROM tracks WHERE id IN (:ids)")
@@ -240,8 +240,9 @@ interface LibraryDao {
     @Query("SELECT id FROM tracks LIMIT 1")
     suspend fun anyTrackId(): String?
 
-    @Upsert
-    suspend fun upsertTracks(tracks: List<TrackEntity>)
+    /** [Track] has [TrackEntity]'s columns exactly, so it is written as one, with no copy a row. */
+    @Upsert(entity = TrackEntity::class)
+    suspend fun upsertTracks(tracks: List<Track>)
 
     @Query("DELETE FROM tracks WHERE albumId = :albumId")
     suspend fun deleteTracksForAlbum(albumId: String)
@@ -253,7 +254,7 @@ interface LibraryDao {
      * per batch, and each swap is atomic.
      */
     @Transaction
-    suspend fun replaceAlbumTracks(albumIds: List<String>, tracks: List<TrackEntity>) {
+    suspend fun replaceAlbumTracks(albumIds: List<String>, tracks: List<Track>) {
         albumIds.forEach { deleteTracksForAlbum(it) }
         upsertTracks(tracks)
     }
@@ -586,50 +587,6 @@ private const val LIBRARY_DB_NAME = "amp-library.db"
  */
 internal fun libraryDatabaseName(sourceId: String): String =
     if (sourceId == AppSettings.LEGACY_SOURCE_ID) LIBRARY_DB_NAME else "$LIBRARY_DB_NAME-$sourceId"
-
-fun TrackEntity.toTrack(): Track = Track(
-    id = id,
-    title = title,
-    artist = artist,
-    album = album,
-    albumArtist = albumArtist,
-    albumId = albumId,
-    coverArtId = coverArtId,
-    durationMs = durationMs,
-    trackNumber = trackNumber,
-    discNumber = discNumber,
-    year = year,
-    playCount = playCount,
-    lastPlayedMs = lastPlayedMs,
-    liked = liked,
-    rating = rating,
-    genre = genre,
-    composer = composer,
-    streamPath = streamPath,
-    gainDb = gainDb,
-)
-
-fun Track.toEntity(): TrackEntity = TrackEntity(
-    id = id,
-    title = title,
-    artist = artist,
-    album = album,
-    albumArtist = albumArtist,
-    albumId = albumId,
-    coverArtId = coverArtId,
-    durationMs = durationMs,
-    trackNumber = trackNumber,
-    discNumber = discNumber,
-    year = year,
-    playCount = playCount,
-    lastPlayedMs = lastPlayedMs,
-    liked = liked,
-    rating = rating,
-    genre = genre,
-    composer = composer,
-    streamPath = streamPath,
-    gainDb = gainDb,
-)
 
 fun AlbumEntity.toAlbum(): Album = Album(
     id = id,

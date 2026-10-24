@@ -1,7 +1,6 @@
 package com.sublunar.amp.data
 
 import com.sublunar.amp.data.db.AlbumEntity
-import com.sublunar.amp.data.db.TrackEntity
 
 /** The albums a sync reads the songs of; why, counted; and how many had nothing to compare and were left alone. */
 internal class SongFetch(val albums: List<Album>, val reasons: Map<String, Int>, val untouched: Int)
@@ -169,7 +168,7 @@ internal const val WALK_REST_MS = 12 * 60 * 60 * 1000L
  * scrobble on its way), so every album just heard would be rewritten. A count
  * higher than the cached one is a play somewhere else, and is.
  */
-internal fun songsChanged(cached: List<TrackEntity>, fresh: List<TrackEntity>): Boolean {
+internal fun songsChanged(cached: List<Track>, fresh: List<Track>): Boolean {
     val before = cached.associateBy { it.id }
     val heard = fresh.mapTo(HashSet()) { row ->
         val old = before[row.id]

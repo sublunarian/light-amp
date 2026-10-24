@@ -492,7 +492,7 @@ class LibrarySync(
             dao.clearTracks()
             dao.clearAlbums()
             dao.upsertAlbums(scan.albums.map { it.toEntity() })
-            dao.upsertTracks(scan.tracks.map { it.toEntity() })
+            dao.upsertTracks(scan.tracks)
             reportDroppedCovers(dao, sourceId, coversBefore)
             rereadLists(tracks = true)
             val finishedAt = System.currentTimeMillis()
@@ -592,7 +592,7 @@ class LibrarySync(
             // a whole re-read of the library as surely as a real edit.
             val cachedRows = dao.tracksForAlbums(read.map { batch[it].id }).groupBy { it.albumId }
             val changed = read.mapNotNull { i ->
-                val rows = fetched[i].orEmpty().map { it.toEntity() }
+                val rows = fetched[i].orEmpty()
                 (batch[i].id to rows).takeIf { songsChanged(cachedRows[batch[i].id].orEmpty(), rows) }
             }
             if (changed.isNotEmpty()) {

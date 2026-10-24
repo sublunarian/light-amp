@@ -7,8 +7,6 @@ import com.sublunar.amp.data.db.LikedArtistEntity
 import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.sublunar.amp.data.db.TopSongEntity
 import com.sublunar.amp.data.db.toAlbum
-import com.sublunar.amp.data.db.toEntity
-import com.sublunar.amp.data.db.toTrack
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
@@ -508,11 +506,11 @@ class LibraryRepository(
         // Both ends pinned, and the write dropped if the source changed meanwhile — see runSync.
         val pinned = dao
         val client = serverClient.value
-        val cached = pinned.tracksForAlbum(albumId).map { it.toTrack() }
+        val cached = pinned.tracksForAlbum(albumId)
         if (cached.isNotEmpty()) return narrowedToDownloads(cached).sortedWith(TRACK_ORDER)
         if (client == null) return emptyList()
         val fresh = client.getAlbumTracks(albumId)
-        if (daos.value === pinned) pinned.upsertTracks(fresh.map { it.toEntity() })
+        if (daos.value === pinned) pinned.upsertTracks(fresh)
         return narrowedToDownloads(fresh).sortedWith(TRACK_ORDER)
     }
 
@@ -536,9 +534,8 @@ class LibraryRepository(
         val merged = fresh.map { it.copy(liked = liked[it.id] ?: it.liked) }
         if (daos.value !== dao) return null
         // Written only if something moved — see fetchAndStoreSongs.
-        val rows = merged.map { it.toEntity() }
-        if (songsChanged(cached, rows)) {
-            dao.replaceAlbumTracks(listOf(albumId), rows)
+        if (songsChanged(cached, merged)) {
+            dao.replaceAlbumTracks(listOf(albumId), merged)
         }
         return narrowedToDownloads(merged).sortedWith(TRACK_ORDER)
     }
@@ -553,7 +550,7 @@ class LibraryRepository(
     /** These albums' songs from the cache, album after album, each in its running order. */
     suspend fun albumQueue(albumIds: List<String>): List<Track> =
         albumIds.flatMap { id ->
-            dao.tracksForAlbum(id).map { it.toTrack() }.sortedWith(TRACK_ORDER)
+            dao.tracksForAlbum(id).sortedWith(TRACK_ORDER)
         }
 
     /** Tracks for the given ids, preserving id order (used by playlists/queue restore). */
