@@ -1789,8 +1789,10 @@ class PlaybackController(
             // Read before the rebuild: a stream can die while paused (the player
             // buffers regardless), which is no reason to start the copy playing.
             val wanted = p.playWhenReady
-            p.setMediaQueueAt(_queue.value.map(sources::item), _index.value, resumeAt)
-            if (wanted) p.play() else p.pause()
+            // A rebuild like any other, so what the controller holds for the row
+            // says file, as what plays now is.
+            rebuildQueueAt(p, _queue.value, _index.value, resumeAt)
+            playOrCue(p, _index.value, wanted)
         }
     }
 
