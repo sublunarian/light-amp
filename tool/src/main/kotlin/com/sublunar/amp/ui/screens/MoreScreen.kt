@@ -56,8 +56,8 @@ class MoreScreen(
         // Under Simplified the liked lists are entries on the library index
         // rather than a filter over a tab.
         val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
-        val likedTab = if (simplified) null else likedFilterTab(page)
-        val liked = likedTab != null && likedOnly(likedTab)
+        val likedTab = likedFilterTab(page).takeUnless { simplified }
+        val liked = likedOnly(likedTab)
         // Under both layouts, unlike the liked filter: these narrowings have no
         // other home.
         val genre = tagSettingOf(page, byComposer = false)

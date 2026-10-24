@@ -170,14 +170,23 @@ fun tagFilter(tab: LibraryTab): TagFilter = when (tab) {
     else -> TagFilter()
 }
 
-/** Whether this tab is currently showing only liked items. */
+/**
+ * Whether this tab is currently showing only liked items; false for no tab. All
+ * three are read whatever the tab, so a caller whose tab changes keeps following
+ * — see ARCHITECTURE.md on conditional composable calls.
+ */
 @Composable
-fun likedOnly(tab: LibraryTab): Boolean = when (tab) {
-    LibraryTab.ALBUMS -> App.settings.likedAlbumsOnly.state.collectAsState().value
-    LibraryTab.SONGS -> App.settings.likedSongsOnly.state.collectAsState().value
-    LibraryTab.ARTISTS -> App.settings.likedArtistsOnly.state.collectAsState().value
-    // Nothing likes a playlist.
-    LibraryTab.PLAYLISTS -> false
+fun likedOnly(tab: LibraryTab?): Boolean {
+    val albums = App.settings.likedAlbumsOnly.state.collectAsState().value
+    val songs = App.settings.likedSongsOnly.state.collectAsState().value
+    val artists = App.settings.likedArtistsOnly.state.collectAsState().value
+    return when (tab) {
+        LibraryTab.ALBUMS -> albums
+        LibraryTab.SONGS -> songs
+        LibraryTab.ARTISTS -> artists
+        // Nothing likes a playlist.
+        LibraryTab.PLAYLISTS, null -> false
+    }
 }
 
 /**
