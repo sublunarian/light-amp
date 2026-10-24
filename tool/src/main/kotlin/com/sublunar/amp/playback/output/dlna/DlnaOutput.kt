@@ -153,6 +153,14 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      */
     private val seekableStreams = ConcurrentHashMap<String, Boolean>()
 
+    /**
+     * Each renderer's sink list, by renderer id, asked once per cast rather
+     * than for every Original track — see [castFormatFor]. Only a list it
+     * gave is kept, so one it wouldn't give is asked again. Concurrent, as
+     * [formats] is.
+     */
+    private val sinks = ConcurrentHashMap<String, Set<String>>()
+
     /** Whatever an earlier seek left to check is moot: a seek, a push or a change of track has replaced it. */
     private fun dropSeekChecks() {
         seekGeneration++
@@ -175,6 +183,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     override fun connect(target: OutputTarget, fromMs: Long, play: Boolean) {
         val renderer = (target as DlnaTarget).renderer
         job?.cancel()
+        sinks.remove(renderer.id)
         job = host.scope.launch {
             undoHush(renderer)
             // The fader takes the renderer's level, and the phone's own follows,
@@ -976,7 +985,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val key = formatChoiceKey(renderer.id, desired, track.id)
         formats[key]?.let { return it }
 
-        val sink = runCatching { DlnaCast.sinkFormats(renderer) }.getOrDefault(emptySet())
+        val sink = sinkOf(renderer)
         // Same as seekable: this asks the music server; DlnaCast's own
         // switch stands in front of it. Not where the server already says.
         val mime = host.knownStream(track, desired)?.mime
@@ -989,6 +998,14 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         }
         formats[key] = choice
         return choice
+    }
+
+    /** What [renderer] says it can play — see [sinks]. Empty when it won't say. */
+    private suspend fun sinkOf(renderer: DlnaRenderer): Set<String> {
+        sinks[renderer.id]?.let { return it }
+        val sink = runCatching { DlnaCast.sinkFormats(renderer) }.getOrDefault(emptySet())
+        if (sink.isNotEmpty()) sinks[renderer.id] = sink
+        return sink
     }
 
     /**
