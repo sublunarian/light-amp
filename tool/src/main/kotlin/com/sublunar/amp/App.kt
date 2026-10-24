@@ -814,7 +814,8 @@ object App {
                     .collect { topUpDownloads() }
             }
             // Rebuild the download index from disk before anything reads it: a
-            // schema bump wipes the table, and the audio would be fetched again.
+            // schema change with no migration path drops the table, and the
+            // audio would be fetched again.
             scope.launch { downloader.reindexFromDisk() }
             // The artwork cache's launch upkeep. Tracks point at their album's
             // cover first, so the protected set is one file per downloaded album
