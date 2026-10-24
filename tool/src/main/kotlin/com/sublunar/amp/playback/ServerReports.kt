@@ -7,9 +7,7 @@ import com.sublunar.amp.data.PendingAction
 import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
-import com.sublunar.amp.data.UNREACHABLE
 import com.sublunar.amp.data.WriteResult
-import com.sublunar.amp.data.attemptWrite
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CompletableDeferred
@@ -396,26 +394,17 @@ internal class ServerReports(
             // bytes it is queued, as for an unreachable server, not dropped. A
             // gate that can't be read errs towards the queue.
             val allowed = runCatching { metadataAllowed() }.getOrDefault(false)
-            val result = if (allowed && client != null) {
-                attemptWrite { client.scrobble(track.id, at) }
-            } else {
-                WriteResult.Unreachable(UNREACHABLE)
-            }
-            when (result) {
-                WriteResult.Saved -> Unit
-                // Guarded: a play can land before App has finished wiring itself up.
-                is WriteResult.Unreachable -> runCatching {
-                    App.pending.add(
-                        PendingAction(PendingAction.Kind.SCROBBLE, track.id, atMs = at, sourceId = source),
-                    )
-                }
-                // Not kept, as the server would refuse it every time. Said once
-                // per source and run: a server that refuses one play tends to
-                // refuse them all.
-                is WriteResult.Refused -> {
-                    Log.w("AmpSync", "play of ${track.id} refused: ${result.reason}")
-                    if (playRefusalSaid.add(source)) runCatching { App.tell("Couldn't save\n${result.reason}") }
-                }
+            val action = PendingAction(PendingAction.Kind.SCROBBLE, track.id, atMs = at, sourceId = source)
+            // Guarded: a play can land before App has finished wiring itself up.
+            val result = runCatching {
+                App.pending.attempt(action, client.takeIf { allowed }, artistId = { null })
+            }.getOrNull()
+            // Not kept, as the server would refuse it every time. Said once per
+            // source and run: a server that refuses one play tends to refuse
+            // them all.
+            if (result is WriteResult.Refused) {
+                Log.w("AmpSync", "play of ${track.id} refused: ${result.reason}")
+                if (playRefusalSaid.add(source)) runCatching { App.tell("Couldn't save\n${result.reason}") }
             }
         }
     }
