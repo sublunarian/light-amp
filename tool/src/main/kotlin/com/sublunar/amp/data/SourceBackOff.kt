@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Per source, because a server that is down is one server: its tracks wait and
  * everyone else's are picked instead — see Downloader.eligible. After
  * [PARK_AFTER_FAILURES] failures in a row, and never on one, the Downloader
- * stops trying until something says the server is back: see Downloader.parkings.
+ * stops trying until something says the server is back: see Downloader.Hold.Parked.
  *
  * The time is always passed in, never read here, so the tests can be the clock.
  */

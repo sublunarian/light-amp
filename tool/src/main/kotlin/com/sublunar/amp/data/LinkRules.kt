@@ -1,5 +1,7 @@
 package com.sublunar.amp.data
 
+import com.thelightphone.sdk.NetworkStatus
+
 /**
  * What the connection and the data mode allow right now — the one answer the
  * library, the queue, playback, downloads and artwork all read. One value,
@@ -39,6 +41,13 @@ data class LinkRules(
         get() = connected && (unmetered || mode == DataMode.MAKE_IT_HURT)
 
     /**
+     * The cover sync's bytes, which nobody asked for: on an unmetered link
+     * only, in every mode — see CoverUpkeep.
+     */
+    val maySyncCovers: Boolean
+        get() = unmetered && mayStream
+
+    /**
      * The cover of the thing in front of the user — what is playing, the album
      * page that is open. Allowed wherever the music itself is: a sleeve is a
      * fraction of a percent of its album. Library lists stay [mayMoveHeavyBytes]:
@@ -69,6 +78,15 @@ data class LinkRules(
         }
 
     companion object {
+        /** The rules for the link as [net] reports it, in [mode], with the server last seen [serverReachable] or not. */
+        fun from(net: NetworkStatus, mode: DataMode, serverReachable: Boolean) = LinkRules(
+            connected = net.isConnected,
+            unmetered = net.isConnected && !net.isMetered,
+            mode = mode,
+            serverReachable = serverReachable,
+            wifi = net.isConnected && net.isWifi,
+        )
+
         const val WAITING_FOR_CONNECTION = "Waiting for connection"
         const val WAITING_FOR_SERVER = "Waiting for server"
 

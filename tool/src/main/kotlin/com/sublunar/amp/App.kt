@@ -24,7 +24,6 @@ import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.PlaylistSort
 import com.sublunar.amp.data.Reachability
 import com.sublunar.amp.data.SongSort
-import com.sublunar.amp.data.SourceLibrary
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.TagFilter
 import com.sublunar.amp.data.Track
@@ -63,7 +62,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -273,15 +271,8 @@ object App {
      * one state everything reads, so a change reaches all of it at once.
      */
     val rules: StateFlow<LinkRules> by lazy {
-        combine(Connectivity.network, settings.dataMode.state, reachability.reachable) { net, mode, reachable ->
-            LinkRules(
-                connected = net.isConnected,
-                unmetered = net.isConnected && !net.isMetered,
-                mode = mode,
-                serverReachable = reachable,
-                wifi = net.isConnected && net.isWifi,
-            )
-        }.stateIn(scope, SharingStarted.Eagerly, LinkRules.UNKNOWN)
+        combine(Connectivity.network, settings.dataMode.state, reachability.reachable, LinkRules::from)
+            .stateIn(scope, SharingStarted.Eagerly, LinkRules.UNKNOWN)
     }
 
     /**
@@ -307,9 +298,6 @@ object App {
 
     /** How long the server must stay silent before the lists narrow to downloads. */
     private const val SERVER_GONE_SETTLE_MS = 20_000L
-
-    /** How long a new link settles before parked download servers are asked about it. */
-    private const val PARKED_PROBE_SETTLE_MS = 2_000L
 
     /**
      * Whether the server may be spoken to at all (sync, playlists, lyrics).
@@ -360,14 +348,7 @@ object App {
      */
     fun rulesNow(): LinkRules {
         Connectivity.refresh()
-        val net = Connectivity.network.value
-        return LinkRules(
-            connected = net.isConnected,
-            unmetered = net.isConnected && !net.isMetered,
-            mode = settings.dataMode.value,
-            serverReachable = reachability.reachable.value,
-            wifi = net.isConnected && net.isWifi,
-        )
+        return LinkRules.from(Connectivity.network.value, settings.dataMode.value, reachability.reachable.value)
     }
 
     /**
@@ -378,7 +359,7 @@ object App {
     fun linkMayHaveChanged() {
         if (!coreReady) return
         Connectivity.refresh()
-        if (!serverReachable.value) reachability.check(delayMs = 0L)
+        if (!reachability.reachable.value) reachability.check(delayMs = 0L)
         // Nothing, unless a download server is parked — see Downloader.wakeParked.
         scope.launch { downloader.wakeParked() }
     }
@@ -434,7 +415,6 @@ object App {
             // here, before anything builds a queue, and proven before it is
             // used: until its self-test passes, nothing streams.
             streamProxy.start(scope)
-            NetworkGate.isMetered = { Connectivity.network.value.let { !it.isConnected || it.isMetered } }
             // Speakers are reached on a stack of their own, outside the wall
             // above, so each output family is held to the link's rules here.
             Outputs.install(::rulesNow)
@@ -477,6 +457,7 @@ object App {
                 tell = ::tell,
                 settings = settings,
                 scope = scope,
+                browsed = { _source.value },
             )
             downloader = Downloader(
                 activeSource = { _source.value },
@@ -521,7 +502,7 @@ object App {
             // The playlists cached last time, shown before anything is fetched.
             scope.launch { library.primePlaylists() }
             scope.launch {
-                serverReachable.collect { reachable ->
+                reachability.reachable.collect { reachable ->
                     // The browsed server's downloads stop when it goes and pick
                     // up when it comes back: reachability says nothing of the
                     // other sources, which are judged by their own transfers.
@@ -530,107 +511,22 @@ object App {
                     if (reachable) library.flushPending()
                 }
             }
-            // One line per change of the rules: which inputs moved and what they
-            // now allow. The first thing to read when something did the unexpected.
+            // Every reaction to the rules, in one place and one order.
             scope.launch {
-                rules.collect { r ->
-                    Log.i(
-                        "AmpNet",
-                        "rules: connected=${r.connected} unmetered=${r.unmetered} wifi=${r.wifi} " +
-                            "mode=${r.mode} server=${r.serverReachable} → talk=${r.mayTalkToServer} " +
-                            "stream=${r.mayStream} heavy=${r.mayMoveHeavyBytes} lan=${r.mayUseLan}",
-                    )
+                var last: LinkRules? = null
+                rules.collect { now ->
+                    logRules(now)
+                    NetworkGate.rulesMoved(last, now)
+                    last?.let { before -> rulesMoved(before, now) }
+                    last = now
                 }
             }
-            // A socket opened over cellular stays usable for minutes, and the
-            // rule answers for the default network, not a socket's. So the rule
-            // closing shuts every connection, and *entering* Wi-Fi Only shuts
-            // just those opened on a metered link: on Wi-Fi the rest are free,
-            // and shutting them would fail the transfers in flight. The rule
-            // opening shuts nothing.
-            scope.launch {
-                var wasWifiOnly = false
-                var wasClosed = false
-                rules.map { (it.mode == DataMode.WIFI_ONLY) to (it.mode == DataMode.WIFI_ONLY && !it.unmetered) }
-                    .distinctUntilChanged()
-                    .collect { (wifiOnly, closed) ->
-                        when {
-                            closed && !wasClosed -> NetworkGate.slam()
-                            wifiOnly && !wasWifiOnly -> NetworkGate.slamMetered()
-                        }
-                        wasWifiOnly = wifiOnly
-                        wasClosed = closed
-                    }
-            }
-            // Downloads held for a quality their server couldn't meet go the
-            // moment that changes (another quality picked, or a sync found the
-            // call after all). The worker had ended — see Downloader.drain —
-            // and nothing else would start it for a source on Manual.
-            scope.launch {
-                settings.sources
-                    .map { list -> list.filterNot { it.downloadFormatAvailable }.map { it.id }.toSet() }
-                    .distinctUntilChanged()
-                    .drop(1)
-                    .collect { downloader.retry() }
-            }
-            // And those a server refused, once their record changes — signed
-            // in again, say. Or parked, when an address changed is the reason it
-            // stopped answering. See Downloader.Hold.
-            scope.launch {
-                settings.sources
-                    .drop(1)
-                    .collect {
-                        if (downloader.holds.value.isNotEmpty()) downloader.retry()
-                    }
-            }
-            // Bulk work put off on a metered link is picked up the moment bytes
-            // may move, and a parked server is asked again, a mode change with
-            // no change of link included. After the same settle as a change of
-            // link (below), so a ping doesn't go out in a new link's first
-            // seconds. See Downloader.wakeParked.
-            scope.launch {
-                rules.map { it.mayMoveHeavyBytes }
-                    .distinctUntilChanged()
-                    .drop(1)
-                    .collect { may ->
-                        if (may) {
-                            scope.launch {
-                                delay(PARKED_PROBE_SETTLE_MS)
-                                downloader.wakeParked()
-                            }
-                            topUpDownloads()
-                        }
-                    }
-            }
-            // A queue held by the rule has no worker waiting on it — see
-            // Downloader.drain — so the rule moving is what starts one.
-            scope.launch {
-                rules.map { it.heavyWaitingFor }
-                    .distinctUntilChanged()
-                    .drop(1)
-                    .collect { downloader.holdChanged() }
-            }
-            // The covers a sync on cellular couldn't fetch, or a run cut short.
-            // Its own edge: in Make it Hurt the one above never moves, and the
-            // cover sync is for free bytes whatever the mode.
-            scope.launch {
-                rules.map { it.unmetered && it.mayStream }
-                    .distinctUntilChanged()
-                    .drop(1)
-                    .collect { free -> if (free) covers.sync() }
-            }
-            // Being allowed to ask the server is a reason to ask: a *mode*
-            // change isn't a network change, and a server last seen silent on
-            // a dying Wi-Fi would stay "gone" on a cellular link that reaches it.
-            scope.launch {
-                rules.map { it.mayTalkToServer }
-                    .distinctUntilChanged()
-                    .drop(1)
-                    .collect { may -> if (may) reachability.check(delayMs = 0L) }
-            }
             // A change of link ends every connection: they belong to the network
-            // just left. Dropped before the reachability check's wait, so its
-            // ping goes out on a fresh one.
+            // just left, and a socket never follows the phone across. Left in the
+            // pool, one carries the next request onto a path that is going away,
+            // where a ping stalls for seconds and reads as "the server is gone".
+            // Dropped before the reachability check's wait, so its ping goes out
+            // on a fresh one.
             scope.launch {
                 Connectivity.network
                     .map { Triple(it.isConnected, it.isMetered, it.isWifi) }
@@ -638,34 +534,17 @@ object App {
                     .drop(1)
                     .collect {
                         Log.i("AmpNet", "link changed → dropping every connection")
-                        NetworkGate.linkChanged()
-                    }
-            }
-            // Every change of connection is a reason to ask the server again: a
-            // LAN address stops answering on cellular, and starts again at home.
-            scope.launch {
-                Connectivity.network
-                    .map { Triple(it.isConnected, it.isMetered, it.isWifi) }
-                    .distinctUntilChanged()
-                    .drop(1)
-                    .collect { reachability.check() }
-            }
-            // ...and every parked download server, which nothing else asks.
-            // After a settle: a new link's first seconds are the worst moment
-            // to ask (see NetworkGate.linkChanged).
-            scope.launch {
-                Connectivity.network
-                    .map { Triple(it.isConnected, it.isMetered, it.isWifi) }
-                    .distinctUntilChanged()
-                    .drop(1)
-                    .collectLatest {
-                        delay(PARKED_PROBE_SETTLE_MS)
-                        downloader.wakeParked()
+                        NetworkGate.slam()
+                        // A reason to ask the server again: a LAN address stops
+                        // answering on cellular, and starts again at home.
+                        reachability.check()
+                        // ...and every parked download server, which nothing else asks.
+                        downloader.linkChanged()
                     }
             }
             // Held writes also go whenever there is both a client and a
             // connection: reachability starts out true and may never change, so
-            // the serverReachable collector can miss Wi-Fi coming back. Watching
+            // the reachability collector can miss Wi-Fi coming back. Watching
             // either one alone misses a case. Cheap otherwise: flushPending asks first.
             scope.launch {
                 combine(serverClient, Connectivity.changed) { client, (connected, _) ->
@@ -674,7 +553,6 @@ object App {
                     .distinctUntilChanged()
                     .collect { ready -> if (ready) runCatching { library.flushPending() } }
             }
-            scope.launch { downloader.setUserPaused(settings.downloadsPaused.first()) }
             // The colour workaround (an off-SDK spike, see LightDisplayColor)
             // follows the artwork switch: with no covers there is nothing for it to do.
             scope.launch {
@@ -688,24 +566,6 @@ object App {
             // order — see [swapSource].
             scope.launch {
                 settings.activeSource.collect { active -> swapSource(active) }
-            }
-            // Whatever folders the server reports, remembered on the source so
-            // the Sources page can list them instantly and offline.
-            scope.launch {
-                library.syncState.collect { state ->
-                    if (state.syncing || state.lastSyncedMs == 0L) return@collect
-                    val current = source.value
-                    if (!current.supportsLibraries) return@collect
-                    val folders = runCatching { library.musicFolders() }.getOrNull() ?: return@collect
-                    // Empty means "couldn't ask" (a network failure, a client not
-                    // up yet) as often as "none", and written through it would
-                    // wipe libraries already found. None looks the same anyway.
-                    if (folders.isEmpty()) return@collect
-                    settings.setSourceLibraries(
-                        current.id,
-                        folders.map { SourceLibrary(it.id, it.name) },
-                    )
-                }
             }
             // Any source's mode changing (the Offline page sets it per server)
             // starts fetching without waiting for the next sync.
@@ -787,6 +647,38 @@ object App {
      */
     fun shutdown(sealedActivity: SealedLightActivity) {
         playback.release(owner = DefaultLightAudio(sealedActivity))
+    }
+
+    /**
+     * One line per change of the rules: which inputs moved and what they now
+     * allow. The first thing to read when something did the unexpected.
+     */
+    private fun logRules(r: LinkRules) {
+        Log.i(
+            "AmpNet",
+            "rules: connected=${r.connected} unmetered=${r.unmetered} wifi=${r.wifi} " +
+                "mode=${r.mode} server=${r.serverReachable} → talk=${r.mayTalkToServer} " +
+                "stream=${r.mayStream} heavy=${r.mayMoveHeavyBytes} lan=${r.mayUseLan}",
+        )
+    }
+
+    /**
+     * What the rules moving from [before] to [now] sets off, past the wall's
+     * own reaction (NetworkGate.rulesMoved). Suspending work is launched, so
+     * no reaction holds up the next change.
+     */
+    private fun rulesMoved(before: LinkRules, now: LinkRules) {
+        downloader.rulesMoved(before, now)
+        // Bulk work put off on a metered link is picked up the moment bytes may move.
+        if (now.mayMoveHeavyBytes && !before.mayMoveHeavyBytes) scope.launch { topUpDownloads() }
+        // The covers a sync on cellular couldn't fetch, or a run cut short. Its
+        // own edge: Make it Hurt moves heavy bytes on cellular too, and the
+        // cover sync is for free bytes whatever the mode.
+        if (now.maySyncCovers && !before.maySyncCovers) covers.sync()
+        // Being allowed to ask the server is a reason to ask: a *mode* change
+        // isn't a network change, and a server last seen silent on a dying
+        // Wi-Fi would stay "gone" on a cellular link that reaches it.
+        if (now.mayTalkToServer && !before.mayTalkToServer) reachability.check(delayMs = 0L)
     }
 
     /**

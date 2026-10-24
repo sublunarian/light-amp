@@ -77,8 +77,7 @@ class CoverUpkeep(
                         yieldToPlayback()
                         // Asked of the system, not of the flow: this is the
                         // last look before bytes that must not cost anything.
-                        val now = rulesNow()
-                        now.unmetered && now.mayStream && browsedSourceId() == source.id
+                        rulesNow().maySyncCovers && browsedSourceId() == source.id
                     },
                 )
                 if (result.missing > 0) {

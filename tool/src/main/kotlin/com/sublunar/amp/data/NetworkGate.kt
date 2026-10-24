@@ -81,7 +81,7 @@ object NetworkGate {
     fun isOpen(): Boolean = policy()
 
     /** Throws [NetworkGateClosedException] unless the network may be used now; slams if not. */
-    fun check() {
+    private fun check() {
         val open = policy()
         // The newest live answer always wins over the cached one the body
         // reads use — see isOpenRecently.
@@ -92,14 +92,6 @@ object NetworkGate {
             throw NetworkGateClosedException()
         }
     }
-
-    /**
-     * Whether the link is metered right now, wired at boot. Asked only when a
-     * socket is handed out, to remember which ones were opened on a link that
-     * costs money — see [slamMetered].
-     */
-    @Volatile
-    var isMetered: () -> Boolean = { true }
 
     // --- The kill switch -----------------------------------------------------
 
@@ -149,17 +141,6 @@ object NetworkGate {
     }
 
     /**
-     * The phone moved to a different network. Every connection belongs to the
-     * old one — a socket never follows the phone across — and left in the pool
-     * it carries the next request onto a path that is going away, where a ping
-     * stalls for seconds and reads as "the server is gone". Every caller
-     * survives a dropped connection; none survives a stalled one well.
-     */
-    fun linkChanged() {
-        slam()
-    }
-
-    /**
      * Close only the connections that were opened on a metered link, for the
      * moment the mode becomes Wi-Fi Only: with Wi-Fi the default the rule reads
      * open while a pooled cellular connection would carry the next request.
@@ -172,6 +153,25 @@ object NetworkGate {
         if (open.isNotEmpty()) lastSlamAtMs = monotonicMs()
         for (socket in open) runCatching { socket.close() }
     }
+
+    /**
+     * Follow the rules from [before] to [now]. A socket opened over cellular
+     * stays usable for minutes, and the rule answers for the default network,
+     * not a socket's. So the rule closing shuts every connection, and
+     * *entering* Wi-Fi Only shuts just those opened on a metered link: on
+     * Wi-Fi the rest are free, and shutting them would fail the transfers in
+     * flight. The rule opening shuts nothing. With no [before], the network
+     * counts as having been open in another mode.
+     */
+    fun rulesMoved(before: LinkRules?, now: LinkRules) {
+        when {
+            now.closed && before?.closed != true -> slam()
+            now.wifiOnly && before?.wifiOnly != true -> slamMetered()
+        }
+    }
+
+    private val LinkRules.wifiOnly: Boolean get() = mode == DataMode.WIFI_ONLY
+    private val LinkRules.closed: Boolean get() = wifiOnly && !unmetered
 
     /** Whether sockets were shut by this wall at or after [sinceMs] (monotonic ms) — an I/O failure then is ours. */
     fun slammedSince(sinceMs: Long): Boolean = lastSlamAtMs >= sinceMs
@@ -300,7 +300,8 @@ object NetworkGate {
             check()
             return make().also {
                 sockets.add(it)
-                if (isMetered()) meteredSockets.add(it)
+                // Remembered so that entering Wi-Fi Only can shut just these — see slamMetered.
+                if (!Connectivity.isUnmetered()) meteredSockets.add(it)
             }
         }
 

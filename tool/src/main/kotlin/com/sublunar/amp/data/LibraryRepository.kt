@@ -120,6 +120,8 @@ class LibraryRepository(
     /** For the handful of things cached in preferences rather than in a table. */
     private val settings: AppSettings,
     private val scope: CoroutineScope,
+    /** The source being browsed — App.source, which changes over last on a switch. */
+    private val browsed: () -> MusicSource,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -1123,6 +1125,24 @@ class LibraryRepository(
     /** The server's libraries (music folders); empty if unsupported or on error. */
     suspend fun musicFolders(): List<MusicFolder> =
         runCatching { serverClient.value?.getMusicFolders().orEmpty() }.getOrDefault(emptyList())
+
+    init {
+        // Whatever folders the server reports, remembered on the source so
+        // the Sources page can list them instantly and offline.
+        scope.launch {
+            syncState.collect { state ->
+                if (state.syncing || state.lastSyncedMs == 0L) return@collect
+                val current = browsed()
+                if (!current.supportsLibraries) return@collect
+                val folders = runCatching { musicFolders() }.getOrNull() ?: return@collect
+                // Empty means "couldn't ask" (a network failure, a client not
+                // up yet) as often as "none", and written through it would
+                // wipe libraries already found. None looks the same anyway.
+                if (folders.isEmpty()) return@collect
+                settings.setSourceLibraries(current.id, folders.map { SourceLibrary(it.id, it.name) })
+            }
+        }
+    }
 
     /** Full incremental sync of the currently selected library. Safe to repeat. */
     suspend fun sync() = syncScoped(libraryId.first())

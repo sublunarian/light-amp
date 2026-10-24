@@ -141,7 +141,7 @@ class Downloader(
 
     /** Set from the Downloads page and remembered across launches. */
     @Volatile
-    private var userPaused = false
+    private var userPaused = settings.downloadsPaused.value
 
     /** When to try each source again after its server stopped answering — see [SourceBackOff]. */
     private val backOffs = SourceBackOff()
@@ -351,15 +351,46 @@ class Downloader(
     }
 
     /**
-     * The rule that holds everyone's downloads moved — heavy data allowed
-     * again, or waiting for something else. A queue held by it has no worker
-     * (see [drain]), so this is what starts one: to move the queue, or to
+     * The link's rules moved from [before] to [now].
+     *
+     * The rule that holds everyone's downloads moving — heavy data allowed
+     * again, or waiting for something else — starts a worker: a queue held by
+     * it has none (see [drain]), and one is needed to move the queue, or to
      * find it still held and leave the Downloads page saying what for. Any
      * entry will do, held by its source or not, because a worker that finds
      * nothing it may fetch ends before it starts the transfer service.
+     *
+     * Bytes being allowed to move is also a reason to ask the parked servers
+     * again, a mode change with no change of link included — after the same
+     * settle as a change of link, so a ping doesn't go out in a new link's
+     * first seconds.
      */
-    fun holdChanged() {
-        scope.launch { lock.withLock { if (!queue.isEmpty()) startWorkerLocked() } }
+    fun rulesMoved(before: LinkRules, now: LinkRules) {
+        if (now.mayMoveHeavyBytes && !before.mayMoveHeavyBytes) {
+            scope.launch {
+                delay(PARKED_PROBE_SETTLE_MS)
+                wakeParked()
+            }
+        }
+        if (now.heavyWaitingFor != before.heavyWaitingFor) {
+            scope.launch { lock.withLock { if (!queue.isEmpty()) startWorkerLocked() } }
+        }
+    }
+
+    /** The probe [linkChanged] has waiting, replaced by the next change. */
+    private var parkedProbe: Job? = null
+
+    /**
+     * The phone moved to another link: ask every parked server, which nothing
+     * else asks, once it settles. A new link's first seconds are the worst
+     * moment to ask, and a burst of changes is one probe, after the last.
+     */
+    fun linkChanged() {
+        parkedProbe?.cancel()
+        parkedProbe = scope.launch {
+            delay(PARKED_PROBE_SETTLE_MS)
+            wakeParked()
+        }
     }
 
     /**
@@ -843,7 +874,7 @@ class Downloader(
             // waiting with the service up: a Wi-Fi rule can hold a queue all
             // day, which spends the hours a day Android allows the service.
             // Resuming starts it again (setUserPaused), and so does the rule
-            // moving (holdChanged), which App hears from the link's callback, on
+            // moving (rulesMoved), which App hears from the link's callback, on
             // the way back to the front, and from the half-hourly job.
             if (heldForEveryone()) {
                 val waiting = lock.withLock { queue.size }
@@ -1154,6 +1185,25 @@ class Downloader(
         }
     }
 
+    // Last in the class, so every member it can reach is built before it runs.
+    init {
+        // Downloads held for a quality their server couldn't meet go the
+        // moment that changes (another quality picked, or a sync found the
+        // call after all), and those under a [Hold] once their record changes
+        // (signed in again, an address changed). The worker had ended — see
+        // [drain] — and nothing else would start it for a source on Manual.
+        scope.launch {
+            var unmetBefore: Set<String>? = null
+            settings.sources.collect { sources ->
+                val unmet = sources.filterNot { it.downloadFormatAvailable }.mapTo(HashSet()) { it.id }
+                val first = unmetBefore == null
+                val unmetMoved = unmet != unmetBefore
+                unmetBefore = unmet
+                if (!first && (unmetMoved || _holds.value.isNotEmpty())) retry()
+            }
+        }
+    }
+
     private companion object {
         const val PAUSE_POLL_MS = 1_000L
 
@@ -1166,6 +1216,9 @@ class Downloader(
          * foreground — see LightTransferService and [drain].
          */
         const val SERVICE_SETTLE_MS = 5_000L
+
+        /** How long a new link, or bytes newly allowed, settle before parked servers are asked about it. */
+        const val PARKED_PROBE_SETTLE_MS = 2_000L
 
         /**
          * How long a top-up pass waits after being asked for: the triggers fire
