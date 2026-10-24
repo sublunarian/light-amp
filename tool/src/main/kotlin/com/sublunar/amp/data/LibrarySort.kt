@@ -98,7 +98,7 @@ fun sortName(name: String): String {
  * inside the comparator, n log n times; with [titleKey] (normalisation plus a
  * regex) on a large library that hangs the main thread into an ANR.
  */
-private inline fun <T, K : Comparable<K>> List<T>.sortedByKeyOnce(
+internal inline fun <T, K : Comparable<K>> List<T>.sortedByKeyOnce(
     selector: (T) -> K,
 ): List<T> = map { selector(it) to it }.sortedBy { it.first }.map { it.second }
 

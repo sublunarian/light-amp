@@ -433,27 +433,38 @@ class LibraryRepository(
             deriveArtists(list, liked, images.orEmpty())
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
+    /** One pass over every credit, tallied per name in the order names first appear. */
     private fun deriveArtists(
         list: List<Track>,
         liked: Set<String>,
         images: Map<String, String>,
-    ): List<Artist> =
-        list.flatMap { track -> track.albumArtistNames().map { it to track } }
-            .groupBy({ it.first }, { it.second })
-            .map { (name, ts) ->
-                Artist(
-                    name = name,
-                    imageId = images[name],
-                    albumCount = ts.mapNotNull { it.albumId }.distinct().size,
-                    trackCount = ts.size,
-                    playCount = ts.sumOf { it.playCount },
-                    liked = name in liked,
-                )
+    ): List<Artist> {
+        val tallies = LinkedHashMap<String, ArtistTally>()
+        for (track in list) {
+            for (name in track.albumArtistNames()) {
+                val tally = tallies.getOrPut(name, ::ArtistTally)
+                track.albumId?.let { tally.albumIds += it }
+                tally.tracks++
+                tally.plays += track.playCount
             }
-            // Key once per artist, not once per comparison — see LibrarySort.
-            .map { sortName(it.name) to it }
-            .sortedBy { it.first }
-            .map { it.second }
+        }
+        return tallies.map { (name, tally) ->
+            Artist(
+                name = name,
+                imageId = images[name],
+                albumCount = tally.albumIds.size,
+                trackCount = tally.tracks,
+                playCount = tally.plays,
+                liked = name in liked,
+            )
+        }.sortedByKeyOnce { sortName(it.name) }
+    }
+
+    private class ArtistTally {
+        val albumIds = HashSet<String>()
+        var tracks = 0
+        var plays = 0
+    }
 
     /**
      * Fetch the server's artist index for its pictures, once per source: one
