@@ -11,10 +11,6 @@ import com.sublunar.amp.playback.output.PREVIOUS_RESTARTS_AFTER_MS
 import com.sublunar.amp.playback.output.QueueEdit
 import com.sublunar.amp.playback.output.VolumeControl
 import com.sublunar.amp.source.plex.PlexClient
-import com.sublunar.amp.source.plex.PlexPlayer
-import com.sublunar.amp.source.plex.PlexPlayerTimeline
-import com.sublunar.amp.source.plex.PlexQueue
-import com.sublunar.amp.source.plex.plexTimelineFrom
 import kotlin.coroutines.coroutineContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -33,10 +29,11 @@ import kotlinx.coroutines.launch
  * Unlike DLNA, the player is handed a server-side play queue and walks it
  * itself, gapless and skippable from its own remote. So this side mirrors
  * rather than drives: it adopts whatever the player reports, track changes
- * and pauses made on the TV included. Commands go through the server, as the
- * official controllers send them, so nothing here connects to the player.
+ * and pauses made on the TV included. Commands go to the player's own
+ * Companion port; the queue it walks is the server's.
  *
- * The calls themselves are PlexClient's: they need its token and its lock.
+ * The calls are in PlexCompanionCalls.kt, on the Plex client for its token
+ * and its lock.
  */
 internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     override val family = PlexCompanionFamily

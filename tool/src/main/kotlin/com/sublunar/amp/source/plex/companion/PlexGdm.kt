@@ -1,7 +1,6 @@
 package com.sublunar.amp.source.plex.companion
 
 import com.sublunar.amp.data.NetworkGate
-import com.sublunar.amp.source.plex.PlexPlayer
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -82,7 +81,6 @@ object PlexGdm {
             name = headers["name"]?.takeIf { it.isNotBlank() }
                 ?: headers["product"]?.takeIf { it.isNotBlank() }
                 ?: "Plex player",
-            product = headers["product"].orEmpty(),
             directUrl = "http://$fromAddress:$port",
             // The reply carried its own identity.
             identityKnown = true,

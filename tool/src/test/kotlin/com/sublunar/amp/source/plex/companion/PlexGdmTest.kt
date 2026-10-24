@@ -29,7 +29,6 @@ class PlexGdmTest {
         val p = PlexGdm.parseReply(appleTv, "192.168.2.102")!!
         assertEquals("abc123def", p.id)
         assertEquals("Living Room", p.name)
-        assertEquals("Plex for Apple TV", p.product)
         // The address is where it answered from, never what the reply claims.
         assertEquals("http://192.168.2.102:32500", p.directUrl)
     }

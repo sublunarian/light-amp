@@ -4,13 +4,11 @@ import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputFamily
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
-import com.sublunar.amp.source.plex.PlexPlayer
 
 /**
  * Plex players — the Apple TV's Plex app, another Plexamp — steered over
- * Plex's Companion protocol through the server. Offered by the Plex
- * provider, so only a Plex source lists them; [PlexCompanionOutput] does the
- * playing.
+ * Plex's Companion protocol. Offered by the Plex provider, so only a Plex
+ * source lists them; [PlexCompanionOutput] does the playing.
  */
 object PlexCompanionFamily : OutputFamily {
     override val id = "plex-companion"

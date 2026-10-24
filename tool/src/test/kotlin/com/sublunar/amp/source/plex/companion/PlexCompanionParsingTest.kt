@@ -1,4 +1,4 @@
-package com.sublunar.amp.source.plex
+package com.sublunar.amp.source.plex.companion
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

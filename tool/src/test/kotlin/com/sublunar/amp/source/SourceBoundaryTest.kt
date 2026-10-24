@@ -185,7 +185,7 @@ class SourceBoundaryTest {
         val files = PROVIDERS + listOf(
             KtFile(
                 "source/plex/companion/PlexGdm.kt",
-                lines("package com.sublunar.amp.source.plex.companion", "", "import com.sublunar.amp.source.plex.PlexPlayer"),
+                lines("package com.sublunar.amp.source.plex.companion", "", "import com.sublunar.amp.source.plex.PlexClient"),
             ),
             KtFile(
                 REGISTRY,
