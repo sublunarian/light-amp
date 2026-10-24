@@ -437,9 +437,10 @@ class AppSettings(
 
     /**
      * Save [ids], the playing one at [index] among them, and roughly where it
-     * had got to. A longer queue is saved as a slice of at most
-     * [MAX_SAVED_QUEUE] ids around the playing one, and [index] points into
-     * that slice.
+     * had got to. The caller cuts a long queue down to a slice of at most
+     * [MAX_SAVED_QUEUE] ids around the playing one (PlaybackController, with
+     * savedRows), [index] pointing into it; the cap here only keeps the first
+     * that many, so a longer list would lose the index.
      */
     suspend fun saveQueue(ids: List<String>, index: Int, positionMs: Long) {
         dataStore.edit { p ->

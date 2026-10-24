@@ -434,10 +434,10 @@ internal class ServerReports(
         // per id, and a long queue would be a request the server, or a proxy
         // in front of it, refuses silently. What is ahead is what another
         // device can use.
-        val ids = if (tracks.size <= MAX_SAVED_QUEUE) {
+        val ids = if (tracks.size <= MAX_SERVER_QUEUE) {
             tracks.map { it.id }
         } else {
-            tracks.subList(at, minOf(at + MAX_SAVED_QUEUE, tracks.size)).map { it.id }
+            tracks.subList(at, minOf(at + MAX_SERVER_QUEUE, tracks.size)).map { it.id }
         }
         val key = 31 * ids.hashCode() + currentId.hashCode()
         if (!force && key == lastSavedQueueKey) return
@@ -459,7 +459,7 @@ internal class ServerReports(
          * kilobytes of ids in a URL, under the eight that proxies commonly cut
          * off, and far enough ahead for another device to resume.
          */
-        const val MAX_SAVED_QUEUE = 100
+        const val MAX_SERVER_QUEUE = 100
     }
 }
 
