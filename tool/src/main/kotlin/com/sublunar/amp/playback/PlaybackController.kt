@@ -462,16 +462,7 @@ class PlaybackController(
         bindJob = bound
         // What the screen carried across a reopen: the re-cue in attachHandle
         // puts it back if the service came back empty.
-        val carried = _queue.value
-        val carriedIndex = _index.value
-        val carriedPositionMs = _positionMs.value
-        // Detached: playback lives in the SDK's service and survives the screen
-        // and the activity going away.
-        val p = audio.newPlayer(LightPlayerSpec(playback = LightAudioPlayback.Detached))
-        p.playbackGain = appliedGain
-        player = p
-        handleOwner = audio
-        attachHandle(p, carried, carriedIndex, carriedPositionMs)
+        openHandle(audio, _queue.value, _index.value, _positionMs.value)
         // Anything that changes what plays next has to reach an output holding
         // a URI chosen earlier. Debounced: one edit moves several of these.
         @OptIn(kotlinx.coroutines.FlowPreview::class)
@@ -619,12 +610,22 @@ class PlaybackController(
         handleJob = null
         standIn.unbind()
         old.release()
+        openHandle(audio, carried, carriedIndex, carriedPositionMs)
+    }
+
+    /**
+     * Make [audio]'s handle on the service, seeded with the gain the service
+     * last had, and attach it with what the screen shows as it is made — see
+     * [attachHandle]. Main only. A failure is thrown on: the activity doesn't
+     * start without its player. Left behind is no handle, not a released one
+     * that throws at the next press.
+     */
+    private fun openHandle(audio: LightAudio, carried: List<Track>, carriedIndex: Int, carriedPositionMs: Long) {
         val p = try {
+            // Detached: playback lives in the SDK's service and survives the
+            // screen and the activity going away.
             audio.newPlayer(LightPlayerSpec(playback = LightAudioPlayback.Detached))
         } catch (e: Throwable) {
-            // Thrown on, as a first bind's failure is: the activity doesn't start
-            // without its player. Left behind is no handle, not a released one
-            // that throws at the next press.
             player = null
             handleOwner = null
             throw e
@@ -638,8 +639,8 @@ class PlaybackController(
     /**
      * Everything that lives on one handle: the volume follower and, once the
      * handle has connected, the re-cue or the landing and the collectors of
-     * its flows. Run for each new handle, by [bind] and [handOver], and
-     * cancelled with it through [handleJob].
+     * its flows. Run for each new handle, by [openHandle], and cancelled
+     * with it through [handleJob].
      *
      * Until the handle connects its flows hold placeholders (nothing playing,
      * 0:00, no track); the SDK fills them from the service before it calls the
