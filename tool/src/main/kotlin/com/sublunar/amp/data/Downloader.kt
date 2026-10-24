@@ -549,7 +549,7 @@ class Downloader(
      * answer back in line — see [Hold.Parked]. No worker and no transfer
      * service unless one does.
      *
-     * Asked the way the browsed server is asked, by [Reachability]: a 5xx is
+     * Asked the way the browsed server is asked — see [askServer]: a 5xx is
      * a proxy saying the thing behind it is down, so no; a refused login is
      * the server answering, so yes, and the transfer that follows meets the
      * refusal and says so.
@@ -568,9 +568,11 @@ class Downloader(
                     continue
                 }
                 val client = clientFor(source) ?: continue
-                val answered = Reachability(scope, client = { client }, mayAsk = heavyDataAllowed).verify()
-                Log.i("AmpDl", "parked ${source.name}: ping → ${answered ?: "no verdict"}")
-                if (answered == true && unpark(id)) woke = true
+                // Asked again per server: the rule can close part-way.
+                if (!heavyDataAllowed()) continue
+                val ping = askServer(client)
+                Log.i("AmpDl", "parked ${source.name}: ping → ${ping.answered ?: "no verdict"} in ${ping.tookMs}ms (${ping.why})")
+                if (ping.answered == true && unpark(id)) woke = true
             }
             if (woke) retry()
         } finally {

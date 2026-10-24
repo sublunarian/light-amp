@@ -87,45 +87,59 @@ class Reachability(
             return null
         }
         val server = client() ?: return null
-        val askedAtMs = monotonicMs()
-        var why = "answered"
-        val answered: Boolean? = try {
-            // Only *this* timeout is an answer ("never came back"). A caller
-            // that stops waiting sooner cancels this with a timeout of its own,
-            // which must pass straight through: caught here as "no", a caller's
-            // impatience would mark a slow server as gone.
-            withTimeoutOrNull(PING_TIMEOUT_MS) { server.ping(); true } ?: false.also { why = "no answer in ${PING_TIMEOUT_MS}ms" }
-        } catch (e: NetworkGateClosedException) {
-            why = "rule closed"
-            // The wall said no between the check above and the request. Not
-            // an answer about the server.
-            null
-        } catch (e: IOException) {
-            // No route, no name, no TLS, no reply: nobody there — unless the
-            // wall shut every socket while this was out, which is our doing
-            // and not the server's.
-            why = "${e::class.simpleName}: ${e.message}"
-            if (NetworkGate.slammedSince(askedAtMs)) null.also { why = "our own slam" } else false
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            why = "${e::class.simpleName}: ${e.message}"
-            answeredBy(e)
-        }
-        log("ping → ${answered ?: "no verdict"} in ${monotonicMs() - askedAtMs}ms ($why)")
-        if (answered != null) _reachable.value = answered
-        answered
+        val ping = askServer(server)
+        log("ping → ${ping.answered ?: "no verdict"} in ${ping.tookMs}ms (${ping.why})")
+        ping.answered?.let { _reachable.value = it }
+        ping.answered
     }
 
     private fun log(text: String) = Log.i("AmpNet", "reachability: $text")
 
     private companion object {
         const val SETTLE_MS = 400L
-        const val PING_TIMEOUT_MS = 6_000L
         /** Then silence, until something changes. About two minutes in all. */
         val RETRY_MS = listOf(2_000L, 5_000L, 15_000L, 30_000L, 60_000L)
     }
 }
+
+/** What one [askServer] came to: the server's answer, or null for none; [why] and [tookMs] are for the log. */
+internal class Ping(val answered: Boolean?, val why: String, val tookMs: Long)
+
+/**
+ * Ping [server] once and judge what came back — for the browsed server
+ * ([Reachability]) and for a parked download server alike. Null is no verdict
+ * about the server: the wall said no, or shut the socket itself.
+ */
+internal suspend fun askServer(server: MusicServer): Ping {
+    val askedAtMs = monotonicMs()
+    var why = "answered"
+    val answered: Boolean? = try {
+        // Only *this* timeout is an answer ("never came back"). A caller
+        // that stops waiting sooner cancels this with a timeout of its own,
+        // which must pass straight through: caught here as "no", a caller's
+        // impatience would mark a slow server as gone.
+        withTimeoutOrNull(PING_TIMEOUT_MS) { server.ping(); true } ?: false.also { why = "no answer in ${PING_TIMEOUT_MS}ms" }
+    } catch (e: NetworkGateClosedException) {
+        why = "rule closed"
+        // The wall said no between the caller's check and the request. Not
+        // an answer about the server.
+        null
+    } catch (e: IOException) {
+        // No route, no name, no TLS, no reply: nobody there — unless the
+        // wall shut every socket while this was out, which is our doing
+        // and not the server's.
+        why = "${e::class.simpleName}: ${e.message}"
+        if (NetworkGate.slammedSince(askedAtMs)) null.also { why = "our own slam" } else false
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        why = "${e::class.simpleName}: ${e.message}"
+        answeredBy(e)
+    }
+    return Ping(answered, why, monotonicMs() - askedAtMs)
+}
+
+private const val PING_TIMEOUT_MS = 6_000L
 
 /**
  * Whether an answer that wasn't the expected one still came from the
