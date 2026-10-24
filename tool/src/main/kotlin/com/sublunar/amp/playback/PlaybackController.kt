@@ -1045,11 +1045,13 @@ class PlaybackController(
 
     // --- The saved queue -----------------------------------------------------
 
-    /** Write the queue, index and position so the next launch can pick them up. */
+    /** Write the queue, index and position so the next launch can pick them up — see [savedRows]. */
     private suspend fun persistState(final: Boolean = false) {
         val tracks = _queue.value
         if (tracks.isEmpty()) return
-        settings.saveQueue(tracks.map { it.id }, _index.value, _positionMs.value)
+        val at = _index.value
+        val kept = savedRows(tracks.size, at)
+        settings.saveQueue(tracks.slice(kept).map { it.id }, at - kept.first, _positionMs.value)
         reports.pushQueue(tracks, force = final)
     }
 
