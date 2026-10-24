@@ -370,11 +370,12 @@ class SourceDetailScreen(
         val source = sources.firstOrNull { it.id == sourceId }
         val sync by App.librarySync.syncState.collectAsState()
 
-        // Re-checked on every sync, since granting access is what the user goes
-        // off to do. Keyed on the source too: the list starts empty, and an
-        // answer taken before it loaded would stand until the next sync.
+        // Re-checked as every sync starts and ends, since granting access is what
+        // the user goes off to do; not on each progress step. Keyed on the source
+        // too: the list starts empty, and an answer taken before it loaded would
+        // stand until the next sync.
         var access by remember { mutableStateOf(PhoneAccess.GRANTED) }
-        LaunchedEffect(sync, source?.id) { access = source?.phoneLibrary?.access() ?: PhoneAccess.GRANTED }
+        LaunchedEffect(sync.syncing, sync.lastSyncedMs, source?.id) { access = source?.phoneLibrary?.access() ?: PhoneAccess.GRANTED }
         val canRead = access == PhoneAccess.GRANTED
         val askAccess = rememberAccessRequest(source?.phoneLibrary)
 
