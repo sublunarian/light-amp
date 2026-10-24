@@ -214,6 +214,10 @@ internal class TrackSources(
     }
 }
 
+/** [tracks] as player queue items, each from the source already resolved for it in [from]. */
+internal fun itemsFrom(tracks: List<Track>, from: List<LightAudioSource>): List<LightAudioItem> =
+    tracks.mapIndexed { i, track -> track.toAudioItem(from[i]) }
+
 /** [this] as a player queue item playing from [from]. */
 internal fun Track.toAudioItem(from: LightAudioSource): LightAudioItem = LightAudioItem(
     source = from,

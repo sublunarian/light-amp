@@ -2056,7 +2056,7 @@ class PlaybackController(
         // handed on, not again per item, on Main.
         val resolved = tracks.map(sources::source)
         queuedSources = resolved
-        queuePlayer?.setMediaQueue(tracks.mapIndexed { i, track -> track.toAudioItem(resolved[i]) }, startIndex)
+        queuePlayer?.setMediaQueue(itemsFrom(tracks, resolved), startIndex)
         _index.value = startIndex
         // A new queue plays from the start of whatever it opens on. A leftover
         // offset would be added to a clock starting at 0:00, and the index
@@ -2102,7 +2102,9 @@ class PlaybackController(
         settleRestartCopy()
         val track = tracks[index]
         val at = positionMs.coerceAtLeast(0L)
-        queuedSources = tracks.map(sources::source)
+        // Each source resolved once, for the memo and the items alike.
+        val resolved = tracks.map(sources::source)
+        queuedSources = resolved
         // Set before the player moves: the index collector would read the move
         // as a new track and clear the offset set below. That is also why the
         // duration is seeded here.
@@ -2117,14 +2119,14 @@ class PlaybackController(
             offsetItemTrackId = track.id
             p.setMediaQueue(
                 tracks.mapIndexed { i, it ->
-                    if (i == index) it.toAudioItem(LightAudioSource.UrlSource(url)) else sources.item(it)
+                    it.toAudioItem(if (i == index) LightAudioSource.UrlSource(url) else resolved[i])
                 },
                 index,
             )
         } else {
             streamOffsetMs = 0
             offsetItemTrackId = null
-            p.setMediaQueueAt(tracks.map(sources::item), index, at)
+            p.setMediaQueueAt(itemsFrom(tracks, resolved), index, at)
             if (at > 0L) verifyNativeSeek(p, track, at, awaitStream = true)
         }
         rearmSoon()
@@ -2132,7 +2134,7 @@ class PlaybackController(
 
     /**
      * Rebuild the queue's sources when "file or stream?" may have changed.
-     * The answer ([source]) hangs on things that move while a queue plays:
+     * The answer ([TrackSources.source]) hangs on things that move while a queue plays:
      * Wi-Fi going, a download finishing, the data mode. A queue built on Wi-Fi
      * went on asking the network for tracks by then on disk, which offline
      * means a socket timeout for every one.
@@ -2173,13 +2175,13 @@ class PlaybackController(
             }
             settleRestartCopy()
             if (current > 0) {
-                p.replaceRange(0, current, tracks.subList(0, current).map(sources::item))
+                p.replaceRange(0, current, itemsFrom(tracks.subList(0, current), rebuilt.subList(0, current)))
             }
             if (current + 1 <= tracks.lastIndex) {
                 p.replaceRange(
                     current + 1,
                     tracks.size,
-                    tracks.subList(current + 1, tracks.size).map(sources::item),
+                    itemsFrom(tracks.subList(current + 1, tracks.size), rebuilt.subList(current + 1, tracks.size)),
                 )
             }
             rearmSoon()
