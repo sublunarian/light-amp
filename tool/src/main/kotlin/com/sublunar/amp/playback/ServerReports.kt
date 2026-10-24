@@ -118,6 +118,9 @@ internal class ServerReports(
     /** The play and position last heard — see [heard]. */
     private var lastHeard: Pair<Int, Long>? = null
 
+    /** The song ended into itself while nothing was playing, so its next play waits for a play — see [heard]. */
+    private var replayWaits = false
+
     /** The sources a refused play has been said for this run — see [maybeSubmitPlay]. */
     private val playRefusalSaid: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -325,6 +328,7 @@ internal class ServerReports(
      */
     fun songStarted() {
         play++
+        replayWaits = false
         val q = queue.value
         val i = index.value
         playAt = q.getOrNull(i)?.let { PlayAt(q, i, it) }
@@ -336,13 +340,18 @@ internal class ServerReports(
      * start (repeat-one, or a speaker repeating it) never changes the index,
      * so this is where it is seen: the last reading near the end and this
      * one near the start, in the same play.
+     *
+     * Only a play under way starts a new one. A queue of one song that ran
+     * out is rewound to its start, stopped: that is not the song heard again,
+     * and its next play begins when it is played. Main only.
      */
     private fun heard(positionMs: Long) {
         val before = lastHeard
         lastHeard = play to positionMs
         if (before != null && before.first == play && endedIntoItself(before.second, positionMs, durationMs.value)) {
-            songStarted()
+            replayWaits = true
         }
+        if (replayWaits && playbackWanted()) songStarted()
         maybeSubmitPlay(positionMs)
     }
 
