@@ -358,14 +358,13 @@ class PlexClient(
      * says so, and nothing plays instead.
      */
     override suspend fun getSimilarSongs(songId: String): List<Track> {
-        val own = runCatching { stationTracks(songId, "track") }
+        val own = runCatching { stationTracks(songId) }
             .onFailure { Log.w(RADIO_TAG, "plex track station failed: ${it.message}") }
             .getOrDefault(StationAnswer())
         if (own.tracks.isNotEmpty()) return own.tracks.take(RADIO_LENGTH)
         val nearest = runCatching { nearestTracks(songId, RADIO_LENGTH) }
             .onFailure { Log.w(RADIO_TAG, "plex nearest failed: ${it.message}") }
             .getOrDefault(emptyList())
-        Log.i(RADIO_TAG, "plex nearest: ${nearest.size} tracks for $songId")
         if (nearest.isNotEmpty()) return nearest
         val artist = own.grandparentRatingKey ?: return emptyList()
         // A station hands out a few songs at a time and expects to be topped up
@@ -374,14 +373,13 @@ class PlexClient(
         // handful, merged until there is enough or an ask brings nothing new.
         val merged = LinkedHashMap<String, Track>()
         for (ask in 1..STATION_ASKS) {
-            val answer = runCatching { stationTracks(artist, "artist") }
+            val answer = runCatching { stationTracks(artist) }
                 .onFailure { Log.w(RADIO_TAG, "plex artist station failed: ${it.message}") }
                 .getOrDefault(StationAnswer())
             val before = merged.size
             answer.tracks.forEach { merged.putIfAbsent(it.id, it) }
             if (merged.size == before || merged.size >= RADIO_LENGTH) break
         }
-        Log.i(RADIO_TAG, "plex artist radio: ${merged.size} tracks after up to $STATION_ASKS asks")
         return merged.values.take(RADIO_LENGTH)
     }
 
@@ -392,14 +390,12 @@ class PlexClient(
     )
 
     /** An item's station, read once as a play queue; no tracks when it has none. */
-    private suspend fun stationTracks(ratingKey: String, what: String): StationAnswer {
-        val text = body("/library/metadata/$ratingKey", listOf("includeStations" to "1"))
-        val tree = serverJson.parseToJsonElement(text)
+    private suspend fun stationTracks(ratingKey: String): StationAnswer {
+        val tree = serverJson.parseToJsonElement(body("/library/metadata/$ratingKey", listOf("includeStations" to "1")))
         val stationKey = findStationKey(tree)
         val artistKey = findString(tree, "grandparentRatingKey")
-        Log.i(RADIO_TAG, "plex $what $ratingKey: station=${stationKey != null}, artist=$artistKey")
         if (stationKey == null) return StationAnswer(grandparentRatingKey = artistKey)
-        val machine = machineIdentifier.ifBlank { identity().orEmpty() }
+        val machine = machineId()
         if (machine.isBlank()) {
             Log.w(RADIO_TAG, "plex: no machine identifier, can't build the queue")
             return StationAnswer(grandparentRatingKey = artistKey)
@@ -407,7 +403,7 @@ class PlexClient(
         // Read once rather than followed: `continuous` keeps Plex topping the
         // queue up for clients that report their position back, and this one
         // doesn't.
-        val queueText = body(
+        val queue = fetch(
             "/playQueues",
             listOf(
                 "type" to "audio",
@@ -419,25 +415,7 @@ class PlexClient(
             ),
             HttpMethod.Post,
         )
-        var tracks = decode(queueText).container.metadata.filter { it.type == "track" }.map { it.toTrack() }
-        val queueTree = serverJson.parseToJsonElement(queueText)
-        val queueId = findString(queueTree, "playQueueID")
-        Log.i(
-            RADIO_TAG,
-            "plex $what station queue $queueId: ${tracks.size} tracks, " +
-                "total=${findString(queueTree, "playQueueTotalCount")}",
-        )
-        // Checked once, logged: whether re-reading a continuous queue with a
-        // wide window is what makes Plex generate more of it.
-        if (queueId != null) {
-            val wider = runCatching {
-                fetch("/playQueues/$queueId", listOf("window" to "100", "includeChapters" to "0"))
-                    .container.metadata.filter { it.type == "track" }.map { it.toTrack() }
-            }.getOrDefault(emptyList())
-            Log.i(RADIO_TAG, "plex queue $queueId re-read, window=100: ${wider.size} tracks")
-            if (wider.size > tracks.size) tracks = wider
-        }
-        return StationAnswer(tracks, artistKey)
+        return StationAnswer(queue.container.metadata.filter { it.type == "track" }.map { it.toTrack() }, artistKey)
     }
 
     /** Sonically nearest tracks — python-plexapi's `sonicallySimilar`. */
