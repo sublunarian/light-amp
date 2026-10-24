@@ -287,7 +287,7 @@ class SourceBoundaryTest {
             Allowance(
                 "data/AppSettings.kt",
                 "subsonic",
-                "the one server from before sources existed was a Subsonic server, and stands in until a source is read. Stays: it is what older installs stored",
+                "the placeholder that stands in until a source is read is the one server from before sources existed, a Subsonic server, whose id still names its database. Stays: PersistedNamesTest pins it",
             ),
         )
 

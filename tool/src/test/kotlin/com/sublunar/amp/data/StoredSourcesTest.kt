@@ -1,7 +1,6 @@
 package com.sublunar.amp.data
 
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.preferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlin.test.Test
@@ -31,19 +30,11 @@ class StoredSourcesTest {
 
     private fun list(vararg records: String) = records.joinToString(",", "[", "]")
 
-    /** What [AppSettings.sources] adds on read when no old app-wide download choices are set. */
-    private fun MusicSource.filled() = copy(
-        offlineModeName = offlineModeName ?: "MANUAL",
-        downloadLimitBytes = downloadLimitBytes ?: 2147483648L,
-    )
-
     @Test
     fun `every kind reads back as the record it was saved as`() = runBlocking {
         val phone = Phone(SOURCES to list(*CANONICAL))
         assertEquals(
-            listOf(
-                subsonicFull, bandcamp, plex, plexOld, jellyfin, jellyfinOld, local, subsonicOld,
-            ).map { it.filled() },
+            listOf(subsonicFull, bandcamp, plex, plexOld, jellyfin, jellyfinOld, local, subsonicOld),
             phone.settings.sources.first(),
         )
     }
@@ -59,7 +50,7 @@ class StoredSourcesTest {
     fun `an older shape reads with today's defaults and is rewritten in today's shape`() = runBlocking {
         val phone = Phone(SOURCES to list(NON_CANONICAL))
         assertEquals(
-            listOf(MusicSource("src-s1", SourceKind.SUBSONIC, "Reordered", baseUrl = "https://r.example").filled()),
+            listOf(MusicSource("src-s1", SourceKind.SUBSONIC, "Reordered", baseUrl = "https://r.example")),
             phone.settings.sources.first(),
         )
         phone.settings.setSourceLibraryId("src-s1", null)
@@ -73,7 +64,7 @@ class StoredSourcesTest {
     fun `a key this build doesn't know is ignored on read and kept on write`() = runBlocking {
         val phone = Phone(SOURCES to list(EXTRA_KEY))
         assertEquals(
-            listOf(MusicSource("src-s2", SourceKind.SUBSONIC, "Extra", baseUrl = "https://x.example").filled()),
+            listOf(MusicSource("src-s2", SourceKind.SUBSONIC, "Extra", baseUrl = "https://x.example")),
             phone.settings.sources.first(),
         )
         phone.settings.setSourceLibraryId("src-s2", null)
@@ -114,108 +105,11 @@ class StoredSourcesTest {
     }
 
     @Test
-    fun `the old app-wide download choices stand in on read`() = runBlocking {
-        val phone = Phone(
-            SOURCES to list(SUBSONIC_OLD, SUBSONIC_FULL),
-            DOWNLOAD_FORMAT to "flac",
-            OFFLINE_MODE to "RANDOM",
-            DOWNLOAD_LIMIT to 5368709120L,
-        )
-        val (old, full) = phone.settings.sources.first()
-        assertEquals("flac", old.downloadFormatId)
-        assertEquals("ALL", old.offlineModeName)
-        assertEquals(5368709120L, old.downloadLimitBytes)
-        assertEquals(subsonicFull, full)
-
-        val bogus = Phone(SOURCES to list(SUBSONIC_OLD), OFFLINE_MODE to "bogus")
-        assertEquals("MANUAL", bogus.settings.sources.first().single().offlineModeName)
-    }
-
-    @Test
-    fun `and the next per-source edit writes them into the record`() = runBlocking {
-        // Every edit saves the source as AppSettings.sources reads it, so the
-        // old choices standing in for its own go into its record with the
-        // change: the same values, no longer read from the old keys.
-        val phone = Phone(
-            SOURCES to list(SUBSONIC_OLD, SUBSONIC_FULL),
-            DOWNLOAD_FORMAT to "flac",
-            OFFLINE_MODE to "RANDOM",
-            DOWNLOAD_LIMIT to 5368709120L,
-        )
-        phone.settings.setParserGeneration("src-s0", 2)
-        assertEquals(
-            list(
-                """{"id":"src-s0","kind":"SUBSONIC","name":"Old","baseUrl":"https://old.example","username":"u","password":"p","streamFormatId":"mp3","downloadFormatId":"flac","offlineModeName":"ALL","downloadLimitBytes":5368709120,"parserGeneration":2}""",
-                SUBSONIC_FULL,
-            ),
-            phone.stored,
-        )
-    }
-
-    private val legacyKeys = arrayOf<Preferences.Pair<*>>(
-        LEGACY_BASE_URL to "https://music.example.com/",
-        LEGACY_USERNAME to "armin",
-        LEGACY_PASSWORD to "pw",
-        LEGACY_STREAM_FORMAT to "mp3",
-        LEGACY_LIBRARY_ID to "2",
-    )
-
-    private val legacy = MusicSource(
-        id = "server",
-        kind = SourceKind.SUBSONIC,
-        name = "music.example.com",
-        baseUrl = "https://music.example.com/",
-        username = "armin",
-        password = "pw",
-        streamFormatId = "mp3",
-        libraryId = "2",
-    )
-
-    @Test
-    fun `a server set up before sources existed is read from its old keys`() = runBlocking {
-        val phone = Phone(*legacyKeys)
-        assertEquals(listOf(legacy.filled()), phone.settings.sources.first())
-    }
-
-    @Test
-    fun `the first edit stores the old server as a source and leaves its keys`() = runBlocking {
-        val phone = Phone(*legacyKeys)
-        phone.settings.setSourceLibraryId("server", "4")
-        assertEquals(
-            list(
-                """{"id":"server","kind":"SUBSONIC","name":"music.example.com","baseUrl":"https://music.example.com/","username":"armin","password":"pw","streamFormatId":"mp3","libraryId":"4"}""",
-            ),
-            phone.stored,
-        )
-        assertEquals("https://music.example.com/", phone.store.raw("server.baseUrl"))
-        assertEquals("pw", phone.store.raw("server.password"))
-    }
-
-    @Test
-    fun `the old keys read as they always did`() = runBlocking {
-        val bogusFormat = Phone(*legacyKeys, LEGACY_STREAM_FORMAT to "bogus")
-        assertEquals("opus", bogusFormat.settings.sources.first().single().streamFormatId)
-
-        val noPassword = Phone(
-            LEGACY_BASE_URL to "https://music.example.com/",
-            LEGACY_USERNAME to "armin",
-        )
-        assertEquals(emptyList(), noPassword.settings.sources.first())
-    }
-
-    @Test
-    fun `a stored list wins over the old keys, even an empty one`() = runBlocking {
-        val both = Phone(*legacyKeys, SOURCES to list(PLEX))
-        assertEquals(listOf(plex.filled()), both.settings.sources.first())
-
-        val empty = Phone(*legacyKeys, SOURCES to "[]")
-        assertEquals(emptyList(), empty.settings.sources.first())
-    }
-
-    @Test
-    fun `a stored list that isn't JSON falls back to the old keys`() = runBlocking {
-        val phone = Phone(*legacyKeys, SOURCES to "not json")
-        assertEquals(listOf(legacy.filled()), phone.settings.sources.first())
+    fun `a stored list that isn't JSON reads as none, and adding a source starts a new one`() = runBlocking {
+        val phone = Phone(SOURCES to "not json")
+        assertEquals(emptyList(), phone.settings.sources.first())
+        phone.settings.saveSource(local)
+        assertEquals(list(LOCAL), phone.stored)
     }
 
     @Test
@@ -235,8 +129,6 @@ class StoredSourcesTest {
             phone.settings.saveSource(local)
             assertEquals(list(SUBSONIC_FULL, unreadable, LOCAL), phone.stored, unreadable)
         }
-        val withLegacy = Phone(*legacyKeys, SOURCES to list(SUBSONIC_FULL, UNKNOWN_KIND))
-        assertEquals(listOf(subsonicFull), withLegacy.settings.sources.first())
     }
 
     @Test
@@ -264,28 +156,13 @@ class StoredSourcesTest {
     }
 
     @Test
-    fun `a list with nothing readable is empty, not the old server, and adding a source keeps it`() = runBlocking {
-        // The Welcome screen, as "[]" always was. The old keys are what a list
-        // that isn't there at all falls back to, not one this build can't read.
-        val phone = Phone(*legacyKeys, SOURCES to list(UNKNOWN_KIND))
+    fun `a list with nothing readable is empty, and adding a source keeps it`() = runBlocking {
+        // The Welcome screen, as "[]" always was.
+        val phone = Phone(SOURCES to list(UNKNOWN_KIND))
         assertEquals(emptyList(), phone.settings.sources.first())
         assertNull(phone.settings.activeSource.first())
         phone.settings.saveSource(local)
         assertEquals(list(UNKNOWN_KIND, LOCAL), phone.stored)
-    }
-
-    @Test
-    fun `the one download limit starts at the largest a source had`() = runBlocking {
-        val phone = Phone(SOURCES to list(SUBSONIC_FULL, BANDCAMP))
-        phone.settings.migrateDownloadLimit()
-        assertEquals(21474836480L, phone.settings.downloadLimit.first())
-    }
-
-    @Test
-    fun `an unreadable record doesn't stop the download limit moving up`() = runBlocking {
-        val phone = Phone(SOURCES to list(SUBSONIC_FULL, UNKNOWN_KIND))
-        phone.settings.migrateDownloadLimit()
-        assertEquals(21474836480L, phone.settings.downloadLimit.first())
     }
 
     private val subsonicFull = MusicSource(
@@ -419,14 +296,5 @@ class StoredSourcesTest {
 
         val SOURCES = stringPreferencesKey("pref.sources")
         val ACTIVE_SOURCE = stringPreferencesKey("pref.activeSource")
-        val DOWNLOAD_FORMAT = stringPreferencesKey("pref.downloadFormat")
-        val OFFLINE_MODE = stringPreferencesKey("pref.offlineMode")
-        val DOWNLOAD_LIMIT = longPreferencesKey("pref.downloadLimitBytes")
-
-        val LEGACY_BASE_URL = stringPreferencesKey("server.baseUrl")
-        val LEGACY_USERNAME = stringPreferencesKey("server.username")
-        val LEGACY_PASSWORD = stringPreferencesKey("server.password")
-        val LEGACY_STREAM_FORMAT = stringPreferencesKey("server.streamFormat")
-        val LEGACY_LIBRARY_ID = stringPreferencesKey("server.libraryId")
     }
 }

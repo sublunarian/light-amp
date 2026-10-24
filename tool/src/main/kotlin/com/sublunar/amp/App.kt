@@ -553,8 +553,6 @@ object App {
                 },
                 artworkOff = { hideArtwork.value },
             ) { _source.value.id }
-            // One download budget for the whole tool: the largest of the old per-source ones.
-            runBlocking { settings.migrateDownloadLimit() }
             // The source last in use, resolved first: the DAO has to exist before the repository.
             val first = runBlocking { settings.activeSource.first() }
                 ?: AppSettings.placeholderSource()

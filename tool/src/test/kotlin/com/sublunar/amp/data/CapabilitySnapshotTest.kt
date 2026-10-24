@@ -85,7 +85,7 @@ class CapabilitySnapshotTest {
     /**
      * A stored format id, read for each kind: what isn't one falls back to
      * the default, and what the kind can't serve to the original. Null is
-     * only possible for downloads, which follow the old app-wide choice.
+     * only possible for downloads, where it means never chosen.
      */
     @Test
     fun `a stored format reads as one the kind can serve`() {

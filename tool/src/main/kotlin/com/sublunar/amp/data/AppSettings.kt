@@ -1,6 +1,7 @@
 package com.sublunar.amp.data
 
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -111,24 +112,10 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * is read and written whole, and DataStore has no list-of-records type. Read
      * one record at a time — see [StoredSources]. One this build can't read is
      * left out, and the rest still show.
-     *
-     * A pre-sources install has its single server under the old flat keys; that
-     * is folded in here rather than migrated in place.
      */
-    val sources: Flow<List<MusicSource>> = dataStore.data.map { p ->
-        val stored = p[SOURCES]?.let { StoredSources.decode(sourcesJson, it) }
-        val list = stored?.readable ?: legacySource(p)?.let { listOf(it) } ?: emptyList()
-        // A source saved before downloads were configured per source reads the
-        // old app-wide values until each is chosen for it; the next edit to the
-        // source writes them into its record with the rest.
-        list.map { source ->
-            source.copy(
-                downloadFormatId = source.downloadFormatId ?: p[DOWNLOAD_FORMAT],
-                offlineModeName = source.offlineModeName ?: legacyOfflineMode(p[OFFLINE_MODE]).name,
-                downloadLimitBytes = source.downloadLimitBytes ?: p[DOWNLOAD_LIMIT] ?: DEFAULT_DOWNLOAD_LIMIT,
-            )
-        }
-    }.distinctUntilChanged()
+    val sources: Flow<List<MusicSource>> = dataStore.data.map { it[SOURCES] }.distinctUntilChanged()
+        .map { stored -> readSources(stored).readable }
+        .distinctUntilChanged()
 
     /** The source the library is currently showing; the first one until chosen. */
     val activeSource: Flow<MusicSource?> = combine(
@@ -146,52 +133,37 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     }
 
     suspend fun removeSource(id: String) {
-        editSources { list -> list.filterNot { it.id == id } }
-        dataStore.edit { p -> if (p[ACTIVE_SOURCE] == id) p.remove(ACTIVE_SOURCE) }
+        dataStore.edit { p ->
+            p.editSources { list -> list.filterNot { it.id == id } }
+            if (p[ACTIVE_SOURCE] == id) p.remove(ACTIVE_SOURCE)
+        }
     }
 
     suspend fun setActiveSource(id: String) {
         dataStore.edit { it[ACTIVE_SOURCE] = id }
     }
 
+    /** The stored list; a value that isn't a JSON array at all reads as none. */
+    private fun readSources(stored: String?): StoredSources =
+        stored?.let { StoredSources.decode(sourcesJson, it) } ?: StoredSources.NONE
+
+    private suspend fun editSources(block: (List<MusicSource>) -> List<MusicSource>) {
+        dataStore.edit { p -> p.editSources(block) }
+    }
+
     /**
      * Rewrite the stored list through [block], which is handed only what this
-     * build can read. The records it can't read go back where they were.
+     * build can read, inside one edit: read and write can't straddle another
+     * write. The records it can't read go back where they were.
      */
-    private suspend fun editSources(block: (List<MusicSource>) -> List<MusicSource>) {
-        dataStore.edit { p ->
-            val stored = p[SOURCES]?.let { StoredSources.decode(sourcesJson, it) }
-            val current = stored?.readable ?: listOfNotNull(legacySource(p))
-            p[SOURCES] = (stored ?: StoredSources.NONE).encode(sourcesJson, block(current))
-        }
+    private fun MutablePreferences.editSources(block: (List<MusicSource>) -> List<MusicSource>) {
+        val stored = readSources(this[SOURCES])
+        this[SOURCES] = stored.encode(sourcesJson, block(stored.readable))
     }
 
-    private fun legacySource(p: Preferences): MusicSource? {
-        val base = p[BASE_URL]
-        val user = p[USERNAME]
-        val pass = p[PASSWORD]
-        if (base.isNullOrBlank() || user == null || pass == null) return null
-        return MusicSource(
-            id = LEGACY_SOURCE_ID,
-            kind = SourceKind.SUBSONIC,
-            name = MusicSource.nameFor(base),
-            baseUrl = base,
-            username = user,
-            password = pass,
-            streamFormatId = StreamFormat.fromId(p[STREAM_FORMAT]).id,
-            libraryId = p[LIBRARY_ID],
-        )
-    }
-
-    /**
-     * The old app-wide offline mode, read only to seed a source that has none of
-     * its own — see [sources]. "Random" was folded into ALL, which downloads
-     * favourites first and then the rest.
-     */
-    private fun legacyOfflineMode(stored: String?): OfflineMode = when (stored) {
-        null -> OfflineMode.MANUAL
-        "RANDOM" -> OfflineMode.ALL
-        else -> runCatching { enumValueOf<OfflineMode>(stored) }.getOrNull() ?: OfflineMode.MANUAL
+    /** Change the one source with [sourceId], if it is still there, in one edit. */
+    private suspend fun editSource(sourceId: String, block: (MusicSource) -> MusicSource) {
+        editSources { list -> list.map { if (it.id == sourceId) block(it) else it } }
     }
 
     /** Selected library (music folder) id; null means all libraries. */
@@ -206,14 +178,12 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * Libraries *is* none, and would never be saved.
      */
     suspend fun setSourceLibraryId(sourceId: String, libraryId: String?) {
-        editSources { list -> list.map { if (it.id == sourceId) it.copy(libraryId = libraryId) else it } }
+        editSource(sourceId) { it.copy(libraryId = libraryId) }
     }
 
     /** Record the folders a server reported, for the Sources page. */
     suspend fun setSourceLibraries(sourceId: String, libraries: List<SourceLibrary>) {
-        val current = sources.first().firstOrNull { it.id == sourceId } ?: return
-        if (current.libraries == libraries) return
-        saveSource(current.copy(libraries = libraries))
+        editSource(sourceId) { it.copy(libraries = libraries) }
     }
 
     /**
@@ -223,9 +193,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      * browsing to All Libraries.
      */
     suspend fun setLibraryVisible(sourceId: String, libraryId: String, visible: Boolean) {
-        editSources { list ->
-            list.map { if (it.id == sourceId) it.withLibraryShown(libraryId, visible) else it }
-        }
+        editSource(sourceId) { it.withLibraryShown(libraryId, visible) }
     }
 
     /**
@@ -257,11 +225,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
      */
     suspend fun setParserGeneration(sourceId: String, generation: Int) {
         editSource(sourceId) { it.copy(parserGeneration = generation) }
-    }
-
-    private suspend fun editSource(sourceId: String, block: (MusicSource) -> MusicSource) {
-        val current = sources.first().firstOrNull { it.id == sourceId } ?: return
-        saveSource(block(current))
     }
 
     // --- Library lists -------------------------------------------------------
@@ -439,19 +402,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { it[DOWNLOAD_LIMIT] = bytes }
     }
 
-    /**
-     * Carry the per-source limits up to the one that replaced them, taking the
-     * largest so nobody's budget shrinks under them on update.
-     */
-    suspend fun migrateDownloadLimit() {
-        val p = dataStore.data.first()
-        if (p[DOWNLOAD_LIMIT] != null) return
-        val perSource = StoredSources.decode(sourcesJson, p[SOURCES].orEmpty())
-            ?.readable.orEmpty().mapNotNull { it.downloadLimitBytes }
-        if (perSource.isEmpty()) return
-        setDownloadLimit(perSource.max())
-    }
-
     /** The user's own hold on downloading, kept across launches. */
     val downloadsPaused: Flow<Boolean> = boolFlow(DOWNLOADS_PAUSED, false)
     suspend fun setDownloadsPaused(value: Boolean) = putBool(DOWNLOADS_PAUSED, value)
@@ -571,13 +521,6 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
 
     // Every key string below is stored on phones: never change one.
     companion object {
-        // The single server from before sources existed.
-        private val BASE_URL = stringPreferencesKey("server.baseUrl")
-        private val USERNAME = stringPreferencesKey("server.username")
-        private val PASSWORD = stringPreferencesKey("server.password")
-        private val STREAM_FORMAT = stringPreferencesKey("server.streamFormat")
-        private val LIBRARY_ID = stringPreferencesKey("server.libraryId")
-
         private val ALBUM_SORT = stringPreferencesKey("pref.albumSort")
         private val SONG_SORT = stringPreferencesKey("pref.songSort")
         private val ARTIST_SORT = stringPreferencesKey("pref.artistSort")
@@ -614,7 +557,11 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         private val SOURCES = stringPreferencesKey("pref.sources")
         private val ACTIVE_SOURCE = stringPreferencesKey("pref.activeSource")
 
-        /** The id given to a server configured before sources existed. */
+        /**
+         * The id the one server from before sources existed was given. Still
+         * in use: it names that source's database, amp-library.db — see
+         * libraryDatabaseName.
+         */
         const val LEGACY_SOURCE_ID = "server"
 
         /**
@@ -633,10 +580,7 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
         /** Plenty for an album or a long playlist, short of a whole library. */
         private const val MAX_SAVED_QUEUE = 1000
 
-        private val OFFLINE_MODE = stringPreferencesKey("pref.offlineMode")
         private val DATA_MODE = stringPreferencesKey("pref.dataMode")
-        /** The old app-wide download format, read only to seed a source with no choice of its own. */
-        private val DOWNLOAD_FORMAT = stringPreferencesKey("pref.downloadFormat")
         private val DOWNLOAD_LIMIT = longPreferencesKey("pref.downloadLimitBytes")
 
         /** 2 GB — a few hundred albums as MP3, and well inside any device. */

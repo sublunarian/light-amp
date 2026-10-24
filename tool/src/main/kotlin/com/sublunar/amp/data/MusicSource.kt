@@ -61,21 +61,13 @@ data class MusicSource(
     val streamFormatId: String = StreamFormat.DEFAULT.id,
     /** What to stream on cellular. Null follows the Wi-Fi choice. */
     val cellularFormatId: String? = null,
-    /**
-     * What downloads from this source are fetched as.
-     *
-     * Null means "never chosen here", which is how a source configured before
-     * these became per-source inherits the old app-wide setting instead of
-     * silently dropping to the default — see AppSettings.sources, which fills
-     * every null below in the same way.
-     */
+    /** What downloads from this source are fetched as; null until chosen, read as the default. */
     val downloadFormatId: String? = null,
-    /** What gets downloaded without being asked for. */
+    /** What gets downloaded without being asked for; null until chosen, read as Manual. */
     val offlineModeName: String? = null,
     /**
-     * What this source was allowed on its own, before the budget became one for
-     * the whole tool. Kept only so [AppSettings.migrateDownloadLimit] can carry
-     * the largest of them up; nothing reads it to decide anything any more.
+     * What this source was allowed on its own, before one budget covered the
+     * whole tool. Nothing reads it; stored records still carry it.
      */
     val downloadLimitBytes: Long? = null,
     /**
