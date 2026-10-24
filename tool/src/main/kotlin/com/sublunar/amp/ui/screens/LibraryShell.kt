@@ -179,8 +179,12 @@ private fun SimpleLightScreen<*>.SearchView(
     val live = if (typing) state.text.toString() else query
     LaunchedEffect(live, typing) { if (typing) LibraryNav.setQuery(live) }
 
-    val library by App.library.tracks.collectAsState()
-    val results = remember(live, library.size) { App.library.search(live) }
+    // Keyed on every list search reads, so a re-sync or a switch that keeps the
+    // track count still refreshes the results.
+    val tracks by App.library.tracks.collectAsState()
+    val albums by App.library.albums.collectAsState()
+    val artists by App.library.artists.collectAsState()
+    val results = remember(live, tracks, albums, artists) { App.library.search(live) }
     val listState = rememberListAnchor("search")
 
     // The rows take the scrollbar's lane back individually, so the list itself
