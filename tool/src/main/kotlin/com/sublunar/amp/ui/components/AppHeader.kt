@@ -37,16 +37,12 @@ data class HeaderAction(
 )
 
 /**
- * Right-hand geometry when a search button is present. Search and now-playing read
- * as a pair: now-playing keeps its full 160px square (icon centred at 1000px), and
- * search centres 120px to its left in an 80px square. The hit boxes meet at 920px
- * without overlapping.
+ * The inner slot beside the right corner: search on the tabs, delete while
+ * selecting. The two read as a pair: the corner keeps its full square (icon
+ * centred at 1000px), and the inner slot is an 80px square hard against it, its
+ * icon 120px to the left. The hit boxes meet at 920px without overlapping.
  */
-private const val SEARCH_SLOT_PX = 80
-private const val NOW_PLAYING_SLOT_PX = 160
-
-/** Gap between the two icon centres. */
-private const val SEARCH_TO_NOW_PLAYING_PX = 120
+const val INNER_SLOT_PX = 80
 
 /** The corner glyph's box, the same size the player's header gives its More. */
 const val CORNER_ICON_PX = 66
@@ -93,7 +89,8 @@ const val HEADER_BAR_PX = 160
 /**
  * The header every page wears: a [HEADER_BAR_PX] band with a full-height square at
  * each end so hit zones line up. Left is back or a custom action, centre a title or
- * custom content, right an optional action, with an optional search slot beside it.
+ * custom content, right an optional action, with an optional [INNER_SLOT_PX] slot
+ * beside it.
  */
 @Composable
 fun AppHeader(
@@ -102,9 +99,7 @@ fun AppHeader(
     onBack: (() -> Unit)? = null,
     leftAction: HeaderAction? = null,
     rightAction: HeaderAction? = null,
-    searchAction: (() -> Unit)? = null,
-    /** What the [searchAction] slot draws. The slot's geometry never changes. */
-    searchIcon: ImageVector = AppIcons.Search,
+    innerAction: HeaderAction? = null,
     /**
      * Let a title that will not fit drop to a smaller size rather than being cut.
      * Library pages only: elsewhere titles are the app's own short words.
@@ -114,11 +109,6 @@ fun AppHeader(
     // The corner slots are 160px squares, so their hit boxes match the transport's
     // and the icons land on the shared 80px axis.
     val headerHeight = px(HEADER_BAR_PX)
-    val hasSearch = searchAction != null
-    val rightSlot = if (hasSearch) px(NOW_PLAYING_SLOT_PX) else headerHeight
-    // Search centres SEARCH_TO_NOW_PLAYING_PX left of now-playing, whose slot
-    // already reaches half its width past that centre: this is the leftover gap.
-    val searchGap = px(SEARCH_TO_NOW_PLAYING_PX - NOW_PLAYING_SLOT_PX / 2 - SEARCH_SLOT_PX / 2)
 
     Row(
         modifier = Modifier.fillMaxWidth().height(headerHeight),
@@ -133,9 +123,9 @@ fun AppHeader(
                 else -> {}
             }
         }
-        // Balances the search slot's width on the right, so the title stays
+        // Balances the inner slot's width on the right, so the title stays
         // centred on screen.
-        if (hasSearch) Spacer(Modifier.width(px(SEARCH_SLOT_PX) + searchGap).height(headerHeight))
+        if (innerAction != null) Spacer(Modifier.width(px(INNER_SLOT_PX)).height(headerHeight))
 
         BoxWithConstraints(
             modifier = Modifier.weight(1f).fillMaxHeight(),
@@ -149,14 +139,18 @@ fun AppHeader(
             }
         }
 
-        if (searchAction != null) {
-            HeaderSlot(px(SEARCH_SLOT_PX), px(SEARCH_SLOT_PX), onClick = searchAction) {
-                AppIcon(searchIcon, size = px(66))
+        if (innerAction != null) {
+            HeaderSlot(
+                px(INNER_SLOT_PX),
+                px(INNER_SLOT_PX),
+                onClick = innerAction.onClick,
+                onLongClick = innerAction.onLongClick,
+            ) {
+                AppIcon(innerAction.icon, size = px(66))
             }
-            Spacer(Modifier.width(searchGap).height(headerHeight))
         }
         HeaderSlot(
-            rightSlot,
+            headerHeight,
             headerHeight,
             onClick = rightAction?.onClick,
             onLongClick = rightAction?.onLongClick,

@@ -60,9 +60,9 @@ fun rememberSelection(owner: String): SelectionState = remember(owner) { Selecti
 
 /**
  * The header a list wears while selecting: the count replaces the title, X leaves
- * the mode, and "+" takes the now-playing corner. [onDelete], where the list can be
- * deleted from, takes the search button's slot: destructive, so it is its own
- * button rather than a line in the "+" sheet.
+ * the mode, and "+" takes the right corner. [onDelete], where the list can be
+ * deleted from, takes the inner slot the tabs give search: destructive, so it is
+ * its own button rather than a line in the "+" sheet.
  */
 @Composable
 fun SelectionHeader(
@@ -73,8 +73,9 @@ fun SelectionHeader(
     AppHeader(
         leftAction = HeaderAction(AppIcons.Close) { selection.clear() },
         title = selectionTitle(selection.count),
-        searchAction = onDelete?.let { delete -> { if (selection.count > 0) delete() } },
-        searchIcon = AppIcons.DeleteOutline,
+        innerAction = onDelete?.let { delete ->
+            HeaderAction(AppIcons.DeleteOutline) { if (selection.count > 0) delete() }
+        },
         rightAction = HeaderAction(AppIcons.Add) { if (selection.count > 0) onConfirm() },
     )
 }

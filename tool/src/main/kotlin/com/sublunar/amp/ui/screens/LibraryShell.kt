@@ -55,6 +55,7 @@ import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.HEADER_BAR_PX
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.INDEX_STRIP_PX
+import com.sublunar.amp.ui.components.INNER_SLOT_PX
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import com.sublunar.amp.ui.components.LatestList
 import com.sublunar.amp.ui.components.ListScrollBar
@@ -349,7 +350,7 @@ private fun SearchHeader(
         // Both slots are AppHeader's: an 80px square hard against the 160px one.
         Box(
             modifier = Modifier
-                .width(px(SEARCH_SLOT_PX))
+                .width(px(INNER_SLOT_PX))
                 .fillMaxHeight()
                 .appClickable(onClick = onCancel),
             contentAlignment = Alignment.Center,
@@ -366,9 +367,6 @@ private fun SearchHeader(
         }
     }
 }
-
-/** AppHeader's inner slot, which the cross stands in. */
-private const val SEARCH_SLOT_PX = 80
 
 /** Where the search glyph sits: the list's edge plus a row's lead. */
 private const val SEARCH_AXIS_PX = LIST_EDGE_PX + ROW_LEAD_PX
@@ -390,10 +388,10 @@ private fun TabHeader(tab: LibraryTab, actions: ShellActions) {
         onBack = if (simplified) ({ LibraryNav.openLibraryIndex() }) else null,
         // Beside the page's menu, as a way of narrowing the list like the sort
         // and filters. Straight to the keyboard: a magnifier is a request to type.
-        searchAction = if (simplified) {
+        innerAction = if (simplified) {
             null
         } else {
-            ({ LibraryNav.openSearch(withKeyboard = true) })
+            HeaderAction(AppIcons.Search) { LibraryNav.openSearch(withKeyboard = true) }
         },
         fitTitle = true,
         rightAction = HeaderAction(AppIcons.Sort, onLongClick = actions.settings) { actions.more(tab.page) },
