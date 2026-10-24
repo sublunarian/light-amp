@@ -27,4 +27,7 @@ internal class MemoryDataStore(initial: Preferences = emptyPreferences()) : Data
 
     /** The stored string under [key], as the phone would hold it. */
     fun raw(key: String): String? = state.value[stringPreferencesKey(key)]
+
+    /** Everything stored, by key name, each value as the type it is stored as. */
+    fun all(): Map<String, Any> = state.value.asMap().mapKeys { it.key.name }
 }
