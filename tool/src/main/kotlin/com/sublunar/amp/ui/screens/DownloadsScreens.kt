@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.DataMode
+import com.sublunar.amp.data.Downloader
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.OfflineMode
 import com.sublunar.amp.data.Track
@@ -109,13 +110,12 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
         val severalServers = sources.count { it.supportsDownloads } > 1
         // Why nothing is arriving, read from the settings and the downloader: servers
         // that can't serve the chosen quality (their downloads wait rather than come
-        // down as something else), that refused the last download
-        // (Downloader.refusals), or that stopped answering (Downloader.parkings).
+        // down as something else), or that refused the last download or stopped
+        // answering (Downloader.Hold).
         val unmet = sources.filter { it.supportsDownloads && !it.downloadFormatAvailable }
-        val refusedStatus by App.downloader.refused.collectAsState()
-        val refused = sources.filter { it.id in refusedStatus && it !in unmet }
-        val parkedError by App.downloader.parked.collectAsState()
-        val parked = sources.filter { it.id in parkedError && it !in unmet && it !in refused }
+        val holds by App.downloader.holds.collectAsState()
+        val refused = sources.filter { holds[it.id] is Downloader.Hold.Refused && it !in unmet }
+        val parked = sources.filter { holds[it.id] is Downloader.Hold.Parked && it !in unmet }
 
         // No tab bar and no menu: a page about storage, reached from Settings.
         PlayerTheme {
@@ -136,7 +136,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                     anchor = "downloaded-songs",
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    downloadProblems(unmet, refused, refusedStatus, parked, parkedError)
+                    downloadProblems(unmet, refused, parked, holds)
                     if (progress.active || paused) {
                         item {
                             // Separate from pause: this throws away a queue that can
@@ -198,9 +198,8 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
     private fun LazyListScope.downloadProblems(
         unmet: List<MusicSource>,
         refused: List<MusicSource>,
-        refusedStatus: Map<String, Int>,
         parked: List<MusicSource>,
-        parkedError: Map<String, String?>,
+        holds: Map<String, Downloader.Hold>,
     ) {
         unmet.forEach { source ->
             item(key = "unmet/${source.id}") {
@@ -218,7 +217,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
         }
         refused.forEach { source ->
             item(key = "refused/${source.id}") {
-                if (refusedStatus[source.id] == 401) {
+                if ((holds[source.id] as? Downloader.Hold.Refused)?.status == 401) {
                     TextRow(
                         title = "${source.name} refused the login",
                         subtitle = "Sign in again in Sources",
@@ -235,7 +234,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
                 // A tap is someone saying the server is back: try now.
                 TextRow(
                     title = "${source.name} isn't answering",
-                    subtitle = listOfNotNull("Its downloads wait for it", parkedError[source.id]).joinToString(" · "),
+                    subtitle = listOfNotNull("Its downloads wait for it", (holds[source.id] as? Downloader.Hold.Parked)?.error).joinToString(" · "),
                     subtitleLines = 2,
                     onClick = { App.downloader.tryNow(source.id) },
                 )

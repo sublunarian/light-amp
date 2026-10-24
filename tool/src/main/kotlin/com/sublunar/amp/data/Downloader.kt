@@ -6,7 +6,7 @@ import com.sublunar.amp.data.db.DownloadEntity
 import com.sublunar.amp.data.db.LibraryDao
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.transfer.LightTransferService
-import java.util.concurrent.ConcurrentHashMap
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -15,6 +15,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.getAndUpdate
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -95,12 +97,12 @@ class Downloader(
     private var worker: Job? = null
 
     /**
-     * The entry being transferred right now, and one that a [cancelSource]
-     * has disowned mid-transfer. The transfer itself is blocking I/O and isn't
-     * interrupted; instead, whatever it produces is thrown away when it ends,
-     * and it is neither recorded nor requeued. Cheaper than cancelling the
-     * worker, which would also drop the foreground service out from under the
-     * other sources' downloads.
+     * The entry being worked on, from the moment it is picked, and one that a
+     * [cancelSource] has disowned meanwhile. A transfer is blocking I/O and
+     * isn't interrupted; instead, whatever it produces is thrown away when it
+     * ends, and it is neither recorded nor requeued — see [settle]. Cheaper
+     * than cancelling the worker, which would also drop the foreground service
+     * out from under the other sources' downloads.
      */
     @Volatile
     private var inFlight: DownloadQueue.Key? = null
@@ -128,90 +130,89 @@ class Downloader(
     private val backOffs = SourceBackOff()
 
     /**
-     * Sources whose server refused a download outright — 401, the login; 403,
-     * not for this account — with the record they were refused under.
-     *
-     * Not an outage, so not backed off: retrying only asks the same question
-     * again, for ever. The source's downloads wait instead, the Downloads page
-     * says why, and the refusal lapses when the record changes — signed in
-     * again, or a sync learning the account may download after all — or when a
-     * download is asked for by hand.
+     * Why a source's downloads wait until something about it changes, and the
+     * record they were held under: a different record lifts the hold — see
+     * [stillHeld].
      */
-    private val refusals = ConcurrentHashMap<String, Pair<Int, MusicSource>>()
-    private val _refused = MutableStateFlow<Map<String, Int>>(emptyMap())
+    sealed interface Hold {
+        val heldAs: MusicSource
 
-    /** Which sources' downloads wait on a refusal, by status — for the Downloads page. */
-    val refused: StateFlow<Map<String, Int>> = _refused
+        /**
+         * The server refused a download outright — 401, the login; 403, not
+         * for this account. Not an outage, so not backed off: retrying only
+         * asks the same question again, for ever. It lapses when the record
+         * changes — signed in again, or a sync learning the account may
+         * download after all — or when a download is asked for by hand.
+         */
+        data class Refused(val status: Int, override val heldAs: MusicSource) : Hold
+
+        /**
+         * The server stopped answering for long enough that the worker stopped
+         * asking — see [SourceBackOff.PARK_AFTER_FAILURES] — with the last error.
+         *
+         * The back-off alone retries for ever, keeping the transfer service up
+         * through a long outage and spending the six hours a day Android allows
+         * a `dataSync` service. Parked, the source's entries stay queued and the
+         * worker ends, as it does for a refusal.
+         *
+         * Never on one failure, and never for good: a download asked for by
+         * hand, a tap on that row, the browsed server answering or syncing, the
+         * record changing, or a ping answered on a change of link, a mode
+         * opening, the app coming back to the front or the half-hourly job —
+         * see [wakeParked] — each puts it back in line.
+         */
+        data class Parked(val error: String?, override val heldAs: MusicSource) : Hold
+    }
+
+    private val _holds = MutableStateFlow<Map<String, Hold>>(emptyMap())
+
+    /** Which sources' downloads wait on a [Hold], and why — for the Downloads page. */
+    val holds: StateFlow<Map<String, Hold>> = _holds
 
     private fun refuse(source: MusicSource, status: Int) {
-        refusals[source.id] = status to source
-        _refused.value = refusals.mapValues { it.value.first }
+        _holds.update { it + (source.id to Hold.Refused(status, source)) }
     }
-
-    private fun forgive(sourceId: String) {
-        if (refusals.remove(sourceId) != null) _refused.value = refusals.mapValues { it.value.first }
-    }
-
-    /** With the queue gone there is nothing left to refuse, and a row saying so would be about nothing. */
-    private fun forgiveAll() = refusals.keys.toList().forEach { forgive(it) }
-
-    /** Whether [source]'s downloads still wait on a refusal made under the record it has now. */
-    private fun stillRefused(source: MusicSource): Boolean {
-        val (_, refusedAs) = refusals[source.id] ?: return false
-        if (refusedAs == source) return true
-        forgive(source.id)
-        return false
-    }
-
-    /**
-     * Sources whose server has stopped answering for long enough that the
-     * worker stopped asking — see [SourceBackOff.PARK_AFTER_FAILURES] — with
-     * the last error and the record they were parked under.
-     *
-     * The back-off alone retries for ever, keeping the transfer service up
-     * through a long outage and spending the six hours a day Android allows a
-     * `dataSync` service. Parked, the source's entries stay queued, the worker
-     * ends like it does for a refusal, and the Downloads page says why.
-     *
-     * Never on one failure, and never for good: a download asked for by
-     * hand, a tap on that row, the browsed server answering or syncing, the
-     * record changing, or a ping answered on a change of link, a mode
-     * opening, the app coming back to the front or the half-hourly job —
-     * see [wakeParked] — each puts it back in line.
-     */
-    private val parkings = ConcurrentHashMap<String, Pair<String?, MusicSource>>()
-    private val _parked = MutableStateFlow<Map<String, String?>>(emptyMap())
-
-    /** Sources whose downloads wait because their server stopped answering, with the last error — for the Downloads page. */
-    val parked: StateFlow<Map<String, String?>> = _parked
 
     private fun park(source: MusicSource, error: String?) {
-        parkings[source.id] = error to source
-        _parked.value = parkings.mapValues { it.value.first }
+        _holds.update { it + (source.id to Hold.Parked(error, source)) }
         Log.i("AmpDl", "parked ${source.name} after ${SourceBackOff.PARK_AFTER_FAILURES} failures (${error ?: "no reason"})")
     }
 
     /** Clears the back-off either way; true when the source was parked. */
     private fun unpark(sourceId: String): Boolean {
         clearBackOff(sourceId)
-        if (parkings.remove(sourceId) == null) return false
-        _parked.value = parkings.mapValues { it.value.first }
-        return true
+        var wasParked = false
+        _holds.update { holds ->
+            wasParked = holds[sourceId] is Hold.Parked
+            if (wasParked) holds - sourceId else holds
+        }
+        return wasParked
     }
 
-    private fun unparkAll() = parkings.keys.toList().forEach { unpark(it) }
+    /** Whatever holds [sourceId]'s downloads goes, and its back-off with it. */
+    private fun lift(sourceId: String) {
+        clearBackOff(sourceId)
+        _holds.update { it - sourceId }
+    }
 
-    /** Whether [source]'s downloads are still parked under the record it has now. */
-    private fun stillParked(source: MusicSource): Boolean {
-        val (_, parkedAs) = parkings[source.id] ?: return false
-        if (parkedAs == source) return true
-        unpark(source.id)
+    /** With the queue gone there is nothing left to hold, and a row saying so would be about nothing. */
+    private fun liftAll() {
+        _holds.getAndUpdate { emptyMap() }.forEach { (id, hold) -> if (hold is Hold.Parked) clearBackOff(id) }
+    }
+
+    private fun parkedIds(): List<String> = _holds.value.filterValues { it is Hold.Parked }.keys.toList()
+
+    /** Whether [source]'s downloads are still held under the record it has now. */
+    private fun stillHeld(source: MusicSource): Boolean {
+        val hold = _holds.value[source.id] ?: return false
+        if (hold.heldAs == source) return true
+        if (hold is Hold.Parked) unpark(source.id) else _holds.update { it - source.id }
         return false
     }
 
     /** Sources nothing in the queue can be fetched from until something about them changes. */
     private fun heldUntilChanged(sources: List<MusicSource>): Set<String> =
-        sources.filter { !it.downloadFormatAvailable || stillRefused(it) || stillParked(it) }.map { it.id }.toSet()
+        sources.filter { !it.downloadFormatAvailable || stillHeld(it) }.map { it.id }.toSet()
 
     private fun waiting(sourceId: String): Boolean = backOffs.waiting(sourceId, System.currentTimeMillis())
 
@@ -266,10 +267,7 @@ class Downloader(
         // Asking for something by hand is also asking to try now: whatever the
         // last failure decided about waiting, the person tapping Download has
         // better information about whether the server is up than we do.
-        if (manual) {
-            unpark(source.id)
-            forgive(source.id)
-        }
+        if (manual) lift(source.id)
         scope.launch {
             // One query for the whole set, outside the lock: an automatic mode
             // over a large library would otherwise be a point select per track.
@@ -347,17 +345,21 @@ class Downloader(
         scope.launch { lock.withLock { if (!queue.isEmpty()) startWorkerLocked() } }
     }
 
+    /**
+     * Drop the whole queue and stop the worker, in one hold of [lock]: an
+     * enqueue landing in between would find the worker about to be cancelled,
+     * ask it to look again, and be left with nobody to fetch it.
+     */
     fun cancelAll() {
         scope.launch {
             lock.withLock {
                 queue.clear()
                 abandoned = null
+                liftAll()
+                worker?.cancel()
+                worker = null
+                _progress.value = DownloadProgress()
             }
-            unparkAll()
-            forgiveAll()
-            worker?.cancel()
-            worker = null
-            _progress.value = DownloadProgress()
         }
     }
 
@@ -371,8 +373,7 @@ class Downloader(
         lock.withLock {
             queue.removeSource(sourceId)
             // Nothing of its source's is left to refuse or to wait for.
-            unpark(sourceId)
-            forgive(sourceId)
+            lift(sourceId)
             val current = inFlight
             if (current?.sourceId == sourceId) abandoned = current
             _progress.value = if (queue.isEmpty() && current == null) {
@@ -543,7 +544,7 @@ class Downloader(
 
     /**
      * Ask each parked server once whether it is back, and put the ones that
-     * answer back in line — see [parkings]. No worker and no transfer
+     * answer back in line — see [Hold.Parked]. No worker and no transfer
      * service unless one does.
      *
      * Asked the way the browsed server is asked, by [Reachability]: a 5xx is
@@ -552,12 +553,12 @@ class Downloader(
      * refusal and says so.
      */
     suspend fun wakeParked() {
-        if (parkings.isEmpty() || !heavyDataAllowed()) return
+        if (parkedIds().isEmpty() || !heavyDataAllowed()) return
         if (!probing.tryLock()) return
         try {
             val sources = settings.sources.first()
             var woke = false
-            for (id in parkings.keys.toList()) {
+            for (id in parkedIds()) {
                 val source = sources.firstOrNull { it.id == id }
                 if (source == null) {
                     // Removed since it was parked; nothing is left to wake.
@@ -644,20 +645,9 @@ class Downloader(
         }
 
     private suspend fun drain() {
-        // Held around actual transfers rather than around the worker: starting the
-        // service for a queue that turns out to be empty means starting and
-        // stopping it within milliseconds, and Android kills the process when a
-        // foreground service is torn down before it ever reached the foreground.
-        var serviceSinceMs: Long? = null
-        // For the same reason, a worker that ends a moment after its first
-        // transfer began — refused at once, or cut off by the rule it is about
-        // to end on — keeps the service until it has had those seconds.
-        suspend fun letServiceSettle() {
-            serviceSinceMs?.let { delay(SERVICE_SETTLE_MS - (System.currentTimeMillis() - it)) }
-        }
+        val service = ServiceHold()
         val wantKaraoke = settings.karaokeLyrics.first()
-        // One budget for the tool, not one per source — see AppSettings.downloadLimit.
-        val limit = settings.downloadLimit.first()
+        val used = UsedBytes()
         var completed = 0
 
         while (true) {
@@ -679,33 +669,26 @@ class Downloader(
                 // first one after it.
                 backOffs.clearAll()
                 showHeld(waiting)
-                letServiceSettle()
+                service.settle()
                 return
             }
             // A transfer is the greediest thing on the link; a stream being
             // started waits for nobody else — see App.yieldToPlayback.
             yieldToPlayback()
 
-            // Manual lane first, always, of whichever source can be asked right
-            // now — see [DownloadQueue.next]. Which lane it came from travels
-            // with it, so a re-queue goes back where it belongs. Never picked:
-            // a source whose download quality its server can't meet (its
-            // entries wait rather than being fetched as something else), one
-            // whose server refused the last download ([refusals]), and one
-            // parked ([parkings]). Read every pass, so a change frees them.
-            val blocked = heldUntilChanged(settings.sources.first())
-            val (picked, held) = lock.withLock {
-                val next = queue.next { eligible(it) && it !in blocked }
-                next to (if (next == null) queue.sourceIds() else emptySet())
-            }
+            // Read once a pass: the records as they stand now, not as they were
+            // when queued, so a token renewed or an address changed since is the
+            // one used, and a change frees what [heldUntilChanged] held.
+            val sources = settings.sources.first()
+            val blocked = heldUntilChanged(sources)
+            val (picked, held) = pick(blocked)
             if (picked == null) {
-                if (held.isEmpty()) break
                 // Only sources waiting on a quality change, a refusal, or a
                 // parked server are left. Nothing here can end that wait, so the
                 // worker ends instead — which lets the foreground service go —
                 // and the entries stay queued. Whatever ends the wait starts it
                 // again; see [retry]. The Downloads page says why.
-                if (held.all { it in blocked }) break
+                if (held.isEmpty() || held.all { it in blocked }) break
                 // Something is queued, and every source it belongs to is held:
                 // on its server to answer again, or for its sync to finish.
                 _progress.value = _progress.value.copy(
@@ -715,161 +698,276 @@ class Downloader(
                 delay(PAUSE_POLL_MS)
                 continue
             }
-            val entry = picked.entry
 
-            // The record as it stands now, not as it was when queued: a token
-            // renewed or an address changed since then is the one to use.
-            val source = settings.sources.first().firstOrNull { it.id == entry.sourceId }
-            if (source == null) {
-                // Removed since it was queued; the entry goes with it.
-                continue
-            }
-            val dao = daoFor(source)
-            // Fetched while it waited: a top-up that ran while this same song was
-            // transferring found it in no lane and no table, and queued it again.
-            if (dao.download(entry.trackId) != null) {
-                lock.withLock { queue.complete(entry) }
-                continue
-            }
-            // An offline mode's entry is an id — see QueuedDownload — read from
-            // its source's tables now, so it is also the row as it stands now.
-            // One no longer there left the library since it was queued, and
-            // there is nothing to fetch.
-            val next = entry.track ?: dao.tracksByIds(listOf(entry.trackId)).firstOrNull()
-            if (next == null) {
-                lock.withLock { queue.complete(entry) }
-                continue
-            }
-
-            // Re-checked every track, because the budget moves as files land.
-            // Measured off the disk across every source, because the budget
-            // covers all of them and a table only answers for its own source.
-            if (store.usedBytesEverywhere() >= limit) {
-                lock.withLock { queue.clear() }
-                // A row saying a server isn't answering, or refused, would be
-                // about entries that are no longer there.
-                unparkAll()
-                forgiveAll()
-                _progress.value = _progress.value.copy(
-                    pending = 0,
-                    currentTitle = null,
-                    currentSource = null,
-                )
-                letServiceSettle()
-                return
-            }
-
-            _progress.value = _progress.value.copy(
-                pending = lock.withLock { queue.size } + 1,
-                completed = completed,
-                currentTitle = next.title,
-                currentSource = source.name,
-            )
-
-            val client = clientFor(source)
-            if (client == null) {
-                // Nothing to ask — a record with no server behind it. Back to
-                // the front of its own lane, and its source waits its turn like
-                // one that isn't answering, so the others aren't held up by it.
-                _progress.value = _progress.value.copy(error = "Not connected")
-                lock.withLock { queue.requeueFront(picked) }
-                if (backOff(source.id)) park(source, "Not connected")
-                continue
-            }
-
-            // This source's own choice, not the browsed one's: the downloads
-            // belong to that library, and a server that can only serve one
-            // format shouldn't dictate what the others are fetched as.
-            val format = source.downloadFormat
-            // Changed to a quality the server can't meet since this pass began:
-            // back in the queue untouched, and the next pass leaves it there.
-            if (!source.downloadFormatAvailable) {
-                lock.withLock { queue.requeueFront(picked) }
-                continue
-            }
-
-            if (serviceSinceMs == null) {
-                // Without this the process drops to the cached bucket the moment the
-                // user leaves the app and transfers are throttled — see
-                // LightTransferService.
-                LightTransferService.start(lightContext, "Syncing your library for offline")
-                serviceSinceMs = System.currentTimeMillis()
-            }
-            inFlight = entry.key
-            val file = try {
-                store.download(source.id, client.downloadUrl(next, format), next.id, format)
-            } finally {
-                inFlight = null
-            }
-
-            // Disowned while it was transferring — its source's downloads were
-            // deleted, or the source itself was. Whatever landed goes; nothing
-            // is recorded, nothing requeued, no strike, no back-off.
-            val disowned = lock.withLock {
-                (abandoned == entry.key).also { if (it) abandoned = null }
-            }
-            if (disowned) {
-                file?.delete()
-                continue
-            }
-
-            if (file != null) {
-                // An mp3 that came down as a stream has no index, and every
-                // player that opens it has to guess its length — see
-                // Mp3VbrIndex. Written now, before anything records the size.
-                if (format == StreamFormat.MP3) {
-                    runCatching { Mp3VbrIndex.index(file) }
-                        .onSuccess { if (it is Mp3VbrIndex.Outcome.Written) Log.i("AmpMp3", "indexed ${file.name}: ${it.frames} frames") }
-                        .onFailure { Log.w("AmpMp3", "couldn't index ${file.name}", it) }
+            when (fetch(picked, sources, used, completed, service, wantKaraoke)) {
+                Fetch.SAVED -> completed++
+                Fetch.NEXT -> Unit
+                Fetch.OVER_BUDGET -> {
+                    lock.withLock { queue.clear() }
+                    // A row saying a server isn't answering, or refused, would be
+                    // about entries that are no longer there.
+                    liftAll()
+                    _progress.value = _progress.value.copy(
+                        pending = 0,
+                        currentTitle = null,
+                        currentSource = null,
+                    )
+                    service.settle()
+                    return
                 }
-                // The sleeve is part of having the record offline — this
-                // source's sleeve, from this source's server.
-                runCatching { App.artwork.prefetch(source.id, client, next.coverArtId) }
-                // Always: the words are a few kilobytes beside a song, and an
-                // offline track without them is the one place they cannot be
-                // fetched on demand.
-                val lyrics = fetchLyrics(client, next, wantKaraoke)
-                dao.upsertDownload(
-                    DownloadEntity(
-                        trackId = next.id,
-                        albumId = next.albumId,
-                        fileName = file.name,
-                        format = format.id,
-                        bytes = file.length(),
-                        lyrics = lyrics,
-                        downloadedAtMs = System.currentTimeMillis(),
-                    ),
-                )
-                completed++
-                clearBackOff(source.id)
-                if (_progress.value.error != null) _progress.value = _progress.value.copy(error = null)
-                lock.withLock { queue.complete(entry) }
-            } else {
-                // A cancelled worker must not put the track back: cancelAll has
-                // just emptied the queue it would go into.
-                coroutineContext.ensureActive()
-                val status = store.lastStatus
-                if (status == 401 || status == 403) {
-                    lock.withLock { queue.requeueFront(picked) }
-                    refuse(source, status)
-                    continue
-                }
-                // A failed transfer is the server's problem more often than the
-                // track's: back off *this source's* queue rather than failing
-                // every entry in a row. Where the track goes back to — front, or
-                // back after enough strikes — is the queue's rule; see
-                // [DownloadQueue.fail]. Failing for long enough parks the
-                // source instead: see [parkings].
-                lock.withLock { queue.fail(picked) }
-                val error = store.lastError
-                _progress.value = _progress.value.copy(error = error)
-                if (backOff(source.id)) park(source, error)
-                continue
             }
         }
 
         _progress.value = DownloadProgress(completed = completed)
-        letServiceSettle()
+        service.settle()
+    }
+
+    /**
+     * Take the next entry, manual lane first, of whichever source can be asked
+     * right now — see [DownloadQueue.next] — and mark it in flight in the same
+     * hold of [lock], so a [cancelSource] from here on disowns it. Which lane it
+     * came from travels with it, so a re-queue goes back where it belongs.
+     *
+     * Never picked: a source in [blocked] — see [heldUntilChanged]. With
+     * nothing picked, the sources that still have entries waiting.
+     */
+    private suspend fun pick(blocked: Set<String>): Pair<DownloadQueue.Picked?, Set<String>> = lock.withLock {
+        val next = queue.next { eligible(it) && it !in blocked }
+        if (next == null) return@withLock null to queue.sourceIds()
+        inFlight = next.entry.key
+        // Only one entry is ever in flight: anything disowned before is over.
+        abandoned = null
+        next to emptySet()
+    }
+
+    /**
+     * End [picked]'s time in flight and hand it back to the queue through
+     * [then] — unless a [cancelSource] disowned it meanwhile: then it simply
+     * goes, and the answer is false. Nothing of a disowned entry is recorded or
+     * requeued, and it earns its source no strike and no back-off.
+     */
+    private suspend fun settle(
+        picked: DownloadQueue.Picked,
+        then: DownloadQueue.(DownloadQueue.Picked) -> Unit = {},
+    ): Boolean = lock.withLock {
+        inFlight = null
+        if (abandoned == picked.entry.key) {
+            abandoned = null
+            false
+        } else {
+            queue.then(picked)
+            true
+        }
+    }
+
+    private enum class Fetch { SAVED, NEXT, OVER_BUDGET }
+
+    /** Work [picked] off: fetch it, or say why not and put it where it belongs. */
+    private suspend fun fetch(
+        picked: DownloadQueue.Picked,
+        sources: List<MusicSource>,
+        used: UsedBytes,
+        completed: Int,
+        service: ServiceHold,
+        wantKaraoke: Boolean,
+    ): Fetch {
+        val entry = picked.entry
+        val source = sources.firstOrNull { it.id == entry.sourceId }
+        if (source == null) {
+            // Removed since it was queued; the entry goes with it.
+            settle(picked)
+            return Fetch.NEXT
+        }
+        val dao = daoFor(source)
+        val track = trackToFetch(entry, dao)
+        if (track == null) {
+            settle(picked) { complete(it.entry) }
+            return Fetch.NEXT
+        }
+
+        // Re-checked every track, because the budget moves as files land, and
+        // read again, so a limit lowered mid-queue holds from the next track.
+        if (used.now() >= settings.downloadLimit.first()) {
+            settle(picked)
+            return Fetch.OVER_BUDGET
+        }
+
+        _progress.value = _progress.value.copy(
+            pending = lock.withLock { queue.size } + 1,
+            completed = completed,
+            currentTitle = track.title,
+            currentSource = source.name,
+        )
+
+        val client = clientFor(source)
+        if (client == null) {
+            // Nothing to ask — a record with no server behind it. Back to
+            // the front of its own lane, and its source waits its turn like
+            // one that isn't answering, so the others aren't held up by it.
+            _progress.value = _progress.value.copy(error = "Not connected")
+            if (settle(picked) { requeueFront(it) } && backOff(source.id)) park(source, "Not connected")
+            return Fetch.NEXT
+        }
+
+        // This source's own choice, not the browsed one's: the downloads
+        // belong to that library, and a server that can only serve one
+        // format shouldn't dictate what the others are fetched as.
+        val format = source.downloadFormat
+        // Changed to a quality the server can't meet since this pass began:
+        // back in the queue untouched, and the next pass leaves it there.
+        if (!source.downloadFormatAvailable) {
+            settle(picked) { requeueFront(it) }
+            return Fetch.NEXT
+        }
+
+        service.start()
+        return when (val fetched = store.download(source.id, client.downloadUrl(track, format), track.id, format)) {
+            is DownloadStore.Fetched.Saved -> {
+                // Disowned while it was transferring — its source's downloads
+                // were deleted, or the source itself was. Whatever landed goes.
+                if (!settle(picked) { complete(it.entry) }) {
+                    fetched.file.delete()
+                    return Fetch.NEXT
+                }
+                keep(fetched.file, track, format, source, client, dao, wantKaraoke)
+                used.add(fetched.file.length())
+                clearBackOff(source.id)
+                if (_progress.value.error != null) _progress.value = _progress.value.copy(error = null)
+                Fetch.SAVED
+            }
+            is DownloadStore.Fetched.Refused -> {
+                failed(picked, source, fetched.status, fetched.why)
+                Fetch.NEXT
+            }
+            is DownloadStore.Fetched.Failed -> {
+                failed(picked, source, status = null, fetched.why)
+                Fetch.NEXT
+            }
+        }
+    }
+
+    /**
+     * The row to fetch for [entry], or null when there is nothing to: fetched
+     * while it waited (a top-up that ran while this same song was transferring
+     * found it in no lane and no table, and queued it again), or an offline
+     * mode's id — see QueuedDownload — that has left the library since. Read
+     * from its source's tables now, so it is the row as it stands now.
+     */
+    private suspend fun trackToFetch(entry: QueuedDownload, dao: LibraryDao): Track? {
+        if (dao.download(entry.trackId) != null) return null
+        return entry.track ?: dao.tracksByIds(listOf(entry.trackId)).firstOrNull()
+    }
+
+    /** Make [file] the download of [track]: its index, its sleeve, its words, and its row. */
+    private suspend fun keep(
+        file: File,
+        track: Track,
+        format: StreamFormat,
+        source: MusicSource,
+        client: MusicServer,
+        dao: LibraryDao,
+        wantKaraoke: Boolean,
+    ) {
+        // An mp3 that came down as a stream has no index, and every
+        // player that opens it has to guess its length — see
+        // Mp3VbrIndex. Written now, before anything records the size.
+        if (format == StreamFormat.MP3) {
+            runCatching { Mp3VbrIndex.index(file) }
+                .onSuccess { if (it is Mp3VbrIndex.Outcome.Written) Log.i("AmpMp3", "indexed ${file.name}: ${it.frames} frames") }
+                .onFailure { Log.w("AmpMp3", "couldn't index ${file.name}", it) }
+        }
+        // The sleeve is part of having the record offline — this
+        // source's sleeve, from this source's server.
+        runCatching { App.artwork.prefetch(source.id, client, track.coverArtId) }
+        // Always: the words are a few kilobytes beside a song, and an
+        // offline track without them is the one place they cannot be
+        // fetched on demand.
+        val lyrics = fetchLyrics(client, track, wantKaraoke)
+        dao.upsertDownload(
+            DownloadEntity(
+                trackId = track.id,
+                albumId = track.albumId,
+                fileName = file.name,
+                format = format.id,
+                bytes = file.length(),
+                lyrics = lyrics,
+                downloadedAtMs = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    /** A transfer that brought nothing back: the server refused it, or [why]. */
+    private suspend fun failed(picked: DownloadQueue.Picked, source: MusicSource, status: Int?, why: String) {
+        // A cancelled worker must not put the track back: cancelAll has
+        // just emptied the queue it would go into.
+        coroutineContext.ensureActive()
+        if (status == 401 || status == 403) {
+            if (settle(picked) { requeueFront(it) }) refuse(source, status)
+            return
+        }
+        // A failed transfer is the server's problem more often than the
+        // track's: back off *this source's* queue rather than failing
+        // every entry in a row. Where the track goes back to — front, or
+        // back after enough strikes — is the queue's rule; see
+        // [DownloadQueue.fail]. Failing for long enough parks the
+        // source instead: see [Hold.Parked].
+        if (!settle(picked) { fail(it) }) return
+        _progress.value = _progress.value.copy(error = why)
+        if (backOff(source.id)) park(source, why)
+    }
+
+    /**
+     * The transfer service, held around actual transfers rather than around
+     * the worker: starting it for a queue that turns out to be empty means
+     * starting and stopping it within milliseconds, and Android kills the
+     * process when a foreground service is torn down before it ever reached
+     * the foreground.
+     */
+    private inner class ServiceHold {
+        private var sinceMs: Long? = null
+
+        fun start() {
+            if (sinceMs != null) return
+            // Without this the process drops to the cached bucket the moment the
+            // user leaves the app and transfers are throttled — see
+            // LightTransferService.
+            LightTransferService.start(lightContext, "Syncing your library for offline")
+            sinceMs = System.currentTimeMillis()
+        }
+
+        /**
+         * For the same reason, a worker that ends a moment after its first
+         * transfer began — refused at once, or cut off by the rule it is about
+         * to end on — keeps the service until it has had those seconds.
+         */
+        suspend fun settle() {
+            sinceMs?.let { delay(SERVICE_SETTLE_MS - (System.currentTimeMillis() - it)) }
+        }
+    }
+
+    /**
+     * What every source's downloads take on disk, for the budget: one budget
+     * for the tool, not one per source — see AppSettings.downloadLimit — so it
+     * is measured off the disk, where a table only answers for its own source.
+     * Measured once a worker and then added to as files land, rather than a
+     * walk of every folder per track; measured again after any deletion.
+     */
+    private inner class UsedBytes {
+        private var deletionsSeen = -1
+        private var bytes = 0L
+
+        fun now(): Long {
+            val deletions = store.deletions
+            if (deletions != deletionsSeen) {
+                deletionsSeen = deletions
+                bytes = store.usedBytesEverywhere()
+            }
+            return bytes
+        }
+
+        fun add(landed: Long) {
+            bytes += landed
+        }
     }
 
     private companion object {

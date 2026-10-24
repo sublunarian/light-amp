@@ -4,6 +4,7 @@ import android.os.StatFs
 import android.util.Log
 import java.io.BufferedOutputStream
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ensureActive
@@ -33,8 +34,7 @@ class DownloadStore(private val filesDir: File) {
 
     private val downloadsDir: File get() = File(filesDir, "downloads")
 
-    private fun rootFor(sourceId: String): File =
-        File(downloadsDir, sourceId).apply { mkdirs() }
+    private fun rootFor(sourceId: String): File = File(downloadsDir, sourceId)
 
     /** Every source's folder — used by the sweep and by "delete everything". */
     private fun allRoots(): List<File> =
@@ -74,15 +74,28 @@ class DownloadStore(private val filesDir: File) {
     fun existing(sourceId: String, fileName: String): File? =
         File(rootFor(sourceId), fileName).takeIf { it.isFile }
 
+    /** What one [download] came to. */
+    sealed interface Fetched {
+        data class Saved(val file: File) : Fetched
+
+        /** The server answered [status] instead of the song. */
+        data class Refused(val status: Int) : Fetched {
+            val why: String get() = "Server said $status"
+        }
+
+        /** Nothing usable came back, for the reason given, in the words the Downloads page shows. */
+        data class Failed(val why: String) : Fetched
+    }
+
     /**
      * Download [url] to the file for this track of [sourceId]. Writes to a
      * temporary file first so an interrupted download can never be mistaken for
      * a complete one.
      */
-    suspend fun download(sourceId: String, url: String, trackId: String, format: StreamFormat): File? =
+    suspend fun download(sourceId: String, url: String, trackId: String, format: StreamFormat): Fetched =
         withContext(Dispatchers.IO) {
-            lastStatus = null
             val target = fileFor(sourceId, trackId, format)
+            target.parentFile?.mkdirs()
             val partial = File(target.parentFile, "${target.name}$PART_SUFFIX")
             try {
                 val startedMs = System.currentTimeMillis()
@@ -101,9 +114,7 @@ class DownloadStore(private val filesDir: File) {
                         if (!response.isSuccessful) {
                             // The path only: the query can carry the token.
                             Log.w(TAG, "download $trackId: HTTP ${response.code} for ${response.request.url.encodedPath}")
-                            lastStatus = response.code
-                            lastError = "Server said ${response.code}"
-                            return@withContext null
+                            return@withContext Fetched.Refused(response.code)
                         }
                         // A server can answer 200 with an error *document* — Subsonic
                         // does — and saved under the track's name that would be "the
@@ -112,8 +123,7 @@ class DownloadStore(private val filesDir: File) {
                         val type = response.body.contentType()
                         if (type != null && (type.type == "text" || isDocumentSubtype(type.subtype))) {
                             Log.w(TAG, "download $trackId: $type, not audio, from ${response.request.url.encodedPath}")
-                            lastError = "Server sent $type instead of audio"
-                            return@withContext null
+                            return@withContext Fetched.Failed("Server sent $type instead of audio")
                         }
                         response.body.byteStream().use { input ->
                             // 8 KiB (copyTo's default) into an unbuffered FileOutputStream
@@ -135,43 +145,37 @@ class DownloadStore(private val filesDir: File) {
                     val kbPerSec = bytes * 1000 / elapsedMs / 1024
                     Log.i(TAG, "downloaded $bytes bytes in ${elapsedMs}ms (${kbPerSec} KB/s) $trackId")
                 }
-                if (partial.length() == 0L) {
+                if (bytes == 0L) {
                     partial.delete()
-                    return@withContext null
+                    return@withContext Fetched.Failed("Server sent an empty file")
                 }
                 if (!partial.renameTo(target)) {
                     partial.delete()
-                    lastError = "Couldn't save ${target.name}"
-                    return@withContext null
+                    return@withContext Fetched.Failed("Couldn't save ${target.name}")
                 }
-                target
+                Fetched.Saved(target)
             } catch (e: Exception) {
                 Log.w(TAG, "download failed after ${partial.length()} bytes for $trackId", e)
                 partial.delete()
                 // No `javaClass` here — the plugin sandbox forbids reflection.
-                lastError = e.message ?: "Download failed"
-                null
+                Fetched.Failed(e.message ?: "Download failed")
             }
         }
 
-    /** Reason the most recent download failed, for surfacing in the UI. */
-    @Volatile
-    var lastError: String? = null
-        private set
-
-    /** The HTTP status the last download was refused with; null when it wasn't one. */
-    @Volatile
-    var lastStatus: Int? = null
-        private set
-
     suspend fun delete(sourceId: String, fileName: String) = withContext(Dispatchers.IO) {
+        deletionCount.incrementAndGet()
         File(rootFor(sourceId), fileName).delete()
     }
 
     /** Throw away one source's audio entirely — see App.forgetSource. */
     fun deleteSource(id: String) {
+        deletionCount.incrementAndGet()
         File(downloadsDir, id).deleteRecursively()
     }
+
+    /** Bumped by every deletion, so a running total of [usedBytesEverywhere] knows to measure again. */
+    val deletions: Int get() = deletionCount.get()
+    private val deletionCount = AtomicInteger()
 
     /** Free space on the volume holding the downloads. */
     fun freeBytes(): Long =

@@ -589,7 +589,7 @@ object App {
                 reportServerReachable(true)
                 // Its downloads too, if they were parked — the reachability
                 // flow only speaks on a change, and a download failing never
-                // tells it anything. See Downloader.parkings.
+                // tells it anything. See Downloader.Hold.Parked.
                 downloader.tryNow(source.value.id)
                 scope.launch {
                     // Fresh library rows are also the first chance to work out
@@ -659,13 +659,13 @@ object App {
                     .collect { downloader.retry() }
             }
             // And those a server refused, once their record changes — signed
-            // in again, say. See Downloader.refusals. Or parked, when an address
-            // changed is the reason it stopped answering: Downloader.parkings.
+            // in again, say. Or parked, when an address changed is the reason it
+            // stopped answering. See Downloader.Hold.
             scope.launch {
                 settings.sources
                     .drop(1)
                     .collect {
-                        if (downloader.refused.value.isNotEmpty() || downloader.parked.value.isNotEmpty()) downloader.retry()
+                        if (downloader.holds.value.isNotEmpty()) downloader.retry()
                     }
             }
             // Bulk work put off on a metered link is picked up the moment bytes
