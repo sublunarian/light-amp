@@ -37,7 +37,6 @@ import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.SyncState
 import com.sublunar.amp.data.TagFilter
-import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.PhoneLibrary
@@ -68,7 +67,6 @@ import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.SelectionHeader
-import com.sublunar.amp.ui.components.SelectionState
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.appClickable
@@ -80,6 +78,7 @@ import com.sublunar.amp.ui.components.rememberScrollTarget
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
+import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.rememberPermissionRequestLauncher
 import com.thelightphone.sdk.ui.LightThemeTokens
 import kotlinx.coroutines.Dispatchers
@@ -100,57 +99,24 @@ internal fun iconFor(tab: LibraryTab): ImageVector = when (tab) {
     LibraryTab.ALBUMS -> AppIcons.AlbumStack
 }
 
-class ShellActions(
-    val nowPlaying: () -> Unit,
-    val settings: () -> Unit,
-    val search: () -> Unit,
-    /** The SDK's full-screen editor — Simplified's way of typing a query. */
-    val editSearch: (String) -> Unit,
-    /** More carries the showing page's modifiers up with it — see [LibraryPage]. */
-    val more: (LibraryPage) -> Unit,
-    /** Simplified's library button — see [LibraryNav.pressLibrary]. */
-    val browse: () -> Unit,
-    /** Each takes where back should land — see [Parent]. */
-    val openAlbum: (String, Parent) -> Unit,
-    val openArtist: (String, Parent) -> Unit,
-    val openPlaylist: (String, String) -> Unit,
-    val trackOptions: (String, SelectionState?) -> Unit,
-    /** Opens the bulk-action sheet for a multi-selection. */
-    val selectionActions: (List<Track>, SelectionState) -> Unit,
-    val albumOptions: (String) -> Unit,
-    /** Long-press on an artist: the only way to like one. */
-    val artistOptions: (String) -> Unit,
-    val playlistOptions: (String, String) -> Unit,
-    val newPlaylist: () -> Unit,
-)
-
+/**
+ * The library: a tab list, search or Simplified's index, over the bottom bar.
+ * Drawn by the root screen, so everything it opens is pushed from there.
+ */
 @Composable
-fun LibraryShell(
-    currentTab: LibraryTab,
-    onSelectTab: (LibraryTab) -> Unit,
-    /** Simplified's library index — see [LibraryNav.libraryIndex]. */
-    libraryIndex: Boolean,
-    searchActive: Boolean,
-    searchQuery: String,
-    onSearchQueryChange: (String) -> Unit,
-    onSearchClose: () -> Unit,
-    actions: ShellActions,
-) {
+fun SimpleLightScreen<*>.LibraryShell() {
+    val currentTab by LibraryNav.currentTab.collectAsState()
+    val libraryIndex by LibraryNav.libraryIndex.collectAsState()
+    val searchActive by LibraryNav.searchActive.collectAsState()
     PlayerTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
                 if (searchActive) {
-                    SearchView(
-                        searchQuery,
-                        onSearchQueryChange,
-                        onSearchClose,
-                        currentTab,
-                        actions,
-                    )
+                    SearchView(currentTab)
                 } else if (libraryIndex) {
-                    LibraryIndex(actions)
+                    LibraryIndex()
                 } else {
-                    TabContent(currentTab, actions)
+                    TabContent(currentTab)
                 }
             }
             // The keyboard takes the bottom of the screen while typing, and the bar
@@ -160,14 +126,28 @@ fun LibraryShell(
                     // Search keeps the tab it was started from lit: it borrows the
                     // list in front of you and hands it back on the way out.
                     current = if (libraryIndex) null else currentTab,
-                    onSelect = onSelectTab,
-                    onSearch = actions.search,
+                    onSelect = { LibraryNav.tapTab(it) },
+                    onSearch = { startSearch() },
                     searchActive = searchActive,
-                    onNowPlaying = actions.nowPlaying,
-                    onBrowse = actions.browse,
+                    onNowPlaying = { go { NowPlayingScreen(it) } },
+                    onBrowse = { LibraryNav.pressLibrary() },
                 )
             }
         }
+    }
+}
+
+/**
+ * The bar's search button. Simplified gets the full-screen editor: its bar is the
+ * phone's own three buttons, and the inline keyboard belongs to the layout with a
+ * magnifier in the header. Standard goes straight to typing on the page itself.
+ */
+private fun SimpleLightScreen<*>.startSearch() {
+    if (App.settings.layoutMode.value == LayoutMode.SIMPLIFIED) {
+        LibraryNav.openSearch()
+        editSearch("")
+    } else {
+        LibraryNav.openSearch(withKeyboard = true)
     }
 }
 
@@ -177,30 +157,27 @@ fun LibraryShell(
  * Search borrows the body without the header — see [SearchView].
  */
 @Composable
-private fun TabContent(tab: LibraryTab, actions: ShellActions, header: Boolean = true) {
+private fun SimpleLightScreen<*>.TabContent(tab: LibraryTab, header: Boolean = true) {
     when (tab) {
-        LibraryTab.ALBUMS -> AlbumsTab(actions, header)
-        LibraryTab.SONGS -> SongsTab(actions, header)
-        LibraryTab.ARTISTS -> ArtistsTab(actions, header)
-        LibraryTab.PLAYLISTS -> PlaylistsTab(actions, header)
+        LibraryTab.ALBUMS -> AlbumsTab(header)
+        LibraryTab.SONGS -> SongsTab(header)
+        LibraryTab.ARTISTS -> ArtistsTab(header)
+        LibraryTab.PLAYLISTS -> PlaylistsTab(header)
     }
 }
 
 @Composable
-private fun SearchView(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onClose: () -> Unit,
+private fun SimpleLightScreen<*>.SearchView(
     /** The list search was started from — what it shows until something is typed. */
     tab: LibraryTab,
-    actions: ShellActions,
 ) {
+    val query by LibraryNav.searchQuery.collectAsState()
     val typing by LibraryNav.typing.collectAsState()
     // While the keyboard is up the field is the query: the keyboard writes into
     // this state and the results follow it keystroke by keystroke.
     val state = rememberTextFieldState(query)
     val live = if (typing) state.text.toString() else query
-    LaunchedEffect(live, typing) { if (typing) onQueryChange(live) }
+    LaunchedEffect(live, typing) { if (typing) LibraryNav.setQuery(live) }
 
     val library by App.library.tracks.collectAsState()
     val results = remember(live, library.size) { App.library.search(live) }
@@ -216,7 +193,7 @@ private fun SearchView(
                 // Simplified never raises the inline keyboard: its search is the
                 // SDK's own screen.
                 if (App.settings.layoutMode.value == LayoutMode.SIMPLIFIED) {
-                    actions.editSearch(live)
+                    editSearch(live)
                 } else {
                     LibraryNav.typing.value = true
                 }
@@ -225,17 +202,17 @@ private fun SearchView(
                 // The cross abandons the search, query included: back to the
                 // list it was started from, as if it never happened.
                 state.clearText()
-                onQueryChange("")
+                LibraryNav.setQuery("")
                 LibraryNav.typing.value = false
-                onClose()
+                LibraryNav.closeSearch()
             },
-            onMenu = { actions.more(LibraryPage.SEARCH) },
+            onMenu = { go { MoreScreen(it, LibraryPage.SEARCH) } },
         )
         Box(modifier = Modifier.weight(1f)) {
             // Nothing typed yet, so the list that was already there: the keyboard
             // opening is not itself a search.
             if (live.isBlank()) {
-                TabContent(tab, actions, header = false)
+                TabContent(tab, header = false)
             } else {
                 LazyColumn(
                     state = listState,
@@ -255,8 +232,8 @@ private fun SearchView(
                                 imageId = artist.imageId,
                                 modifier = Modifier.padding(end = lane),
                                 onClick = {
-                                    onClose()
-                                    actions.openArtist(artist.name, Parent.tab(LibraryTab.ARTISTS))
+                                    LibraryNav.closeSearch()
+                                    openArtist(artist.name, Parent.tab(LibraryTab.ARTISTS))
                                 },
                             )
                         }
@@ -270,8 +247,14 @@ private fun SearchView(
                                 coverArtId = album.coverArtId,
                                 fallback = AppIcons.Album,
                                 modifier = Modifier.padding(end = lane),
-                                onClick = { onClose(); actions.openAlbum(album.id, Parent.artist(album.artist)) },
-                                onLongClick = { onClose(); actions.albumOptions(album.id) },
+                                onClick = {
+                                    LibraryNav.closeSearch()
+                                    openAlbum(album.id, Parent.artist(album.artist))
+                                },
+                                onLongClick = {
+                                    LibraryNav.closeSearch()
+                                    go { AlbumActionsScreen(it, album.id) }
+                                },
                             )
                         }
                     }
@@ -289,9 +272,9 @@ private fun SearchView(
                                     // parent: back out of the player lands on the
                                     // results, still typed and scrolled.
                                     App.playback.playQueue(listOf(track), 0)
-                                    actions.nowPlaying()
+                                    go { NowPlayingScreen(it) }
                                 },
-                                onLongClick = { actions.trackOptions(track.id, null) },
+                                onLongClick = { openTrackActions(track.id, null) },
                             )
                         }
                     }
@@ -379,7 +362,7 @@ private const val SEARCH_GLYPH_PX = ROW_ACTION_ICON_PX
  * the left corner is the way back to the library index instead.
  */
 @Composable
-private fun TabHeader(tab: LibraryTab, actions: ShellActions) {
+private fun SimpleLightScreen<*>.TabHeader(tab: LibraryTab) {
     val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
     AppHeader(
         title = tabTitle(tab, likedOnly(tab), tagFilter(tab)),
@@ -392,7 +375,7 @@ private fun TabHeader(tab: LibraryTab, actions: ShellActions) {
             HeaderAction(AppIcons.Search) { LibraryNav.openSearch(withKeyboard = true) }
         },
         fitTitle = true,
-        rightAction = HeaderAction(AppIcons.Sort, onLongClick = actions.settings) { actions.more(tab.page) },
+        rightAction = libraryCornerAction(tab.page),
     )
 }
 
@@ -505,7 +488,7 @@ internal fun syncProgressText(phase: String): String {
 }
 
 @Composable
-private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
+private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
     val view by App.sortedAlbums.collectAsState()
     val sorted = view.items
     val rows = rememberLatest(sorted)
@@ -518,7 +501,7 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
     val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
     val grid = App.albumGrid.collectAsState().value
     Column(Modifier.fillMaxSize()) {
-        if (header) TabHeader(LibraryTab.ALBUMS, actions)
+        if (header) TabHeader(LibraryTab.ALBUMS)
         if (grid) {
             // Its own anchor, separate from the list's: see rememberGridAnchor.
             val gridState = rememberGridAnchor("tab:albums/grid", headerCount = 1)
@@ -527,12 +510,12 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
             Box(modifier = Modifier.weight(1f)) {
                 AlbumGrid(
                     albums = sorted,
-                    onOpen = { actions.openAlbum(it.id, Parent.Here) },
-                    onLongPress = { actions.albumOptions(it.id) },
+                    onOpen = { openAlbum(it.id, Parent.Here) },
+                    onLongPress = { album -> go { AlbumActionsScreen(it, album.id) } },
                     state = gridState,
                 ) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
-                        RandomAlbumRow(rows, actions)
+                        RandomAlbumRow(rows)
                     }
                     if (sorted.isEmpty() && sync.syncing) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
@@ -552,9 +535,9 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
                 headerCount = 1,
                 reversed = reversed,
             ) {
-                item { RandomAlbumRow(rows, actions) }
+                item { RandomAlbumRow(rows) }
                 localAccessNotice(needsAccess, askAccess)
-                syncErrorNotice(syncError, actions.settings)
+                syncErrorNotice(syncError) { go { SettingsScreen(it) } }
                 syncProgressNotice(sorted.isEmpty(), sync)
                 items(sorted.size, key = { rows[it]?.id ?: it }) { i ->
                     val album = rows[i] ?: return@items
@@ -564,8 +547,8 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
                         coverArtId = album.coverArtId,
                         fallback = AppIcons.Album,
                         downloaded = album.id in downloadedAlbums,
-                        onClick = { actions.openAlbum(album.id, Parent.Here) },
-                        onLongClick = { actions.albumOptions(album.id) },
+                        onClick = { openAlbum(album.id, Parent.Here) },
+                        onLongClick = { go { AlbumActionsScreen(it, album.id) } },
                     )
                 }
             }
@@ -579,7 +562,7 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
  * search narrows what can come up.
  */
 @Composable
-private fun RandomAlbumRow(albums: LatestList<Album>, actions: ShellActions) {
+private fun SimpleLightScreen<*>.RandomAlbumRow(albums: LatestList<Album>) {
     PlayAllRow(AppIcons.Shuffle, "Play Random Album") {
         val album = albums.items.randomOrNull() ?: return@PlayAllRow
         App.scope.launch {
@@ -589,7 +572,7 @@ private fun RandomAlbumRow(albums: LatestList<Album>, actions: ShellActions) {
             if (queue.isEmpty()) return@launch
             withContext(Dispatchers.Main) {
                 App.playback.playQueue(queue, 0)
-                actions.nowPlaying()
+                go { NowPlayingScreen(it) }
             }
         }
     }
@@ -639,7 +622,7 @@ private fun ColumnScope.IndexedList(
 }
 
 @Composable
-private fun SongsTab(actions: ShellActions, header: Boolean = true) {
+private fun SimpleLightScreen<*>.SongsTab(header: Boolean = true) {
     val view by App.sortedSongs.collectAsState()
     val sorted = view.items
     val rows = rememberLatest(sorted)
@@ -656,10 +639,10 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
         if (header) {
             if (selection.active) {
                 SelectionHeader(selection) {
-                    actions.selectionActions(selection.pick(rows.items) { it.id }, selection)
+                    openSelectionActions(selection.pick(rows.items) { it.id }, selection)
                 }
             } else {
-                TabHeader(LibraryTab.SONGS, actions)
+                TabHeader(LibraryTab.SONGS)
             }
         }
         IndexedList(
@@ -672,11 +655,11 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
                 item {
                     PlayAllRow(AppIcons.Shuffle, "Shuffle") {
                         App.playback.playQueue(shuffled(rows.items), 0)
-                        actions.nowPlaying()
+                        go { NowPlayingScreen(it) }
                     }
                 }
                 localAccessNotice(needsAccess, askAccess)
-                syncErrorNotice(syncError, actions.settings)
+                syncErrorNotice(syncError) { go { SettingsScreen(it) } }
                 syncProgressNotice(sorted.isEmpty(), sync)
             }
             // Read through [rows], never captured — see LatestList.
@@ -695,11 +678,11 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
                             val list = rows.items
                             val index = list.indexOfFirst { it.id == track.id }
                             App.playback.playQueue(list, index.coerceAtLeast(0))
-                            actions.nowPlaying()
+                            go { NowPlayingScreen(it) }
                         }
                     },
                     onLongClick = {
-                        if (!selection.active) actions.trackOptions(track.id, selection)
+                        if (!selection.active) openTrackActions(track.id, selection)
                     },
                 )
             }
@@ -708,7 +691,7 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
 }
 
 @Composable
-private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
+private fun SimpleLightScreen<*>.ArtistsTab(header: Boolean = true) {
     val view by App.sortedArtists.collectAsState()
     val sorted = view.items
     val rows = rememberLatest(sorted)
@@ -724,7 +707,7 @@ private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
     val sync = App.librarySync.syncState.collectAsState().value
     val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
     Column(Modifier.fillMaxSize()) {
-        if (header) TabHeader(LibraryTab.ARTISTS, actions)
+        if (header) TabHeader(LibraryTab.ARTISTS)
         IndexedList(
             anchor = "tab:artists",
             letters = letters,
@@ -739,8 +722,8 @@ private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
                     name = artist.name,
                     downloaded = artist.name in downloadedArtists,
                     imageId = artist.imageId,
-                    onClick = { actions.openArtist(artist.name, Parent.Here) },
-                    onLongClick = { actions.artistOptions(artist.name) },
+                    onClick = { openArtist(artist.name, Parent.Here) },
+                    onLongClick = { go { ArtistActionsScreen(it, artist.name) } },
                 )
             }
         }
@@ -748,7 +731,7 @@ private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
 }
 
 @Composable
-private fun PlaylistsTab(actions: ShellActions, header: Boolean = true) {
+private fun SimpleLightScreen<*>.PlaylistsTab(header: Boolean = true) {
     val view by App.sortedPlaylists.collectAsState()
     val playlists = view.items
     val letters = view.letters
@@ -771,7 +754,7 @@ private fun PlaylistsTab(actions: ShellActions, header: Boolean = true) {
     // list for ever.
     LaunchedEffect(source.id) { App.playlists.refreshPlaylists() }
     Column(Modifier.fillMaxSize()) {
-        if (header) TabHeader(LibraryTab.PLAYLISTS, actions)
+        if (header) TabHeader(LibraryTab.PLAYLISTS)
         IndexedList(
             anchor = "tab:playlists",
             letters = letters,
@@ -781,7 +764,7 @@ private fun PlaylistsTab(actions: ShellActions, header: Boolean = true) {
             // A server that can't hold an empty playlist has no use for a bare
             // "New Playlist" — see MusicSource.supportsEmptyPlaylists.
             if (canCreateEmpty) {
-                item { PlayAllRow(AppIcons.Add, "New Playlist") { actions.newPlaylist() } }
+                item { PlayAllRow(AppIcons.Add, "New Playlist") { newPlaylist() } }
             }
             items(playlists, key = { it.id }) { playlist ->
                 TrackRow(
@@ -790,8 +773,8 @@ private fun PlaylistsTab(actions: ShellActions, header: Boolean = true) {
                     coverArtId = playlist.coverArtId,
                     fallback = AppIcons.QueueMusic,
                     downloaded = playlist.id in downloadedPlaylists,
-                    onClick = { actions.openPlaylist(playlist.id, playlist.name) },
-                    onLongClick = { actions.playlistOptions(playlist.id, playlist.name) },
+                    onClick = { go { PlaylistDetailScreen(it, playlist.id, playlist.name) } },
+                    onLongClick = { go { PlaylistActionsScreen(it, playlist.id, playlist.name) } },
                 )
             }
         }
@@ -804,7 +787,7 @@ private fun PlaylistsTab(actions: ShellActions, header: Boolean = true) {
  * search are in the bar below.
  */
 @Composable
-private fun LibraryIndex(actions: ShellActions) {
+private fun SimpleLightScreen<*>.LibraryIndex() {
     val source by App.source.collectAsState()
     // The liked lists appear only where there is something in them, and not at
     // all where the source has no likes — see MusicSource.supportsLikes.
@@ -818,9 +801,7 @@ private fun LibraryIndex(actions: ShellActions) {
         AppHeader(
             title = "Library",
             fitTitle = true,
-            rightAction = HeaderAction(AppIcons.Sort, onLongClick = actions.settings) {
-                actions.more(LibraryPage.LIBRARY)
-            },
+            rightAction = libraryCornerAction(LibraryPage.LIBRARY),
         )
         ScrollableList {
             item { IndexRow(LibraryTab.PLAYLISTS) }

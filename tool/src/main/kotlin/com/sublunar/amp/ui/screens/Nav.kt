@@ -184,6 +184,28 @@ fun SimpleLightScreen<Unit>.replaceWithPlayer() {
     go { NowPlayingScreen(it) }
 }
 
+/** The SDK's full-screen editor: Simplified's way of typing a query. */
+fun SimpleLightScreen<*>.editSearch(current: String) {
+    navigateTo<String?>(
+        { TextEntryScreen(it, title = "Search", initial = current, submitLabel = "SEARCH") },
+        resultCallback = { text -> if (text != null) LibraryNav.setQuery(text) },
+    )
+}
+
+/**
+ * Ask for a name and make a playlist of it holding [trackIds]. [onCreated] runs
+ * once a name was given; backing out makes nothing.
+ */
+fun SimpleLightScreen<*>.newPlaylist(trackIds: List<String> = emptyList(), onCreated: () -> Unit = {}) {
+    editText("New Playlist", "") { name ->
+        if (name.isBlank()) return@editText
+        // The songs are part of the create, not a second pass: a failed create
+        // can't half-succeed, and Plex makes playlists no other way.
+        App.scope.launch { App.playlists.createPlaylist(name, trackIds) }
+        onCreated()
+    }
+}
+
 /** Long-press sheet for a track in a list that supports multi-select. */
 fun SimpleLightScreen<*>.openTrackActions(trackId: String, selection: SelectionState?) {
     go { TrackActionsScreen(it, trackId, onSelect = selection?.let { s -> { s.begin(trackId) } }) }

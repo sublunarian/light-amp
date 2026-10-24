@@ -30,7 +30,6 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** How long to wait for the restored queue before giving up on the player. */
@@ -43,15 +42,6 @@ sealed interface BootState {
 }
 
 class BootViewModel : LightViewModel<Unit>() {
-    // Tab and search state live in LibraryNav, so library sub-pages (which show
-    // the bar too) can drive them.
-    val currentTab = LibraryNav.currentTab
-    val searchActive = LibraryNav.searchActive
-    val searchQuery = LibraryNav.searchQuery
-
-    fun setSearchQuery(query: String) = LibraryNav.setQuery(query)
-    fun closeSearch() = LibraryNav.closeSearch()
-
     /**
      * The welcome page only while there is no source at all, never for a missing
      * server: the phone's own music has none.
@@ -118,15 +108,6 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
         val isShowing: Boolean get() = root?.showing == true
     }
 
-    private fun createPlaylistFlow() {
-        navigateTo<String?>(
-            { TextEntryScreen(it, title = "New Playlist") },
-            resultCallback = { name ->
-                if (!name.isNullOrBlank()) App.scope.launch { App.playlists.createPlaylist(name) }
-            },
-        )
-    }
-
     @Composable
     override fun Content() {
         val state by viewModel.bootState.collectAsState()
@@ -154,7 +135,6 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
                 onChoose = { begin(it, thenBack = false) },
             )
             BootState.Ready -> {
-                val tab by viewModel.currentTab.collectAsState()
                 // Reopen where the app was left: one of the bar's three
                 // destinations, never the page beneath it — see LastSection.
                 // Once per window — see [landed].
@@ -177,67 +157,7 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
                         LastSection.LIBRARY -> openLibrary()
                     }
                 }
-                val libraryIndex by LibraryNav.libraryIndex.collectAsState()
-                val searchActive by viewModel.searchActive.collectAsState()
-                val searchQuery by viewModel.searchQuery.collectAsState()
-                // The SDK's full-screen editor, Simplified's way of typing a
-                // query — see search and editSearch below.
-                val openSearchEditor: (String) -> Unit = { current ->
-                    navigateTo<String?>(
-                        {
-                            TextEntryScreen(
-                                it,
-                                title = "Search",
-                                initial = current,
-                                submitLabel = "SEARCH",
-                            )
-                        },
-                        resultCallback = { text ->
-                            if (text != null) viewModel.setSearchQuery(text)
-                        },
-                    )
-                }
-                LibraryShell(
-                    currentTab = tab,
-                    onSelectTab = { LibraryNav.tapTab(it) },
-                    libraryIndex = libraryIndex,
-                    searchActive = searchActive,
-                    searchQuery = searchQuery,
-                    onSearchQueryChange = { viewModel.setSearchQuery(it) },
-                    onSearchClose = { viewModel.closeSearch() },
-                    actions = ShellActions(
-                        nowPlaying = { go { NowPlayingScreen(it) } },
-                        settings = { go { SettingsScreen(it) } },
-                        // Simplified gets the full-screen editor: its bar is the
-                        // phone's own three buttons, and the inline keyboard
-                        // belongs to the layout with a magnifier in the header.
-                        // Standard goes straight to typing on the page itself.
-                        search = {
-                            if (App.settings.layoutMode.value == LayoutMode.SIMPLIFIED) {
-                                LibraryNav.openSearch()
-                                openSearchEditor("")
-                            } else {
-                                LibraryNav.openSearch(withKeyboard = true)
-                            }
-                        },
-                        // The search page's query, tapped under Simplified.
-                        editSearch = { current -> openSearchEditor(current) },
-                        more = { page -> go { MoreScreen(it, page) } },
-                        // Simplified's library button — see LibraryNav.pressLibrary.
-                        browse = { LibraryNav.pressLibrary() },
-                        openAlbum = { id, parent -> openAlbum(id, parent) },
-                        openArtist = { name, parent -> openArtist(name, parent) },
-                        openPlaylist = { id, name -> go { PlaylistDetailScreen(it, id, name) } },
-                        trackOptions = { id, selection -> openTrackActions(id, selection) },
-                        selectionActions = { tracks, selection ->
-                            openSelectionActions(tracks, selection)
-                        },
-                        albumOptions = { id -> go { AlbumActionsScreen(it, id) } },
-                        artistOptions = { name -> go { ArtistActionsScreen(it, name) } },
-                        playlistOptions = { id, name -> go { PlaylistActionsScreen(it, id, name) } },
-                        newPlaylist = { createPlaylistFlow() },
-                    ),
-                )
+                LibraryShell()
             }
         }
     }

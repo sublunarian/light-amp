@@ -4,7 +4,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import com.sublunar.amp.App
 import com.sublunar.amp.data.WriteResult
 import com.sublunar.amp.ui.components.AppIcons
@@ -32,27 +31,12 @@ class AddToPlaylistScreen(
         ListScreen(onBack = { goBack() }, title = "Add to Playlist") {
             ScrollableList {
                 // First, and shown even with no playlists yet.
-                item { PlayAllRow(AppIcons.Add, "New Playlist") { createAndAdd() } }
+                item { PlayAllRow(AppIcons.Add, "New Playlist") { newPlaylist(trackIds) { goBack(Unit) } } }
                 items(playlists, key = { it.id }) { playlist ->
                     TextRow(title = playlist.name) { addTo(playlist.id) }
                 }
             }
         }
-    }
-
-    private fun createAndAdd() {
-        navigateTo<String?>(
-            { TextEntryScreen(it, title = "New Playlist") },
-            resultCallback = { name ->
-                if (name.isNullOrBlank()) return@navigateTo
-                App.scope.launch {
-                    // The songs are part of the create, not a second pass: a failed
-                    // create can't half-succeed, and Plex makes playlists no other way.
-                    App.playlists.createPlaylist(name, trackIds)
-                }
-                goBack(Unit)
-            },
-        )
     }
 
     private fun addTo(playlistId: String) {
