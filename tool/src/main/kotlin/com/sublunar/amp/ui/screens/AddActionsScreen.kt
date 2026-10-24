@@ -61,18 +61,16 @@ class AddActionsScreen(
                         go { RatingScreen(it, track.id, track.title, track.rating, isAlbum = false) }
                     }
                 }
-                if (source.supportsPlaylists) {
-                    TextRow(title = "Add to Playlist") {
-                        navigateTo<Unit>(
-                            { AddToPlaylistScreen(it, track.id) },
-                            resultCallback = { goBack() },
-                        )
-                    }
+                TextRow(title = "Add to Playlist") {
+                    navigateTo<Unit>(
+                        { AddToPlaylistScreen(it, track.id) },
+                        resultCallback = { goBack() },
+                    )
                 }
                 // How a song radio becomes something to come back to (or download):
                 // you hear it, you decide. The queue's name ("Judith Radio") is
                 // offered where it has one.
-                if (source.supportsPlaylists && queue.isNotEmpty()) {
+                if (queue.isNotEmpty()) {
                     TextRow(title = "Save Queue as Playlist") {
                         val ids = queue.map { it.id }
                         navigateTo<String?>(

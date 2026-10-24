@@ -829,11 +829,7 @@ private fun LibraryIndex(actions: ShellActions) {
             },
         )
         ScrollableList(modifier = Modifier.fillMaxSize()) {
-            // A source with no server has nowhere to keep a playlist — see
-            // MusicSource.supportsPlaylists.
-            if (source.supportsPlaylists) {
-                item { IndexRow(LibraryTab.PLAYLISTS) }
-            }
+            item { IndexRow(LibraryTab.PLAYLISTS) }
             item { IndexRow(LibraryTab.ARTISTS) }
             item { IndexRow(LibraryTab.ALBUMS) }
             item { IndexRow(LibraryTab.SONGS) }
@@ -977,16 +973,12 @@ private fun StandardNavbar(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // A source with no server has nowhere to keep a playlist, so the tab
-        // isn't there — see MusicSource.supportsPlaylists.
-        if (App.source.collectAsState().value.supportsPlaylists) {
-            NavIcon(
-                AppIcons.QueueMusic,
-                current == LibraryTab.PLAYLISTS,
-                scale = PLAYLISTS_SCALE,
-                lift = PLAYLISTS_LIFT_PX,
-            ) { onSelect(LibraryTab.PLAYLISTS) }
-        }
+        NavIcon(
+            AppIcons.QueueMusic,
+            current == LibraryTab.PLAYLISTS,
+            scale = PLAYLISTS_SCALE,
+            lift = PLAYLISTS_LIFT_PX,
+        ) { onSelect(LibraryTab.PLAYLISTS) }
         NavIcon(
             AppIcons.RecordVoiceOver,
             current == LibraryTab.ARTISTS,

@@ -982,23 +982,16 @@ class NowPlayingScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
         val liked = remember(libraryTracks, current) {
             libraryTracks.firstOrNull { it.id == current.id }?.liked ?: current.liked
         }
-        val source by App.source.collectAsState()
-        // Everything behind "+" is a way of filing the track somewhere, so on a
-        // source with nowhere to file it the button isn't there.
-        val canFile = source.supportsLikes || source.supportsPlaylists ||
-            source.supportsRatings || source.supportsDownloads
 
         Band(SECONDARY_UP_PX, SECONDARY_ROW_PX) {
             // "+" rather than a heart: liking is one of several ways to file the
             // track. Ringed once it is liked, so the button keeps its meaning.
-            if (canFile) {
-                Slot(SlotAt.FromStart(SIDE_X_PX), onClick = { go { AddActionsScreen(it, current.id) } }) {
-                    AppIcon(
-                        if (liked) AppIcons.AddCircle else AppIcons.Add,
-                        size = size,
-                        modifier = Modifier.alpha(alpha),
-                    )
-                }
+            Slot(SlotAt.FromStart(SIDE_X_PX), onClick = { go { AddActionsScreen(it, current.id) } }) {
+                AppIcon(
+                    if (liked) AppIcons.AddCircle else AppIcons.Add,
+                    size = size,
+                    modifier = Modifier.alpha(alpha),
+                )
             }
             Slot(SlotAt.Centre, onClick = { openOutput() }) {
                 AppIcon(AppIcons.Cast, size = size, modifier = Modifier.alpha(alpha))

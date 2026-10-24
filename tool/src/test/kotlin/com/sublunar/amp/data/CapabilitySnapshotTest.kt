@@ -27,7 +27,7 @@ class CapabilitySnapshotTest {
         MusicSource(id = "s", kind = kind, name = "Source", features = features)
 
     /**
-     * likes · ratings · radio · playlists · empty playlists · downloads ·
+     * likes · ratings · radio · empty playlists · downloads ·
      * refused · may download · original download · server scan · libraries,
      * then what it streams | what it downloads.
      */
@@ -36,7 +36,6 @@ class CapabilitySnapshotTest {
             source.supportsLikes,
             source.supportsRatings,
             source.supportsRadio,
-            source.supportsPlaylists,
             source.supportsEmptyPlaylists,
             source.supportsDownloads,
             source.downloadsRefused,
@@ -57,26 +56,26 @@ class CapabilitySnapshotTest {
         }
         assertEquals(
             """
-            SUBSONIC, never asked: YYYYYY.YYYY mp3 opus flac raw | mp3 opus flac raw
-            SUBSONIC, nothing missing: YYYYYY.YYYY mp3 opus flac raw | mp3 opus flac raw
-            SUBSONIC, no probes: Y..YYY.Y..Y mp3 opus flac raw | mp3 opus flac
-            SUBSONIC, no copies: YYYYYYY.YYY mp3 opus flac raw | mp3 opus flac raw
-            SUBSONIC, neither: Y..YYYY...Y mp3 opus flac raw | mp3 opus flac
-            PLEX, never asked: .YYY.Y.YYYY raw mp3 | raw mp3
-            PLEX, nothing missing: .YYY.Y.YYYY raw mp3 | raw mp3
-            PLEX, no probes: .YYY.Y.YYYY raw mp3 | raw mp3
-            PLEX, no copies: .YYY.YY.YYY raw mp3 | raw mp3
-            PLEX, neither: .YYY.YY.YYY raw mp3 | raw mp3
-            JELLYFIN, never asked: Y.YYYY.YYYY mp3 opus flac raw | mp3 opus flac raw
-            JELLYFIN, nothing missing: Y.YYYY.YYYY mp3 opus flac raw | mp3 opus flac raw
-            JELLYFIN, no probes: Y.YYYY.YYYY mp3 opus flac raw | mp3 opus flac raw
-            JELLYFIN, no copies: Y.YYYYY.YYY mp3 opus flac raw | mp3 opus flac raw
-            JELLYFIN, neither: Y.YYYYY.YYY mp3 opus flac raw | mp3 opus flac raw
-            LOCAL, never asked: ...YY...Y.. - | -
-            LOCAL, nothing missing: ...YY...Y.. - | -
-            LOCAL, no probes: ...YY...Y.. - | -
-            LOCAL, no copies: ...YY.Y.Y.. - | -
-            LOCAL, neither: ...YY.Y.Y.. - | -
+            SUBSONIC, never asked: YYYYY.YYYY mp3 opus flac raw | mp3 opus flac raw
+            SUBSONIC, nothing missing: YYYYY.YYYY mp3 opus flac raw | mp3 opus flac raw
+            SUBSONIC, no probes: Y..YY.Y..Y mp3 opus flac raw | mp3 opus flac
+            SUBSONIC, no copies: YYYYYY.YYY mp3 opus flac raw | mp3 opus flac raw
+            SUBSONIC, neither: Y..YYY...Y mp3 opus flac raw | mp3 opus flac
+            PLEX, never asked: .YY.Y.YYYY raw mp3 | raw mp3
+            PLEX, nothing missing: .YY.Y.YYYY raw mp3 | raw mp3
+            PLEX, no probes: .YY.Y.YYYY raw mp3 | raw mp3
+            PLEX, no copies: .YY.YY.YYY raw mp3 | raw mp3
+            PLEX, neither: .YY.YY.YYY raw mp3 | raw mp3
+            JELLYFIN, never asked: Y.YYY.YYYY mp3 opus flac raw | mp3 opus flac raw
+            JELLYFIN, nothing missing: Y.YYY.YYYY mp3 opus flac raw | mp3 opus flac raw
+            JELLYFIN, no probes: Y.YYY.YYYY mp3 opus flac raw | mp3 opus flac raw
+            JELLYFIN, no copies: Y.YYYY.YYY mp3 opus flac raw | mp3 opus flac raw
+            JELLYFIN, neither: Y.YYYY.YYY mp3 opus flac raw | mp3 opus flac raw
+            LOCAL, never asked: ...Y...Y.. - | -
+            LOCAL, nothing missing: ...Y...Y.. - | -
+            LOCAL, no probes: ...Y...Y.. - | -
+            LOCAL, no copies: ...Y.Y.Y.. - | -
+            LOCAL, neither: ...Y.Y.Y.. - | -
             """.trimIndent(),
             snapshot.joinToString("\n"),
         )

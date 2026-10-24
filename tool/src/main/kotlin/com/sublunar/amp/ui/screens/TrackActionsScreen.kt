@@ -178,7 +178,7 @@ class TrackActionsScreen(
                         }
                     }
                 }
-                if (showAddToPlaylist && source.supportsPlaylists) {
+                if (showAddToPlaylist) {
                     TextRow(title = "Add to Playlist") {
                         // Dismiss this sheet too once a playlist is picked.
                         navigateTo<Unit>(

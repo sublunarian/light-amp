@@ -276,9 +276,6 @@ data class MusicSource(
      */
     val supportsRadio: Boolean get() = capabilities.radio
 
-    /** Every kind has playlists: the phone keeps its own, as m3u8 files. */
-    val supportsPlaylists: Boolean get() = true
-
     /** Whether a playlist can be started empty and filled later — not on Plex. */
     val supportsEmptyPlaylists: Boolean get() = capabilities.emptyPlaylists
 
