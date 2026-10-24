@@ -305,7 +305,6 @@ object App {
     val reachability: Reachability by lazy {
         Reachability(scope, client = { serverClient.value }, mayAsk = { rules.value.mayTalkToServer })
     }
-    val serverReachable: StateFlow<Boolean> get() = reachability.reachable
 
     /**
      * True is proof, and is taken as such. False is a *suspicion* (one stream
@@ -564,7 +563,7 @@ object App {
                 browsedPlaylistTrackIds = ::browsedPlaylistTrackIds,
             )
             playback = PlaybackController(
-                settings, serverClient, ::dao, downloads, scope,
+                settings, serverClient, downloads, scope,
                 metadataAllowed = ::metadataAllowed,
                 standInDir = java.io.File(context.filesDir, "stand-in"),
             )

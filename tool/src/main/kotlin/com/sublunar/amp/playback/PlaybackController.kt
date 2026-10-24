@@ -19,7 +19,6 @@ import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
-import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.playback.output.ActiveOutput
 import com.sublunar.amp.playback.output.Disconnect
 import com.sublunar.amp.playback.output.Output
@@ -90,8 +89,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 class PlaybackController(
     private val settings: AppSettings,
     private val serverClient: StateFlow<MusicServer?>,
-    /** Unused; goes when App stops passing it. */
-    daoProvider: () -> LibraryDao,
     downloads: DownloadStore,
     private val scope: CoroutineScope,
     /**
