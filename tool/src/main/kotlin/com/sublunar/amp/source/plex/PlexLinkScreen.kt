@@ -1,6 +1,5 @@
 package com.sublunar.amp.source.plex
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,8 +33,8 @@ import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
+import com.sublunar.amp.ui.screens.AmpScreen
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -50,7 +49,7 @@ import com.sublunar.amp.ui.screens.adoptServer
  * never claimed to an account is added on [PlexManualScreen], reached from the
  * row at the bottom.
  */
-class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
+class PlexLinkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     /** A server is being looked at; its answer will go back from this page. */
     private var looking by mutableStateOf(false)
@@ -92,10 +91,6 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
     override fun onScreenDestroy() {
         gone = true
     }
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
     @Composable
     override fun Content() {
@@ -322,11 +317,7 @@ private const val PLEX_TOKEN_REFUSED = "Plex didn't accept that token."
 private const val NOT_PLEX = "That address answered, but it isn't a Plex server. Check the address and port."
 
 /** The fallback: a server address and a token, typed in. */
-class PlexManualScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+class PlexManualScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     // On the screen rather than in the composition: opening the editor for a
     // field composes a new top-of-stack screen and tears this one's down.

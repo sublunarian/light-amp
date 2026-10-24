@@ -1,6 +1,5 @@
 package com.sublunar.amp.source.jellyfin
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -16,8 +15,8 @@ import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.screens.AmpScreen
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
@@ -38,11 +37,7 @@ import com.sublunar.amp.ui.screens.adoptServer
 class JellyfinLinkScreen(
     sealed: SealedLightActivity,
     private val again: MusicSource? = null,
-) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<Unit>(sealed) {
 
     // On the screen rather than in the composition: opening the keyboard for a
     // field composes a new top-of-stack screen and tears this one's composition

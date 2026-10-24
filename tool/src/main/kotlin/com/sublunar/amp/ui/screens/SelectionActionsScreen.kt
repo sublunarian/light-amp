@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -10,7 +9,6 @@ import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 
 /**
  * What to do with a multi-selection. Returns true when an action was carried out
@@ -24,11 +22,7 @@ class SelectionActionsScreen(
     private val showAddToQueue: Boolean = true,
     /** Cleared from the queue: storage is a library job. */
     private val showDownload: Boolean = true,
-) : SimpleLightScreen<Boolean>(sealed) {
-
-    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<Boolean>(sealed) {
 
     @Composable
     override fun Content() {

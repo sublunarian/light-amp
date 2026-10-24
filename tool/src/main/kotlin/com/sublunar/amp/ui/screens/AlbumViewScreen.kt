@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -11,7 +10,6 @@ import com.sublunar.amp.App
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.launch
@@ -24,11 +22,7 @@ class AlbumViewScreen(
     sealed: SealedLightActivity,
     /** Editing an artist's own page rather than the whole album list. */
     private val forArtist: Boolean = false,
-) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {

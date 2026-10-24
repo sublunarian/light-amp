@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -22,7 +21,6 @@ import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.launch
@@ -49,11 +47,7 @@ class TagFilterScreen(
     sealed: SealedLightActivity,
     private val tab: LibraryTab,
     private val byComposer: Boolean,
-) : SimpleLightScreen<Unit>(sealed) {
-    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
-
+) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val values by (if (byComposer) App.library.composers else App.library.genres)
@@ -156,11 +150,7 @@ private fun <T> SortOptions(
 
 class AlbumsSortScreen(
     sealed: SealedLightActivity,
-) : SimpleLightScreen<Unit>(sealed) {
-    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
-
+) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val current by App.settings.albumSort.state.collectAsState()
@@ -206,7 +196,7 @@ class AlbumsSortScreen(
     }
 }
 
-class SongsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
+class SongsSortScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val current by App.settings.songSort.state.collectAsState()
@@ -241,7 +231,7 @@ class SongsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
     }
 }
 
-class ArtistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
+class ArtistsSortScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val current by App.settings.artistSort.state.collectAsState()
@@ -272,7 +262,7 @@ class ArtistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(s
     }
 }
 
-class PlaylistsSortScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
+class PlaylistsSortScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val current by App.settings.playlistSort.state.collectAsState()

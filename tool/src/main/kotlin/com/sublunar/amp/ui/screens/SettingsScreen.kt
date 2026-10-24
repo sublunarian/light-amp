@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -23,7 +22,6 @@ import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.launch
@@ -63,11 +61,7 @@ private fun streamingSummary(server: MusicSource): String =
     }
 
 /** The hub: a row per category, each stating where its page stands. */
-class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
@@ -125,11 +119,7 @@ class SettingsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
 }
 
 /** How the audio itself is treated on the way out — levels, not sources. */
-class PlaybackScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+class PlaybackScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
@@ -151,11 +141,7 @@ class PlaybackScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
 }
 
 /** How the app looks — every switch, none of them about any one source. */
-class AppearanceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
@@ -238,11 +224,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
  * Qualities are per server because only some servers can transcode — see
  * MusicSource.streamFormats.
  */
-class DataScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+class DataScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
@@ -302,11 +284,7 @@ class DataScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) 
  * What the phone holds: the downloaded music, the budget it fits in, what each
  * server fetches without being asked, and the way to clear the lot.
  */
-class OfflineScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+class OfflineScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     // Off the disk rather than the index. Held on the screen, not in a
     // remember: pushing the confirmation tears this page's composition down
@@ -421,7 +399,7 @@ class OfflineScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
 class StreamFormatScreen(
     sealed: SealedLightActivity,
     private val sourceId: String,
-) : SimpleLightScreen<Unit>(sealed) {
+) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
@@ -450,7 +428,7 @@ class StreamFormatScreen(
 class CellularFormatScreen(
     sealed: SealedLightActivity,
     private val sourceId: String,
-) : SimpleLightScreen<Unit>(sealed) {
+) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
@@ -477,7 +455,7 @@ class CellularFormatScreen(
 class SourceDownloadFormatScreen(
     sealed: SealedLightActivity,
     private val sourceId: String,
-) : SimpleLightScreen<Unit>(sealed) {
+) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
@@ -511,11 +489,7 @@ class SourceDownloadFormatScreen(
 class SourceStreamingScreen(
     sealed: SealedLightActivity,
     private val sourceId: String,
-) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
@@ -554,11 +528,7 @@ class SourceStreamingScreen(
 class SourceOfflineScreen(
     sealed: SealedLightActivity,
     private val sourceId: String,
-) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {

@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyListScope
@@ -35,7 +34,6 @@ import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.Dispatchers
@@ -70,11 +68,7 @@ private fun dataModeDetail(mode: DataMode): String = when (mode) {
 }
 
 /** Everything the phone holds, from every source, in the song lists' order. */
-class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
-
+class DownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         // Every source's downloads (App.downloadsBySource), read again each time a
@@ -259,7 +253,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sea
 class OfflineModeScreen(
     sealed: SealedLightActivity,
     private val sourceId: String,
-) : SimpleLightScreen<Unit>(sealed) {
+) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
@@ -283,7 +277,7 @@ class OfflineModeScreen(
     }
 }
 
-class DataModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
+class DataModeScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val current by App.settings.dataMode.state.collectAsState()
@@ -310,7 +304,7 @@ class DataModeScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
  * Size budget. The offered values stop at what the device can actually spare (see
  * [com.sublunar.amp.data.DownloadStore.maxSelectableBytes]).
  */
-class SizeLimitScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
+class SizeLimitScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val current by App.settings.downloadLimit.state.collectAsState()
@@ -352,7 +346,7 @@ class ConfirmScreen(
     private val title: String,
     private val message: String,
     private val confirmLabel: String,
-) : SimpleLightScreen<Boolean>(sealed) {
+) : AmpScreen<Boolean>(sealed) {
     @Composable
     override fun Content() {
         ListScreen(onBack = { goBack(false) }, title = title) {

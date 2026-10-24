@@ -98,8 +98,8 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
 
     override fun createViewModel(): BootViewModel = BootViewModel()
 
-    // The library is where the rocker is usually pressed, so the root screen
-    // forwards it too — see PlaybackController.handleVolumeKey.
+    // The library is where the rocker is usually pressed, and the root isn't an
+    // AmpScreen, so it forwards the keys itself — see AmpScreen.
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
         App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 

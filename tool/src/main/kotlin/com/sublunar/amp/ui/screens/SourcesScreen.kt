@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
@@ -46,11 +45,7 @@ import kotlinx.coroutines.launch
  * Each source keeps its own cache, downloads and likes, so switching is a swap
  * rather than a re-sync.
  */
-class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
@@ -176,11 +171,7 @@ class LibraryVisibilityScreen(
      * alike, since the adding carries on either way.
      */
     private val adding: Boolean = false,
-) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
@@ -306,11 +297,7 @@ private const val FOLDER_INDENT_PX = 60
  * Managing sources: adding them, and reaching each one's settings. The
  * counterpart to [SourcesScreen], which only switches between libraries.
  */
-class SourceListScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+class SourceListScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
@@ -335,11 +322,7 @@ class SourceListScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
 }
 
 /** Every kind of source, offered as equals — from [Providers.addEntries], as first run is. */
-class AddSourceScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+class AddSourceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
@@ -395,11 +378,7 @@ private fun subtitleFor(source: MusicSource): String =
 class SourceDetailScreen(
     sealed: SealedLightActivity,
     private val sourceId: String,
-) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {

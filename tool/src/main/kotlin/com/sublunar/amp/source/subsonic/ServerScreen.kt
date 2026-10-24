@@ -1,6 +1,5 @@
 package com.sublunar.amp.source.subsonic
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -19,8 +18,8 @@ import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.screens.AmpScreen
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,11 +44,7 @@ class ServerScreen(
      * an ordinary Subsonic server.
      */
     private val bandcamp: Boolean = false,
-) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<Unit>(sealed) {
 
     /*
      * Form state lives on the screen, not in remember{}: the activity composes

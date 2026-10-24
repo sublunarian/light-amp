@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -36,14 +35,13 @@ import com.sublunar.amp.ui.components.rememberGridAnchor
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.launch
 
 /** An artist's page: their discography, with the ways into their songs on top. */
 class ArtistDetailScreen(
     sealed: SealedLightActivity,
     private val name: String,
-) : SimpleLightScreen<Unit>(sealed) {
+) : AmpScreen<Unit>(sealed) {
 
     /**
      * The two ways into this artist's songs. All Songs holds its place whether or
@@ -130,11 +128,7 @@ class ArtistDetailScreen(
 class ArtistActionsScreen(
     sealed: SealedLightActivity,
     private val name: String,
-) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
@@ -182,7 +176,7 @@ class ArtistActionsScreen(
 class ArtistTopSongsScreen(
     sealed: SealedLightActivity,
     private val name: String,
-) : SimpleLightScreen<Unit>(sealed) {
+) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         var songs by remember(name) { mutableStateOf<List<Track>?>(null) }
@@ -267,7 +261,7 @@ class ArtistTopSongsScreen(
 class ArtistSongsScreen(
     sealed: SealedLightActivity,
     private val name: String,
-) : SimpleLightScreen<Unit>(sealed) {
+) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val tracks by App.library.tracks.collectAsState()

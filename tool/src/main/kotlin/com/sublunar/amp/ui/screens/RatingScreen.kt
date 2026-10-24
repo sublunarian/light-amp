@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -15,7 +14,6 @@ import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.Dispatchers
@@ -38,7 +36,7 @@ class RatingScreen(
     private val title: String,
     private val current: Int,
     private val isAlbum: Boolean,
-) : SimpleLightScreen<Unit>(sealed) {
+) : AmpScreen<Unit>(sealed) {
 
     /** Set once this page has been popped, so a save finishing late can't pop another. */
     private var gone = false
@@ -46,10 +44,6 @@ class RatingScreen(
     override fun onScreenDestroy() {
         gone = true
     }
-
-    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
     @Composable
     override fun Content() {

@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -15,7 +14,6 @@ import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.launch
 
 /** Long-press actions for a playlist row: play, download, rename, delete. */
@@ -28,11 +26,7 @@ class PlaylistActionsScreen(
      * landing on the page of a playlist that no longer exists.
      */
     private val fromDetail: Boolean = false,
-) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {

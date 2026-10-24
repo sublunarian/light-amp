@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -16,20 +15,15 @@ import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.launch
 
 class AddToPlaylistScreen(
     sealed: SealedLightActivity,
     /** One or many: a multi-selection adds in list order. */
     private val trackIds: List<String>,
-) : SimpleLightScreen<Unit>(sealed) {
+) : AmpScreen<Unit>(sealed) {
 
     constructor(sealed: SealedLightActivity, trackId: String) : this(sealed, listOf(trackId))
-
-    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
     @Composable
     override fun Content() {

@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -103,7 +102,6 @@ import com.sublunar.amp.ui.currentScale
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightThemeTokens
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -159,7 +157,7 @@ private object NowPlayingNav {
     }
 }
 
-class NowPlayingScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
+class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     /**
      * The player is one of the bar's three destinations, so it records itself
@@ -184,10 +182,6 @@ class NowPlayingScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
         NowPlayingNav.showQueue.value = false
         NowPlayingNav.coverChrome.value = false
     }
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
     @Composable
     override fun Content() {

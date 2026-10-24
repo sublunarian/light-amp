@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -41,7 +40,6 @@ import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import kotlin.math.roundToInt
@@ -56,11 +54,7 @@ import kotlin.math.roundToInt
  * active source's own players. The page names none of the kinds — see
  * OutputFamilies.
  */
-class OutputScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     // A speaker left paused long enough is let go before the page names it.
     override fun willShow() {

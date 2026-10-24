@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -38,7 +37,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import com.sublunar.amp.App
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.ChoiceButton
 import com.sublunar.amp.ui.components.rememberTapHaptics
@@ -67,11 +65,7 @@ class TextEntryScreen(
     private val title: String,
     private val initial: String = "",
     private val submitLabel: String = "DONE",
-) : SimpleLightScreen<String?>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<String?>(sealed) {
 
     @Composable
     override fun Content() {

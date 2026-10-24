@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -55,7 +54,6 @@ import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -64,7 +62,7 @@ class PlaylistDetailScreen(
     sealed: SealedLightActivity,
     private val playlistId: String,
     private val playlistName: String,
-) : SimpleLightScreen<Unit>(sealed) {
+) : AmpScreen<Unit>(sealed) {
 
     // Held on the screen instance (the SDK disposes the composition under a pushed
     // sheet), so local edits survive the track-options sheet without a reload.
@@ -100,10 +98,6 @@ class PlaylistDetailScreen(
     // A playlist can hold a song twice, so rows use a synthetic key, not track.id.
     private var nextEntryKey = 0
     private fun newEntryKey(): String = "e${nextEntryKey++}"
-
-    // While casting, the rocker belongs to the speaker (see handleVolumeKey).
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
     @Composable
     override fun Content() {

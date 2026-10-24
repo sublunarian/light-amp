@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,11 +43,7 @@ class MoreScreen(
     private val page: LibraryPage,
     /** What that list is called, where its name isn't a constant — an artist's. See [defaultTitle] for the rest. */
     private val pageTitle: String? = null,
-) : SimpleLightScreen<Unit>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
@@ -309,7 +304,7 @@ private fun tagSettingOf(page: LibraryPage, byComposer: Boolean): PageSetting? {
     )
 }
 
-class AboutScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(sealed) {
+class AboutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {

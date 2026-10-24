@@ -1,17 +1,14 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import com.sublunar.amp.App
 import com.sublunar.amp.ui.PlayerTheme
 import com.thelightphone.sdk.LightQrCodeScanner
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 
 /**
  * Reads one QR code with the phone's camera and returns its text, or null when
@@ -21,11 +18,7 @@ import com.thelightphone.sdk.SimpleLightScreen
 class QrScanScreen(
     sealed: SealedLightActivity,
     private val title: String,
-) : SimpleLightScreen<String?>(sealed) {
-
-    // While casting, the rocker belongs to the speaker — see handleVolumeKey.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
+) : AmpScreen<String?>(sealed) {
 
     @Composable
     override fun Content() {
