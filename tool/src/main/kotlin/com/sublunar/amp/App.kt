@@ -757,18 +757,22 @@ object App {
     }
 
     val sortedSongs: StateFlow<SortedView<Track>> by lazy {
+        // Folded into one flow, as sortedAlbums' order is: combine takes five at most.
+        val order = combine(settings.songSort.state, settings.songSortReversed.state, ::Pair)
+        // Recently Added goes by album dates. Distinct, so liking an album doesn't sort the songs again.
+        val albumAdded = library.albums.map { list -> list.associate { it.id to it.createdMs } }.distinctUntilChanged()
         combine(
             library.tracks,
-            settings.songSort.state,
-            settings.songSortReversed.state,
+            order,
             settings.likedSongsOnly.state,
             songsTagFilter,
-        ) { list, sort, rev, liked, tags ->
+            albumAdded,
+        ) { list, (sort, rev), liked, tags, added ->
             val narrowed = list.asSequence()
                 .filter { !liked || it.liked }
                 .filter { tags.admits(it) }
                 .toList()
-            val sorted = sortSongs(narrowed, sort, rev)
+            val sorted = sortSongs(narrowed, sort, rev, added)
             SortedView(
                 sorted,
                 when (sort) {

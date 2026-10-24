@@ -65,4 +65,48 @@ class LibrarySortTest {
             sortArtists(artists, ArtistSort.NAME).map { it.name },
         )
     }
+
+    private fun song(id: String, album: String, albumId: String?, disc: Int?, track: Int?) = Track(
+        id = id, title = id, artist = "", album = album, albumArtist = "", albumId = albumId,
+        coverArtId = null, durationMs = 0, trackNumber = track, discNumber = disc, year = null,
+        playCount = 0, lastPlayedMs = 0,
+    )
+
+    @Test
+    fun `recently added songs follow their album's date, newest first, each album in running order`() {
+        val songs = listOf(
+            song("old-1", "Old", "old", 1, 1),
+            song("new-2", "New", "new", 1, 2),
+            song("no-album", "", null, null, null),
+            song("new-d2", "New", "new", 2, 1),
+            song("new-1", "New", "new", 1, 1),
+            song("unlisted", "Loose", "gone", 1, 1),
+        )
+        val added = mapOf("old" to 100L, "new" to 200L)
+        // An album missing from the list counts as oldest; among those, by name as ever.
+        assertEquals(
+            listOf("new-1", "new-2", "new-d2", "old-1", "unlisted", "no-album"),
+            sortSongs(songs, SongSort.DATE_ADDED, albumAdded = added).map { it.id },
+        )
+        assertEquals(
+            listOf("no-album", "unlisted", "old-1", "new-d2", "new-2", "new-1"),
+            sortSongs(songs, SongSort.DATE_ADDED, reversed = true, albumAdded = added).map { it.id },
+        )
+    }
+
+    @Test
+    fun `albums added at once order by name, and same-named ones stay whole`() {
+        val songs = listOf(
+            song("b-1", "Bravo", "b", 1, 1),
+            song("a2-1", "Alpha", "a2", 1, 1),
+            song("a1-2", "Alpha", "a1", 1, 2),
+            song("a2-2", "Alpha", "a2", 1, 2),
+            song("a1-1", "Alpha", "a1", 1, 1),
+        )
+        val added = mapOf("a1" to 5L, "a2" to 5L, "b" to 5L)
+        assertEquals(
+            listOf("a1-1", "a1-2", "a2-1", "a2-2", "b-1"),
+            sortSongs(songs, SongSort.DATE_ADDED, albumAdded = added).map { it.id },
+        )
+    }
 }

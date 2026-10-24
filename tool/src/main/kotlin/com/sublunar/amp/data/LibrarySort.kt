@@ -176,7 +176,13 @@ fun sortAlbums(
     return if (reversed) ordered.reversed() else ordered
 }
 
-fun sortSongs(tracks: List<Track>, sort: SongSort, reversed: Boolean = false): List<Track> {
+fun sortSongs(
+    tracks: List<Track>,
+    sort: SongSort,
+    reversed: Boolean = false,
+    /** Each album's date added, by album id, for [SongSort.DATE_ADDED]; a song whose album isn't here sorts as oldest. */
+    albumAdded: Map<String, Long> = emptyMap(),
+): List<Track> {
     val ordered = when (sort) {
         SongSort.TITLE -> tracks.sortedByKeyOnce { nameKey(it.title) }
         SongSort.ARTIST -> tracks
@@ -202,18 +208,19 @@ fun sortSongs(tracks: List<Track>, sort: SongSort, reversed: Boolean = false): L
             primary = { it.rating.toLong() },
             key = { nameKey(it.title) },
         )
-        // Songs carry no date added of their own: grouped by album title, then
-        // disc and track, for a stable order.
+        // Songs carry no date added of their own, so they go by their album's:
+        // newest album first, each album whole and in running order.
         SongSort.DATE_ADDED -> tracks
-            .map { nameKey(it.album) to it }
+            .map { Triple(it.albumId?.let(albumAdded::get) ?: Long.MIN_VALUE, nameKey(it.album), it) }
             .sortedWith(
-                compareBy(
-                    { it.first },
-                    { it.second.discNumber ?: 0 },
-                    { it.second.trackNumber ?: 0 },
-                ),
+                compareByDescending<Triple<Long, String, Track>> { it.first }
+                    .thenBy { it.second }
+                    // Two albums of one name and date stay apart.
+                    .thenBy { it.third.albumId }
+                    .thenBy { it.third.discNumber ?: 0 }
+                    .thenBy { it.third.trackNumber ?: 0 },
             )
-            .map { it.second }
+            .map { it.third }
     }
     return if (reversed) ordered.reversed() else ordered
 }
