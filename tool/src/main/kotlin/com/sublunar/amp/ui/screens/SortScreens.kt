@@ -8,6 +8,7 @@ import com.sublunar.amp.App
 import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.ArtistSort
 import com.sublunar.amp.data.PlaylistSort
+import com.sublunar.amp.data.Pref
 import com.sublunar.amp.data.SongSort
 import com.sublunar.amp.data.descendingByNature
 import com.sublunar.amp.ui.components.AppIcon
@@ -26,13 +27,6 @@ private val SONG_SORT_OPTIONS = SongSort.entries.toList()
 private val ARTIST_SORT_OPTIONS = ArtistSort.entries.toList()
 private val PLAYLIST_SORT_OPTIONS =
     listOf(PlaylistSort.NAME, PlaylistSort.DATE_CREATED, PlaylistSort.RECENTLY_UPDATED)
-
-/**
- * The page a sort menu belongs to, named under the menu's own "Sort by" heading as
- * Filter and View do, with its narrowing, so sorting a filtered list says so.
- */
-@Composable
-private fun sortedPage(tab: LibraryTab): String = tabTitle(tab, likedOnly(tab))
 
 /**
  * Narrow a list to one genre, or to one composer. The values are the library's own
@@ -83,201 +77,131 @@ class TagFilterScreen(
 }
 
 /**
- * Shared body for every "Sort by" menu. Picking a different option applies it and
- * closes. Tapping the selected one flips the direction (or deals a new shuffle for
- * Random) and closes too, and the label up top says so, since nothing else hints at
- * it. The arrow shows the direction in effect, Random has none.
+ * A tab's "Sort by" menu. Picking a different option applies it and closes.
+ * Tapping the selected one flips the direction (or deals a new shuffle for
+ * Random) and closes too, and the label up top says so, since nothing else hints
+ * at it. The arrow shows the direction in effect, Random has none.
  */
-@Composable
-private fun <T> SortOptions(
-    options: List<T>,
-    current: T,
-    reversed: Boolean,
-    label: (T) -> String,
-    naturallyDescending: (T) -> Boolean,
-    onSelect: (T) -> Unit,
-    onFlip: () -> Unit,
-    onBack: () -> Unit,
-    /** The page being sorted, named under the heading (see [sortedPage]). */
-    page: String?,
-    /** The option that shuffles rather than orders, where the menu has one. */
-    isRandom: (T) -> Boolean = { false },
-) {
-    ListScreen(onBack = onBack, title = "Sort by", subtitle = page) {
-        ScrollableList {
-            item {
-                SectionLabel(
-                    if (isRandom(current)) {
-                        "Tap Random again for a new shuffle"
-                    } else {
-                        "Tap the current sort again to reverse it"
-                    },
-                )
-            }
-            items(options) { option ->
-                val selected = option == current
-                TextRow(
-                    title = label(option),
-                    onClick = { if (selected) onFlip() else onSelect(option) },
-                    trailing = {
-                        if (selected && !isRandom(option)) {
-                            // `reversed` inverts the option's natural direction.
-                            val descending = naturallyDescending(option) != reversed
-                            AppIcon(
-                                if (descending) AppIcons.ArrowDownward else AppIcons.ArrowUpward,
-                                size = px(46),
-                            )
-                        }
-                    },
-                )
+class SortScreen(
+    sealed: SealedLightActivity,
+    private val tab: LibraryTab,
+) : AmpScreen<Unit>(sealed) {
+    @Composable
+    override fun Content() {
+        val settings = App.settings
+        when (tab) {
+            LibraryTab.ALBUMS -> SortMenu(
+                ALBUM_SORT_OPTIONS, settings.albumSort, settings.albumSortReversed, ::albumSortLabel,
+                naturallyDescending = { it.descendingByNature },
+                rating = AlbumSort.RATING,
+                random = AlbumSort.RANDOM,
+            )
+            LibraryTab.SONGS -> SortMenu(
+                SONG_SORT_OPTIONS, settings.songSort, settings.songSortReversed, ::songSortLabel,
+                naturallyDescending = { it.descendingByNature },
+                rating = SongSort.RATING,
+            )
+            LibraryTab.ARTISTS -> SortMenu(
+                ARTIST_SORT_OPTIONS, settings.artistSort, settings.artistSortReversed, ::artistSortLabel,
+                naturallyDescending = { it.descendingByNature },
+            )
+            LibraryTab.PLAYLISTS -> SortMenu(
+                PLAYLIST_SORT_OPTIONS, settings.playlistSort, settings.playlistSortReversed, ::playlistSortLabel,
+                naturallyDescending = { it.descendingByNature },
+            )
+        }
+    }
+
+    @Composable
+    private fun <T> SortMenu(
+        options: List<T>,
+        sort: Pref<T>,
+        reversed: Pref<Boolean>,
+        label: (T) -> String,
+        naturallyDescending: (T) -> Boolean,
+        /** The order by rating, where the menu has one (see below). */
+        rating: T? = null,
+        /** The option that shuffles rather than orders, where the menu has one. */
+        random: T? = null,
+    ) {
+        val current by sort.state.collectAsState()
+        val isReversed by reversed.state.collectAsState()
+        // No Rating where nothing can be rated (all zeros order nothing), except
+        // while it is the current sort, so a source switch can't hide the order
+        // in effect.
+        val supportsRatings = App.source.collectAsState().value.supportsRatings
+        val shown = options.filter { it != rating || supportsRatings || it == current }
+
+        // The page being sorted is named under the heading, as Filter and View do,
+        // with its narrowing, so sorting a filtered list says so.
+        ListScreen(onBack = { goBack() }, title = "Sort by", subtitle = tabTitle(tab, likedOnly(tab))) {
+            ScrollableList {
+                item {
+                    SectionLabel(
+                        if (current == random) {
+                            "Tap Random again for a new shuffle"
+                        } else {
+                            "Tap the current sort again to reverse it"
+                        },
+                    )
+                }
+                items(shown) { option ->
+                    val selected = option == current
+                    TextRow(
+                        title = label(option),
+                        onClick = {
+                            App.scope.launch {
+                                when {
+                                    !selected -> {
+                                        sort.set(option)
+                                        reversed.set(false)
+                                    }
+                                    // A shuffle has no direction: the second tap deals again.
+                                    option == random -> App.settings.bumpShuffleNonce()
+                                    else -> reversed.set(!isReversed)
+                                }
+                            }
+                            // A new order makes the old position meaningless: the
+                            // list opens at the top.
+                            ScrollAnchors.clear("tab:${tab.name.lowercase()}")
+                            goBack(Unit)
+                        },
+                        trailing = {
+                            if (selected && option != random) {
+                                // `reversed` inverts the option's natural direction.
+                                val descending = naturallyDescending(option) != isReversed
+                                AppIcon(
+                                    if (descending) AppIcons.ArrowDownward else AppIcons.ArrowUpward,
+                                    size = px(46),
+                                )
+                            }
+                        },
+                    )
+                }
             }
         }
     }
 }
 
-class AlbumsSortScreen(
-    sealed: SealedLightActivity,
-) : AmpScreen<Unit>(sealed) {
-    @Composable
-    override fun Content() {
-        val current by App.settings.albumSort.state.collectAsState()
-        val reversed by App.settings.albumSortReversed.state.collectAsState()
-        // No Rating where nothing can be rated (all zeros order nothing), except
-        // while it is the current sort, so a source switch can't hide the order
-        // in effect.
-        val supportsRatings = App.source.collectAsState().value.supportsRatings
-        SortOptions(
-            options = ALBUM_SORT_OPTIONS.filter {
-                it != AlbumSort.RATING || supportsRatings || it == current
-            },
-            current = current,
-            reversed = reversed,
-            label = ::albumSortLabel,
-            naturallyDescending = { it.descendingByNature },
-            isRandom = { it == AlbumSort.RANDOM },
-            onSelect = { option ->
-                App.scope.launch {
-                    App.settings.albumSort.set(option)
-                    App.settings.albumSortReversed.set(false)
-                }
-                // A new order makes the old position meaningless: the list opens
-                // at the top.
-                ScrollAnchors.clear("tab:albums")
-                goBack(Unit)
-            },
-            onFlip = {
-                App.scope.launch {
-                    if (current == AlbumSort.RANDOM) {
-                        // A shuffle has no direction: the second tap deals again.
-                        App.settings.bumpShuffleNonce()
-                    } else {
-                        App.settings.albumSortReversed.set(!reversed)
-                    }
-                }
-                ScrollAnchors.clear("tab:albums")
-                goBack(Unit)
-            },
-            onBack = { goBack() },
-            page = sortedPage(LibraryTab.ALBUMS),
-        )
-    }
+fun albumSortLabel(sort: AlbumSort): String = when (sort) {
+    AlbumSort.TITLE -> "Title"
+    // Labels name the key exactly: the album artist, and the full release date.
+    AlbumSort.ARTIST -> "Album Artist"
+    AlbumSort.YEAR -> "Date Released"
+    AlbumSort.DATE_ADDED -> "Recently Added"
+    AlbumSort.RECENTLY_PLAYED -> "Recently Played"
+    AlbumSort.MOST_PLAYED -> "Frequently Played"
+    AlbumSort.RATING -> "Rating"
+    AlbumSort.RANDOM -> "Random"
 }
 
-class SongsSortScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
-    @Composable
-    override fun Content() {
-        val current by App.settings.songSort.state.collectAsState()
-        val reversed by App.settings.songSortReversed.state.collectAsState()
-        // Same gate as the albums menu (see AlbumsSortScreen).
-        val supportsRatings = App.source.collectAsState().value.supportsRatings
-        SortOptions(
-            options = SONG_SORT_OPTIONS.filter {
-                it != SongSort.RATING || supportsRatings || it == current
-            },
-            current = current,
-            reversed = reversed,
-            label = ::songSortLabel,
-            naturallyDescending = { it.descendingByNature },
-            onSelect = { option ->
-                App.scope.launch {
-                    App.settings.songSort.set(option)
-                    App.settings.songSortReversed.set(false)
-                }
-                // A new order makes the old position meaningless.
-                ScrollAnchors.clear("tab:songs")
-                goBack(Unit)
-            },
-            onFlip = {
-                App.scope.launch { App.settings.songSortReversed.set(!reversed) }
-                ScrollAnchors.clear("tab:songs")
-                goBack(Unit)
-            },
-            onBack = { goBack() },
-            page = sortedPage(LibraryTab.SONGS),
-        )
-    }
-}
-
-class ArtistsSortScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
-    @Composable
-    override fun Content() {
-        val current by App.settings.artistSort.state.collectAsState()
-        val reversed by App.settings.artistSortReversed.state.collectAsState()
-        SortOptions(
-            options = ARTIST_SORT_OPTIONS,
-            current = current,
-            reversed = reversed,
-            label = ::artistSortLabel,
-            naturallyDescending = { it.descendingByNature },
-            onSelect = { option ->
-                App.scope.launch {
-                    App.settings.artistSort.set(option)
-                    App.settings.artistSortReversed.set(false)
-                }
-                // A new order makes the old position meaningless.
-                ScrollAnchors.clear("tab:artists")
-                goBack(Unit)
-            },
-            onFlip = {
-                App.scope.launch { App.settings.artistSortReversed.set(!reversed) }
-                ScrollAnchors.clear("tab:artists")
-                goBack(Unit)
-            },
-            onBack = { goBack() },
-            page = sortedPage(LibraryTab.ARTISTS),
-        )
-    }
-}
-
-class PlaylistsSortScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
-    @Composable
-    override fun Content() {
-        val current by App.settings.playlistSort.state.collectAsState()
-        val reversed by App.settings.playlistSortReversed.state.collectAsState()
-        SortOptions(
-            options = PLAYLIST_SORT_OPTIONS,
-            current = current,
-            reversed = reversed,
-            label = ::playlistSortLabel,
-            naturallyDescending = { it.descendingByNature },
-            onSelect = { option ->
-                App.scope.launch {
-                    App.settings.playlistSort.set(option)
-                    App.settings.playlistSortReversed.set(false)
-                }
-                // A new order makes the old position meaningless.
-                ScrollAnchors.clear("tab:playlists")
-                goBack(Unit)
-            },
-            onFlip = {
-                App.scope.launch { App.settings.playlistSortReversed.set(!reversed) }
-                ScrollAnchors.clear("tab:playlists")
-                goBack(Unit)
-            },
-            onBack = { goBack() },
-            page = sortedPage(LibraryTab.PLAYLISTS),
-        )
-    }
+fun songSortLabel(sort: SongSort): String = when (sort) {
+    SongSort.TITLE -> "Title"
+    SongSort.ARTIST -> "Artist"
+    SongSort.DATE_ADDED -> "Recently Added"
+    SongSort.RECENTLY_PLAYED -> "Recently Played"
+    SongSort.MOST_PLAYED -> "Frequently Played"
+    SongSort.RATING -> "Rating"
 }
 
 fun artistSortLabel(sort: ArtistSort): String = when (sort) {
@@ -290,4 +214,3 @@ fun playlistSortLabel(sort: PlaylistSort): String = when (sort) {
     PlaylistSort.DATE_CREATED -> "Date Created"
     PlaylistSort.RECENTLY_UPDATED -> "Recently Updated"
 }
-

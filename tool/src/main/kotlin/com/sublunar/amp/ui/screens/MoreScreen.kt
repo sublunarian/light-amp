@@ -195,7 +195,7 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
             // A shuffle has no direction for the arrow to claim.
             directionless = sort == AlbumSort.RANDOM,
         ) {
-            AlbumsSortScreen(it)
+            SortScreen(it, LibraryTab.ALBUMS)
         }
     }
 
@@ -203,7 +203,7 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
         val sort by App.settings.songSort.state.collectAsState()
         val reversed by App.settings.songSortReversed.state.collectAsState()
         sortable(songSortLabel(sort), sort.descendingByNature, reversed) {
-            SongsSortScreen(it)
+            SortScreen(it, LibraryTab.SONGS)
         }
     }
 
@@ -211,7 +211,7 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
         val sort by App.settings.artistSort.state.collectAsState()
         val reversed by App.settings.artistSortReversed.state.collectAsState()
         sortable(artistSortLabel(sort), sort.descendingByNature, reversed) {
-            ArtistsSortScreen(it)
+            SortScreen(it, LibraryTab.ARTISTS)
         }
     }
 
@@ -219,7 +219,7 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
         val sort by App.settings.playlistSort.state.collectAsState()
         val reversed by App.settings.playlistSortReversed.state.collectAsState()
         sortable(playlistSortLabel(sort), sort.descendingByNature, reversed) {
-            PlaylistsSortScreen(it)
+            SortScreen(it, LibraryTab.PLAYLISTS)
         }
     }
 
@@ -241,7 +241,7 @@ private fun sortable(
     directionless: Boolean = false,
     open: (SealedLightActivity) -> SimpleLightScreen<Unit>,
 ): PageSetting {
-    // `reversed` inverts the option's natural direction — as in SortOptions.
+    // `reversed` inverts the option's natural direction, as in SortScreen.
     val descending = naturallyDescending != reversed
     return PageSetting(
         value = label,
