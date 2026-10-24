@@ -140,17 +140,22 @@ object LyricsRepository {
     /** `[mm:ss.xx]` — one or more may prefix a single line. */
     private val LRC_STAMP = Regex("""\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?]""")
 
+    /** `[offset:+250]`: milliseconds to shift every line by, where positive shows the words sooner. */
+    private val LRC_OFFSET = Regex("""^\s*\[offset:\s*([+-]?\d+)\s*]""", RegexOption.IGNORE_CASE)
+
     /**
      * Parse LRC into timed lines, or null when it carries no usable timestamps.
      *
      * A line may hold several stamps (a repeated chorus), each its own entry.
-     * Metadata tags like `[ar:...]` don't match and fall away. Empty-text stamps
-     * (instrumental gaps) are dropped, so the previous line stays highlighted
-     * through the gap.
+     * Metadata tags like `[ar:...]` don't match and fall away; `[offset:]` is
+     * applied to every line. Empty-text stamps (instrumental gaps) are dropped,
+     * so the previous line stays highlighted through the gap.
      */
     fun parseLrc(raw: String): Lyrics? {
+        val lines = raw.split('\n')
+        val offset = lines.firstNotNullOfOrNull { LRC_OFFSET.find(it)?.groupValues?.get(1)?.toLongOrNull() } ?: 0L
         val parsed = mutableListOf<LyricLine>()
-        for (line in raw.split('\n')) {
+        for (line in lines) {
             val stamps = LRC_STAMP.findAll(line).toList()
             if (stamps.isEmpty()) continue
             val text = LRC_STAMP.replace(line, "").trim()
@@ -162,7 +167,8 @@ object LyricsRepository {
                 val fraction = stamp.groupValues[3]
                     .takeIf { it.isNotEmpty() }
                     ?.padEnd(3, '0')?.take(3)?.toLong() ?: 0L
-                parsed += LyricLine(minutes * 60_000 + seconds * 1000 + fraction, text)
+                val at = minutes * 60_000 + seconds * 1000 + fraction
+                parsed += LyricLine((at - offset).coerceAtLeast(0L), text)
             }
         }
         if (parsed.isEmpty()) return null

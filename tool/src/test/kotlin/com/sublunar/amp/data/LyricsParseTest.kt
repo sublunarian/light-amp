@@ -23,6 +23,17 @@ class LyricsParseTest {
     }
 
     @Test
+    fun `an offset tag shifts every line, positive meaning sooner`() {
+        val sooner = LyricsRepository.parseLrc("[offset:+500]\n[00:10.00]One\n[00:20.00]Two")!!
+        assertEquals(listOf(9_500L, 19_500L), sooner.lines.map { it.timeMs })
+        val later = LyricsRepository.parseLrc("[00:10.00]One\n[OFFSET: -250]")!!
+        assertEquals(listOf(10_250L), later.lines.map { it.timeMs })
+        // Never before the start of the song.
+        val early = LyricsRepository.parseLrc("[offset:3000]\n[00:01.00]One")!!
+        assertEquals(listOf(0L), early.lines.map { it.timeMs })
+    }
+
+    @Test
     fun `a line with several stamps becomes several lines`() {
         val parsed = LyricsRepository.parseLrc("[00:10.00][01:10.00]Chorus")!!
         assertEquals(listOf(10_000L, 70_000L), parsed.lines.map { it.timeMs })
