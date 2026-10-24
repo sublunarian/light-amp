@@ -6,7 +6,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import com.sublunar.amp.App
 import com.sublunar.amp.data.ArtworkMode
@@ -22,7 +22,9 @@ import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * A source's download quality as its settings row shows it: the choice, and
@@ -66,8 +68,11 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val sources by App.settings.sources.state.collectAsState()
         val dataMode by App.settings.dataMode.state.collectAsState()
         val downloadLimit by App.settings.downloadLimit.state.collectAsState()
-        // Off the disk, once per visit: what the phone actually holds.
-        val used = remember { App.downloads.usedBytesEverywhere() }
+        // Off the disk, once per visit: what the phone actually holds. A walk of
+        // every downloaded file, so off Main, and the row waits for it.
+        val used = produceState<Long?>(null) {
+            value = withContext(Dispatchers.IO) { App.downloads.usedBytesEverywhere() }
+        }.value
         val sourceNames = sources.joinToString(", ") { it.name }
         // Any server, not the active source: streaming and downloads still have
         // their pages while the phone's own music is the one playing.
@@ -101,10 +106,10 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     item {
                         TextRow(
                             title = "Offline",
-                            value = if (used == 0L) {
-                                "Nothing downloaded"
-                            } else {
-                                "${formatGb(used)} / ${formatGb(downloadLimit)}"
+                            value = when (used) {
+                                null -> null
+                                0L -> "Nothing downloaded"
+                                else -> "${formatGb(used)} / ${formatGb(downloadLimit)}"
                             },
                             onClick = { go { OfflineScreen(it) } },
                         )
@@ -284,11 +289,12 @@ class DataScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
  */
 class OfflineScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
-    // Off the disk rather than the index. Held on the screen, not in a
-    // remember: pushing the confirmation tears this page's composition down
-    // (see ARCHITECTURE.md, the SDK composes only the top of the back stack), so
-    // state written by the Delete callback would never be read.
-    private var used by mutableStateOf(App.downloads.usedBytesEverywhere())
+    // Off the disk rather than the index, and off Main; null until first
+    // measured. Held on the screen, not in a remember: pushing the confirmation
+    // tears this page's composition down (see ARCHITECTURE.md, the SDK composes
+    // only the top of the back stack), so state written by the Delete callback
+    // would never be read.
+    private var used by mutableStateOf<Long?>(null)
 
     @Composable
     override fun Content() {
@@ -297,7 +303,9 @@ class OfflineScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val downloadLimit by App.settings.downloadLimit.state.collectAsState()
         // Again each time the page comes back to the top: the pages this one
         // leads to are the ones that move the number.
-        LaunchedEffect(Unit) { used = App.downloads.usedBytesEverywhere() }
+        LaunchedEffect(Unit) {
+            used = withContext(Dispatchers.IO) { App.downloads.usedBytesEverywhere() }
+        }
 
         ListScreen(onBack = { goBack() }, title = "Offline") {
             ScrollableList {
@@ -305,7 +313,11 @@ class OfflineScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 item {
                     TextRow(
                         title = "Downloads",
-                        value = if (used == 0L) "Nothing downloaded yet" else formatBytes(used),
+                        value = when (val bytes = used) {
+                            null -> null
+                            0L -> "Nothing downloaded yet"
+                            else -> formatBytes(bytes)
+                        },
                         onClick = { go { DownloadsScreen(it) } },
                     )
                 }
