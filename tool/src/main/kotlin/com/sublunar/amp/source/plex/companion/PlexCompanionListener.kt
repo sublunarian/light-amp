@@ -1,10 +1,14 @@
 package com.sublunar.amp.source.plex.companion
 
 import com.sublunar.amp.data.NetworkGate
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,11 +26,8 @@ import kotlinx.coroutines.launch
  */
 class PlexCompanionListener(private val onTimeline: (String) -> Unit) {
 
-    private var server: ServerSocket? = null
+    private val server = AtomicReference<ServerSocket?>(null)
     private var job: Job? = null
-
-    /** The port a player should push to, or null when it couldn't be opened. */
-    private val port: Int? get() = server?.localPort
 
     /** This phone's address on the LAN, for the player to answer at. */
     fun localAddress(): String? = runCatching {
@@ -40,12 +41,12 @@ class PlexCompanionListener(private val onTimeline: (String) -> Unit) {
 
     /** Open the port and start accepting. Idempotent; returns the port. */
     fun start(scope: CoroutineScope): Int? {
-        if (server != null) return port
+        server.get()?.let { return it.localPort }
         // A listening socket binds every interface, the cellular one included,
         // so none is opened with the wall closed — see NetworkGate.
         if (!NetworkGate.isOpen()) return null
         val opened = runCatching { ServerSocket(0) }.getOrNull() ?: return null
-        server = opened
+        server.set(opened)
         job = scope.launch(Dispatchers.IO) {
             while (isActive && !opened.isClosed) {
                 val socket = runCatching { opened.accept() }.getOrNull() ?: break
@@ -53,6 +54,10 @@ class PlexCompanionListener(private val onTimeline: (String) -> Unit) {
                 if (NetworkGate.isOpen()) runCatching { serve(socket) }
                 runCatching { socket.close() }
             }
+            // Let go of a port nobody is answering on any more, so the next
+            // start opens a new one rather than handing this one out.
+            runCatching { opened.close() }
+            server.compareAndSet(opened, null)
         }
         return opened.localPort
     }
@@ -60,8 +65,7 @@ class PlexCompanionListener(private val onTimeline: (String) -> Unit) {
     fun stop() {
         job?.cancel()
         job = null
-        runCatching { server?.close() }
-        server = null
+        runCatching { server.getAndSet(null)?.close() }
     }
 
     /**
@@ -72,7 +76,7 @@ class PlexCompanionListener(private val onTimeline: (String) -> Unit) {
      */
     private fun serve(socket: Socket) {
         socket.soTimeout = READ_TIMEOUT_MS
-        val text = socket.getInputStream().readBytes().decodeToString()
+        val text = readHttpRequest(BufferedInputStream(socket.getInputStream()))
         // Answer first: a player that doesn't hear 200 promptly drops the subscription.
         socket.getOutputStream().apply {
             write(RESPONSE.toByteArray())
@@ -88,3 +92,36 @@ class PlexCompanionListener(private val onTimeline: (String) -> Unit) {
         const val RESPONSE = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     }
 }
+
+/**
+ * One HTTP request off [input]: the head up to the blank line that ends it,
+ * then as many bytes of body as its `Content-Length` says. Never to the end
+ * of the stream: a player keeps its side open for the answer, so that read
+ * would wait out the timeout and the push would go unanswered.
+ */
+internal fun readHttpRequest(input: InputStream): String {
+    val head = ByteArrayOutputStream()
+    var lastFour = 0
+    while (lastFour != HEAD_END && head.size() < MAX_HEAD_BYTES) {
+        val b = input.read()
+        if (b < 0) break
+        head.write(b)
+        lastFour = (lastFour shl 8) or b
+    }
+    val headText = head.toString(Charsets.UTF_8.name())
+    val length = CONTENT_LENGTH.find(headText)?.groupValues?.get(1)?.toIntOrNull()?.coerceAtMost(MAX_BODY_BYTES) ?: 0
+    val body = ByteArray(length)
+    var read = 0
+    while (read < length) {
+        val n = input.read(body, read, length - read)
+        if (n < 0) break
+        read += n
+    }
+    return headText + String(body, 0, read, Charsets.UTF_8)
+}
+
+/** `\r\n\r\n` as the last four bytes read. */
+private const val HEAD_END = 0x0D0A0D0A
+private const val MAX_HEAD_BYTES = 16 * 1024
+private const val MAX_BODY_BYTES = 256 * 1024
+private val CONTENT_LENGTH = Regex("""(?im)^content-length:\s*(\d+)""")

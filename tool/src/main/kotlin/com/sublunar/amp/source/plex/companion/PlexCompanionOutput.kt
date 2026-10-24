@@ -11,6 +11,7 @@ import com.sublunar.amp.playback.output.PREVIOUS_RESTARTS_AFTER_MS
 import com.sublunar.amp.playback.output.QueueEdit
 import com.sublunar.amp.playback.output.VolumeControl
 import com.sublunar.amp.source.plex.PlexClient
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.coroutineContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -63,8 +64,10 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     private var playQueue: PlexQueue? = null
     private var pushedIds: List<String> = emptyList()
 
-    /** Companion wants a fresh command id per request, per controller. */
-    private var commandId = 0
+    /** Companion wants a fresh command id per request, per controller; commands go out from several coroutines at once. */
+    private val commandIds = AtomicInteger()
+
+    private fun nextCommandId(): Int = commandIds.incrementAndGet()
 
     /**
      * How far into the queue the player has been given, or -1 when it holds
@@ -163,7 +166,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
                 return@launch
             }
             if (host.repeatMode.value == RepeatMode.TRACK) {
-                client.companionSetParameters(player, listOf("repeat" to "1"), ++commandId)
+                client.companionSetParameters(player, listOf("repeat" to "1"), nextCommandId())
             }
             subscribe(client, player)
             pollPlayer(client, player)
@@ -193,7 +196,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         // in PlexClient), and its own "stopped" push can't clean up: castEnded
         // returns once the controller has let go, as it has.
         endSubscription(client, player)
-        host.scope.launch { client?.companionCommand(player, "stop", ++commandId) }
+        host.scope.launch { client?.companionCommand(player, "stop", nextCommandId()) }
     }
 
     // Never asked of a source's own output, which goes with its source — see
@@ -201,7 +204,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     override fun stopPlayback() {
         val target = steered() ?: return
         playQueue = null
-        host.scope.launch { plexClient()?.companionCommand(target, "stop", ++commandId) }
+        host.scope.launch { plexClient()?.companionCommand(target, "stop", nextCommandId()) }
     }
 
     override fun play() = command("play")
@@ -211,7 +214,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     override fun seekTo(ms: Long) {
         val target = steered() ?: return
         host.showPosition(ms)
-        host.scope.launch { plexClient()?.companionSeek(target, ms, ++commandId) }
+        host.scope.launch { plexClient()?.companionSeek(target, ms, nextCommandId()) }
     }
 
     override fun next() = command("skipNext")
@@ -220,9 +223,9 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         val target = steered() ?: return
         host.scope.launch {
             if (host.positionMs.value > PREVIOUS_RESTARTS_AFTER_MS) {
-                plexClient()?.companionSeek(target, 0, ++commandId)
+                plexClient()?.companionSeek(target, 0, nextCommandId())
             } else {
-                plexClient()?.companionCommand(target, "skipPrevious", ++commandId)
+                plexClient()?.companionCommand(target, "skipPrevious", nextCommandId())
             }
         }
     }
@@ -230,7 +233,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     /** Send the steered player the Companion command [name]. */
     private fun command(name: String) {
         val target = steered() ?: return
-        host.scope.launch { plexClient()?.companionCommand(target, name, ++commandId) }
+        host.scope.launch { plexClient()?.companionCommand(target, name, nextCommandId()) }
     }
 
     override fun jumpTo(index: Int) {
@@ -240,7 +243,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         host.showPosition(0)
         host.scope.launch {
             if (pushedIds.contains(track.id)) {
-                plexClient()?.companionSkipTo(target, track.id, ++commandId)
+                plexClient()?.companionSkipTo(target, track.id, nextCommandId())
                 // A player may keep less of the queue than it was handed, and a
                 // skipTo outside its own window is accepted and silently ignored.
                 // So check where it went, and rebuild around the track if not
@@ -271,7 +274,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
             RepeatMode.QUEUE -> "2"
         }
         host.scope.launch {
-            plexClient()?.companionSetParameters(target, listOf("repeat" to plexRepeat), ++commandId)
+            plexClient()?.companionSetParameters(target, listOf("repeat" to plexRepeat), nextCommandId())
         }
     }
 
@@ -287,7 +290,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
             plexClient()?.companionSetParameters(
                 target,
                 listOf("volume" to asked.toString()),
-                ++commandId,
+                nextCommandId(),
             )
         }
     }
@@ -344,7 +347,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
                 }
                 continue
             }
-            val t = client.companionTimeline(target, ++commandId)
+            val t = client.companionTimeline(target, nextCommandId())
             if (t == null || t.state == "stopped") {
                 // Silent or stopped for a few polls: ended from the player's own
                 // side. The phone keeps its place, paused.
@@ -367,6 +370,8 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
      * back, or a mode read from the player would be set on it again, a loop.
      */
     private fun adoptTimeline(t: PlexPlayerTimeline) {
+        // A push or a poll answered after the cast was let go is no longer this output's to show.
+        if (steered() == null) return
         // Paused is the player's own say. Buffering is a start still going,
         // and playing is its end.
         if (t.state == "paused") host.showPaused() else host.showPlaying(t.state == "playing")
@@ -452,7 +457,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
             val updated = client.readPlayQueue(edited, WINDOW) ?: edited
             playQueue = updated
             pushedIds = host.queue.value.map { it.id }
-            client.companionRefreshQueue(target, updated, ++commandId)
+            client.companionRefreshQueue(target, updated, nextCommandId())
         }
     }
 
@@ -480,7 +485,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         playQueue = queue
         pushedIds = window.map { it.id }
         windowEnd = if (to >= tracks.size) -1 else to - 1
-        client.companionPlay(target, queue, tracks[index].id, positionMs, ++commandId, WINDOW)
+        client.companionPlay(target, queue, tracks[index].id, positionMs, nextCommandId(), WINDOW)
         log(
             "pushed ${window.size} of ${tracks.size} at idx=$index from ${positionMs}ms" +
                 if (windowEnd >= 0) ", window ends at $windowEnd" else "",
@@ -499,7 +504,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
             return
         }
         lastPush = System.currentTimeMillis()
-        subscribed = client.companionSubscribe(target, port, ++commandId)
+        subscribed = client.companionSubscribe(target, port, nextCommandId())
         log(
             if (subscribed) "subscribed; ${target.name} pushes to ${listener.localAddress()}:$port"
             else "subscribe declined — polling",
@@ -526,7 +531,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         playQueue = updated
         pushedIds = pushedIds + more.map { it.id }
         windowEnd = if (to >= tracks.size) -1 else to - 1
-        client.companionRefreshQueue(target, updated, ++commandId)
+        client.companionRefreshQueue(target, updated, nextCommandId())
         log("topped up ${more.size} more; window now ends at $windowEnd")
     }
 
@@ -545,7 +550,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         subscribed = false
         listener.stop()
         if (wasSubscribed && client != null && target != null) {
-            host.scope.launch { client.companionUnsubscribe(target, ++commandId) }
+            host.scope.launch { client.companionUnsubscribe(target, nextCommandId()) }
         }
     }
 
