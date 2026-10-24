@@ -1753,11 +1753,14 @@ class LibraryRepository(
 
     /** An album's tracks, from cache when present, otherwise fetched and cached. */
     suspend fun getAlbumTracks(albumId: String): List<Track> {
-        val cached = dao.tracksForAlbum(albumId).map { it.toTrack() }
+        // Both ends pinned, and the write dropped if the source changed meanwhile — see runSync.
+        val pinned = dao
+        val client = serverClient.value
+        val cached = pinned.tracksForAlbum(albumId).map { it.toTrack() }
         if (cached.isNotEmpty()) return narrowedToDownloads(cached).sortedWith(TRACK_ORDER)
-        val client = serverClient.value ?: return emptyList()
+        if (client == null) return emptyList()
         val fresh = client.getAlbumTracks(albumId)
-        dao.upsertTracks(fresh.map { it.toEntity() })
+        if (daos.value === pinned) pinned.upsertTracks(fresh.map { it.toEntity() })
         return narrowedToDownloads(fresh).sortedWith(TRACK_ORDER)
     }
 
@@ -1849,12 +1852,16 @@ class LibraryRepository(
 
     /** Ask the server, store what it says, answer with the library's own rows. */
     private suspend fun refreshTopSongs(name: String): List<Track> {
+        val pinned = daos.value ?: return emptyList()
         val client = serverClient.value ?: return emptyList()
         val answered = runCatching { client.getTopSongs(name) }.getOrDefault(emptyList())
         if (answered.isEmpty()) return emptyList()
+        // A switch meanwhile: the answer is the server left behind's, for neither
+        // the new database nor the memo forgetDerived has just emptied.
+        if (daos.value !== pinned) return emptyList()
         val now = System.currentTimeMillis()
         runCatching {
-            dao.replaceTopSongs(name, answered.mapIndexed { i, t -> TopSongEntity(name, i, t.id, now) })
+            pinned.replaceTopSongs(name, answered.mapIndexed { i, t -> TopSongEntity(name, i, t.id, now) })
         }
         val byId = tracks.value.associateBy { it.id }
         // Fresh from the server, a song the library doesn't hold is shown this
