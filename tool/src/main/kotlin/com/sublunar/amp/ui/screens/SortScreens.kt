@@ -192,10 +192,7 @@ class AlbumsSortScreen(
                 App.scope.launch {
                     if (current == AlbumSort.RANDOM) {
                         // A shuffle has no direction: the second tap deals again.
-                        // Reversed is cleared too, for a Random flipped before
-                        // it stopped taking a direction.
                         App.settings.bumpShuffleNonce()
-                        App.settings.setAlbumSortReversed(false)
                     } else {
                         App.settings.setAlbumSortReversed(!reversed)
                     }
