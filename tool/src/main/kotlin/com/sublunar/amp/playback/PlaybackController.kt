@@ -2289,19 +2289,13 @@ class PlaybackController(
     }
 
     fun removeFromQueue(index: Int) {
-        pickedIndex = -1 // indices are about to move under it
-        player ?: return
-        settleRestartCopy()
-        val q = _queue.value
-        if (index !in q.indices) return
-        val playingId = q.getOrNull(_index.value)?.id
-        val goneId = q[index].id
-        queuePlayer?.removeMediaItem(index)
-        val newQueue = q.toMutableList().apply { removeAt(index) }
-        _queue.value = newQueue
-        _index.value = indexAfterEdit(newQueue, playingId)
-        remote?.queueEdited(QueueEdit.Removed(listOf(goneId)))
-        rearmSoon()
+        editQueue { q ->
+            if (index !in q.indices) return@editQueue null
+            RowEdit(
+                queue = q.toMutableList().apply { removeAt(index) },
+                told = QueueEdit.Removed(listOf(q[index].id)),
+            ) { it.removeMediaItem(index) }
+        }
     }
 
     /**
@@ -2310,40 +2304,27 @@ class PlaybackController(
      * out here rather than read back from the player mid-edit.
      */
     fun removeFromQueue(ids: Set<String>) {
-        pickedIndex = -1 // indices are about to move under it
-        player ?: return
-        settleRestartCopy()
-        if (ids.isEmpty()) return
-        val q = _queue.value
-        val targets = q.indices.filter { q[it].id in ids }
-        if (targets.isEmpty()) return
-        val playingId = q.getOrNull(_index.value)?.id
-        queuePlayer?.let { held -> targets.sortedDescending().forEach { held.removeMediaItem(it) } }
-        val gone = targets.toSet()
-        val goneIds = targets.map { q[it].id }
-        val newQueue = q.filterIndexed { i, _ -> i !in gone }
-        _queue.value = newQueue
-        _index.value = indexAfterEdit(newQueue, playingId)
-        remote?.queueEdited(QueueEdit.Removed(goneIds))
-        rearmSoon()
+        editQueue { q ->
+            val targets = q.indices.filter { q[it].id in ids }
+            if (targets.isEmpty()) return@editQueue null
+            val gone = targets.toSet()
+            RowEdit(
+                queue = q.filterIndexed { i, _ -> i !in gone },
+                told = QueueEdit.Removed(targets.map { q[it].id }),
+            ) { held -> targets.sortedDescending().forEach { held.removeMediaItem(it) } }
+        }
     }
 
     private fun moveInQueue(from: Int, to: Int) {
-        pickedIndex = -1 // indices are about to move under it
-        player ?: return
-        settleRestartCopy()
-        val q = _queue.value
-        if (from !in q.indices || to !in q.indices || from == to) return
-        val playingId = q.getOrNull(_index.value)?.id
-        val movedId = q[from].id
-        queuePlayer?.moveMediaItem(from, to)
-        val newQueue = q.toMutableList().apply { add(to, removeAt(from)) }
-        _queue.value = newQueue
-        _index.value = indexAfterEdit(newQueue, playingId)
-        // An output is told what the track now follows: nothing at the front.
-        val afterId = newQueue.getOrNull(to - 1)?.id
-        remote?.queueEdited(QueueEdit.Moved(listOf(movedId), afterId))
-        rearmSoon()
+        editQueue { q ->
+            if (from !in q.indices || to !in q.indices || from == to) return@editQueue null
+            val newQueue = q.toMutableList().apply { add(to, removeAt(from)) }
+            // An output is told what the track now follows: nothing at the front.
+            RowEdit(
+                queue = newQueue,
+                told = QueueEdit.Moved(listOf(q[from].id), newQueue.getOrNull(to - 1)?.id),
+            ) { it.moveMediaItem(from, to) }
+        }
     }
 
     /**
@@ -2351,19 +2332,42 @@ class PlaybackController(
      * applied to the player one move at a time, as it has no batch move.
      */
     fun moveGroupInQueue(fromIndices: Set<Int>, insertAt: Int) {
+        editQueue { q ->
+            val (newQueue, landsAt) = movedAsBlock(q, fromIndices, insertAt) ?: return@editQueue null
+            // An output is told what the block's first track now follows:
+            // nothing at the front.
+            val movedIds = newQueue.subList(landsAt, landsAt + fromIndices.size).map { it.id }
+            RowEdit(
+                queue = newQueue,
+                told = QueueEdit.Moved(movedIds, newQueue.getOrNull(landsAt - 1)?.id),
+            ) { held -> stepwiseMoves(q, newQueue).forEach { (from, to) -> held.moveMediaItem(from, to) } }
+        }
+    }
+
+    /** Rows removed or moved: the new queue, what an output is told, and the same change made to the player. */
+    private class RowEdit(
+        val queue: List<Track>,
+        val told: QueueEdit,
+        val onPlayer: (LightAudioPlayer) -> Unit,
+    )
+
+    /**
+     * Remove or move rows. [edit] works out the change from the queue as it
+     * is, or null when there is nothing to do. The player is changed only
+     * while it holds the queue, and the playing track stays the one playing —
+     * see [indexAfterEdit].
+     */
+    private fun editQueue(edit: (List<Track>) -> RowEdit?) {
         pickedIndex = -1 // indices are about to move under it
         player ?: return
         settleRestartCopy()
         val q = _queue.value
-        val (newQueue, landsAt) = movedAsBlock(q, fromIndices, insertAt) ?: return
+        val change = edit(q) ?: return
         val playingId = q.getOrNull(_index.value)?.id
-        queuePlayer?.let { held -> stepwiseMoves(q, newQueue).forEach { (from, to) -> held.moveMediaItem(from, to) } }
-        _queue.value = newQueue
-        _index.value = indexAfterEdit(newQueue, playingId)
-        // An output is told what the block's first track now follows: nothing
-        // at the front.
-        val movedIds = newQueue.subList(landsAt, landsAt + fromIndices.size).map { it.id }
-        remote?.queueEdited(QueueEdit.Moved(movedIds, newQueue.getOrNull(landsAt - 1)?.id))
+        queuePlayer?.let(change.onPlayer)
+        _queue.value = change.queue
+        _index.value = indexAfterEdit(change.queue, playingId)
+        remote?.queueEdited(change.told)
         rearmSoon()
     }
 
