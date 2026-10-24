@@ -2289,8 +2289,8 @@ class PlaybackController(
     /**
      * Main only. The player follows a rearranged [queue] whose playing row is
      * now [row], without touching the playing item — see [followingEdit].
-     * Read before [_queue] is set: the window it holds is in the old queue's
-     * rows.
+     * Called before [_queue] is set: the window it holds is in the old queue's
+     * rows. The caller syncs the repeat once the queue is set.
      */
     private fun followInPlayer(p: LightAudioPlayer, queue: List<Track>, row: Int) {
         val heldAt = window.positionOf(_index.value) ?: return
@@ -2299,7 +2299,6 @@ class PlaybackController(
         val (followed, edits) = followingEdit(held, heldAt, queue, row)
         for (edit in edits) replaceInPlayer(p, edit.from, edit.to, queue.slice(edit.rows))
         window = followed
-        syncQueueRepeat(p)
     }
 
     // --- Editing the queue ---------------------------------------------------
@@ -2364,6 +2363,7 @@ class PlaybackController(
         queuePlayer?.let { followInPlayer(it, queue, row) }
         _queue.value = queue
         _index.value = row
+        queuePlayer?.let(::syncQueueRepeat)
     }
 
     fun removeFromQueue(index: Int) {
@@ -2448,6 +2448,7 @@ class PlaybackController(
         }
         _queue.value = change.queue
         _index.value = indexAfterEdit(change.queue, playingId)
+        queuePlayer?.let(::syncQueueRepeat)
         remote?.queueEdited(change.told)
         if (held != null && held.size == 0 && change.queue.isNotEmpty()) {
             // Every row the player held went, the playing one with them. It
@@ -2475,7 +2476,6 @@ class PlaybackController(
                 queuedSources = queuedSources.toMutableList().apply { removeAt(position) }
             }
         }
-        syncQueueRepeat(p)
     }
 
     /** Main only. Move the player's item at [from] to [to], with [queuedSources] kept in step. */
@@ -2570,7 +2570,7 @@ class PlaybackController(
     private val playerLoops: Boolean
         get() = _repeatMode.value == RepeatMode.QUEUE && window.isWhole(_queue.value.size)
 
-    /** Main only. The player's repeat-queue kept in step with whether its window is the whole queue. */
+    /** Main only, once [_queue] and [window] are set. The player's repeat-queue kept in step with whether its window is the whole queue. */
     private fun syncQueueRepeat(p: LightAudioPlayer) {
         if (_repeatMode.value != RepeatMode.QUEUE) return
         val wanted = RepeatMode.QUEUE.forPlayer()
