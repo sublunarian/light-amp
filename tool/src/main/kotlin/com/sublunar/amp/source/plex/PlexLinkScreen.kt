@@ -11,7 +11,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +58,26 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
     /** The line above the servers, which [pick] writes to as well as the code's wait. */
     private var status by mutableStateOf("Asking Plex for a code…")
 
+    // The link's progress lives on the screen rather than in the composition,
+    // which the SDK disposes while another page is on top: coming back from
+    // the manual page would otherwise ask for a new code and forget the
+    // account's servers.
+
+    /** The code being waited on, kept so a page composed again waits on the same one. */
+    private var pin: PlexPin? = null
+
+    /** The code on show, until it is claimed. */
+    private var code by mutableStateOf<String?>(null)
+
+    private var token by mutableStateOf<String?>(null)
+    private var servers by mutableStateOf<List<PlexResource>>(emptyList())
+
+    /**
+     * The way in without an account, offered until the code is claimed, and
+     * again if the account route leads nowhere (no servers, or none that answers).
+     */
+    private var offerManual by mutableStateOf(true)
+
     /** Set once this page has been popped, so an answer arriving late can't act on another. */
     private var gone = false
 
@@ -80,49 +99,7 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
 
     @Composable
     override fun Content() {
-        var code by remember { mutableStateOf<String?>(null) }
-        var servers by remember { mutableStateOf<List<PlexResource>>(emptyList()) }
-        var token by remember { mutableStateOf<String?>(null) }
-        // The way in without an account, offered until the code is claimed,
-        // and again if the account route leads nowhere (no servers, or none
-        // that answers).
-        var offerManual by remember { mutableStateOf(true) }
-
-        LaunchedEffect(Unit) {
-            val pin = PlexAccount.requestPin(clientId)
-            if (pin == null) {
-                status = "Couldn't reach plex.tv."
-                return@LaunchedEffect
-            }
-            code = pin.code
-            status = "Waiting for you to enter it…"
-            val linked = PlexAccount.awaitToken(pin, clientId)
-            if (linked == null) {
-                status = "The code expired. Go back and try again."
-                code = null
-                return@LaunchedEffect
-            }
-            token = linked
-            offerManual = false
-            // The code has done its job; from here the page only says what is happening.
-            code = null
-            status = "Finding your servers…"
-            val found = PlexAccount.resources(linked, clientId)
-            val only = found.singleOrNull()
-            if (only != null) {
-                // One server is no choice: go straight on to it, and list it
-                // only if it doesn't answer, to try again from.
-                status = "Connecting to ${only.name}…"
-                pick(only, linked) {
-                    servers = found
-                    offerManual = true
-                }
-            } else {
-                servers = found
-                status = if (found.isEmpty()) "No servers on that account." else "Choose a server"
-                if (found.isEmpty()) offerManual = true
-            }
-        }
+        LaunchedEffect(Unit) { link() }
 
         ListScreen(onBack = { goBack() }, title = "Link Plex") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
@@ -165,26 +142,75 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
     }
 
     /**
+     * Ask for a code, wait for it to be claimed, then find the account's
+     * servers. Run while the page is composed, and picked up where it was left
+     * when it is composed again: the same code is waited on, and a claimed one
+     * isn't asked for again.
+     */
+    private suspend fun link() {
+        if (token != null) return
+        val asked = pin ?: PlexAccount.requestPin(clientId)?.also { pin = it }
+        if (asked == null) {
+            status = "Couldn't reach plex.tv."
+            return
+        }
+        code = asked.code
+        status = "Waiting for you to enter it…"
+        val linked = PlexAccount.awaitToken(asked, clientId)
+        if (linked == null) {
+            status = "The code expired. Go back and try again."
+            code = null
+            pin = null
+            return
+        }
+        token = linked
+        offerManual = false
+        // The code has done its job; from here the page only says what is happening.
+        code = null
+        status = "Finding your servers…"
+        val found = PlexAccount.resources(linked, clientId)
+        val only = found.singleOrNull()
+        if (only != null) {
+            // One server is no choice: go straight on to it, and list it
+            // only if it doesn't answer, to try again from.
+            status = "Connecting to ${only.name}…"
+            pick(only, linked) {
+                servers = found
+                offerManual = true
+            }
+        } else {
+            servers = found
+            status = if (found.isEmpty()) "No servers on that account." else "Choose a server"
+            if (found.isEmpty()) offerManual = true
+        }
+    }
+
+    /**
      * Look at [server] and, if it answers, carry on to its libraries (picked
      * before its first sync, see finishAddingSource). One server at a time, and
      * nothing opened over this page meanwhile: the answer goes on from here.
-     * [onMissed] runs if it doesn't answer, after the status says so.
+     * [onMissed] runs if it doesn't answer, after the status says why.
      */
     private fun pick(server: PlexResource, accountToken: String, onMissed: () -> Unit) {
         if (looking) return
         looking = true
         status = "Looking at ${server.name}…"
         App.scope.launch {
-            val next = prepare(server, accountToken)
+            val outcome = prepare(server, accountToken)
             // Main, and only while this page is up: see JellyfinLinkScreen.signIn.
             withContext(Dispatchers.Main.immediate) {
                 if (gone) return@withContext
                 looking = false
-                if (next == null) {
-                    status = "Couldn't reach ${server.name}."
-                    onMissed()
-                } else {
-                    adoptServer(next) { gone }
+                when (outcome) {
+                    is SignInOutcome.Found -> adoptServer(outcome.server) { gone }
+                    is SignInOutcome.Settled -> {
+                        status = outcome.reason
+                        onMissed()
+                    }
+                    is SignInOutcome.Missed -> {
+                        status = outcome.reason
+                        onMissed()
+                    }
                 }
             }
         }
@@ -195,21 +221,23 @@ class PlexLinkScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seal
      * Settled now rather than at play time: only some of a server's addresses
      * work from here.
      */
-    private suspend fun prepare(server: PlexResource, accountToken: String): PendingServer? {
-        val uri = PlexAccount.reachable(server, accountToken, clientId) ?: return null
-        val found = inspectPlexServer(
+    private suspend fun prepare(server: PlexResource, accountToken: String): SignInOutcome {
+        val uri = PlexAccount.reachable(server, accountToken, clientId)
+            ?: return SignInOutcome.Missed("Couldn't reach ${server.name}.", answered = false)
+        val outcome = inspectPlexServer(
             name = server.name,
             uri = uri,
             token = server.accessToken ?: accountToken,
             clientIdentifier = clientId,
             // An account already knows the server's id; only the typed-in path asks for it.
             machineIdentifier = server.clientIdentifier,
-        ) as? SignInOutcome.Found ?: return null
-        val pending = found.server
+        )
+        if (outcome !is SignInOutcome.Found) return outcome
+        val pending = outcome.server
         // Keep the addresses that didn't win too: the LAN one that answers at
         // home is dead anywhere else (see MusicSource.connections).
-        return pending.copy(
-            source = pending.source.copy(connections = PlexAccount.candidates(server)),
+        return SignInOutcome.Found(
+            pending.copy(source = pending.source.copy(connections = PlexAccount.candidates(server))),
         )
     }
 }
