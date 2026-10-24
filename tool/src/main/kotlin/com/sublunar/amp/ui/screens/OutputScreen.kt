@@ -1,7 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import com.sublunar.amp.App
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.VolumeControl
@@ -37,6 +34,7 @@ import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.horizontalScrub
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
@@ -193,24 +191,11 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     .height(px(71))
                     // Not merely dimmed: a control that can't do anything
                     // shouldn't move under the thumb either.
-                    .pointerInput(enabled) {
-                        if (!enabled) return@pointerInput
-                        awaitEachGesture {
-                            val down = awaitFirstDown()
-                            fun ratioAt(x: Float) = (x / size.width).coerceIn(0f, 1f)
-                            var r = ratioAt(down.position.x)
-                            App.playback.setVolume(r)
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull() ?: break
-                                r = ratioAt(change.position.x)
-                                App.playback.setVolume(r)
-                                if (!change.pressed) break
-                                change.consume()
-                            }
-                            App.playback.setVolume(r)
-                        }
-                    },
+                    .horizontalScrub(
+                        enabled,
+                        onMove = { App.playback.setVolume(it) },
+                        onEnd = { App.playback.setVolume(it) },
+                    ),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 AppProgressBar(volume)

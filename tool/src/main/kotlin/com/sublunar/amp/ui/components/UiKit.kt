@@ -167,6 +167,40 @@ fun Modifier.rowClickable(
     )
 }
 
+/**
+ * A finger pressed and slid along the element, as a fraction of its width:
+ * [onMove] on the press and at every step while it is held, [onEnd] once with
+ * where it lifted. Nothing while not [enabled].
+ */
+@Composable
+fun Modifier.horizontalScrub(
+    enabled: Boolean = true,
+    onMove: (Float) -> Unit,
+    onEnd: (Float) -> Unit,
+): Modifier {
+    // Read through state rather than keyed on, so a value the callbacks use
+    // changing mid-scrub (the track's length arriving) doesn't end the gesture.
+    val move by rememberUpdatedState(onMove)
+    val end by rememberUpdatedState(onEnd)
+    return this.pointerInput(enabled) {
+        if (!enabled) return@pointerInput
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            fun ratioAt(x: Float) = (x / size.width).coerceIn(0f, 1f)
+            var ratio = ratioAt(down.position.x)
+            move(ratio)
+            while (true) {
+                val change = awaitPointerEvent().changes.firstOrNull() ?: break
+                ratio = ratioAt(change.position.x)
+                move(ratio)
+                if (!change.pressed) break
+                change.consume()
+            }
+            end(ratio)
+        }
+    }
+}
+
 /** Icon and button counterpart to [rowClickable]: the SDK's clickable plus a haptic tick. */
 @Composable
 fun Modifier.appClickable(onClick: () -> Unit): Modifier {

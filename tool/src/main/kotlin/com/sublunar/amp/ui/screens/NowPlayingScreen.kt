@@ -93,6 +93,7 @@ import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.dragReorderContainer
 import com.sublunar.amp.ui.components.dropTarget
 import com.sublunar.amp.ui.components.formatTime
+import com.sublunar.amp.ui.components.horizontalScrub
 import com.sublunar.amp.ui.components.rememberArtwork
 import com.sublunar.amp.ui.components.rememberDragReorderState
 import com.sublunar.amp.ui.components.rememberSelection
@@ -877,22 +878,13 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     .fillMaxSize()
                     .padding(horizontal = px(INSET_PX))
                     .alpha(alpha)
-                    .pointerInput(duration) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown()
-                            fun ratioAt(x: Float) = (x / size.width).coerceIn(0f, 1f)
-                            dragRatio = ratioAt(down.position.x)
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull() ?: break
-                                dragRatio = ratioAt(change.position.x)
-                                if (!change.pressed) break
-                                change.consume()
-                            }
-                            dragRatio?.let { r -> if (duration > 0) App.playback.seekTo((r * duration).toLong()) }
+                    .horizontalScrub(
+                        onMove = { dragRatio = it },
+                        onEnd = { r ->
+                            if (duration > 0) App.playback.seekTo((r * duration).toLong())
                             dragRatio = null
-                        }
-                    },
+                        },
+                    ),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 AppProgressBar(ratio)
