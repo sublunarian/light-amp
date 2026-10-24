@@ -68,7 +68,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * (the SDK's own service, which plays on with the screens gone), owns the
  * queue and every readout the screens show, and steers an [Output] instead
  * while the sound is elsewhere. Queue edits use the player's incremental ops,
- * so changing what plays next never interrupts the current track.
+ * so changing what plays next never interrupts the current track. What the
+ * server is told lives in [ServerReports], where each track plays from in
+ * [TrackSources], and the pure queue arithmetic in QueueMath.kt.
  *
  * Two rules hold throughout. The player's looper is Main and it throws on
  * any other thread, so every player call from a coroutine is made on Main,
