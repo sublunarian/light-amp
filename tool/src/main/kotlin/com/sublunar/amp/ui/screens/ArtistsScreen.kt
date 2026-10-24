@@ -54,7 +54,7 @@ class ArtistDetailScreen(
             rightIcon = if (hasPopular) AppIcons.Whatshot else null,
             rightLabel = "Popular",
             onRight = if (hasPopular) {
-                { go { ArtistTopSongsScreen(it, name) } }
+                { go { ArtistSongsScreen(it, name, popular = true) } }
             } else {
                 null
             },
@@ -155,27 +155,30 @@ class ArtistActionsScreen(
 }
 
 /**
- * An artist's top tracks in popularity order. Just those: shuffling here shouldn't
- * drop the whole discography into the queue.
+ * An artist's songs: every one in the library, or with [popular] the server's
+ * top tracks in popularity order. Just those: shuffling Popular shouldn't drop
+ * the whole discography into the queue.
  */
-class ArtistTopSongsScreen(
+class ArtistSongsScreen(
     sealed: SealedLightActivity,
     private val name: String,
+    private val popular: Boolean = false,
 ) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        var songs by remember(name) { mutableStateOf<List<Track>?>(null) }
-        LaunchedEffect(name) { songs = App.library.topSongsForArtist(name) }
+        // Fixed for the page, so the branch never flips between compositions.
+        val songs = if (popular) rememberPopular() else rememberAll()
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
-
-        val selection = rememberSelection("artist-top:$name")
+        // Anchor and selection owner both: the two lists never share either.
+        val owner = if (popular) "artist-top:$name" else "artist-songs:$name"
+        val selection = rememberSelection(owner)
 
         LibrarySubPage {
             if (selection.active) {
                 SelectionHeader(selection) {
                     openSelectionActions(selection.pick(songs.orEmpty()) { it.id }, selection)
                 }
-            } else {
+            } else if (popular) {
                 AppHeader(
                     onBack = { goBack() },
                     titleContent = {
@@ -197,25 +200,31 @@ class ArtistTopSongsScreen(
                     },
                     rightAction = libraryCornerAction(LibraryPage.ARTIST_POPULAR),
                 )
+            } else {
+                AppHeader(
+                    onBack = { goBack() },
+                    title = name,
+                    rightAction = libraryCornerAction(LibraryPage.ARTIST_SONGS, name),
+                    fitTitle = true,
+                )
             }
-            val list = songs
             when {
-                list == null -> EmptyState("Loading…")
-                list.isEmpty() -> EmptyState("No popular songs")
+                songs == null -> EmptyState("Loading…")
+                popular && songs.isEmpty() -> EmptyState("No popular songs")
                 else -> LibraryList(
-                    anchor = "artist-top:$name",
+                    anchor = owner,
                     headerCount = if (selection.active) 0 else 1,
                     scrollBar = false,
                 ) {
                     if (!selection.active) {
                         item {
                             PlayAllRow(AppIcons.Shuffle, "Shuffle") {
-                                App.playback.playQueue(shuffled(list), 0)
+                                App.playback.playQueue(shuffled(songs), 0)
                                 go { NowPlayingScreen(it) }
                             }
                         }
                     }
-                    itemsIndexed(list, key = { _, t -> t.id }) { index, track ->
+                    itemsIndexed(songs, key = { _, t -> t.id }) { index, track ->
                         TrackRow(
                             title = track.title,
                             subtitle = track.album,
@@ -226,7 +235,7 @@ class ArtistTopSongsScreen(
                                 if (selection.active) {
                                     selection.toggle(track.id)
                                 } else {
-                                    App.playback.playQueue(list, index)
+                                    App.playback.playQueue(songs, index)
                                     go { NowPlayingScreen(it) }
                                 }
                             },
@@ -239,66 +248,19 @@ class ArtistTopSongsScreen(
             }
         }
     }
-}
 
-/** All of an artist's songs. */
-class ArtistSongsScreen(
-    sealed: SealedLightActivity,
-    private val name: String,
-) : AmpScreen<Unit>(sealed) {
+    /** The server's top tracks, asked for once per visit: null until they come. */
     @Composable
-    override fun Content() {
+    private fun rememberPopular(): List<Track>? {
+        var songs by remember(name) { mutableStateOf<List<Track>?>(null) }
+        LaunchedEffect(name) { songs = App.library.topSongsForArtist(name) }
+        return songs
+    }
+
+    /** Every song of theirs in the library, following it as it syncs. */
+    @Composable
+    private fun rememberAll(): List<Track> {
         val tracks by App.library.tracks.collectAsState()
-        val songs = remember(tracks, name) { App.library.tracksForArtist(name) }
-        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
-
-        val selection = rememberSelection("artist-songs:$name")
-
-        LibrarySubPage {
-            if (selection.active) {
-                SelectionHeader(selection) {
-                    openSelectionActions(selection.pick(songs) { it.id }, selection)
-                }
-            } else {
-                AppHeader(
-                    onBack = { goBack() },
-                    title = name,
-                    rightAction = libraryCornerAction(LibraryPage.ARTIST_SONGS, name),
-                    fitTitle = true,
-                )
-            }
-            LibraryList(
-                anchor = "artist-songs:$name",
-                headerCount = if (selection.active) 0 else 1,
-                scrollBar = false,
-            ) {
-                if (!selection.active) {
-                    item {
-                        PlayAllRow(AppIcons.Shuffle, "Shuffle") {
-                            App.playback.playQueue(shuffled(songs), 0)
-                            go { NowPlayingScreen(it) }
-                        }
-                    }
-                }
-                itemsIndexed(songs, key = { _, t -> t.id }) { index, track ->
-                    TrackRow(
-                        title = track.title,
-                        subtitle = track.album,
-                        coverArtId = track.coverArtId,
-                        downloaded = track.id in downloadedIds,
-                        selected = if (selection.active) track.id in selection.selected else null,
-                        onClick = {
-                            if (selection.active) {
-                                selection.toggle(track.id)
-                            } else {
-                                App.playback.playQueue(songs, index)
-                                go { NowPlayingScreen(it) }
-                            }
-                        },
-                        onLongClick = { if (!selection.active) openTrackActions(track.id, selection) },
-                    )
-                }
-            }
-        }
+        return remember(tracks, name) { App.library.tracksForArtist(name) }
     }
 }
