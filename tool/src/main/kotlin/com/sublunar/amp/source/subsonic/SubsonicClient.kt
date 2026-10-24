@@ -36,7 +36,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import java.time.Instant
 import kotlin.random.Random
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
@@ -516,16 +515,8 @@ class SubsonicClient(
         // The record's own artist, from the same parent: AlbumID3's artist is
         // the album artist by definition, where a song's is whatever its file
         // carried, and a file without ALBUMARTIST would file every "feat."
-        // guest as an artist of their own. Joined with the separator the app
-        // splits on (see Track.albumArtistNames), so several names come apart
-        // again cleanly.
-        val albumArtist = body.album?.let { a ->
-            a.artists.mapNotNull { it.name?.trim()?.takeIf(String::isNotEmpty) }
-                .takeIf { it.isNotEmpty() }
-                ?.joinToString("; ")
-                ?: a.displayArtist?.takeIf { it.isNotBlank() }
-                ?: a.artist
-        }
+        // guest as an artist of their own.
+        val albumArtist = body.album?.recordArtist
         // The album's own cover for every track on it — see toTrack.
         return body.album?.song.orEmpty().map { it.toTrack(albumName, albumArtist, body.album?.coverArt) }
     }
@@ -640,13 +631,7 @@ class SubsonicClient(
             val synced = structured.firstOrNull { entry ->
                 entry.synced && entry.line.any { it.start != null }
             }
-            if (synced != null) {
-                val lines = synced.line
-                    .filter { !it.value.isNullOrBlank() && it.start != null }
-                    .map { LyricLine(timeMs = it.start, text = it.value.orEmpty().trim()) }
-                    .sortedBy { it.timeMs ?: 0L }
-                if (lines.isNotEmpty()) return Lyrics(lines, synced = true)
-            }
+            synced?.timedLines()?.takeIf { it.isNotEmpty() }?.let { return Lyrics(it, synced = true) }
 
             structured.firstOrNull { it.line.isNotEmpty() }?.let { plain ->
                 unsynced(plain.line.map { it.value })?.let { return it }
@@ -831,110 +816,6 @@ class SubsonicClient(
         return hidden
     }
 
-    // --- Mapping -------------------------------------------------------------
-
-    private fun AlbumDto.toAlbum(): Album = Album(
-        id = id,
-        title = albumTitle(name ?: title, version),
-        artist = artist ?: "Unknown Artist",
-        coverArtId = coverArt ?: id,
-        durationMs = (duration ?: 0).toLong() * 1000L,
-        songCount = songCount ?: 0,
-        year = year,
-        releaseDate = releaseDateKey(),
-        createdMs = parseInstantMs(created),
-        playCount = playCount ?: 0,
-        lastPlayedMs = parseInstantMs(played),
-        rating = userRating ?: 0,
-        genre = genre.orEmpty(),
-    )
-
-    /**
-     * The album's own name, with Navidrome's appended release comment removed.
-     *
-     * Navidrome sends the MusicBrainz disambiguation both as [AlbumDto.version]
-     * and glued onto the end of the name, so "Alive 2007" arrives as
-     * "Alive 2007 (printed in EU)". Only an exact match for the version string is
-     * stripped — a trailing parenthesis is not evidence by itself, or "Apostrophe
-     * (’)" and "Enter the Wu-Tang (36 Chambers)" would lose part of their real
-     * titles. No version, or a name that doesn't end with it, means no change.
-     */
-    private fun albumTitle(raw: String?, version: String?): String {
-        val name = raw?.trim().orEmpty().ifEmpty { return "Unknown Album" }
-        val comment = version?.trim().orEmpty()
-        if (comment.isEmpty()) return name
-        for (suffix in listOf(" ($comment)", " [$comment]", " $comment")) {
-            if (name.endsWith(suffix, ignoreCase = true)) {
-                return name.dropLast(suffix.length).trim().ifEmpty { name }
-            }
-        }
-        return name
-    }
-
-    /**
-     * Release date flattened to a sortable YYYYMMDD number, 0 when unknown.
-     * Prefers the *original* release date so a discography reads chronologically
-     * rather than by remaster date; missing month/day sort before the same year's
-     * dated releases.
-     */
-    private fun AlbumDto.releaseDateKey(): Long {
-        val date = originalReleaseDate?.takeIf { it.year != null }
-            ?: releaseDate?.takeIf { it.year != null }
-        val y = date?.year ?: year ?: return 0L
-        return y * 10_000L + (date?.month ?: 0) * 100L + (date?.day ?: 0)
-    }
-
-    private fun SongDto.toTrack(
-        albumName: String? = null,
-        albumArtistName: String? = null,
-        /**
-         * The parent album's cover id, where the caller has the album. Preferred
-         * over the song's own: Navidrome gives every file an `mf-` id of its own
-         * for the same sleeve, and keyed by those the cover cache held one copy
-         * per song.
-         */
-        albumCoverArt: String? = null,
-    ): Track {
-        val coverId = albumCoverArt ?: coverArt ?: albumId ?: id
-        return Track(
-            id = id,
-            title = title ?: "Unknown Title",
-            artist = artist ?: "Unknown Artist",
-            album = albumName ?: album ?: "Unknown Album",
-            // The album's answer first — see getAlbumTracks. The track's own
-            // artist is the last resort rather than the second, because it is
-            // the one value here that is known not to be an album artist.
-            albumArtist = albumArtistName
-                ?: displayAlbumArtist?.takeIf { it.isNotBlank() }
-                ?: albumArtist
-                ?: artist
-                ?: "Unknown Artist",
-            albumId = albumId,
-            coverArtId = coverId,
-            durationMs = (duration ?: 0).toLong() * 1000L,
-            trackNumber = track,
-            discNumber = discNumber,
-            year = year,
-            playCount = playCount ?: 0,
-            lastPlayedMs = parseInstantMs(played),
-            liked = starred != null,
-            rating = userRating ?: 0,
-            genre = genre.orEmpty(),
-            composer = displayComposer?.takeIf { it.isNotBlank() } ?: composer.orEmpty(),
-            // Track gain first; a file tagged only album-wise still normalises.
-            gainDb = replayGain?.trackGain ?: replayGain?.albumGain,
-        )
-    }
-
-    private fun PlaylistDto.toPlaylist(): Playlist = Playlist(
-        id = id,
-        name = name ?: "Playlist",
-        coverArtId = coverArt,
-        createdAt = parseInstantMs(created),
-        updatedAt = parseInstantMs(changed),
-        trackIds = emptyList(),
-    )
-
     companion object {
         /**
          * Default `c=` value, when a source has no [SubsonicConfig.clientName]
@@ -947,15 +828,6 @@ class SubsonicClient(
         private fun randomSalt(): String {
             val chars = "0123456789abcdef"
             return buildString { repeat(16) { append(chars[Random.nextInt(16)]) } }
-        }
-
-        private fun parseInstantMs(value: String?): Long {
-            if (value.isNullOrBlank()) return 0L
-            return try {
-                Instant.parse(value).toEpochMilli()
-            } catch (_: Exception) {
-                0L
-            }
         }
     }
 }
