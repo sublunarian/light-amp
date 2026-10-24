@@ -324,21 +324,31 @@ class PlexClient(
         }.getOrDefault(emptyList())
     }
 
-    /** Artist name to the section it lives in and its rating key. */
-    private val artistKeys = mutableMapOf<String, Pair<String, String>>()
+    /**
+     * Artist name to the section it lives in and its rating key. Kept only
+     * when every section was read: one that failed would leave its artists
+     * without Popular songs until the client is rebuilt.
+     */
+    private var artistKeys: Map<String, Pair<String, String>>? = null
     private val artistKeyLock = Mutex()
 
     private suspend fun artistLocation(name: String): Pair<String, String>? =
         artistKeyLock.withLock {
-            if (artistKeys.isEmpty()) {
-                val sections = runCatching { getMusicFolders() }.getOrDefault(emptyList())
-                for (section in sections) {
-                    runCatching { pagedSection(section.id, ARTIST_TYPE) }
-                        .getOrDefault(emptyList())
-                        .forEach { artistKeys.putIfAbsent(it.title, section.id to it.ratingKey) }
-                }
+            artistKeys?.let { return@withLock it[name] }
+            val keys = mutableMapOf<String, Pair<String, String>>()
+            var whole = true
+            val sections = runCatching { getMusicFolders() }.getOrElse {
+                whole = false
+                emptyList()
             }
-            artistKeys[name]
+            for (section in sections) {
+                runCatching { pagedSection(section.id, ARTIST_TYPE) }
+                    .onFailure { whole = false }
+                    .getOrDefault(emptyList())
+                    .forEach { keys.putIfAbsent(it.title, section.id to it.ratingKey) }
+            }
+            if (whole) artistKeys = keys
+            keys[name]
         }
 
     override suspend fun getAlbumTracks(albumId: String): List<Track> =
