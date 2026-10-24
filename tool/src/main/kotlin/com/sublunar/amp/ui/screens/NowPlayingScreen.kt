@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,7 +55,6 @@ import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.data.ArtworkMode
-import com.sublunar.amp.data.Connectivity
 import com.sublunar.amp.data.LastSection
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.LyricsRepository
@@ -214,18 +214,19 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     private fun LyricsOverlay(current: Track, modifier: Modifier) {
         val karaoke by App.settings.karaokeLyrics.state.collectAsState()
-        val position by App.playback.positionMs.collectAsState()
+        // Read only inside the derivedStateOf below: a position tick then
+        // recomposes nothing unless the active line changes.
+        val position = App.playback.positionMs.collectAsState()
         var outcome by remember(current.id) { mutableStateOf<LyricsRepository.Outcome?>(null) }
         var loading by remember(current.id) { mutableStateOf(true) }
         // Looking lyrics up is two network calls (the server, then lrclib.net)
         // for something nobody asked to download, so Wi-Fi Only doesn't. Words
         // downloaded with the song are read either way: the decision is passed
         // down, so the free copy is never withheld along with the paid one.
-        // The rule is App.metadataAllowed's. Collecting what it depends on
-        // re-reads it when the link or the mode changes.
-        val dataMode by App.settings.dataMode.state.collectAsState()
-        val unmetered by Connectivity.unmetered.collectAsState(initial = false)
-        LaunchedEffect(current.id, dataMode, unmetered) {
+        // The rule is App.metadataAllowed's. Keyed on it and on the server
+        // answering, so a lookup that reached nothing is tried again once it can.
+        val rules by App.rules.collectAsState()
+        LaunchedEffect(current.id, rules.mayTalkToServer, rules.serverReachable) {
             loading = true
             outcome = LyricsRepository.forTrack(
                 current,
@@ -238,7 +239,9 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val lyrics = (outcome as? LyricsRepository.Outcome.Found)?.lyrics
         val lines = lyrics?.lines ?: emptyList()
         val synced = (lyrics?.synced == true) && karaoke
-        val activeIndex = if (synced) indexForTime(lines, position) else -1
+        val activeIndex by remember(lines, synced) {
+            derivedStateOf { if (synced) indexForTime(lines, position.value) else -1 }
+        }
 
         Box(modifier = modifier.fillMaxWidth()) {
             when {
