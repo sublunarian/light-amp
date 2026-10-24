@@ -34,8 +34,8 @@ class AddToPlaylistScreen(
     @Composable
     override fun Content() {
         // Not the read-only ones: Plex refuses to add to a smart playlist.
-        val playlists = App.library.allPlaylists.collectAsState().value.filterNot { it.readOnly }
-        LaunchedEffect(Unit) { App.library.refreshPlaylists() }
+        val playlists = App.playlists.allPlaylists.collectAsState().value.filterNot { it.readOnly }
+        LaunchedEffect(Unit) { App.playlists.refreshPlaylists() }
 
         ListScreen(onBack = { goBack() }, title = "Add to Playlist") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
@@ -56,7 +56,7 @@ class AddToPlaylistScreen(
                 App.scope.launch {
                     // The songs are part of the create, not a second pass: a failed
                     // create can't half-succeed, and Plex makes playlists no other way.
-                    App.library.createPlaylist(name, trackIds)
+                    App.playlists.createPlaylist(name, trackIds)
                 }
                 goBack(Unit)
             },
@@ -66,7 +66,7 @@ class AddToPlaylistScreen(
     private fun addTo(playlistId: String) {
         App.scope.launch {
             addSequentially(playlistId)
-            App.library.refreshPlaylists()
+            App.playlists.refreshPlaylists()
         }
         // Unit rather than the default null tells a caller "added" from "backed out".
         goBack(Unit)
@@ -78,6 +78,6 @@ class AddToPlaylistScreen(
      * out of order behind the gap.
      */
     private suspend fun addSequentially(playlistId: String) {
-        for (id in trackIds) if (App.library.addToPlaylist(playlistId, id) != WriteResult.Saved) break
+        for (id in trackIds) if (App.playlists.addToPlaylist(playlistId, id) != WriteResult.Saved) break
     }
 }

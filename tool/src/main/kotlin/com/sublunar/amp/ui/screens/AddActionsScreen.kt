@@ -83,7 +83,7 @@ class AddActionsScreen(
                             },
                             resultCallback = { name ->
                                 if (!name.isNullOrBlank()) {
-                                    App.scope.launch { App.library.createPlaylist(name, ids) }
+                                    App.scope.launch { App.playlists.createPlaylist(name, ids) }
                                     goBack()
                                 }
                             },

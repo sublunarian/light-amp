@@ -57,7 +57,7 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
         val sources by App.settings.sources.state.collectAsState()
         val active by App.settings.activeSource.state.collectAsState()
         val activeLibrary by App.settings.libraryId.state.collectAsState()
-        val sync by App.library.syncState.collectAsState()
+        val sync by App.librarySync.syncState.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Sources") {
             ScrollableList(modifier = Modifier.fillMaxSize()) {
@@ -74,7 +74,7 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
                                 else -> "Sync Now"
                             },
                             subtitle = "${current.name} · ${syncStatus(current, sync)}",
-                            onClick = { if (!sync.syncing) App.library.scanAndSyncInBackground() },
+                            onClick = { if (!sync.syncing) App.librarySync.scanAndSyncInBackground() },
                         )
                     }
                 }
@@ -104,7 +104,7 @@ class SourcesScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(seale
         sync.error != null -> sync.error
         // Worth saying every time: new files on the server won't appear until
         // the server itself is set to look for them.
-        App.library.scanRefused -> "won't scan on request — last synced ${relativeTime(sync.lastSyncedMs)}"
+        App.librarySync.scanRefused -> "won't scan on request — last synced ${relativeTime(sync.lastSyncedMs)}"
         sync.lastSyncedMs > 0L && source.phoneLibrary != null -> "last scanned ${relativeTime(sync.lastSyncedMs)}"
         sync.lastSyncedMs > 0L -> "last synced ${relativeTime(sync.lastSyncedMs)}"
         source.phoneLibrary != null -> "rescan this phone's music"
@@ -228,7 +228,7 @@ class LibraryVisibilityScreen(
             // A library shown again may never have been fetched (hidden while
             // the server was being added), so it is fetched now.
             if (visible && App.source.value.id == sourceId) {
-                withContext(Dispatchers.Main) { App.library.syncInBackground(force = true) }
+                withContext(Dispatchers.Main) { App.librarySync.syncInBackground(force = true) }
             }
         }
     }
@@ -405,7 +405,7 @@ class SourceDetailScreen(
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
-        val sync by App.library.syncState.collectAsState()
+        val sync by App.librarySync.syncState.collectAsState()
 
         // Re-checked on every sync, since granting access is what the user goes
         // off to do. Keyed on the source too: the list starts empty, and an

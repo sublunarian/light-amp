@@ -5,62 +5,36 @@ import com.sublunar.amp.data.db.DownloadFile
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.LikedArtistEntity
 import com.sublunar.amp.data.db.MAX_BOUND_IDS
-import com.sublunar.amp.data.db.PlaylistTrackEntity
 import com.sublunar.amp.data.db.TopSongEntity
-import com.sublunar.amp.data.db.TrackEntity
 import com.sublunar.amp.data.db.toAlbum
 import com.sublunar.amp.data.db.toEntity
 import com.sublunar.amp.data.db.toTrack
-import com.sublunar.amp.source.PhoneLibrary
-import com.sublunar.amp.source.PhonePlaylists
-import com.sublunar.amp.source.PhoneAccess
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.SharingCommand
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.serialization.json.Json
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.SharingCommand
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
-
-data class SyncState(
-    val syncing: Boolean = false,
-    val phase: String = "",
-    val error: String? = null,
-    val lastSyncedMs: Long = 0L,
-)
 
 data class SearchResults(
     val artists: List<Artist> = emptyList(),
@@ -71,26 +45,10 @@ data class SearchResults(
 }
 
 /**
- * A playlist's songs: [all] of them in order, and which are [shown].
- *
- * A song is shown when the chosen library holds it and, offline, when it can
- * play. [tracks] is what a page lists and plays. Edits address [all]:
- * [LibraryRepository.removeFromPlaylistAt] takes an index into the *server's*
- * list, and [LibraryRepository.reorderPlaylist] takes an order that has to name
- * every song or the ones left out are the ones lost.
- *
- * [complete] is whether [all] is the server's own list rather than a rebuild
- * from cached membership the library no longer has every song for. A caller
- * that edits must check it first.
- */
-data class PlaylistView(val all: List<Track>, val complete: Boolean, val shown: List<Boolean> = all.map { true }) {
-    val tracks: List<Track> = all.filterIndexed { i, _ -> shown[i] }
-}
-
-/**
- * The library: reads come from the active source's Room cache (instant on
- * launch) and are kept fresh by [sync], which pulls the server catalogue
- * incrementally — only albums that are new or changed have their songs re-fetched.
+ * The library as the screens read it: lists observed from the active source's
+ * Room cache (instant on launch, kept fresh by [LibrarySync]), reads of albums,
+ * artists and radio, likes and ratings, and search. Playlists are
+ * [LibraryPlaylists]'.
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class LibraryRepository(
@@ -101,18 +59,12 @@ class LibraryRepository(
      */
     private val daos: StateFlow<LibraryDao?>,
     private val serverClient: StateFlow<MusicServer?>,
-    // The persisted selection as a raw flow, not a StateFlow: [sync] must read
-    // the stored value, and a stateIn's initial null would race the DataStore
-    // load at boot and sync the wrong (unscoped) library.
+    /** The persisted library choice, read as stored — see LibrarySync's. */
     private val libraryId: Flow<String?>,
     /** True when only downloaded media should be visible (offline / Wi-Fi only). */
     offlineOnly: Flow<Boolean>,
     /** Whether the server may be spoken to at all — see App.metadataAllowed. */
     private val metadataAllowed: () -> Boolean,
-    /** Whether bulk background fetching is worth the link now: false on a metered link outside Make it Hurt. */
-    private val bulkAllowed: () -> Boolean,
-    /** Suspends while the player starts a stream, so background work steps aside — see App.yieldToPlayback. */
-    private val yieldToPlayback: suspend () -> Unit,
     /** Where likes and ratings go when the server can't be told about them. */
     private val pending: PendingActions,
     /** Puts a line in front of the user — a write the server refused, after its screen has gone. See App.tell. */
@@ -120,13 +72,9 @@ class LibraryRepository(
     /** For the handful of things cached in preferences rather than in a table. */
     private val settings: AppSettings,
     private val scope: CoroutineScope,
-    /** The source being browsed — App.source, which changes over last on a switch. */
-    private val browsed: () -> MusicSource,
-    /** The pooled client for a source record — App.clientFor. See [repoint]. */
-    private val clientFor: (MusicSource) -> MusicServer?,
+    /** What the sync has written, and to which database — see [observing]. */
+    private val sync: LibrarySync,
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
-
     /** The database in use right now, for the imperative half of this class. */
     private val dao: LibraryDao get() = daos.value ?: error("Library database not ready")
 
@@ -139,15 +87,16 @@ class LibraryRepository(
      * download top-up, a cover fetch) sends one server's ids to another. The cost
      * is a blink of empty lists on a source switch, which is the truth.
      *
-     * Each list is also read afresh whenever [rereads] moves — see [reread] —
-     * without blanking: same source, so an empty list would only flicker.
+     * Each list is also read afresh whenever [rereads] moves — see
+     * LibrarySync.reread — without blanking: same source, so an empty list would
+     * only flicker.
      *
      * A [paced] list is read at most once every [SYNC_REREAD_MS] while its own
      * source syncs — see [pacedWhileSyncing].
      */
     private fun <T> observing(
         empty: T,
-        rereads: StateFlow<Int> = reread,
+        rereads: StateFlow<Int> = sync.reread,
         paced: Boolean = false,
         select: (LibraryDao) -> Flow<T>,
     ): Flow<T> =
@@ -158,22 +107,6 @@ class LibraryRepository(
                 }.onStart { emit(empty) }
             } ?: emptyFlow()
         }
-
-    /**
-     * Moved once a sync has finished writing, so every list reads its table again
-     * rather than trusting Room to have noticed the writes: Room 2.7.0 (the
-     * version Light's store builder pins) can leave an observed query showing what
-     * it read before a write landed — a first sync's albums stayed invisible.
-     *
-     * The tracks have [rereadTracks], moved only by a sync that wrote songs: every
-     * sync rewrites album rows, and re-reading the whole library after one that
-     * changed no song is a second copy of it for nothing.
-     */
-    private val reread = MutableStateFlow(0)
-    private val rereadTracks = MutableStateFlow(0)
-
-    /** The database a sync is writing to right now, if one is — see [pacedWhileSyncing]. */
-    private val syncingDao = MutableStateFlow<LibraryDao?>(null)
 
     /** Moved by every like and rating made here — see [pacedWhileSyncing]. */
     private val localWrites = MutableStateFlow(0)
@@ -202,9 +135,9 @@ class LibraryRepository(
         var writes = localWrites.value
         collect { rows ->
             emit(rows)
-            if (syncingDao.value === dao) {
+            if (sync.syncingDao.value === dao) {
                 withTimeoutOrNull(SYNC_REREAD_MS) {
-                    combine(syncingDao, localWrites) { syncing, n -> syncing !== dao || n != writes }.first { it }
+                    combine(sync.syncingDao, localWrites) { syncing, n -> syncing !== dao || n != writes }.first { it }
                 }
                 if (superseded()) awaitCancellation()
             }
@@ -237,7 +170,7 @@ class LibraryRepository(
         downloadFiles.map { rows -> rows.mapTo(HashSet()) { it.trackId } }
             .stateIn(scope, SharingStarted.Eagerly, emptySet())
 
-    private val offline: StateFlow<Boolean> =
+    internal val offline: StateFlow<Boolean> =
         offlineOnly.stateIn(scope, SharingStarted.Eagerly, false)
 
     init {
@@ -253,9 +186,6 @@ class LibraryRepository(
                     android.util.Log.w("AmpSync", "dropping $orphans orphaned track(s) on open")
                     runCatching { d.deleteOrphanedTracks() }.noteOom("orphan sweep")
                 }
-                // Playlist membership comes back with its database; forgetDerived
-                // has emptied the map by now on a switch.
-                seedPlaylistTrackIds(d)
             }
         }
     }
@@ -263,7 +193,7 @@ class LibraryRepository(
     /**
      * The last whole read of the tracks table, and the database it came from:
      * what the next read of the same database reuses unchanged songs from. Only
-     * ever the browsed database's — [trackRows] drops it when the lists change
+     * ever the browsed database's — [cachedTracks] drops it when the lists change
      * over, so the source left behind isn't kept alive for its objects.
      */
     @Volatile private var lastTracksRead: Pair<LibraryDao, TrackGeneration>? = null
@@ -278,14 +208,15 @@ class LibraryRepository(
 
     /**
      * Every cached track, whichever library it belongs to: the one read of the
-     * table, which [allTracks] narrows by a filter rather than a second scan.
+     * table, which [fullTracks] narrows by a filter rather than a second scan. A
+     * playlist can list songs beyond the chosen library.
      *
      * Room says when to read: it re-counts the table after every write and hands
      * each count on, changed or not, so a count arriving is the signal and its
      * value only sizes the read. [readTracks] keeps the songs that didn't change.
      */
-    private val trackRows: StateFlow<List<Track>> =
-        observing(emptyList(), rereadTracks, paced = true) { dao ->
+    val cachedTracks: StateFlow<List<Track>> =
+        observing(emptyList(), sync.rereadTracks, paced = true) { dao ->
             if (lastTracksRead?.first !== dao) lastTracksRead = null
             dao.observeTrackCount().map { count -> readTracks(dao, count) }
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -303,7 +234,7 @@ class LibraryRepository(
     }
 
     /** Which of the server's libraries is chosen, or null for all of them. */
-    private val selectedLibrary: StateFlow<String?> =
+    internal val selectedLibrary: StateFlow<String?> =
         libraryId.stateIn(scope, SharingStarted.Eagerly, null)
 
     /**
@@ -311,14 +242,14 @@ class LibraryRepository(
      * search, the tabs, playlists — and not fetched by a sync. Their rows stay
      * cached, so showing one again is instant. See MusicSource.hiddenLibraryIds.
      */
-    private val hiddenLibraries: StateFlow<Set<String>> =
+    internal val hiddenLibraries: StateFlow<Set<String>> =
         settings.activeSource
             .map { it?.hiddenLibraries.orEmpty() }
             .distinctUntilChanged()
             .stateIn(scope, SharingStarted.Eagerly, emptySet())
 
     /** The album table as stored, library tags and all. */
-    private val albumRows: StateFlow<List<AlbumEntity>> =
+    internal val albumRows: StateFlow<List<AlbumEntity>> =
         observing(emptyList(), paced = true) { it.observeAlbums() }
             .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
@@ -344,26 +275,23 @@ class LibraryRepository(
     /**
      * And its songs: a track belongs to whichever library its album does, so one
      * column is kept in step, not two. A track with no album at all is kept.
+     *
+     * Ignores the offline narrowing. The download top-up's trigger keys on this,
+     * never on [tracks], which offline narrows to what is downloaded and so moves
+     * on the wrong changes — see App.boot.
      */
-    private val allTracks: StateFlow<List<Track>> =
-        combine(trackRows, allAlbums) { rows, albums ->
+    val fullTracks: StateFlow<List<Track>> =
+        combine(cachedTracks, allAlbums) { rows, albums ->
             val visible = albums.mapTo(HashSet()) { it.id }
             rows.filter { it.albumId == null || it.albumId in visible }
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
-
-    /**
-     * The chosen library's songs, ignoring the offline narrowing. The download
-     * top-up's trigger keys on this, never on [tracks], which offline narrows to
-     * what is downloaded and so moves on the wrong changes — see App.boot.
-     */
-    val fullTracks: StateFlow<List<Track>> get() = allTracks
 
     /**
      * The library as the UI should see it: offline, narrowed to what's playable,
      * so browsing, search and queue-building all follow without each screen checking.
      */
     val tracks: StateFlow<List<Track>> =
-        combine(allTracks, downloadedTrackIds, offline) { list, downloaded, offlineOnlyNow ->
+        combine(fullTracks, downloadedTrackIds, offline) { list, downloaded, offlineOnlyNow ->
             if (offlineOnlyNow) list.filter { it.id in downloaded } else list
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
@@ -395,7 +323,7 @@ class LibraryRepository(
      * costs the number of downloads, not the size of the library.
      */
     val downloadedAlbumIds: StateFlow<Set<String>> =
-        combine(allTracks, downloadFiles) { list, rows ->
+        combine(fullTracks, downloadFiles) { list, rows ->
             if (rows.isEmpty()) {
                 albumSizes = null
                 return@combine emptySet()
@@ -424,7 +352,7 @@ class LibraryRepository(
      * download badge, the same way [downloadedAlbumIds] drives the album one.
      */
     val downloadedArtistNames: StateFlow<Set<String>> =
-        combine(allTracks, downloadFiles) { list, rows ->
+        combine(fullTracks, downloadFiles) { list, rows ->
             if (rows.isEmpty()) {
                 artistSizes = null
                 trackIndex = null
@@ -566,1211 +494,12 @@ class LibraryRepository(
         albums.map { list -> list.filter { it.liked } }
             .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    private val _syncState = MutableStateFlow(SyncState())
-    val syncState: StateFlow<SyncState> = _syncState
-
-    // Serializes syncs and library switches so they never write the cache
-    // concurrently; the job lets a switch cancel the sync in flight.
-    private val syncMutex = Mutex()
-    private var syncJob: Job? = null
-
-    // Serializes playlist writes, first come first written: servers
-    // read-then-write whole playlists with no compare-and-swap.
-    private val playlistMutex = Mutex()
-
-    /**
-     * Wait out the playlist writes already queued — before a playlist is read
-     * from the server. Edits show before they are written, and a Plex reorder is
-     * seconds of single moves, so a read that doesn't wait can return the order
-     * from before the edit, or half-moved. The lock is fair, so taking it once
-     * waits for everyone ahead; it isn't held for the (slow) read itself.
-     */
-    private suspend fun awaitPlaylistWrites() = playlistMutex.withLock { }
-
     // Artist name -> server artist id, resolved once and reused for liking.
     private var artistIds: Map<String, String>? = null
 
     // Artist name -> popular songs, so revisiting an artist page doesn't ask the
     // server again, and the order stays stable within a session.
     private val topSongs = ConcurrentHashMap<String, List<Track>>()
-
-    /**
-     * Which songs each playlist holds, for the playlists primed so far — see
-     * [primePlaylistTrackIds]. No server sends membership with its playlist list,
-     * so [Playlist.trackIds] is empty for every server playlist.
-     */
-    private val membership = MutableStateFlow<Map<String, List<String>>>(emptyMap())
-
-    /**
-     * Write membership to [membership] and through to the source's database.
-     *
-     * The map is the live answer, read by every guard the instant it is set; the
-     * table is the copy that outlives the process, read back only by
-     * [seedPlaylistTrackIds] when a database opens.
-     *
-     * [d] is the database the caller started with: after a source switch the
-     * answer belongs to neither the new map nor the new database. [fresh] is
-     * false for a local edit, which changes the copy without re-reading it.
-     */
-    private suspend fun storeMembership(d: LibraryDao?, id: String, trackIds: List<String>, fresh: Boolean = true) {
-        if (d == null || daos.value !== d) return
-        val unchanged = membership.value[id] == trackIds
-        membership.update { it + (id to trackIds) }
-        // This *is* the replacement the mark was asking for.
-        if (fresh) staleMembership.update { it - id }
-        if (unchanged) return
-        runCatching {
-            d.setPlaylistTracks(id, trackIds.mapIndexed { index, trackId -> PlaylistTrackEntity(id, index, trackId) })
-        }
-    }
-
-    /**
-     * Playlists held but not yet re-read from the server: everything loaded from
-     * disk, and anything a refused edit left uncertain. A stale list still opens
-     * and plays; the mark only tells the priming to fetch it again.
-     */
-    private val staleMembership = MutableStateFlow<Set<String>>(emptySet())
-
-    private fun markMembershipStale(id: String) {
-        staleMembership.update { it + id }
-    }
-
-    /** Whether a prime should run for [id] even though membership is already held. */
-    private fun membershipWanted(id: String): Boolean =
-        id !in membership.value || id in staleMembership.value
-
-    /**
-     * Apply a local edit to held membership, if any is held for this playlist —
-     * an edit is not enough to build one from, and the next prime fetches it whole.
-     */
-    private suspend fun editMembership(d: LibraryDao?, id: String, edit: (List<String>) -> List<String>) {
-        val current = membership.value[id] ?: return
-        storeMembership(d, id, edit(current), fresh = false)
-    }
-
-    /** Forget one playlist's membership everywhere. */
-    private suspend fun dropMembership(d: LibraryDao?, id: String) {
-        if (d == null || daos.value !== d) return
-        membership.update { it - id }
-        staleMembership.update { it - id }
-        runCatching { d.clearPlaylistTracks(id) }
-    }
-
-    /**
-     * Fill [membership] from the database that just opened — only what isn't
-     * already known, since a prime that finished meanwhile is newer than the
-     * disk. What loads is marked stale, to be read again when the server can be asked.
-     */
-    private suspend fun seedPlaylistTrackIds(from: LibraryDao) {
-        val stored = runCatching { from.storedPlaylistTracks() }.getOrNull() ?: return
-        if (stored.isEmpty() || daos.value !== from) return
-        val grouped = stored.groupBy({ it.playlistId }, { it.trackId })
-        val seeded = grouped.keys - membership.value.keys
-        membership.update { known -> grouped + known }
-        staleMembership.update { it + seeded }
-    }
-
-    /** [membership] without the stored copies still waiting to be re-read: what downloads go by. */
-    fun freshPlaylistTrackIds(): Map<String, List<String>> {
-        val stale = staleMembership.value
-        return membership.value.filterKeys { it !in stale }
-    }
-
-    private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
-
-    /** Whether a chosen library narrows a playlist's songs — see SourceProvider.libraryNarrowsPlaylistSongs. */
-    private val narrowsPlaylistSongs: StateFlow<Boolean> =
-        settings.activeSource
-            .map { it?.provider?.libraryNarrowsPlaylistSongs ?: true }
-            .distinctUntilChanged()
-            .stateIn(scope, SharingStarted.Eagerly, true)
-
-    /** The chosen library's songs, where it narrows the playlist list instead; null where it doesn't. */
-    private val listingLibrary: StateFlow<ListingLibrary?> =
-        combine(allTracks, selectedLibrary, hiddenLibraries, narrowsPlaylistSongs) { inLibrary, library, hidden, songsRule ->
-            val narrows = LibraryView(library, hidden).narrows
-            // Nothing read yet is a library still loading, not one with no songs.
-            if (!songsRule && narrows && inLibrary.isNotEmpty()) {
-                ListingLibrary(inViewIds(inLibrary), chosen = library != null)
-            } else {
-                if (!narrows) inViewIds = null
-                null
-            }
-        }.stateIn(scope, SharingStarted.Eagerly, null)
-
-    private class ListingLibrary(val songs: Set<String>, val chosen: Boolean)
-
-    /** Every playlist the source lists, whichever library is chosen: for its own pages, the picker, and priming. */
-    val allPlaylists: StateFlow<List<Playlist>> get() = _playlists
-
-    /** Every cached song, whichever library it is in: a playlist can list songs beyond the chosen library. */
-    val cachedTracks: StateFlow<List<Track>> get() = trackRows
-
-    /**
-     * The playlists as the UI should see them — narrowed offline, as the other
-     * three lists are, and to the chosen library's where the source's own app
-     * lists them that way (see [playlistListed]).
-     *
-     * A playlist whose membership isn't known stays visible: an empty
-     * [Playlist.trackIds] means "not asked yet" far more often than "empty", and
-     * hiding those would hide downloaded, playable playlists.
-     */
-    val playlists: StateFlow<List<Playlist>> =
-        combine(_playlists, membership, downloadedTrackIds, offline, listingLibrary) {
-                list, known, downloaded, offlineOnlyNow, listing ->
-            list.filter { playlist ->
-                val held = known[playlist.id]
-                val ids = held ?: playlist.trackIds
-                (listing == null || playlistListed(held, listing.songs, listing.chosen)) &&
-                    (!offlineOnlyNow || ids.isEmpty() || ids.any { it in downloaded })
-            }
-        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
-
-    /** The playlists, when they are files on this phone rather than on a server — see [PhonePlaylists]. */
-    private suspend fun phonePlaylists(): PhonePlaylists? =
-        settings.activeSource.first()?.phoneLibrary?.playlists
-
-    /**
-     * Re-read the playlists, keeping the last known set when the server can't be
-     * reached. Playlists have no table; the cached copy lives in preferences —
-     * enough to list them, and (via [playlistTracks]) to play what is downloaded.
-     */
-    suspend fun refreshPlaylists() {
-        val sourceId = settings.activeSource.first()?.id ?: return
-        val phone = phonePlaylists()
-        if (phone != null) {
-            // Read off the disk every time: another app may have changed the files.
-            _playlists.value = phone.list()
-            return
-        }
-        val d = daos.value
-        val fetched = if (!metadataAllowed()) null else runCatching { serverClient.value?.getPlaylists(libraryId.first()) }.getOrNull()
-        if (fetched != null) {
-            _playlists.value = fetched
-            settings.setCachedPlaylists(sourceId, json.encodeToString(fetched))
-            reconcileMembership(d, fetched)
-            return
-        }
-        if (_playlists.value.isEmpty()) _playlists.value = loadCachedPlaylists()
-    }
-
-    /** Forget the membership of playlists the server no longer lists. */
-    private suspend fun reconcileMembership(d: LibraryDao?, fetched: List<Playlist>) {
-        if (d == null || daos.value !== d) return
-        val live = fetched.mapTo(HashSet()) { it.id }
-        membership.update { known -> known.filterKeys { it in live } }
-        staleMembership.update { marked -> marked.filterTo(HashSet()) { it in live } }
-        runCatching {
-            // Room expands an empty list to `NOT IN ()`, which SQLite rejects.
-            if (live.isEmpty()) d.clearAllPlaylistTracks() else d.prunePlaylistTracks(live.toList())
-        }
-    }
-
-    /** Restores the last known playlists so a cold start offline isn't blank. */
-    suspend fun primePlaylists() {
-        if (_playlists.value.isEmpty()) _playlists.value = loadCachedPlaylists()
-    }
-
-    private suspend fun loadCachedPlaylists(): List<Playlist> {
-        val sourceId = settings.activeSource.first()?.id ?: return emptyList()
-        return runCatching {
-            json.decodeFromString<List<Playlist>>(settings.cachedPlaylists(sourceId))
-        }.getOrDefault(emptyList())
-    }
-
-    /**
-     * A playlist's songs — from the server, or rebuilt from held membership
-     * against the library when it can't be asked. The rebuild keeps the order and
-     * drops songs the library no longer holds, as the server would.
-     */
-    suspend fun playlistTracks(id: String): List<Track> = playlistView(id).tracks
-
-    /** [playlistTracks] plus whether it's the whole playlist — see [PlaylistView]. */
-    suspend fun playlistView(id: String): PlaylistView {
-        val d = daos.value
-        val (tracks, whole) = fetchPlaylistTracks(id)
-        // Held at full membership, narrowed on the way out: the badge needs what
-        // the playlist *is*, the page what it can play.
-        val ids = tracks.map { track -> track.id }
-        // Only a whole read is kept (a whole empty answer included). A rebuild
-        // drops every id with no library row, so its ids are a *subset* of the
-        // membership it was built from: kept, it would lose songs for good and
-        // badge a shorter list than the playlist has. It fills the map only when
-        // the map holds nothing for this playlist.
-        if (whole) {
-            storeMembership(d, id, ids)
-        } else if (ids.isNotEmpty() && id !in membership.value) {
-            membership.update { it + (id to ids) }
-        }
-        val inView = inLibraryView(d, tracks)
-        // A song from the phone's own folder plays whatever the connection is.
-        val downloaded = if (offline.value) downloadedTrackIds.value else null
-        return PlaylistView(
-            tracks,
-            whole,
-            tracks.map { inView(it) && (downloaded == null || it.id in downloaded || PhoneFiles.isPhoneFile(it.id)) },
-        )
-    }
-
-    /**
-     * Which of [tracks] a playlist page shows: the chosen library's, by the Songs
-     * tab's rule, where the source's own app narrows a playlist's songs; otherwise
-     * every song but a hidden library's — see SourceProvider.libraryNarrowsPlaylistSongs.
-     *
-     * Read from the database and the stored choice rather than the lists held
-     * in memory, which are still loading when a playlist is opened at launch.
-     */
-    private suspend fun inLibraryView(d: LibraryDao?, tracks: List<Track>): (Track) -> Boolean {
-        val source = settings.activeSource.first()
-        val songsFollowLibrary = source?.provider?.libraryNarrowsPlaylistSongs ?: true
-        val view = LibraryView(
-            if (songsFollowLibrary) libraryId.first() else null,
-            source?.hiddenLibraries.orEmpty(),
-        )
-        if (!view.narrows || d == null) return { true }
-        val rows = runCatching {
-            tracks.mapNotNullTo(HashSet()) { it.albumId }.toList().chunked(MAX_BOUND_IDS).flatMap { d.albumLibraries(it) }
-        }.noteOom("playlist libraries").getOrNull() ?: return { true }
-        val libraryOf = rows.associate { it.id to it.libraryId }
-        return { track ->
-            val albumId = track.albumId
-            view.showsSong(albumId, albumId != null && albumId in libraryOf, albumId?.let { libraryOf[it] })
-        }
-    }
-
-    /** A playlist's songs, and whether they are the playlist entire rather than what could be recovered. */
-    private data class FetchedPlaylist(val tracks: List<Track>, val whole: Boolean)
-
-    private suspend fun fetchPlaylistTracks(id: String): FetchedPlaylist {
-        awaitPlaylistWrites()
-        val phone = phonePlaylists()
-        if (phone != null) {
-            val ids = phone.trackIds(id)
-            val tracks = getTracksByIds(ids)
-            return FetchedPlaylist(tracks, tracks.size == ids.size)
-        }
-        // Asked only when the mode allows, as the playlist list is; otherwise
-        // straight to the rebuild below, which needs no network.
-        if (metadataAllowed()) {
-            serverClient.value?.let { client ->
-                runCatching { client.getPlaylistTracks(id) }.getOrNull()
-                    ?.let { return FetchedPlaylist(it, whole = true) }
-            }
-        }
-        // A rebuild is a guess at what the server holds — membership can be stale
-        // and the library missing rows — so nothing built here is safe to edit
-        // against. Held membership first: [Playlist.trackIds] is usually empty.
-        val ids = membership.value[id]
-            ?: (_playlists.value.firstOrNull { it.id == id } ?: return FetchedPlaylist(emptyList(), false)).trackIds
-        return FetchedPlaylist(getTracksByIds(ids), whole = false)
-    }
-
-    /**
-     * Primes running, by playlist id. The "already known" check sees only work
-     * that has *finished*, and at launch two callers (App.boot and the library
-     * shell) arrive seconds apart: without this both fetch the same playlist.
-     */
-    private val playlistPrimes = mutableMapOf<String, Deferred<Unit>>()
-    private val playlistPrimeLock = Mutex()
-
-    /**
-     * Fill [membership] for [id] if it isn't already known or on its way, and
-     * otherwise wait for the fetch already running.
-     *
-     * Asks the server directly rather than through [playlistTracks], and writes
-     * nothing on failure: the offline rebuild is right for a screen that must
-     * show *something*, but kept here it would freeze a passing failure.
-     */
-    suspend fun primePlaylistTrackIds(id: String) {
-        if (!membershipWanted(id)) return
-        val prime = playlistPrimeLock.withLock {
-            // Again inside the lock: the fetch may have finished while this waited.
-            if (!membershipWanted(id)) return
-            val running = playlistPrimes[id]
-            // A finished prime may have failed: the next caller gets a fresh
-            // attempt, so a stale entry is never reused and never needs sweeping.
-            if (running != null && running.isActive) {
-                running
-            } else {
-                // In the repository's scope, not the caller's, so a screen going
-                // away mid-fetch doesn't throw the shared download out with it.
-                scope.async { primePlaylistOnce(id) }.also { playlistPrimes[id] = it }
-            }
-        }
-        // Cancelling this caller cancels only its wait; the shared fetch runs on.
-        prime.await()
-    }
-
-    private suspend fun primePlaylistOnce(id: String) {
-        if (phonePlaylists() != null || serverClient.value == null) {
-            playlistTracks(id)
-            return
-        }
-        if (!metadataAllowed()) return
-        val d = daos.value
-        awaitPlaylistWrites()
-        val tracks = runCatching { serverClient.value?.getPlaylistTracks(id) }.noteOom("playlist prime $id").getOrNull() ?: return
-        storeMembership(d, id, tracks.map { track -> track.id })
-    }
-
-    /**
-     * The same for a whole list, what the playlists tab needs: one request per
-     * playlist (no server returns membership with the list), run in parallel
-     * behind the sync's concurrency limit.
-     */
-    suspend fun primePlaylistTrackIds(ids: List<String>) = coroutineScope {
-        // Every playlist's whole contents is the heaviest thing a launch does
-        // after the sync, so on a metered link outside Make it Hurt it waits for
-        // Wi-Fi (opening one playlist goes by metadataAllowed instead). Until
-        // then the playlist_tracks rows serve — see storeMembership.
-        if (!bulkAllowed() && phonePlaylists() == null) return@coroutineScope
-        val gate = Semaphore(SYNC_CONCURRENCY)
-        ids.filter { membershipWanted(it) }
-            .map { id ->
-                launch {
-                    gate.withPermit {
-                        yieldToPlayback()
-                        primePlaylistTrackIds(id)
-                    }
-                }
-            }
-            .joinAll()
-    }
-
-    /** Playlists whose every song the chosen library shows is downloaded — drives the download badge. */
-    val downloadedPlaylistIds: StateFlow<Set<String>> =
-        combine(membership, downloadedTrackIds, playlistShown()) { known, downloaded, shown ->
-            known.entries.mapNotNullTo(mutableSetOf()) { (playlistId, ids) ->
-                playlistId.takeIf { playlistMarked(ids, downloaded, shown) }
-            }
-        }.stateIn(scope, SharingStarted.Eagerly, emptySet())
-
-    /**
-     * The songs a playlist page shows, where the chosen library narrows them: the
-     * Songs tab's, or every library's but a hidden one's — see [inLibraryView].
-     * Null where every song shows.
-     */
-    private fun playlistShown(): Flow<Set<String>?> =
-        combine(
-            combine(allTracks, trackRows, albumRows) { inLibrary, rows, albums -> Triple(inLibrary, rows, albums) },
-            selectedLibrary,
-            hiddenLibraries,
-            narrowsPlaylistSongs,
-        ) { (inLibrary, rows, albums), library, hidden, songsRule ->
-            val narrows = LibraryView(library, hidden).narrows
-            if (!narrows) inViewIds = null
-            if (hidden.isEmpty()) unhidden = null
-            when {
-                narrows && songsRule -> inViewIds(inLibrary)
-                !songsRule && hidden.isNotEmpty() -> unhiddenIds(rows, albums, hidden)
-                else -> null
-            }
-        }
-
-    private class Unhidden(val rows: List<Track>, val albums: List<AlbumEntity>, val hidden: Set<String>, val ids: Set<String>)
-
-    // Memoised on its inputs, so a download landing doesn't rebuild it.
-    @Volatile private var unhidden: Unhidden? = null
-
-    /** The cached songs in no hidden library, by the same rule a playlist page uses. */
-    private fun unhiddenIds(rows: List<Track>, albums: List<AlbumEntity>, hidden: Set<String>): Set<String> {
-        unhidden?.takeIf { it.rows === rows && it.albums === albums && it.hidden == hidden }?.let { return it.ids }
-        val view = LibraryView(null, hidden)
-        val libraryOf = albums.associate { it.id to it.libraryId }
-        val ids = rows.filter { track ->
-            val albumId = track.albumId
-            view.showsSong(albumId, albumId != null && albumId in libraryOf, albumId?.let { libraryOf[it] })
-        }.mapTo(HashSet()) { it.id }
-        unhidden = Unhidden(rows, albums, hidden, ids)
-        return ids
-    }
-
-    // Memoised on the list instance, so a download landing doesn't rebuild it.
-    @Volatile private var inViewIds: Pair<List<Track>, Set<String>>? = null
-
-    private fun inViewIds(list: List<Track>): Set<String> =
-        inViewIds?.takeIf { it.first === list }?.second
-            ?: list.mapTo(HashSet()) { it.id }.also { inViewIds = list to it }
-
-    suspend fun createPlaylist(name: String): WriteResult = createPlaylist(name, emptyList())
-
-    /**
-     * [trackIds] are the playlist's opening contents, not a hint — see
-     * [MusicServer.createPlaylist]. Callers must not add them again.
-     *
-     * This and the writes after it say when they didn't land — see [said] — and
-     * answer how it went, for a caller with more to do after.
-     */
-    suspend fun createPlaylist(name: String, trackIds: List<String>): WriteResult = playlistMutex.withLock {
-        val result = playlistWrite(
-            phone = { it.create(name.trim(), trackIds) != null },
-            server = { it.createPlaylist(name.trim(), trackIds) },
-        )
-        refreshPlaylists()
-        said("createPlaylist", result)
-    }
-
-    suspend fun renamePlaylist(id: String, name: String): WriteResult = playlistMutex.withLock {
-        val result = playlistWrite(
-            phone = { it.rename(id, name.trim()) },
-            server = { it.renamePlaylist(id, name.trim()) },
-        )
-        refreshPlaylists()
-        said("renamePlaylist($id)", result)
-    }
-
-    suspend fun deletePlaylist(id: String): WriteResult = playlistMutex.withLock {
-        val d = daos.value
-        val result = playlistWrite(
-            phone = { it.delete(id) },
-            server = { it.deletePlaylist(id) },
-        )
-        if (result == WriteResult.Saved) dropMembership(d, id)
-        refreshPlaylists()
-        said("deletePlaylist($id)", result)
-    }
-
-    /**
-     * Append one track. Sequential by contract: the server's update appends, so
-     * concurrent calls would race the order — [playlistMutex] holds the contract
-     * across calls, not just within one caller's loop.
-     */
-    suspend fun addToPlaylist(id: String, trackId: String): WriteResult = playlistMutex.withLock {
-        val d = daos.value
-        val result = playlistWrite(
-            phone = { it.add(id, trackId) },
-            server = { it.addToPlaylist(id, trackId) },
-        )
-        if (result == WriteResult.Saved) editMembership(d, id) { it + trackId }
-        said("addToPlaylist($id)", result)
-    }
-
-    /**
-     * Remove the entries [at] these positions in the playlist, each given with the
-     * song expected there — see [MusicServer.removeFromPlaylistAt]. Whether they
-     * all went: callers show the edit at once and take it back on a false.
-     */
-    suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean = playlistMutex.withLock {
-        val d = daos.value
-        playlistEdit(
-            "removeFromPlaylistAt($id)",
-            phone = { it.removeAt(id, at) },
-            server = { it.removeFromPlaylistAt(id, at) },
-        ).also { ok ->
-            if (ok) editMembership(d, id) { ids -> ids.filterIndexed { index, _ -> index !in at.keys } }
-            else markMembershipStale(id)
-        }
-    }
-
-    /** Whether the new order landed — see [removeFromPlaylistAt]. */
-    suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = playlistMutex.withLock {
-        val d = daos.value
-        playlistEdit(
-            "reorderPlaylist($id)",
-            phone = { it.reorder(id, orderedSongIds) },
-            server = { it.reorderPlaylist(id, orderedSongIds) },
-        ).also { ok ->
-            // The new order *is* the new membership. A refusal leaves the server's
-            // order unknown (Plex's can fail partway), so it is read again, and the
-            // stored copy serves until then.
-            if (ok) editMembership(d, id) { orderedSongIds } else markMembershipStale(id)
-        }
-    }
-
-    /** A playlist write, to the phone's playlist file or to the server. */
-    private suspend fun playlistWrite(
-        phone: suspend (PhonePlaylists) -> Boolean,
-        server: suspend (MusicServer) -> Unit,
-    ): WriteResult {
-        val files = phonePlaylists()
-        return if (files != null) fileWrite(phone(files)) else serverWrite(server)
-    }
-
-    /**
-     * A playlist edit that answers whether it landed. The client's own answer,
-     * not merely "it didn't throw": some clients catch their transport errors, so
-     * a refused write — or no client at all — would otherwise read as done.
-     */
-    private suspend fun playlistEdit(
-        what: String,
-        phone: suspend (PhonePlaylists) -> Boolean,
-        server: suspend (MusicServer) -> Boolean,
-    ): Boolean {
-        val files = phonePlaylists()
-        if (files != null) return phone(files)
-        return runCatching { serverClient.value?.let { server(it) } ?: false }
-            .onFailure { android.util.Log.w("AmpSync", "$what failed: ${it.message}", it) }
-            .getOrDefault(false)
-    }
-
-    /** No client at all is a server that can't be reached, not one that said no. */
-    private suspend fun serverWrite(block: suspend (MusicServer) -> Unit): WriteResult =
-        serverClient.value?.let { client -> attemptWrite { block(client) } } ?: WriteResult.Unreachable(UNREACHABLE)
-
-    /** The phone's own playlists are files, and a file that wouldn't change is the only way one fails. */
-    private fun fileWrite(done: Boolean): WriteResult =
-        if (done) WriteResult.Saved else WriteResult.Refused("Couldn't change the playlist file")
-
-    /**
-     * A playlist write that didn't land is said, and that is all: none of these
-     * show their change before the server has it, so there is nothing to take back.
-     */
-    private fun said(what: String, result: WriteResult): WriteResult {
-        val reason = when (result) {
-            WriteResult.Saved -> return result
-            is WriteResult.Unreachable -> result.reason
-            is WriteResult.Refused -> result.reason
-        }
-        android.util.Log.w("AmpSync", "$what → $result")
-        tell("Couldn't save\n$reason")
-        return result
-    }
-
-    // --- Sync ----------------------------------------------------------------
-
-    /** The server's libraries (music folders); empty if unsupported or on error. */
-    suspend fun musicFolders(): List<MusicFolder> =
-        runCatching { serverClient.value?.getMusicFolders().orEmpty() }.getOrDefault(emptyList())
-
-    init {
-        // Whatever folders the server reports, remembered on the source so
-        // the Sources page can list them instantly and offline.
-        scope.launch {
-            syncState.collect { state ->
-                if (state.syncing || state.lastSyncedMs == 0L) return@collect
-                val current = browsed()
-                if (!current.supportsLibraries) return@collect
-                val folders = runCatching { musicFolders() }.getOrNull() ?: return@collect
-                // Empty means "couldn't ask" (a network failure, a client not
-                // up yet) as often as "none", and written through it would
-                // wipe libraries already found. None looks the same anyway.
-                if (folders.isEmpty()) return@collect
-                settings.setSourceLibraries(current.id, folders.map { SourceLibrary(it.id, it.name) })
-            }
-        }
-    }
-
-    /** Full incremental sync of the currently selected library. Safe to repeat. */
-    suspend fun sync() = syncScoped(libraryId.first())
-
-    /**
-     * Switch to [musicFolderId]: cancel any sync in flight and sync just that
-     * library, serialized through [syncMutex].
-     *
-     * **Nothing is thrown away**: every library stays cached, tagged with where it
-     * came from, and choosing one is a filter — see [allAlbums]. The sync is a
-     * refresh, not what makes the switch work; failing, or never running for want
-     * of a signal, it leaves the library showing what was last cached for it.
-     */
-    suspend fun switchLibrary(musicFolderId: String?) {
-        syncJob?.cancelAndJoin()
-        val job = scope.launch {
-            syncMutex.withLock {
-                runSync(musicFolderId)
-            }
-        }
-        syncJob = job
-        job.join()
-    }
-
-    private suspend fun syncScoped(musicFolderId: String?) {
-        syncMutex.withLock { runSync(musicFolderId) }
-    }
-
-    /**
-     * Drop the sync in flight, which is for a source we have left. Its writes are
-     * already pinned to their own database; this saves the fetches, and stops its
-     * failure being reported as *this* source being unreachable.
-     */
-    fun cancelSync() {
-        syncJob?.cancel()
-        syncJob = null
-    }
-
-    /**
-     * Start the sync state over for the source just switched to, from the time it
-     * last finished a sync. One state serves the whole app: carried across, the
-     * new source would show the old one's time, error and scan refusal, and the
-     * floor in [syncInBackground] would turn its first sync away.
-     */
-    fun adoptSource(lastSyncedMs: Long) {
-        scanRefused = false
-        _syncState.value = SyncState(lastSyncedMs = lastSyncedMs)
-    }
-
-    /**
-     * Put back a `syncing` claim that [runSync] turned out to have no work for.
-     * Only the flag: an error an earlier run set still stands.
-     */
-    private fun releaseSyncClaim() {
-        _syncState.update { it.copy(syncing = false, phase = "") }
-    }
-
-    /**
-     * Try the active source's other addresses for the same server, and keep one
-     * that answers — see SourceProvider.relocate. Saving the source rebuilds the
-     * client, and playback and downloads follow; the answer is the moved
-     * address's client, null when nothing moved.
-     *
-     * Asked of the pool rather than read from [serverClient], which App swaps
-     * only once the saved source reaches its collector: read now, it is still the
-     * client of the address that just failed. The pool is keyed on the record, so
-     * App's swap then takes this same client.
-     */
-    private suspend fun repoint(): MusicServer? {
-        val source = settings.activeSource.first() ?: return null
-        val moved = source.provider.relocate(source) ?: return null
-        android.util.Log.i("AmpSync", "${source.kind.name.lowercase()} moved: ${source.baseUrl} -> ${moved.baseUrl}")
-        settings.saveSource(moved)
-        return clientFor(moved)
-    }
-
-    /**
-     * The sync itself, of [musicFolderId] (null = all libraries); callers
-     * serialize through [syncMutex].
-     *
-     * `dao` and `client` are pinned for the whole run, and every helper takes the
-     * pinned ones, never the [dao] or [serverClient] properties — those follow the
-     * active source, and a switch mid-run would land one server's albums and songs
-     * in another's library. The local scan needs the same.
-     *
-     * Each early return releases the claim the caller staked (callers set
-     * `syncing` before launching, to turn duplicates away): left standing, it
-     * would turn away every later sync for the life of the process.
-     * runLocalScan owns the flag across its whole run.
-     */
-    private suspend fun runSync(musicFolderId: String?, repointed: MusicServer? = null) {
-        val source = settings.activeSource.first()
-        val dao = daos.value ?: return releaseSyncClaim()
-        // The phone's own music has no server to ask; it is read off the disk.
-        val phone = source?.phoneLibrary
-        if (source != null && phone != null) {
-            runLocalScan(dao, source.id, phone)
-            return
-        }
-        if (!metadataAllowed()) return releaseSyncClaim()
-        // A build that changed how a track is read refills the cache once: the
-        // incremental filter below sees only what the *server* changed — see
-        // MusicSource.parserGeneration.
-        val refillForParser =
-            source != null && source.parserGeneration != TRACK_PARSER_GENERATION
-        val client = repointed ?: serverClient.value ?: return releaseSyncClaim()
-        _syncState.update { it.copy(syncing = true, error = null, phase = "Connecting") }
-        syncingDao.value = dao
-        // What the run wrote, so the re-read at its end covers that and no more.
-        val wrote = SyncWrites()
-        try {
-            // Read before the first write — see reportDroppedCovers.
-            val coversBefore = coverIdsOrNull(dao)
-            // "All libraries" is fanned out per folder and merged: an unscoped
-            // getAlbumList2 returns only the server's default library. A hidden
-            // library is left out — not wanted on this phone, data included.
-            val hidden = source?.hiddenLibraries.orEmpty()
-            val folderIds: List<String?> = if (musicFolderId != null) {
-                listOf(musicFolderId)
-            } else {
-                client.getMusicFolders().map { it.id }.filterNot { it in hidden }.ifEmpty { listOf(null) }
-            }
-
-            // Null when the server didn't answer: likes then stay as they are,
-            // rather than being reconciled against nothing (unliking everything)
-            // or failing the whole sync over them.
-            val starred = runCatching { folderIds.map { client.getStarred(it) }.mergeStarred() }
-                .noteOom("sync: favourites")
-                .onFailure { android.util.Log.w("AmpSync", "favourites unread, likes kept: $it") }
-                .getOrNull()
-            val cached = dao.allAlbumsSnapshot().associateBy { it.id }
-
-            _syncState.update { it.copy(phase = "Fetching albums") }
-            // Each album keeps the folder it came from, written onto its row — see
-            // AlbumEntity.libraryId. An album in two folders keeps the first.
-            val fetched = folderIds
-                .flatMap { folder ->
-                    val list = client.getAllAlbums(folder)
-                    android.util.Log.i("AmpSync", "folder=$folder returned ${list.size} albums")
-                    list.map { it to folder }
-                }
-                .distinctBy { (album, _) -> album.id }
-            val serverAlbums = fetched.map { (album, _) ->
-                album.copy(liked = starred?.let { album.id in it.albumIds } ?: cached[album.id]?.liked ?: album.liked)
-            }
-            val libraryOf = fetched.associate { (album, folder) -> album.id to folder }
-            val serverAlbumById = serverAlbums.associateBy { it.id }
-
-            dao.upsertAlbums(serverAlbums.map { it.toEntity(libraryOf[it.id]) })
-            if (serverAlbums.isNotEmpty()) wrote.albums = true
-
-            // Prune albums (and their tracks) the server no longer has — never on
-            // an empty answer. A stale scope, a 200 with an empty body or a gone
-            // section id look exactly like an emptied library, and pruning on one
-            // deletes the whole cache for good (the next sync asks the same way).
-            if (serverAlbums.isEmpty()) {
-                android.util.Log.w("AmpSync", "returned no albums; keeping ${cached.size} cached")
-            } else {
-                // Only within the library just fetched: one folder's answer says
-                // nothing about the others. A scoped sync leaves untagged rows
-                // alone (no fetch speaks for them), and a hidden library's rows
-                // were never asked about, so they stay for when it is shown again.
-                val inScope = if (musicFolderId == null) {
-                    cached.filterValues { it.libraryId == null || it.libraryId !in hidden }
-                } else {
-                    cached.filterValues { it.libraryId == musicFolderId }
-                }
-                val staleAlbumIds = inScope.keys - serverAlbumById.keys
-                if (staleAlbumIds.isNotEmpty()) {
-                    staleAlbumIds.forEach { dao.deleteTracksForAlbum(it) }
-                    dao.deleteAlbums(staleAlbumIds.toList())
-                    wrote.tracks = true
-                }
-                // And the tracks belonging to no album here at all, which the album
-                // prune can't reach — see LibraryDao.orphanedTrackCount. Under the
-                // same empty-answer rule.
-                val orphans = dao.orphanedTrackCount()
-                if (orphans > 0) {
-                    android.util.Log.w("AmpSync", "dropping $orphans track(s) belonging to no album here")
-                    dao.deleteOrphanedTracks()
-                    wrote.tracks = true
-                }
-            }
-
-            // Only new or changed albums have their songs re-fetched — and "changed"
-            // includes "its songs aren't here": albums are written before their
-            // songs, so an interrupted sync leaves complete-looking album rows with
-            // no tracks. The real per-album track count makes that self-heal.
-            val cachedTrackCounts = dao.trackCountsByAlbum().associate { it.albumId to it.tracks }
-            // Why each album was chosen, counted for the log: a sync walking the
-            // whole library must be told apart from one that has everything to fetch.
-            val reasons = mutableMapOf<String, Int>()
-            var unchanged = 0
-            val toFetch = if (refillForParser) serverAlbums else serverAlbums.filter { album ->
-                val prev = cached[album.id]
-                val cachedCount = cachedTrackCounts[album.id] ?: 0
-                val why = when {
-                    prev == null -> "new album"
-                    cachedCount == 0 -> "no songs cached"
-                    // A song count of 0 means "not sent" (Plex leaves leafCount
-                    // off), not zero: compared as a count, every album looks
-                    // changed on every sync. Ask when the server last touched the
-                    // album instead (Plex moves updatedAt with its contents). A
-                    // server sending neither leaves both at 0, which keeps the
-                    // cache; rows from before the column read 0 and walk once.
-                    album.songCount == 0 ->
-                        if (album.updatedMs != prev.updatedMs) {
-                            "album changed on the server"
-                        } else {
-                            unchanged++
-                            null
-                        }
-                    prev.songCount != album.songCount -> "server's count changed"
-                    cachedCount != album.songCount -> "cache short of the count"
-                    else -> null
-                }
-                if (why != null) reasons[why] = (reasons[why] ?: 0) + 1
-                why != null
-            }
-            // And the albums whose songs changed without their count moving (a
-            // re-tag, tags a server finished reading late), as far as the server
-            // can say — see songChangesSince.
-            val songCheck = source?.let { settings.songCheck(it.id) }
-            // Asked on a refill too: it hands over the first mark.
-            val changes = if (songCheck == null) {
-                null
-            } else {
-                runCatching { client.songChangesSince(songCheck.mark, folderIds) }
-                    .noteOom("sync: song changes")
-                    .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: $it") }
-                    .getOrNull()
-            }
-            val reread = songCheck?.let {
-                rereadFor(
-                    changes, it, serverAlbums,
-                    whole = musicFolderId == null, bulk = bulkAllowed(), nowMs = System.currentTimeMillis(),
-                )
-            }
-            val already = toFetch.mapTo(HashSet()) { it.id }
-            val more = reread?.albums.orEmpty().filter { already.add(it.id) }
-            if (more.isNotEmpty()) reasons[reread!!.why] = more.size
-            val albumsToFetch = toFetch + more
-
-            android.util.Log.i(
-                "AmpSync",
-                if (refillForParser) {
-                    "parser refill: fetching songs for all ${serverAlbums.size} albums"
-                } else {
-                    "fetching songs for ${albumsToFetch.size} of ${serverAlbums.size} albums $reasons" +
-                        (if (unchanged > 0) "; $unchanged uncounted and untouched, cache kept" else "") +
-                        "; song changes: ${changes?.let { it::class.simpleName } ?: "not asked"}"
-                },
-            )
-
-            // Counted in albums, one request each: labelled as songs it would read
-            // as a library being cut short.
-            _syncState.update { it.copy(phase = "Albums 0/${albumsToFetch.size}") }
-            val likedSongs = starred?.songIds ?: dao.likedTrackIds().toHashSet()
-            val unread = fetchAndStoreSongs(dao, client, albumsToFetch, likedSongs, libraryOf, wrote)
-            // Settled only once every album it covers is read; otherwise the old
-            // mark stays, to be asked again next time.
-            if (source != null && reread != null && unread == 0 && reread.next != songCheck) {
-                settings.setSongCheck(source.id, reread.next)
-            }
-
-            // Reconcile track likes across the whole library — writing only
-            // the ones that moved, see LibraryDao.replaceTrackLikes.
-            if (starred != null) {
-                val moved = dao.replaceTrackLikes(starred.songIds.toList())
-                if (moved > 0) wrote.tracks = true
-                if (dao.replaceLikedArtists(starred.artistNames) > 0) wrote.likedArtists = true
-            }
-
-            // Only now: a run that threw part-way refills again next time.
-            if (refillForParser && source != null) {
-                settings.setParserGeneration(source.id, TRACK_PARSER_GENERATION)
-            }
-
-            // An album whose art changed has a new cover id, which its songs
-            // (not re-fetched for that) don't carry yet: point them at it, so the
-            // old one is seen to be let go of just below.
-            runCatching { dao.collapseTrackCovers() }.noteOom("sync: cover collapse")
-                .onSuccess { if (it > 0) wrote.tracks = true }
-            reportDroppedCovers(dao, source?.id, coversBefore)
-            if (wrote.tracks || wrote.albums || wrote.likedArtists) rereadLists(tracks = wrote.tracks)
-            // The lists read freely again — after the re-read is asked for, so a
-            // list this wakes sees it is superseded: see pacedWhileSyncing.
-            syncingDao.compareAndSet(dao, null)
-
-            val finishedAt = System.currentTimeMillis()
-            _syncState.value = SyncState(
-                syncing = false,
-                lastSyncedMs = finishedAt,
-            )
-            // The source this ran for, not whichever is active by now.
-            runCatching { source?.id?.let { settings.setLastSyncedMs(it, finishedAt) } }
-            learnServerFeatures(dao, client, source)
-            onSyncSucceeded?.invoke()
-        } catch (e: CancellationException) {
-            // A switch cancelled this sync; not an error.
-            _syncState.update { it.copy(syncing = false) }
-            throw e
-        } catch (e: Exception) {
-            android.util.Log.w("AmpSync", "sync failed: ${e::class.simpleName}: ${e.message}", e)
-            // The address may simply have moved — see repoint. Only once, so a
-            // dead server can't loop.
-            if (repointed == null) {
-                repoint()?.let { moved ->
-                    runSync(musicFolderId, repointed = moved)
-                    return
-                }
-            }
-            _syncState.update { it.copy(syncing = false, error = syncErrorMessage(e)) }
-            onSyncFailed?.invoke(isAuthFailure(e))
-        } finally {
-            syncingDao.compareAndSet(dao, null)
-        }
-    }
-
-    /**
-     * Ask the server what it implements, once a sync has just proved it answers:
-     * the probes that need a real song need a library, and a server that just
-     * served a whole sync is reachable and logged in, so an endpoint it calls
-     * missing is missing. Anything thrown leaves what was known. See [ServerFeatures].
-     */
-    private suspend fun learnServerFeatures(
-        dao: LibraryDao,
-        client: MusicServer?,
-        source: MusicSource?,
-    ) {
-        if (client == null || source == null) return
-        runCatching {
-            val learned = client.probeFeatures(source.features, dao.anyTrackId())
-            if (learned == null || learned == source.features) return@runCatching
-            // Re-read the source, which may have been edited during a long sync:
-            // only the features are ours to write.
-            val current = settings.sources.first().firstOrNull { it.id == source.id }
-                ?: return@runCatching
-            settings.saveSource(current.copy(features = learned))
-        }.noteOom("sync: server features")
-    }
-
-    /**
-     * Rebuild the library from the files on this phone — wholesale: the
-     * filesystem *is* the index, a scan takes seconds, and a local source has no
-     * likes, ratings or play counts to reconcile.
-     */
-    private suspend fun runLocalScan(dao: LibraryDao, sourceId: String, phone: PhoneLibrary) {
-        _syncState.update { it.copy(syncing = true, error = null, phase = "Reading this phone") }
-        try {
-            val access = phone.access()
-            if (access != PhoneAccess.GRANTED) {
-                _syncState.value = SyncState(
-                    syncing = false,
-                    // Blocked is not "not yet allowed": the prompt can't change a
-                    // LightOS policy, so say where the wall is.
-                    error = when (access) {
-                        PhoneAccess.BLOCKED_BY_LIGHTOS -> "LightOS is blocking this tool's music access"
-                        else -> "Allow music access to read this phone"
-                    },
-                )
-                return
-            }
-            val scan = phone.scan { count ->
-                _syncState.update { it.copy(phase = "$count tracks") }
-            }
-            val coversBefore = coverIdsOrNull(dao)
-            dao.clearTracks()
-            dao.clearAlbums()
-            dao.upsertAlbums(scan.albums.map { it.toEntity() })
-            dao.upsertTracks(scan.tracks.map { it.toEntity() })
-            reportDroppedCovers(dao, sourceId, coversBefore)
-            rereadLists(tracks = true)
-            val finishedAt = System.currentTimeMillis()
-            _syncState.value = SyncState(
-                syncing = false,
-                lastSyncedMs = finishedAt,
-            )
-            runCatching { settings.setLastSyncedMs(sourceId, finishedAt) }
-            onSyncSucceeded?.invoke()
-        } catch (e: CancellationException) {
-            _syncState.update { it.copy(syncing = false) }
-            throw e
-        } catch (e: Exception) {
-            _syncState.update { it.copy(syncing = false, error = e.message ?: "Couldn't read the music folder") }
-        }
-    }
-
-    /**
-     * Told when a sync finishes — the server answered — so App can report it
-     * reachable and follow up downloads and covers. Callbacks, set by App, so the
-     * repository needn't know about any of them.
-     */
-    var onSyncSucceeded: (() -> Unit)? = null
-
-    /**
-     * Told when a sync gives up. The flag is true when the server answered and
-     * refused us — see [isAuthFailure]; not to be read as unreachable.
-     */
-    var onSyncFailed: ((authFailure: Boolean) -> Unit)? = null
-
-    /**
-     * Told which covers a finished sync left nothing pointing at, so their files
-     * can go — see ArtworkLoader.drop. Names the source the run was pinned to,
-     * which may no longer be the one on screen.
-     */
-    var onCoversDropped: (suspend (sourceId: String, coverArtIds: Set<String>) -> Unit)? = null
-
-    private suspend fun coverIdsOrNull(dao: LibraryDao): Set<String>? =
-        runCatching { dao.allCoverArtIds().toSet() }.noteOom("sync: cover ids").getOrNull()
-
-    /** See [reread]; the tracks too when [tracks], the run having written to them. */
-    private fun rereadLists(tracks: Boolean) {
-        reread.update { it + 1 }
-        if (tracks) rereadTracks.update { it + 1 }
-    }
-
-    /** Which tables a sync wrote to — see [rereadLists]. */
-    private class SyncWrites {
-        var tracks = false
-        var albums = false
-        var likedArtists = false
-    }
-
-    /**
-     * Name the covers that were in this database before the run and aren't now:
-     * a removed album's, or the old id of art that changed (Navidrome and Plex
-     * ids carry the date the art was touched). The artwork cache can't find
-     * those itself — its files are named by a hash of the id.
-     *
-     * Asked of the database, so it covers every way a run changes what is pointed
-     * at. Only on success: a half-finished sync's covers are not orphans. What
-     * this misses ages out — see ArtworkLoader.expireUnclaimed.
-     */
-    private suspend fun reportDroppedCovers(dao: LibraryDao, sourceId: String?, before: Set<String>?) {
-        if (sourceId == null || before.isNullOrEmpty()) return
-        val after = coverIdsOrNull(dao) ?: return
-        val dropped = before - after
-        if (dropped.isEmpty()) return
-        runCatching { onCoversDropped?.invoke(sourceId, dropped) }
-            .noteOom("sync: dropped covers")
-            .onFailure { if (it is CancellationException) throw it }
-    }
-
-    private suspend fun fetchAndStoreSongs(
-        /** The sync's own database — never the property, which follows the active source. */
-        dao: LibraryDao,
-        client: MusicServer,
-        albums: List<Album>,
-        starredSongIds: Set<String>,
-        /** Which library each album came from — see the count write-back below. */
-        libraryOf: Map<String, String?>,
-        wrote: SyncWrites,
-    ): Int = coroutineScope {
-        val gate = Semaphore(SYNC_CONCURRENCY)
-        val done = AtomicInteger(0)
-        var unread = 0
-        // Fetch concurrently, write in batches: a transaction per album would be
-        // an invalidation of the tracks table, and a whole re-read, per album.
-        albums.chunked(SYNC_WRITE_BATCH).forEach { batch ->
-            val fetched = batch.map { album ->
-                async {
-                    gate.withPermit {
-                        yieldToPlayback()
-                        // Null when the server didn't answer, which is not an album
-                        // with no songs: read as one, its songs would be deleted.
-                        val songs = try {
-                            client.getAlbumTracks(album.id)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (_: Exception) {
-                            null
-                        }?.map { it.copy(liked = it.id in starredSongIds) }
-                        val n = done.incrementAndGet()
-                        if (n % 10 == 0 || n == albums.size) {
-                            _syncState.update { it.copy(phase = "Albums $n/${albums.size}") }
-                        }
-                        songs
-                    }
-                }
-            }.awaitAll()
-            // A switch away cancels this sync; a fetched batch must not be written on the way out.
-            ensureActive()
-            val read = batch.indices.filter { fetched[it] != null }
-            unread += batch.size - read.size
-            // Only the albums whose songs differ from the cache — see songsChanged:
-            // rewritten unchanged, an album's rows move in the table, which costs
-            // a whole re-read of the library as surely as a real edit.
-            val cachedRows = dao.tracksForAlbums(read.map { batch[it].id }).groupBy { it.albumId }
-            val changed = read.mapNotNull { i ->
-                val rows = fetched[i].orEmpty().map { it.toEntity() }
-                (batch[i].id to rows).takeIf { songsChanged(cachedRows[batch[i].id].orEmpty(), rows) }
-            }
-            if (changed.isNotEmpty()) {
-                dao.replaceAlbumTracks(changed.map { it.first }, changed.flatMap { it.second })
-                wrote.tracks = true
-            }
-            // Write back the count we got for any album whose server sent none, so
-            // the next sync has something to compare against.
-            val counted = batch.mapIndexedNotNull { index, album ->
-                val songs = fetched.getOrNull(index)?.size ?: 0
-                album.copy(songCount = songs).takeIf { album.songCount == 0 && songs > 0 }
-            }
-            // With its library tag: an upsert replaces the whole row, and an
-            // untagged album shows in every library — see allAlbums.
-            if (counted.isNotEmpty()) {
-                dao.upsertAlbums(counted.map { it.toEntity(libraryOf[it.id]) })
-                wrote.albums = true
-            }
-        }
-        unread
-    }
-
-    /** Union of the per-folder liked results (one call per library). */
-    private fun List<Starred>.mergeStarred(): Starred =
-        if (size == 1) first() else Starred(
-            songIds = flatMapTo(mutableSetOf()) { it.songIds },
-            albumIds = flatMapTo(mutableSetOf()) { it.albumIds },
-            artistNames = flatMapTo(mutableSetOf()) { it.artistNames },
-        )
-
-    /**
-     * An automatic sync, unless one is running or ran within the floor. [force]
-     * skips the floors, for a library just shown again, which may have nothing
-     * to show until it is fetched. Sync Now goes through [scanAndSyncInBackground].
-     */
-    fun syncInBackground(force: Boolean = false) {
-        // Claimed before the launch: runSync says "syncing" only once it holds
-        // the mutex, so a second call before then would queue a whole second
-        // sync behind the first. Callers ask freely (the boot screen on every re-entry).
-        if (_syncState.value.syncing) return
-        // And a floor between runs, which the claim doesn't give. "in 0 until",
-        // not "<": a time in the future (a sync recorded while the clock was
-        // wrong) is not a recent sync, and would stop automatic syncs until the
-        // clock caught up.
-        if (!force && System.currentTimeMillis() - _syncState.value.lastSyncedMs in 0 until SYNC_MIN_INTERVAL_MS) return
-        _syncState.update { it.copy(syncing = true, error = null, phase = "Connecting") }
-        syncJob = scope.launch {
-            try {
-                // The floor above knows only this process, so the stored time is
-                // asked too — and on a metered link the floor is hours: an
-                // automatic sync is hundreds of requests for a library that
-                // rarely changed.
-                val last = runCatching {
-                    settings.activeSource.first()?.id?.let { settings.lastSyncedMs(it) }
-                }.getOrNull() ?: 0L
-                val floor = if (bulkAllowed()) SYNC_MIN_INTERVAL_MS else SYNC_MIN_INTERVAL_METERED_MS
-                if (!force && System.currentTimeMillis() - last in 0 until floor) {
-                    android.util.Log.i("AmpSync", "launch sync skipped: last one ${(System.currentTimeMillis() - last) / 60_000} min ago")
-                    _syncState.update { it.copy(syncing = false, phase = "", lastSyncedMs = last) }
-                    return@launch
-                }
-                sync()
-            } catch (e: Throwable) {
-                // runSync releases the claim on its own paths, but a cancellation
-                // or a failed settings read can end this before it starts — and a
-                // claim left standing turns every later sync away.
-                _syncState.update { it.copy(syncing = false) }
-                throw e
-            }
-        }
-    }
-
-    /**
-     * Set when the server would not be told to scan — see [scanAndSyncInBackground].
-     * Read by the Sync Now row, so a refusal isn't mistaken for nothing new.
-     */
-    @Volatile
-    var scanRefused: Boolean = false
-        private set
-
-    /**
-     * Sync Now: ask the server to look for new files, wait a while for its scan,
-     * then sync. A sync pulls only what the server already knows. The wait is
-     * bounded — a scan can take as long as it likes, and what it finds later
-     * arrives with the next sync. Automatic syncs never ask for a scan.
-     */
-    fun scanAndSyncInBackground() {
-        // Claimed before anything is awaited: asking for a scan is a network
-        // call, and meanwhile a second tap would queue a second scan-and-sync.
-        if (_syncState.value.syncing) return
-        _syncState.update { it.copy(syncing = true, error = null, phase = "Scanning server") }
-        val previous = syncJob
-        syncJob = scope.launch {
-            try {
-                previous?.cancelAndJoin()
-                askForScan()
-                sync()
-            } catch (e: Throwable) {
-                // As in syncInBackground: a claim left standing turns every later sync away.
-                _syncState.update { it.copy(syncing = false) }
-                throw e
-            }
-        }
-    }
-
-    /** The scan half of Sync Now: asked, and waited on for at most [SCAN_WAIT_MS]. */
-    private suspend fun askForScan() {
-        val client = serverClient.value
-        val folder = libraryId.first()
-        // A server known to have no scan call isn't asked — see
-        // MusicSource.supportsServerScan; the sync still runs.
-        val canScan = settings.activeSource.first()?.supportsServerScan ?: true
-        val outcome = if (client != null && canScan) {
-            runCatching { client.startServerScan(folder) }
-                .getOrDefault(ScanRequest.REFUSED)
-        } else {
-            ScanRequest.ABSENT
-        }
-        // Said plainly rather than looking like an empty scan (a library
-        // shared with you on Plex: scanning is the owner's). A server with no
-        // such call has refused nothing.
-        scanRefused = outcome == ScanRequest.REFUSED
-        if (outcome != ScanRequest.STARTED) return
-        var waited = 0L
-        while (waited < SCAN_WAIT_MS) {
-            delay(SCAN_POLL_MS)
-            waited += SCAN_POLL_MS
-            val busy = runCatching { client?.serverScanning(folder) }.getOrDefault(false) == true
-            if (!busy) break
-        }
-    }
 
     // --- Reads ---------------------------------------------------------------
 
@@ -2131,66 +860,34 @@ class LibraryRepository(
         dao.clearTracks()
         dao.clearAlbums()
         dao.clearAllTopSongs()
-        dao.clearAllPlaylistTracks()
         forgetDerived()
     }
 
     /**
      * Throw away everything held in memory *about* the library, leaving the rows
      * alone — on a source switch. None of it is keyed by source, so kept it would
-     * answer for the new one: [topSongs] by artist name, the playlists (held in
-     * memory, not in the database that switches), the memos.
+     * answer for the new one: [topSongs] by artist name, the memos. The playlists
+     * have their own — see LibraryPlaylists.forget.
      *
      * Separate from [clearCache], which also deletes rows: a switch must not
      * delete the rows of the source being switched *to*.
      */
     fun forgetDerived() {
-        _playlists.value = emptyList()
-        membership.value = emptyMap()
-        staleMembership.value = emptySet()
         topSongs.clear()
         artistIds = null
         _artistImages.value = null
         haystack = null
         // Not lastTracksRead: the database hasn't changed over yet, and a write
-        // the cancelled sync lands first is read against it; trackRows drops it
+        // the cancelled sync lands first is read against it; cachedTracks drops it
         // when the lists change over. Each of these holds the source being left.
         albumSizes = null
         artistSizes = null
         trackIndex = null
-        inViewIds = null
-        unhidden = null
         // Stopped, these would still offer the last source's — see genres.
         tagValues.forEach { it.value = emptyList() }
     }
 
     companion object {
-        /**
-         * Bump when a change to how a track is *parsed* makes the cached rows
-         * wrong — not for the server's own changes, which the incremental sync
-         * catches. Each source then refetches every album's songs once (see
-         * MusicSource.parserGeneration). 1: album artist and composer from
-         * OpenSubsonic's display* fields; 2: multi-artist credits from its
-         * structured `artists`.
-         */
-        const val TRACK_PARSER_GENERATION = 2
-
-        /** Albums whose songs are written per transaction. */
-        private const val SYNC_WRITE_BATCH = 40
-
-        /** Album fetches in flight at once, in a sync and in priming playlists. */
-        private const val SYNC_CONCURRENCY = 6
-
-        /** How long an automatic sync waits after the last one finished; Sync Now and the background job mean "now". */
-        private const val SYNC_MIN_INTERVAL_MS = 5L * 60 * 1000
-
-        /** The same floor on a metered link, where an automatic sync costs the user data and their first minutes. */
-        private const val SYNC_MIN_INTERVAL_METERED_MS = 6L * 60 * 60 * 1000
-
-        /** How long Sync Now waits on a server scan before syncing anyway, and how often it asks. */
-        private const val SCAN_WAIT_MS = 30_000L
-        private const val SCAN_POLL_MS = 1_500L
-
         /** Rows per page of a library read: one CursorWindow fill, and the new objects held at once. See readTracks. */
         private const val TRACK_PAGE = 1_000
 

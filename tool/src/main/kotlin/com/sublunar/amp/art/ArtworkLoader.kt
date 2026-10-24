@@ -215,7 +215,7 @@ class ArtworkLoader(
      * Drop covers the library has just stopped pointing at — the other half of
      * [syncCovers]. A sync that removes an album, or sees its art change (a *new*
      * cover id on Navidrome and Plex), names the ids it no longer holds; see
-     * LibraryRepository.reportDroppedCovers. A source removed names every id its
+     * LibrarySync.reportDroppedCovers. A source removed names every id its
      * database held, read before the tables are cleared: files are named by a
      * hash, so only the ids can find them.
      *

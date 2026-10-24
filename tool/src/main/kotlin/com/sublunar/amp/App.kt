@@ -14,7 +14,9 @@ import com.sublunar.amp.data.Connectivity
 import com.sublunar.amp.data.DataMode
 import com.sublunar.amp.data.DownloadStore
 import com.sublunar.amp.data.Downloader
+import com.sublunar.amp.data.LibraryPlaylists
 import com.sublunar.amp.data.LibraryRepository
+import com.sublunar.amp.data.LibrarySync
 import com.sublunar.amp.data.LinkRules
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.MusicSource
@@ -85,6 +87,10 @@ object App {
     lateinit var settings: AppSettings
         private set
     lateinit var library: LibraryRepository
+        private set
+    lateinit var librarySync: LibrarySync
+        private set
+    lateinit var playlists: LibraryPlaylists
         private set
     lateinit var pending: PendingActions
         private set
@@ -234,8 +240,17 @@ object App {
             if (changingLibrary) settings.setSourceLibraryId(source.id, libraryId)
             settings.setActiveSource(source.id)
             afterSaving()
-            if (source.id == this@App.source.value.id && changingLibrary) library.switchLibrary(libraryId)
+            if (source.id == this@App.source.value.id && changingLibrary) librarySync.switchLibrary(libraryId)
         }
+    }
+
+    /**
+     * Empty the browsed source's cached library, rows and all, for a server
+     * edited to another address or account: the next sync fills it again.
+     */
+    suspend fun clearLibraryCache() {
+        library.clearCache()
+        playlists.clearCache()
     }
 
     /** Drop a removed source's cached library and downloaded audio: its storage goes with it. */
@@ -480,20 +495,64 @@ object App {
             _dao.value = databaseFor(first).libraryDao()
             downloads = DownloadStore(context.filesDir)
             pending = PendingActions(settings)
+            librarySync = LibrarySync(
+                daos = _dao,
+                serverClient = serverClient,
+                libraryId = settings.libraryId,
+                metadataAllowed = ::metadataAllowed,
+                bulkAllowed = ::heavyDataAllowed,
+                yieldToPlayback = ::yieldToPlayback,
+                settings = settings,
+                scope = scope,
+                browsed = { _source.value },
+                clientFor = ::clientFor,
+                // A finished sync is proof the server is there. (Its end also tops up
+                // the downloads, through the size collector below.)
+                onSyncSucceeded = {
+                    reportServerReachable(true)
+                    // Its downloads too, if they were parked — the reachability
+                    // flow only speaks on a change, and a download failing never
+                    // tells it anything. See Downloader.Hold.Parked.
+                    downloader.tryNow(source.value.id)
+                    scope.launch {
+                        // Fresh library rows are also the first chance to work out
+                        // which album a reindexed download belongs to.
+                        runCatching { dao().backfillDownloadAlbums() }.noteOom("download album backfill")
+                        // ...and the first chance to put back the words a rebuilt
+                        // download row lost, which the files themselves don't carry.
+                        runCatching { downloader.refillMissingLyrics() }
+                    }
+                    // And the covers of whatever the sync just brought in.
+                    covers.sync()
+                },
+                // A refused login is not the server being gone: marked unreachable,
+                // the library would narrow to downloads and hide a good cache.
+                onSyncFailed = { authFailure -> if (!authFailure) reportServerReachable(false) },
+                onCoversDropped = { sourceId, ids -> artwork.drop(sourceId, ids) },
+            )
             library = LibraryRepository(
                 daos = _dao,
                 serverClient = serverClient,
                 libraryId = settings.libraryId,
                 offlineOnly = offlineOnly,
                 metadataAllowed = ::metadataAllowed,
-                bulkAllowed = ::heavyDataAllowed,
-                yieldToPlayback = ::yieldToPlayback,
                 pending = pending,
                 tell = ::tell,
                 settings = settings,
                 scope = scope,
-                browsed = { _source.value },
-                clientFor = ::clientFor,
+                sync = librarySync,
+            )
+            playlists = LibraryPlaylists(
+                daos = _dao,
+                serverClient = serverClient,
+                libraryId = settings.libraryId,
+                metadataAllowed = ::metadataAllowed,
+                bulkAllowed = ::heavyDataAllowed,
+                yieldToPlayback = ::yieldToPlayback,
+                tell = ::tell,
+                settings = settings,
+                scope = scope,
+                library = library,
             )
             downloader = Downloader(
                 activeSource = { _source.value },
@@ -515,28 +574,8 @@ object App {
                 standInDir = java.io.File(context.filesDir, "stand-in"),
             )
 
-            // A finished sync is proof the server is there. (Its end also tops up
-            // the downloads, through the size collector below.)
-            library.onSyncSucceeded = {
-                reportServerReachable(true)
-                // Its downloads too, if they were parked — the reachability
-                // flow only speaks on a change, and a download failing never
-                // tells it anything. See Downloader.Hold.Parked.
-                downloader.tryNow(source.value.id)
-                scope.launch {
-                    // Fresh library rows are also the first chance to work out
-                    // which album a reindexed download belongs to.
-                    runCatching { dao().backfillDownloadAlbums() }.noteOom("download album backfill")
-                    // ...and the first chance to put back the words a rebuilt
-                    // download row lost, which the files themselves don't carry.
-                    runCatching { downloader.refillMissingLyrics() }
-                }
-                // And the covers of whatever the sync just brought in.
-                covers.sync()
-            }
-            library.onCoversDropped = { sourceId, ids -> artwork.drop(sourceId, ids) }
             // The playlists cached last time, shown before anything is fetched.
-            scope.launch { library.primePlaylists() }
+            scope.launch { playlists.primePlaylists() }
             scope.launch {
                 reachability.reachable.collect { reachable ->
                     // The browsed server's downloads stop when it goes and pick
@@ -594,9 +633,6 @@ object App {
             scope.launch {
                 settings.artwork.collect { LightDisplayColor.enabled = it != ArtworkMode.NONE }
             }
-            // A refused login is not the server being gone: marked unreachable,
-            // the library would narrow to downloads and hide a good cache.
-            library.onSyncFailed = { authFailure -> if (!authFailure) reportServerReachable(false) }
 
             // The client, the database and the source change over together, in
             // order — see [swapSource].
@@ -620,7 +656,7 @@ object App {
             // that a saturated transcoder turns into a crawl. Only the browsed
             // source syncs, so only its downloads wait.
             scope.launch {
-                library.syncState.collect {
+                librarySync.syncState.collect {
                     downloader.setSyncing(if (it.syncing) source.value.id else null)
                 }
             }
@@ -655,7 +691,7 @@ object App {
             scope.launch {
                 var requestedAt = 0
                 var wasSyncing = false
-                combine(library.fullTracks.map { it.size }, library.syncState.map { it.syncing }, ::Pair)
+                combine(library.fullTracks.map { it.size }, librarySync.syncState.map { it.syncing }, ::Pair)
                     .distinctUntilChanged()
                     .collect { (size, syncing) ->
                         val syncEnded = wasSyncing && !syncing
@@ -863,7 +899,7 @@ object App {
     }
 
     val sortedPlaylists: StateFlow<SortedView<Playlist>> by lazy {
-        combine(library.playlists, settings.playlistSort.state, settings.playlistSortReversed.state) { list, sort, rev ->
+        combine(playlists.playlists, settings.playlistSort.state, settings.playlistSortReversed.state) { list, sort, rev ->
             val sorted = sortPlaylists(list, sort, rev)
             SortedView(
                 sorted,
@@ -902,16 +938,17 @@ object App {
         // A sync for the source being left has nothing to tell us, and its
         // failure would be reported against the new one. Its hold on that
         // source's downloads goes with it.
-        library.cancelSync()
+        librarySync.cancelSync()
         downloader.setSyncing(null)
-        // And whatever it said about syncing — see LibraryRepository.adoptSource.
-        library.adoptSource(runCatching { settings.lastSyncedMs(next.id) }.getOrDefault(0L))
+        // And whatever it said about syncing — see LibrarySync.adoptSource.
+        librarySync.adoptSource(runCatching { settings.lastSyncedMs(next.id) }.getOrDefault(0L))
         // Popular songs, the playlists, the search index and the artist ids are
         // all keyed by name rather than by source, so they answer for the wrong
         // server until they're dropped. Cleared *before* the source changes
         // over, so nothing that recomposes on the new source can catch the old
         // data.
         library.forgetDerived()
+        playlists.forget()
         // So are the liked switches and the tag filters: a genre chosen on one
         // server can empty every list on the next, with no row left to clear it.
         settings.clearLibraryFilters()
@@ -928,7 +965,7 @@ object App {
         // when the root screen next asks, which races this switch. The floor
         // still applies. On Main, as every other caller is: the check-then-claim
         // inside isn't atomic.
-        withContext(Dispatchers.Main) { library.syncInBackground() }
+        withContext(Dispatchers.Main) { librarySync.syncInBackground() }
     }
 
     /** Queue what each source's offline mode wants — see Downloader.topUp. */
@@ -942,9 +979,9 @@ object App {
      * for a server playlist.
      */
     private suspend fun browsedPlaylistTrackIds(): Set<String> {
-        if (library.allPlaylists.value.isEmpty()) runCatching { library.refreshPlaylists() }
-        runCatching { library.primePlaylistTrackIds(library.allPlaylists.value.map { it.id }) }
+        if (playlists.allPlaylists.value.isEmpty()) runCatching { playlists.refreshPlaylists() }
+        runCatching { playlists.primePlaylistTrackIds(playlists.allPlaylists.value.map { it.id }) }
             .noteOom("playlists of ${_source.value.name}")
-        return library.freshPlaylistTrackIds().values.flatten().toHashSet()
+        return playlists.freshPlaylistTrackIds().values.flatten().toHashSet()
     }
 }

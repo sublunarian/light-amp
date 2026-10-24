@@ -446,7 +446,7 @@ fun tabTitle(tab: LibraryTab, likedOnly: Boolean, filter: TagFilter = TagFilter(
 @Composable
 private fun rememberLocalAccess(): Boolean {
     val source = App.source.collectAsState().value
-    val sync by App.library.syncState.collectAsState()
+    val sync by App.librarySync.syncState.collectAsState()
     var readable by remember(source.id) { mutableStateOf(true) }
     LaunchedEffect(source.id, sync.lastSyncedMs) {
         readable = source.phoneLibrary?.let { it.access() == PhoneAccess.GRANTED } ?: true
@@ -517,7 +517,7 @@ private fun AlbumsTab(actions: ShellActions, header: Boolean = true) {
     val reversed by App.settings.albumSortReversed.state.collectAsState()
     val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
     val needsAccess = !rememberLocalAccess()
-    val sync = App.library.syncState.collectAsState().value
+    val sync = App.librarySync.syncState.collectAsState().value
     val syncError = sync.error
     val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
     val grid = App.albumGrid.collectAsState().value
@@ -653,7 +653,7 @@ private fun SongsTab(actions: ShellActions, header: Boolean = true) {
     val downloadedIds by App.library.downloadedTrackIds.collectAsState()
     val selection = rememberSelection("songs")
     val needsAccess = !rememberLocalAccess()
-    val sync = App.library.syncState.collectAsState().value
+    val sync = App.librarySync.syncState.collectAsState().value
     val syncError = sync.error
     val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
 
@@ -726,7 +726,7 @@ private fun ArtistsTab(actions: ShellActions, header: Boolean = true) {
     val artistImages = !App.hideArtistImages.collectAsState().value
     LaunchedEffect(artistImages) { if (artistImages) App.library.primeArtistImages() }
     val needsAccess = !rememberLocalAccess()
-    val sync = App.library.syncState.collectAsState().value
+    val sync = App.librarySync.syncState.collectAsState().value
     val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
     Column(Modifier.fillMaxSize()) {
         if (header) TabHeader(LibraryTab.ARTISTS, actions)
@@ -759,23 +759,23 @@ private fun PlaylistsTab(actions: ShellActions, header: Boolean = true) {
     val playlists = view.items
     val letters = view.letters
     val reversed by App.settings.playlistSortReversed.state.collectAsState()
-    val downloadedPlaylists by App.library.downloadedPlaylistIds.collectAsState()
+    val downloadedPlaylists by App.playlists.downloadedPlaylistIds.collectAsState()
     // The playlist list carries no membership, so the downloaded badge has
     // nothing to go on until each playlist's tracks are fetched once. Keyed on
     // the link as well: on a metered connection the priming is put off (see
     // primePlaylistTrackIds), and Wi-Fi arriving is the moment to do it.
     val bulkAllowed = App.rules.collectAsState().value.mayMoveHeavyBytes
     // All of them, not only those listed: a playlist left out by its stored songs is re-read here too.
-    val every by App.library.allPlaylists.collectAsState()
+    val every by App.playlists.allPlaylists.collectAsState()
     LaunchedEffect(every, bulkAllowed) {
-        App.library.primePlaylistTrackIds(every.map { it.id })
+        App.playlists.primePlaylistTrackIds(every.map { it.id })
     }
     val source = App.source.collectAsState().value
     val canCreateEmpty = source.supportsEmptyPlaylists
     // Keyed on the source: playlists are dropped when it changes, and a shell
     // that stayed composed through the switch would otherwise sit on an empty
     // list for ever.
-    LaunchedEffect(source.id) { App.library.refreshPlaylists() }
+    LaunchedEffect(source.id) { App.playlists.refreshPlaylists() }
     Column(Modifier.fillMaxSize()) {
         if (header) TabHeader(LibraryTab.PLAYLISTS, actions)
         IndexedList(

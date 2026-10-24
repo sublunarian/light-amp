@@ -107,7 +107,7 @@ data class MusicSource(
      * A sync only refetches an album whose song count changed, so a fix to how a
      * track is *read* — rather than to what the server holds — would never reach
      * a library that is already cached. Bumping
-     * LibraryRepository.TRACK_PARSER_GENERATION makes the next sync fetch every
+     * LibrarySync.TRACK_PARSER_GENERATION makes the next sync fetch every
      * album once and then record the new number here. Zero is "filled before this
      * existed", so every library synced by an older build refetches once.
      */

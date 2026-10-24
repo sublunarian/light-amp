@@ -111,7 +111,7 @@ class PlaylistDetailScreen(
             if (entries.value == null) {
                 // Ticks left from an earlier visit name rows of a list read afresh here.
                 Selections.of("playlist:$playlistId").clear()
-                val view = App.library.playlistView(playlistId)
+                val view = App.playlists.playlistView(playlistId)
                 wholeList.value = view.complete
                 entries.value = entriesOf(view)
             }
@@ -124,7 +124,7 @@ class PlaylistDetailScreen(
 
         // The stored name, not the one this screen was opened with: the corner menu
         // can rename the playlist while this page is under it.
-        val liveName = App.library.allPlaylists.collectAsState().value
+        val liveName = App.playlists.allPlaylists.collectAsState().value
             .firstOrNull { it.id == playlistId }?.name ?: playlistName
 
         LibrarySubPage {
@@ -370,11 +370,11 @@ class PlaylistDetailScreen(
             if (epoch != editEpoch) return@launch
             if (write()) {
                 // The playlists page's track counts, not this write's own success.
-                App.library.refreshPlaylists()
+                App.playlists.refreshPlaylists()
                 return@launch
             }
             editEpoch++
-            val view = App.library.playlistView(playlistId)
+            val view = App.playlists.playlistView(playlistId)
             if (view.complete && view.all.map { it.id } != before.map { it.track.id }) {
                 // New rows, new keys: what was ticked no longer names anything.
                 Selections.of("playlist:$playlistId").let { if (it.active) it.begin() }
@@ -404,7 +404,7 @@ class PlaylistDetailScreen(
         val at = current.indices.filter { current[it].key in doomed }.associateWith { current[it].track.id }
         if (at.isEmpty()) return
         edit(current.filterNot { it.key in doomed }) {
-            App.library.removeFromPlaylistAt(playlistId, at)
+            App.playlists.removeFromPlaylistAt(playlistId, at)
         }
     }
 
@@ -423,6 +423,6 @@ class PlaylistDetailScreen(
         val before = remaining.getOrNull(insertAt.coerceIn(0, remaining.size))?.key
         val newList = placeBlock(current, { it.key }, moving, before, remaining.last().key)
         if (newList == current) return
-        edit(newList) { App.library.reorderPlaylist(playlistId, newList.map { it.track.id }) }
+        edit(newList) { App.playlists.reorderPlaylist(playlistId, newList.map { it.track.id }) }
     }
 }

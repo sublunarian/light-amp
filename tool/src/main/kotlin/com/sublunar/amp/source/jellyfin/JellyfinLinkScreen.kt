@@ -173,7 +173,7 @@ class JellyfinLinkScreen(
                 ),
             )
             withContext(Dispatchers.Main.immediate) {
-                if (App.source.value.id == old.id) App.library.syncInBackground(force = true)
+                if (App.source.value.id == old.id) App.librarySync.syncInBackground(force = true)
                 checking = false
                 if (!gone) goBack()
             }

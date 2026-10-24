@@ -272,7 +272,7 @@ class ServerScreen(
         val reload = movedServer && App.source.value.id == editing.id
         if (reload) {
             App.playback.stop()
-            App.library.clearCache()
+            App.clearLibraryCache()
         }
         App.settings.saveSource(
             editing.copy(baseUrl = checked.baseUrl, username = checked.username, password = checked.password),

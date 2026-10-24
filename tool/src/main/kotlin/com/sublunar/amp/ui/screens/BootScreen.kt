@@ -122,7 +122,7 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
         navigateTo<String?>(
             { TextEntryScreen(it, title = "New Playlist") },
             resultCallback = { name ->
-                if (!name.isNullOrBlank()) App.scope.launch { App.library.createPlaylist(name) }
+                if (!name.isNullOrBlank()) App.scope.launch { App.playlists.createPlaylist(name) }
             },
         )
     }
@@ -133,7 +133,7 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
 
         LaunchedEffect(state) {
             // Runs in the app scope so it survives navigation into a list.
-            if (state is BootState.Ready) App.library.syncInBackground()
+            if (state is BootState.Ready) App.librarySync.syncInBackground()
         }
 
         // Coming back to the front is a reason to look at the link again: the

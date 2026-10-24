@@ -40,14 +40,14 @@ class PlaylistActionsScreen(
         var tracks by remember(playlistId) { mutableStateOf<List<Track>?>(null) }
         var confirmDelete by remember { mutableStateOf(false) }
         LaunchedEffect(playlistId) {
-            tracks = App.library.playlistTracks(playlistId)
+            tracks = App.playlists.playlistTracks(playlistId)
         }
         val list = tracks ?: emptyList()
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val fullyDownloaded = list.isNotEmpty() && list.all { it.id in downloadedIds }
         // A Plex smart playlist is offered neither Delete (it would really delete
         // it) nor Rename (see Playlist.readOnly).
-        val readOnly = App.library.allPlaylists.collectAsState().value
+        val readOnly = App.playlists.allPlaylists.collectAsState().value
             .firstOrNull { it.id == playlistId }?.readOnly == true
         val kind = if (readOnly) "Smart playlist" else "Playlist"
 
@@ -82,7 +82,7 @@ class PlaylistActionsScreen(
                     TextRow(title = "Rename") { rename() }
                     TextRow(title = if (confirmDelete) "Tap again to delete" else "Delete Playlist") {
                         if (confirmDelete) {
-                            App.scope.launch { App.library.deletePlaylist(playlistId) }
+                            App.scope.launch { App.playlists.deletePlaylist(playlistId) }
                             if (fromDetail) backToRoot() else goBack()
                         } else {
                             confirmDelete = true
@@ -98,7 +98,7 @@ class PlaylistActionsScreen(
             { TextEntryScreen(it, title = "Rename Playlist", initial = playlistName) },
             resultCallback = { newName ->
                 if (!newName.isNullOrBlank()) {
-                    App.scope.launch { App.library.renamePlaylist(playlistId, newName) }
+                    App.scope.launch { App.playlists.renamePlaylist(playlistId, newName) }
                 }
             },
         )

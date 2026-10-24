@@ -95,7 +95,7 @@ data class Album(
     /**
      * When the *server* last changed this album, 0 where it doesn't say: the only
      * sign of change from a server that sends no song count (Plex) — see
-     * LibraryRepository.runSync.
+     * LibrarySync.runSync.
      */
     val updatedMs: Long = 0L,
     val playCount: Int = 0,

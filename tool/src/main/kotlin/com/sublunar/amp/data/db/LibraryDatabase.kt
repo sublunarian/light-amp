@@ -130,7 +130,7 @@ data class DownloadEntity(
  * One song's place in one playlist.
  *
  * Playlists themselves are not a table: they are fetched live and cached in
- * preferences (see LibraryRepository.refreshPlaylists). Membership is here
+ * preferences (see LibraryPlaylists.refreshPlaylists). Membership is here
  * because no server sends it with the list, it costs a fetch per playlist, and
  * it is needed exactly when the server can't be asked: for the download badge
  * and the offline rebuild of a playlist's page.
@@ -224,7 +224,7 @@ interface LibraryDao {
     @Query("SELECT * FROM tracks WHERE albumId = :albumId")
     suspend fun tracksForAlbum(albumId: String): List<TrackEntity>
 
-    /** The cached rows of several albums at once — one sync batch's, see LibraryRepository.fetchAndStoreSongs. */
+    /** The cached rows of several albums at once — one sync batch's, see LibrarySync.fetchAndStoreSongs. */
     @Query("SELECT * FROM tracks WHERE albumId IN (:albumIds)")
     suspend fun tracksForAlbums(albumIds: List<String>): List<TrackEntity>
 
@@ -519,7 +519,7 @@ interface LibraryDao {
 
     /**
      * All stored membership, read once when a database opens — see
-     * LibraryRepository.seedPlaylistTrackIds. Read, not observed: its one writer
+     * LibraryPlaylists.seedPlaylistTrackIds. Read, not observed: its one writer
      * already holds the live answer in memory, and observing it back would open
      * a window where a second caller sees "not known yet" and fetches again.
      * Ordered so each playlist keeps its own order.
