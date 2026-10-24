@@ -1,11 +1,9 @@
 package com.sublunar.amp.ui.screens
 
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.ArtistSort
@@ -57,7 +55,7 @@ class TagFilterScreen(
             title = if (byComposer) "Composer" else "Genre",
             subtitle = tab.title,
         ) {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 item { TextRow(title = "All", checked = current.isEmpty()) { choose("") } }
                 items(values) { value ->
                     TextRow(title = value, checked = value.equals(current, ignoreCase = true)) {
@@ -106,7 +104,7 @@ private fun <T> SortOptions(
     isRandom: (T) -> Boolean = { false },
 ) {
     ListScreen(onBack = onBack, title = "Sort by", subtitle = page) {
-        ScrollableList(modifier = Modifier.fillMaxSize()) {
+        ScrollableList {
             item {
                 SectionLabel(
                     if (isRandom(current)) {

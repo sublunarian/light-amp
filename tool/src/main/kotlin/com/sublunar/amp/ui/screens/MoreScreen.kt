@@ -74,7 +74,7 @@ class MoreScreen(
                     onBack = { goBack() },
                     rightAction = HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
                 )
-                ScrollableList(modifier = Modifier.fillMaxSize()) {
+                ScrollableList {
                     // Always there, even with one source and one library: the
                     // page it opens is also where Sync Now lives.
                     item {

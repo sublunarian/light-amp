@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -53,7 +52,7 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val sync by App.librarySync.syncState.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Sources") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 // First, so it doesn't move when the source changes. It refreshes
                 // the source in use, the only one a sync can work on (switching
                 // syncs the new one as it opens), and the line under names it.
@@ -177,7 +176,7 @@ class LibraryVisibilityScreen(
         val source = sources.firstOrNull { it.id == sourceId }
 
         ListScreen(onBack = { leave() }, title = if (adding) "Choose Libraries" else "Shown in Amp") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 if (source == null) return@ScrollableList
                 item {
                     SectionLabel(
@@ -289,7 +288,7 @@ class SourceListScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val sources by App.settings.sources.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Sources") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 items(sources, key = { it.id }) { source ->
                     TextRow(
                         title = source.name,
@@ -314,7 +313,7 @@ class AddSourceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val sources by App.settings.sources.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Add Source") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 Providers.addNotes.forEach { note -> item { SectionLabel(note) } }
                 Providers.addEntries(sources).forEach { entry ->
                     item {
@@ -380,7 +379,7 @@ class SourceDetailScreen(
         val askAccess = rememberAccessRequest(source?.phoneLibrary)
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Source") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 if (source == null) return@ScrollableList
                 if (source.phoneLibrary != null && !canRead) {
                     // Without the permission the folder listing comes back empty

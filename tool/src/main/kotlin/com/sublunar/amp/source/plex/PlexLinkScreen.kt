@@ -2,7 +2,6 @@ package com.sublunar.amp.source.plex
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
@@ -97,7 +96,7 @@ class PlexLinkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         LaunchedEffect(Unit) { link() }
 
         ListScreen(onBack = { goBack() }, title = "Link Plex") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 if (servers.isEmpty()) {
                     item {
                         Column(
@@ -342,7 +341,7 @@ class PlexManualScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         ListScreen(onBack = { goBack() }, title = "Plex Server") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 item { SectionLabel(status ?: "For a server not linked to an account") }
                 item {
                     TextRow(title = "Name", value = name.ifBlank { "Required" }) {

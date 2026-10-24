@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -9,7 +8,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.LayoutMode
@@ -76,7 +74,7 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val hasServers = sources.any { it.hasServer }
 
         ListScreen(onBack = { goBack() }, title = "Settings") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 item {
                     TextRow(title = "Appearance") { go { AppearanceScreen(it) } }
                 }
@@ -126,7 +124,7 @@ class PlaybackScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val replayGain by App.settings.replayGain.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Playback") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 item {
                     // From the loudness the server measured. Only ever turns a
                     // track down, so it cannot clip. A library with no
@@ -153,7 +151,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val layoutMode by App.settings.layoutMode.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Appearance") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 item {
                     ToggleRow("Invert Colors", invert) {
                         App.scope.launch { App.settings.invertColors.set(!invert) }
@@ -234,7 +232,7 @@ class DataScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val servers = sources.filter { it.hasServer }
 
         ListScreen(onBack = { goBack() }, title = "Data") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 item {
                     TextRow(
                         title = "Data Mode",
@@ -302,7 +300,7 @@ class OfflineScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         LaunchedEffect(Unit) { used = App.downloads.usedBytesEverywhere() }
 
         ListScreen(onBack = { goBack() }, title = "Offline") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 // A page of songs, reached from here because it is about storage.
                 item {
                     TextRow(
@@ -406,7 +404,7 @@ class StreamFormatScreen(
         val source = sources.firstOrNull { it.id == sourceId }
         val current = source?.wifiFormat ?: StreamFormat.DEFAULT
         ListScreen(onBack = { goBack() }, title = "On Wi-Fi") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 // Only what this server will actually send — see
                 // MusicSource.streamFormats.
                 items(source?.streamFormats ?: StreamFormat.entries.toList()) { format ->
@@ -435,7 +433,7 @@ class CellularFormatScreen(
         val source = sources.firstOrNull { it.id == sourceId }
         val current = source?.cellularFormat ?: StreamFormat.DEFAULT
         ListScreen(onBack = { goBack() }, title = "On cellular") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 items(source?.streamFormats ?: StreamFormat.entries.toList()) { format ->
                     TextRow(
                         title = formatLabel(format),
@@ -462,7 +460,7 @@ class SourceDownloadFormatScreen(
         val source = sources.firstOrNull { it.id == sourceId }
         val current = source?.downloadFormat ?: StreamFormat.DEFAULT
         ListScreen(onBack = { goBack() }, title = "Download quality") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 // Not streamFormats: a server with no `download` call can still
                 // download, but never the original file — see downloadFormats.
                 items(source?.downloadFormats ?: StreamFormat.entries.toList()) { format ->
@@ -497,7 +495,7 @@ class SourceStreamingScreen(
         val source = sources.firstOrNull { it.id == sourceId }
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Streaming Quality") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 if (source == null) return@ScrollableList
                 // The header names the server; this names what the rows set.
                 item { SectionLabel("Streaming Quality") }
@@ -536,7 +534,7 @@ class SourceOfflineScreen(
         val source = sources.firstOrNull { it.id == sourceId }
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Offline") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 if (source == null) return@ScrollableList
                 item {
                     TextRow(

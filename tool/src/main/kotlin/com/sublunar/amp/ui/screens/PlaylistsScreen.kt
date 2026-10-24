@@ -35,12 +35,12 @@ import com.sublunar.amp.ui.components.DRAG_HANDLE_PX
 import com.sublunar.amp.ui.components.DropIndicatorLine
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
-import com.sublunar.amp.ui.components.LibraryList
 import com.sublunar.amp.ui.components.NOTICE_MS
 import com.sublunar.amp.ui.components.NoticePill
 import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.ROW_H_PX
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
+import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.SelectionState
 import com.sublunar.amp.ui.components.Selections
@@ -227,11 +227,7 @@ class PlaylistDetailScreen(
                     onDrop = { movingIndices, insertAt -> reorderGroup(movingIndices, insertAt) },
                 ),
         ) {
-            LibraryList(
-                anchor = "playlist:$playlistId",
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-            ) {
+            ScrollableList(state = listState) {
                 if (!editing) {
                     item {
                         PlayAllRow(AppIcons.Shuffle, "Shuffle") {

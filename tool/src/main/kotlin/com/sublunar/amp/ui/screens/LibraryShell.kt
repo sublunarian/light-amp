@@ -828,7 +828,7 @@ private fun LibraryIndex(actions: ShellActions) {
                 actions.more(LibraryPage.LIBRARY)
             },
         )
-        ScrollableList(modifier = Modifier.fillMaxSize()) {
+        ScrollableList {
             item { IndexRow(LibraryTab.PLAYLISTS) }
             item { IndexRow(LibraryTab.ARTISTS) }
             item { IndexRow(LibraryTab.ALBUMS) }

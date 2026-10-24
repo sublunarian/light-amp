@@ -124,10 +124,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     EmptyState("Nothing downloaded yet.\nHold a song, album or artist and choose Download.")
                     return@Column
                 }
-                LibraryList(
-                    anchor = "downloaded-songs",
-                    modifier = Modifier.fillMaxSize(),
-                ) {
+                LibraryList(anchor = "downloaded-songs") {
                     downloadProblems(unmet, refused, parked, holds)
                     if (progress.active || paused) {
                         item {
@@ -257,7 +254,7 @@ class OfflineModeScreen(
         val sources by App.settings.sources.state.collectAsState()
         val current = sources.firstOrNull { it.id == sourceId }?.offlineMode ?: OfflineMode.MANUAL
         ListScreen(onBack = { goBack() }, title = "Auto-Download") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 items(OfflineMode.entries.toList()) { mode ->
                     TextRow(
                         title = offlineModeLabel(mode),
@@ -280,7 +277,7 @@ class DataModeScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     override fun Content() {
         val current by App.settings.dataMode.state.collectAsState()
         ListScreen(onBack = { goBack() }, title = "Data Mode") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 items(DataMode.entries.toList()) { mode ->
                     TextRow(
                         title = dataModeLabel(mode),
@@ -315,7 +312,7 @@ class SizeLimitScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         }
 
         ListScreen(onBack = { goBack() }, title = "Size Limit") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 // Both numbers, because a limit is chosen against both.
                 item {
                     SectionLabel(
@@ -348,7 +345,7 @@ class ConfirmScreen(
     @Composable
     override fun Content() {
         ListScreen(onBack = { goBack(false) }, title = title) {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 item { SectionLabel(message) }
                 item { TextRow(title = confirmLabel) { goBack(true) } }
                 item { TextRow(title = "Cancel") { goBack(false) } }

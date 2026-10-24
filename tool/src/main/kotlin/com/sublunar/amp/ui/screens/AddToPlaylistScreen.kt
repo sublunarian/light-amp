@@ -1,12 +1,10 @@
 package com.sublunar.amp.ui.screens
 
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.WriteResult
 import com.sublunar.amp.ui.components.AppIcons
@@ -32,7 +30,7 @@ class AddToPlaylistScreen(
         LaunchedEffect(Unit) { App.playlists.refreshPlaylists() }
 
         ListScreen(onBack = { goBack() }, title = "Add to Playlist") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 // First, and shown even with no playlists yet.
                 item { PlayAllRow(AppIcons.Add, "New Playlist") { createAndAdd() } }
                 items(playlists, key = { it.id }) { playlist ->

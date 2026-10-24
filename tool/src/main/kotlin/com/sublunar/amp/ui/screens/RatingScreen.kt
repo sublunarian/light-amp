@@ -1,12 +1,10 @@
 package com.sublunar.amp.ui.screens
 
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.WriteResult
 import com.sublunar.amp.ui.components.ListScreen
@@ -49,7 +47,7 @@ class RatingScreen(
         var saving by remember { mutableStateOf(false) }
 
         ListScreen(onBack = { goBack() }, title = "Rating") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 item { SectionLabel(status ?: title) }
                 items(6) { i ->
                     // Listed 5 stars down to none, so the common choices are first.

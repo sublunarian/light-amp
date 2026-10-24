@@ -1,12 +1,10 @@
 package com.sublunar.amp.source.jellyfin
 
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.source.SignInOutcome
@@ -59,7 +57,7 @@ class JellyfinLinkScreen(
     @Composable
     override fun Content() {
         ListScreen(onBack = { goBack() }, title = again?.name ?: "Jellyfin") {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 item {
                     SectionLabel(
                         status ?: if (again != null) "Sign in again, keeping its library and downloads"

@@ -1,7 +1,6 @@
 package com.sublunar.amp.ui.screens
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -13,7 +12,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
@@ -103,7 +101,6 @@ class ArtistDetailScreen(
             LibraryList(
                 anchor = "artist-albums:$name",
                 headerCount = 1,
-                modifier = Modifier.fillMaxSize(),
             ) {
                 // A discography: liking is on the artist's long-press, shuffling on
                 // the song lists.
@@ -221,7 +218,6 @@ class ArtistTopSongsScreen(
                     anchor = "artist-top:$name",
                     headerCount = if (selection.active) 0 else 1,
                     scrollBar = false,
-                    modifier = Modifier.fillMaxSize(),
                 ) {
                     if (!selection.active) {
                         item {
@@ -287,7 +283,6 @@ class ArtistSongsScreen(
                 anchor = "artist-songs:$name",
                 headerCount = if (selection.active) 0 else 1,
                 scrollBar = false,
-                modifier = Modifier.fillMaxSize(),
             ) {
                 if (!selection.active) {
                     item {

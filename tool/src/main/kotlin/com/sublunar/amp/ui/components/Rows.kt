@@ -460,39 +460,18 @@ fun listPadding(
     )
 
 /**
- * A list with a scroll bar down its right edge, its content inset by the bar's
- * lane. The tab lists have the A–Z strip instead.
+ * A list filling its parent, with a scroll bar down its right edge and its
+ * content inset by the bar's lane. The tab lists have the A–Z strip instead.
  */
 @Composable
 fun ScrollableList(
-    modifier: Modifier = Modifier,
+    /** For a caller driving the scroll itself (drag auto-scroll), or [LibraryList]'s remembered one. */
     state: LazyListState = rememberLazyListState(),
-    content: LazyListScope.() -> Unit,
-) {
-    Box(modifier = modifier) {
-        LazyColumn(
-            state = state,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = listPadding(end = px(SCROLLBAR_LANE_PX)),
-            content = content,
-        )
-        ListScrollBar(state)
-    }
-}
-
-/** A library list that remembers where it was (see [rememberListAnchor]), with a scroll bar. */
-@Composable
-fun LibraryList(
-    anchor: String,
-    modifier: Modifier = Modifier,
-    headerCount: Int = 0,
     /** False for the few lists without the bar and its lane. */
     scrollBar: Boolean = true,
-    /** For a caller driving the scroll itself (drag auto-scroll). */
-    state: LazyListState = rememberListAnchor(anchor, headerCount),
     content: LazyListScope.() -> Unit,
 ) {
-    Box(modifier = modifier) {
+    Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = state,
             modifier = Modifier.fillMaxSize(),
@@ -503,4 +482,15 @@ fun LibraryList(
         )
         if (scrollBar) ListScrollBar(state)
     }
+}
+
+/** A library list that remembers where it was (see [rememberListAnchor]). */
+@Composable
+fun LibraryList(
+    anchor: String,
+    headerCount: Int = 0,
+    scrollBar: Boolean = true,
+    content: LazyListScope.() -> Unit,
+) {
+    ScrollableList(rememberListAnchor(anchor, headerCount), scrollBar, content)
 }

@@ -1,12 +1,10 @@
 package com.sublunar.amp.source.subsonic
 
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.source.SignInOutcome
@@ -88,7 +86,7 @@ class ServerScreen(
             onBack = { goBack() },
             title = source?.name ?: if (bandcamp) "Add Bandcamp" else "Add Source",
         ) {
-            ScrollableList(modifier = Modifier.fillMaxSize()) {
+            ScrollableList {
                 item { SectionLabel(status ?: "Tap a field to change it") }
                 if (source == null) {
                     // Required, and first: with several sources the list is read
