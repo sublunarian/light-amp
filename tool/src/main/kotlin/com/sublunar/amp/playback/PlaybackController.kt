@@ -471,12 +471,6 @@ class PlaybackController(
                 .debounce(UPCOMING_DEBOUNCE_MS)
                 .collect { remote?.upcomingChanged() }
         }
-        // The server answering again ends the pins to local files.
-        scope.launch(bound) {
-            App.serverReachable.collect { reachable ->
-                if (reachable) sources.forgetFailures()
-            }
-        }
         // The connectivity callback misses the default moving from a weak Wi-Fi
         // to cellular while both stay up, which decides the next track's format
         // and whether a parked one may resume. So while sound plays or is waited
@@ -1345,10 +1339,8 @@ class PlaybackController(
             // stand-in, which empties itself as the queue goes.
             if (_active.value != null && standIn.active) return@launch
             standIn.stop()
-            // The SDK's stop() clears playWhenReady itself, so the pause is
-            // redundant; either way a new queue waits for its stream decision
-            // before making a sound.
-            cur.pause()
+            // The SDK's stop() clears playWhenReady too, so a new queue waits
+            // for its stream decision before making a sound.
             cur.stop()
             cur.setMediaQueue(emptyList())
         }
