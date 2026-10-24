@@ -9,8 +9,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.Json
 import com.sublunar.amp.data.NetworkGate
+import com.sublunar.amp.source.serverJson
 
 /**
  * Linking a Plex account, and finding the servers on it.
@@ -26,12 +26,6 @@ object PlexAccount {
 
     private val http = NetworkGate.httpClient { expectSuccess = false }
 
-    private val json = Json {
-        ignoreUnknownKeys = true
-        coerceInputValues = true
-        isLenient = true
-    }
-
     /**
      * Ask for a code. Null when plex.tv can't be reached.
      *
@@ -44,7 +38,7 @@ object PlexAccount {
      */
     suspend fun requestPin(clientIdentifier: String): PlexPin? = runCatching {
         val response = http.post("$PLEX_TV/api/v2/pins") { plexHeaders(clientIdentifier) }
-        json.decodeFromString<PlexPin>(response.bodyAsText())
+        serverJson.decodeFromString<PlexPin>(response.bodyAsText())
     }.getOrNull()
 
     /**
@@ -56,7 +50,7 @@ object PlexAccount {
             delay(POLL_INTERVAL_MS)
             val token = runCatching {
                 val response = http.get("$PLEX_TV/api/v2/pins/${pin.id}") { plexHeaders(clientIdentifier) }
-                json.decodeFromString<PlexPin>(response.bodyAsText()).authToken
+                serverJson.decodeFromString<PlexPin>(response.bodyAsText()).authToken
             }.getOrNull()
             if (!token.isNullOrBlank()) return token
         }
@@ -69,7 +63,7 @@ object PlexAccount {
             plexHeaders(clientIdentifier)
             header("X-Plex-Token", token)
         }
-        json.decodeFromString<List<PlexResource>>(response.bodyAsText())
+        serverJson.decodeFromString<List<PlexResource>>(response.bodyAsText())
             .filter { it.provides.contains("server") }
     }.getOrDefault(emptyList())
 
