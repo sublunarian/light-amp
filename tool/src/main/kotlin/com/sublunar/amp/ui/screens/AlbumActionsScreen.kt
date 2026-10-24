@@ -9,7 +9,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
-import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
@@ -35,18 +34,7 @@ class AlbumActionsScreen(
 
         ListScreen(onBack = { goBack() }, title = album?.title ?: "Album", subtitle = album?.artist) {
             ActionList {
-                TextRow(title = "Play") {
-                    if (list.isNotEmpty()) {
-                        App.playback.playQueue(list, 0)
-                        replaceWithPlayer()
-                    }
-                }
-                TextRow(title = "Shuffle") {
-                    if (list.isNotEmpty()) {
-                        App.playback.playQueue(shuffled(list), 0)
-                        replaceWithPlayer()
-                    }
-                }
+                PlayRows(list)
                 TextRow(title = "Play Next") {
                     if (list.isNotEmpty()) App.playback.playNext(list)
                     goBack()
@@ -62,23 +50,9 @@ class AlbumActionsScreen(
                     }
                 }
                 if (album != null && album.artist.isNotBlank() && source.supportsRatings) {
-                    TextRow(title = "Rating", value = ratingStars(album.rating)) {
-                        go { RatingScreen(it, album.id, album.title, album.rating, isAlbum = true) }
-                    }
+                    RatingRow(album.id, album.title, album.rating, isAlbum = true)
                 }
-                if (list.isNotEmpty() && source.supportsDownloads && (fullyDownloaded || source.mayDownload)) {
-                    if (fullyDownloaded) {
-                        TextRow(title = "Remove from Downloads") {
-                            App.scope.launch { App.downloader.removeAll(list.map { it.id }) }
-                            goBack()
-                        }
-                    } else {
-                        TextRow(title = "Download Album") {
-                            App.downloader.enqueue(list)
-                            goBack()
-                        }
-                    }
-                }
+                DownloadRow(source, list, fullyDownloaded, "Download Album")
                 if (album != null && album.artist.isNotBlank()) {
                     TextRow(title = "Go to Artist") {
                         openArtist(album.artist, Parent.tab(LibraryTab.ARTISTS))

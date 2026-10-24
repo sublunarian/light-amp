@@ -172,28 +172,8 @@ class TrackActionsScreen(
                         }
                     }
                 }
-                if (showAddToPlaylist) {
-                    TextRow(title = "Add to Playlist") {
-                        // Dismiss this sheet too once a playlist is picked.
-                        navigateTo<Unit>(
-                            { AddToPlaylistScreen(it, track.id) },
-                            resultCallback = { goBack() },
-                        )
-                    }
-                }
-                if (showDownload && source.supportsDownloads && (downloaded || source.mayDownload)) {
-                    if (downloaded) {
-                        TextRow(title = "Remove from Downloads") {
-                            App.scope.launch { App.downloader.remove(track.id) }
-                            goBack()
-                        }
-                    } else {
-                        TextRow(title = "Add to Downloads") {
-                            App.downloader.enqueue(listOf(track))
-                            goBack()
-                        }
-                    }
-                }
+                if (showAddToPlaylist) AddToPlaylistRow(listOf(track.id)) { goBack() }
+                if (showDownload) DownloadRow(source, listOf(track), downloaded, "Add to Downloads")
                 // Lyrics and the full cover are only offered by the player: they are
                 // things to look at while the track plays.
                 if (onToggleLyrics != null) {
@@ -210,16 +190,9 @@ class TrackActionsScreen(
                     }
                 }
                 // Beside the rating: both say what you think of the track.
-                if (showLike && source.supportsLikes) {
-                    TextRow(title = if (track.liked) "Unlike" else "Like") {
-                        App.scope.launch { App.library.setTrackLiked(track, !track.liked) }
-                        goBack()
-                    }
-                }
+                if (showLike && source.supportsLikes) LikeTrackRow(track)
                 if (showRating && source.supportsRatings) {
-                    TextRow(title = "Rating", value = ratingStars(track.rating)) {
-                        go { RatingScreen(it, track.id, track.title, track.rating, isAlbum = false) }
-                    }
+                    RatingRow(track.id, track.title, track.rating, isAlbum = false)
                 }
                 // Opened from anywhere, so neither destination has a parent on the
                 // stack: both name the walk that leads to them. One artist, the

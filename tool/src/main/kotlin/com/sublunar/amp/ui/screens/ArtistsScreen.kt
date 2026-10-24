@@ -148,19 +148,7 @@ class ArtistActionsScreen(
                     }
                 }
                 TextRow(title = "All Songs") { go { ArtistSongsScreen(it, name) } }
-                if (artistTracks.isNotEmpty() && source.supportsDownloads && (fullyDownloaded || source.mayDownload)) {
-                    if (fullyDownloaded) {
-                        TextRow(title = "Remove from Downloads") {
-                            App.scope.launch { App.downloader.removeAll(artistTracks.map { it.id }) }
-                            goBack()
-                        }
-                    } else {
-                        TextRow(title = "Download All Albums") {
-                            App.downloader.enqueue(artistTracks)
-                            goBack()
-                        }
-                    }
-                }
+                DownloadRow(source, artistTracks, fullyDownloaded, "Download All Albums")
             }
         }
     }

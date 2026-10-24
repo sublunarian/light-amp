@@ -9,7 +9,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
-import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
@@ -47,31 +46,8 @@ class PlaylistActionsScreen(
 
         ListScreen(onBack = { goBack() }, title = playlistName, subtitle = kind) {
             ActionList {
-                TextRow(title = "Play") {
-                    if (list.isNotEmpty()) {
-                        App.playback.playQueue(list, 0)
-                        replaceWithPlayer()
-                    }
-                }
-                TextRow(title = "Shuffle") {
-                    if (list.isNotEmpty()) {
-                        App.playback.playQueue(shuffled(list), 0)
-                        replaceWithPlayer()
-                    }
-                }
-                if (list.isNotEmpty() && source.supportsDownloads && (fullyDownloaded || source.mayDownload)) {
-                    if (fullyDownloaded) {
-                        TextRow(title = "Remove from Downloads") {
-                            App.scope.launch { App.downloader.removeAll(list.map { it.id }) }
-                            goBack()
-                        }
-                    } else {
-                        TextRow(title = "Download Playlist") {
-                            App.downloader.enqueue(list)
-                            goBack()
-                        }
-                    }
-                }
+                PlayRows(list)
+                DownloadRow(source, list, fullyDownloaded, "Download Playlist")
                 if (!readOnly) {
                     TextRow(title = "Rename") { rename() }
                     TextRow(title = if (confirmDelete) "Tap again to delete" else "Delete Playlist") {

@@ -44,23 +44,9 @@ class AddActionsScreen(
                 return@ListScreen
             }
             ActionList {
-                if (source.supportsLikes) {
-                    TextRow(title = if (track.liked) "Unlike" else "Like") {
-                        App.scope.launch { App.library.setTrackLiked(track, !track.liked) }
-                        goBack()
-                    }
-                }
-                if (source.supportsRatings) {
-                    TextRow(title = "Rating", value = ratingStars(track.rating)) {
-                        go { RatingScreen(it, track.id, track.title, track.rating, isAlbum = false) }
-                    }
-                }
-                TextRow(title = "Add to Playlist") {
-                    navigateTo<Unit>(
-                        { AddToPlaylistScreen(it, track.id) },
-                        resultCallback = { goBack() },
-                    )
-                }
+                if (source.supportsLikes) LikeTrackRow(track)
+                if (source.supportsRatings) RatingRow(track.id, track.title, track.rating, isAlbum = false)
+                AddToPlaylistRow(listOf(track.id)) { goBack() }
                 // How a song radio becomes something to come back to (or download):
                 // you hear it, you decide. The queue's name ("Judith Radio") is
                 // offered where it has one.
@@ -86,19 +72,7 @@ class AddActionsScreen(
                 }
                 // Last: a different kind of keeping, and its destructive half
                 // shouldn't sit where a tap aimed at Like might land.
-                if (!source.supportsDownloads) {
-                    // The file is already on the phone.
-                } else if (downloaded) {
-                    TextRow(title = "Remove from Downloads") {
-                        App.scope.launch { App.downloader.remove(track.id) }
-                        goBack()
-                    }
-                } else if (source.mayDownload) {
-                    TextRow(title = "Add to Downloads") {
-                        App.downloader.enqueue(listOf(track))
-                        goBack()
-                    }
-                }
+                DownloadRow(source, listOf(track), downloaded, "Add to Downloads")
             }
         }
     }

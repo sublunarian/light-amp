@@ -32,14 +32,7 @@ class SelectionActionsScreen(
 
         ListScreen(onBack = { goBack(false) }, title = "$count $noun") {
             ActionList {
-                TextRow(title = "Add to Playlist") {
-                    // Unwind only once the picker reports back: goBack() straight
-                    // after the push would pop the picker instead.
-                    navigateTo<Unit>(
-                        { AddToPlaylistScreen(it, tracks.map { t -> t.id }) },
-                        resultCallback = { goBack(true) },
-                    )
-                }
+                AddToPlaylistRow(tracks.map { it.id }) { goBack(true) }
                 TextRow(title = "Play Next") {
                     App.playback.playNext(tracks)
                     goBack(true)
