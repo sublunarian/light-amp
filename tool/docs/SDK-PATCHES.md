@@ -4,8 +4,8 @@ Amp needs some changes to `sdk/client` in Light's SDK — the `light-sdk`
 submodule. They fall into two groups, and the difference matters.
 
 **Additions** (§1–10) are small, self-contained and would be reasonable in the SDK
-as it stands. Every one is marked in the source with
-`SDK PATCH (additive, upstreamable)`.
+as it stands. Every one is marked in the source with `SDK PATCH`, and its
+comments follow Light's rule for SDK code: only where needed, a line or two.
 
 **Workarounds** (§11–15) exist only because there is no supported route. Every one
 is marked `SPIKE` or `TEMPORARY`, carries revert instructions in its own comment,
@@ -54,9 +54,11 @@ git -C light-sdk branch -r | tr -d ' ' \
 ```
 
 Last counted 2026-10-20 against 0.2.1 (`3a6b204`): eight members on
-`LightAudioPlayer` (`addItems`, `replaceRange`, `setMediaQueueAt`,
-`repeatMode`, `playWhenReady`, `playbackGain`, `deviceVolume`,
-`setSystemVolume`), none of them on any upstream branch. 0.2.1's own queue
+`LightAudioPlayer`, none of them on any upstream branch. Seven are left
+(`replaceRange`, `setMediaQueueAt`, `repeatMode`, `playWhenReady`,
+`playbackGain`, `deviceVolume`, `setSystemVolume`): `addItems` went on
+23 Oct 2026, as `replaceRange` over the empty range at the end appends in the
+same single queue update. 0.2.1's own queue
 edits replaced four that the August count had (`addItemAt`, `removeItem`,
 `moveItem`, `seekToIndex`), and three more went the same day
 (`onPlaybackError`, `isCurrentItemSeekable`, `onItemRepeated`): Amp gets what
@@ -90,9 +92,9 @@ playing. Reordering by repeated `moveMediaItem` is a timeline update per move, a
 few hundred of those with a media session attached rebuilds the legacy queue —
 artwork and all — each time, until the process runs out of memory.
 
-Also the right way to re-request a stream at a new offset: removing and
-re-adding the playing item moves the player's current index twice, which any
-listener reads as a track change.
+An empty range inserts, so the same call appends: Add to Queue, and the window
+of the queue Amp's player holds (at most 500 rows of a queue of any length),
+which slides along by replacing its ends.
 
 ### 4. The rest of `LightAudioPlayer`
 
@@ -106,7 +108,6 @@ restore it, and be driven by the phone's own controls.
 
 | Member | Why a music tool needs it |
 |---|---|
-| `addItems` | Add to Queue and a radio tail in one queue update. One `addMediaItem` per track rebuilds the session queue each time. |
 | `setMediaQueueAt(items, index, positionMs)` | Restoring a saved queue mid-track. The position has to go in at prepare time: `seekTo` clamps to a duration that isn't known yet, so it lands on 0. |
 | `deviceVolume`, `setSystemVolume` | The Output page's fader on This device, and matching the phone's level to a speaker's when a cast starts. A tool can't reach `AudioManager` itself. |
 | `playbackGain` | ReplayGain: tracks play at an even loudness. Shaped like the SDK's own `speed`; on by default in Amp. |

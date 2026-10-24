@@ -1,5 +1,6 @@
 package com.sublunar.amp.playback.output.dlna
 
+import com.sublunar.amp.data.Track
 import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -166,33 +167,18 @@ object DlnaCast {
     /**
      * Point the renderer at [url] and start playing.
      *
-     * [title]/[artist]/[album] go over as DIDL-Lite so the renderer can show
-     * what's playing rather than a bare URL.
+     * [track]'s title, artist and album go over as DIDL-Lite so the renderer
+     * can show what's playing rather than a bare URL.
      */
-    suspend fun play(
-        renderer: DlnaRenderer,
-        url: String,
-        title: String,
-        artist: String,
-        album: String,
-        durationMs: Long,
-        mimeType: String,
-    ): Boolean = setUri(renderer, url, title, artist, album, durationMs, mimeType) && resume(renderer)
+    suspend fun play(renderer: DlnaRenderer, url: String, track: Track, mimeType: String): Boolean =
+        setUri(renderer, url, track, mimeType) && resume(renderer)
 
     /**
      * Point the renderer at [url] without playing it. It holds the stream,
      * stopped, until [resume] — so a seek can go in before the first sound.
      */
-    suspend fun setUri(
-        renderer: DlnaRenderer,
-        url: String,
-        title: String,
-        artist: String,
-        album: String,
-        durationMs: Long,
-        mimeType: String,
-    ): Boolean {
-        val didl = didlMetadata(url, title, artist, album, durationMs, mimeType)
+    suspend fun setUri(renderer: DlnaRenderer, url: String, track: Track, mimeType: String): Boolean {
+        val didl = didlMetadata(url, track.title, track.artist, track.album, track.durationMs, mimeType)
         return soap(
             renderer, "SetAVTransportURI",
             """
@@ -211,16 +197,8 @@ object DlnaCast {
      * Optional in the spec: a renderer without it answers with a SOAP fault,
      * false here, and the stop-and-start path carries the queue instead.
      */
-    suspend fun setNext(
-        renderer: DlnaRenderer,
-        url: String,
-        title: String,
-        artist: String,
-        album: String,
-        durationMs: Long,
-        mimeType: String,
-    ): Boolean {
-        val didl = didlMetadata(url, title, artist, album, durationMs, mimeType)
+    suspend fun setNext(renderer: DlnaRenderer, url: String, track: Track, mimeType: String): Boolean {
+        val didl = didlMetadata(url, track.title, track.artist, track.album, track.durationMs, mimeType)
         return soap(
             renderer, "SetNextAVTransportURI",
             """

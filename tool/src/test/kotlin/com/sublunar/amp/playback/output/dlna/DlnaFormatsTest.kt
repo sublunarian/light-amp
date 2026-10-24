@@ -5,6 +5,7 @@ import com.sublunar.amp.data.StreamFormat
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -14,6 +15,19 @@ import kotlin.test.assertTrue
  * the queue stops a track early, so the answers are pinned.
  */
 class DlnaFormatsTest {
+
+    @Test
+    fun `Original's type is remembered per track, a transcode's per format`() {
+        assertNotEquals(
+            formatChoiceKey("r", StreamFormat.RAW, "mp3-song"),
+            formatChoiceKey("r", StreamFormat.RAW, "flac-song"),
+        )
+        assertEquals(
+            formatChoiceKey("r", StreamFormat.MP3, "mp3-song"),
+            formatChoiceKey("r", StreamFormat.MP3, "flac-song"),
+        )
+        assertNotEquals(formatChoiceKey("r", StreamFormat.MP3, "a"), formatChoiceKey("s", StreamFormat.MP3, "a"))
+    }
 
     @Test
     fun `a container is matched under any of the names it goes by`() {

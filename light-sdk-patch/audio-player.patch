@@ -1,5 +1,5 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
-index 0304e2a..e647953 100644
+index 0304e2a..4408196 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
 @@ -2,9 +2,11 @@ package com.thelightphone.sdk.audio
@@ -22,30 +22,17 @@ index 0304e2a..e647953 100644
  import kotlinx.coroutines.CoroutineScope
  import kotlinx.coroutines.Dispatchers
  import kotlinx.coroutines.Job
-@@ -80,7 +83,34 @@ class LightAudioPlayer internal constructor(
+@@ -80,7 +83,21 @@ class LightAudioPlayer internal constructor(
      /** Connection and command-acceptance lifecycle of this player. */
      val availability: StateFlow<LightAudioPlayerAvailability> = commands.availability
  
-+    // System media (STREAM_MUSIC) volume as a 0..1 fraction. Also reflects the
-+    // hardware volume keys, so a UI fader stays in sync with button presses.
-+    // Read and written through AudioManager rather than the player: a detached
-+    // player is a MediaController, and device-volume commands don't reliably
-+    // cross the session boundary — the stream volume is the same fact either
-+    // way, and this way needs no player at all.
++    // SDK PATCH: the media volume as 0..1, through AudioManager, as device-volume
++    // commands don't reliably cross a detached player's session.
 +    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 +    private val _deviceVolume = MutableStateFlow(1f)
 +    val deviceVolume: StateFlow<Float> = _deviceVolume.asStateFlow()
 +
-+    /**
-+     * SDK PATCH (additive, upstreamable): per-track playback gain as a 0..1
-+     * linear factor, multiplied into the platform player's own volume.
-+     *
-+     * Distinct from the device volume (the phone's media level, which the user
-+     * owns) and from focus ducking (which media3 composes with this value
-+     * internally). Loudness normalisation — ReplayGain and its relatives —
-+     * needs exactly this surface and nothing else exposes it. Clamped to at
-+     * most 1: the player can only attenuate; boosting would clip.
-+     */
++    /** SDK PATCH: a 0..1 gain on the player's own volume, for loudness normalisation. */
 +    var playbackGain: Float = 1f
 +        set(value) {
 +            field = value.coerceIn(0f, 1f)
@@ -57,16 +44,15 @@ index 0304e2a..e647953 100644
          when (spec.playback) {
              LightAudioPlayback.Attached ->
                  connectPlayer(buildSdkExoPlayer(context, spec.usage, spec.cache))
-@@ -94,6 +124,8 @@ class LightAudioPlayer internal constructor(
+@@ -94,6 +111,7 @@ class LightAudioPlayer internal constructor(
              return
          }
          player = connectedPlayer
-+        // A gain set before the (possibly async) connect must not be lost.
 +        connectedPlayer.volume = playbackGain
          connectedPlayer.addListener(object : Player.Listener {
              override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                  _currentMediaItemIndex.value = if (mediaItem == null) {
-@@ -131,6 +163,16 @@ class LightAudioPlayer internal constructor(
+@@ -131,6 +149,15 @@ class LightAudioPlayer internal constructor(
              override fun onPlayerErrorChanged(error: PlaybackException?) {
                  _error.value = error?.toLightAudioError(connectedPlayer)
              }
@@ -75,15 +61,14 @@ index 0304e2a..e647953 100644
 +                updateDeviceVolume()
 +            }
 +
-+            // Fires once the volume range is actually known — the first moment
-+            // the fader can show a truthful level.
++            // The volume range is known from here.
 +            override fun onDeviceInfoChanged(deviceInfo: DeviceInfo) {
 +                updateDeviceVolume()
 +            }
          })
          val state = connectedPlayer.snapshotState()
          _currentMediaItemIndex.value = state.currentMediaItemIndex
-@@ -144,9 +186,31 @@ class LightAudioPlayer internal constructor(
+@@ -144,9 +171,31 @@ class LightAudioPlayer internal constructor(
          } else {
              stopPositionUpdates()
          }
@@ -91,7 +76,7 @@ index 0304e2a..e647953 100644
          commands.ready(connectedPlayer)
      }
  
-+    /** Set the system media volume from a 0..1 fraction. */
++    /** SDK PATCH: sets the media volume from a 0..1 fraction. */
 +    fun setSystemVolume(fraction: Float) {
 +        val min = audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC)
 +        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
@@ -115,19 +100,13 @@ index 0304e2a..e647953 100644
      private fun connectDetachedPlayer(context: Context, usage: LightAudioUsage) {
          val token = SessionToken(context, ComponentName(context, LightAudioService::class.java))
          val future = MediaController.Builder(context, token)
-@@ -220,6 +284,32 @@ class LightAudioPlayer internal constructor(
+@@ -220,6 +269,26 @@ class LightAudioPlayer internal constructor(
          }
      }
  
 +    /**
-+     * SDK PATCH (additive, upstreamable): like [setMediaQueue], but starts
-+     * [startIndex] at [startPositionMs] instead of at its beginning.
-+     *
-+     * Needed because [seekTo] clamps to `player.duration`, which is
-+     * `C.TIME_UNSET` until the item has been buffered — so seeking straight after
-+     * preparing a queue silently lands on 0. ExoPlayer takes a start position at
-+     * prepare time precisely for this case (resuming where the user left off), and
-+     * without it that is not expressible through the SDK.
++     * SDK PATCH: like [setMediaQueue], starting [startIndex] at [startPositionMs].
++     * A [seekTo] straight after preparing lands on 0, as the duration isn't known yet.
 +     */
 +    fun setMediaQueueAt(items: List<LightAudioItem>, startIndex: Int, startPositionMs: Long) {
 +        if (items.isEmpty()) {
@@ -148,30 +127,13 @@ index 0304e2a..e647953 100644
      /**
       * Appends [item] to the queue.
       */
-@@ -293,6 +383,32 @@ class LightAudioPlayer internal constructor(
+@@ -293,6 +362,15 @@ class LightAudioPlayer internal constructor(
          }
      }
  
 +    /**
-+     * SDK PATCH (additive, upstreamable): appends [items] in one queue update.
-+     *
-+     * One [addMediaItem] per item is a timeline update each, and with a media
-+     * session attached every one rebuilds the session's whole queue.
-+     */
-+    fun addItems(items: List<LightAudioItem>) {
-+        if (items.isEmpty()) return
-+        val mediaItems = items.map(LightAudioItem::toMediaItem)
-+        commands.dispatch { player -> player.addMediaItems(mediaItems) }
-+    }
-+
-+    /**
-+     * SDK PATCH (additive, upstreamable): swap out a range of the queue.
-+     *
-+     * Reordering by repeated [moveMediaItem] is a timeline update per move, and a
-+     * few hundred of those lock the main thread — with a media session attached,
-+     * the legacy queue is rebuilt (artwork and all) each time and the process runs
-+     * out of memory. `replaceMediaItems` does it once, and leaves an item outside
-+     * the range playing untouched.
++     * SDK PATCH: replaces the items from [fromIndex] until [toIndex] with [items] in
++     * one queue update, instead of one per item. An empty range inserts.
 +     */
 +    fun replaceRange(fromIndex: Int, toIndex: Int, items: List<LightAudioItem>) {
 +        val mediaItems = items.map(LightAudioItem::toMediaItem)
@@ -181,29 +143,21 @@ index 0304e2a..e647953 100644
      /**
       * Start or resume playback if audio focus is available. An idle player is
       * prepared first, and an ended one restarts its current item.
-@@ -318,6 +434,14 @@ class LightAudioPlayer internal constructor(
+@@ -318,6 +396,9 @@ class LightAudioPlayer internal constructor(
          }
      }
  
-+    /**
-+     * SDK PATCH (additive, upstreamable): the caller's intent, as distinct
-+     * from [isPlaying]. True while buffering toward playback: a seek handler
-+     * that reads [isPlaying] mid-rebuffer concludes "paused" and never
-+     * resumes, which strands a slow stream silently.
-+     */
++    /** SDK PATCH: whether playback is wanted, which [isPlaying] isn't while buffering. */
 +    val playWhenReady: Boolean get() = player?.playWhenReady == true
 +
      /** Seeks to [ms], clamped to the resolved duration. Unknown duration clamps to zero. */
      fun seekTo(ms: Long) {
          commands.dispatch { player ->
-@@ -347,6 +471,16 @@ class LightAudioPlayer internal constructor(
+@@ -347,6 +428,13 @@ class LightAudioPlayer internal constructor(
          }
      }
  
-+    /**
-+     * SDK PATCH (additive, upstreamable): loop mode using Media3 constants:
-+     * [Player.REPEAT_MODE_OFF], [Player.REPEAT_MODE_ONE], or [Player.REPEAT_MODE_ALL].
-+     */
++    /** SDK PATCH: [Player.REPEAT_MODE_OFF], [Player.REPEAT_MODE_ONE] or [Player.REPEAT_MODE_ALL]. */
 +    var repeatMode: Int
 +        get() = player?.repeatMode ?: Player.REPEAT_MODE_OFF
 +        set(value) {
@@ -213,32 +167,26 @@ index 0304e2a..e647953 100644
      /** Waits for connection, returning `false` if this player is released first. */
      suspend fun awaitReady(): Boolean = awaitPlayerReady(availability)
  
-@@ -378,6 +512,10 @@ class LightAudioPlayer internal constructor(
+@@ -378,6 +466,8 @@ class LightAudioPlayer internal constructor(
                      updatePosition(it)
                      updateDuration(it)
                  }
-+                // Hardware volume keys change the stream with no callback that
-+                // reliably crosses the session boundary; two int reads per tick
-+                // keep the fader honest while anything plays.
++                // Volume keys have no callback that reliably crosses the session.
 +                updateDeviceVolume()
                  delay(POSITION_POLL_MS)
              }
          }
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt
-index a45f090..629eb46 100644
+index a45f090..a1ad0e2 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt
-@@ -29,6 +29,14 @@ internal fun buildSdkExoPlayer(
+@@ -29,6 +29,10 @@ internal fun buildSdkExoPlayer(
      cache: LightMediaCache?,
  ): ExoPlayer {
      val builder = ExoPlayer.Builder(context)
-+        // SDK PATCH (additive, upstreamable): without device-volume control a
-+        // tool's volume fader reads nothing through a detached controller.
++        // SDK PATCH: device volume, readable through a detached controller.
 +        .setDeviceVolumeControlEnabled(true)
-+        // SDK PATCH (additive, upstreamable): pause when the audio route goes
-+        // away (Bluetooth disconnecting, headphones unplugged). The default is
-+        // false, so playback carries on out loud on the phone's speaker, and a
-+        // tool can't do this itself: it needs a BroadcastReceiver.
++        // SDK PATCH: pause when headphones or Bluetooth go, not play on out loud.
 +        .setHandleAudioBecomingNoisy(true)
      if (cache != null) {
          val network = CacheDataSource.Factory()

@@ -2,7 +2,6 @@ package com.sublunar.amp.playback.output.dlna
 
 import android.os.SystemClock
 import android.util.Log
-import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.playback.output.Disconnect
@@ -48,51 +47,94 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     // The fader drives the renderer's own RenderingControl.
     override val volumeControl: StateFlow<VolumeControl> = MutableStateFlow(VolumeControl.Ours)
 
-    /**
-     * How far into the track the renderer's stream starts. A UPnP Seek is a
-     * byte-range request, which a live transcode can't answer: the renderer
-     * refuses it and plays from the top. So a stream that must start part-way
-     * asks the server for it with a timeOffset, and the readouts shift back.
-     */
-    private var castOffsetMs = 0L
+    /** The stream the renderer was given for the queue's current track. */
+    private class CastStream(
+        val url: String,
+        /**
+         * How far into the track the stream starts. A UPnP Seek is a
+         * byte-range request, which a live transcode can't answer: the
+         * renderer refuses it and plays from the top. So a stream that must
+         * start part-way asks the server for it with a timeOffset, and the
+         * readouts shift back.
+         */
+        val offsetMs: Long,
+    )
 
-    /** Where the current cast track was started from — see pollRenderer. */
-    private var castStartedAtMs = 0L
+    /** What the renderer is playing, or null when nothing of the queue is on it. */
+    private var stream: CastStream? = null
 
-    /**
-     * Target of a seek sent to the renderer in place, until a reading near it
-     * arrives; -1 when none is in flight. See pollRenderer.
-     */
-    private var castSeekPending = -1L
+    /** Where the current track was started from — see readClock. */
+    private var startedAtMs = 0L
 
-    /** When [castSeekPending] was sent — a wait for it is given up after [CAST_SEEK_WAIT_MS]. */
-    private var castSeekPendingAt = 0L
-
-    private var castJob: Job? = null
-
-    // "rendererId|format" -> stream format actually sent + its MIME type.
-    // Concurrent: a source switch clears it from wherever stop was called,
-    // while a cast job on its way out may still be writing it.
-    private val castFormats = ConcurrentHashMap<String, Pair<StreamFormat, String>>()
+    /** A seek sent to the renderer in place, and when. */
+    private class PendingSeek(val targetMs: Long, val sentAt: Long)
 
     /**
-     * Whether a track's stream can be seeked, by track and format: mp3 asked of
-     * a flac original is a live transcode, of an mp3 one the file itself, and
-     * only the file seeks. Only settled answers are kept, so a failed probe is
-     * asked again. Concurrent, as [castFormats] is.
+     * The seek in place in flight, until a reading near its target arrives,
+     * or [CAST_SEEK_WAIT_MS] goes by — see readClock.
      */
-    private val castSeekable = ConcurrentHashMap<String, Boolean>()
-
-    /** What the renderer is playing, and what it has been given to play next. */
-    private var castCurrentUrl: String? = null
-    private var castNextUrl: String? = null
+    private var pendingSeek: PendingSeek? = null
 
     /**
-     * The address last offered as the next track, whether or not the
-     * renderer's reply said it was taken — see [queueNextOnRenderer]. A reply
-     * lost on its way back is not a renderer that refused.
+     * Bumped by every seek, push and change of track, so the check a seek
+     * leaves behind can't act on whatever replaced it — see [verifyCastSeek].
+     * A previous pressed soon after a seek must not read as that seek missing.
      */
-    private var castNextOffered: String? = null
+    private var seekGeneration = 0
+
+    /**
+     * The renderer's next slot as this side knows it: what was offered for
+     * it, for which song and queue slot, and whether the renderer said it took
+     * it. Filled near a track's end — see [armNextIfDue].
+     */
+    private class NextOffer {
+        /**
+         * The queue index armed for, or offered and refused. Arming is tried at
+         * every poll near a track's end, so without this a renderer lacking
+         * SetNextAVTransportURI would be asked every second.
+         */
+        var armedFor: Int? = null
+
+        /**
+         * The track offered, by id. A queue edited since may have moved it or
+         * taken it out, and the slot it was offered for then names some other
+         * song — see [offeredNextIndex].
+         */
+        var trackId: String? = null
+
+        /**
+         * The address offered, set before the reply: a renderer can take the
+         * address and lose the answer (straight after a seek, say), and its
+         * hand-off must still be seen. A lost reply is not a refusal.
+         */
+        var offered: String? = null
+
+        /**
+         * The address the renderer said it took. Set when the reply comes, even
+         * one that comes after the offer was forgotten: the renderer may hold
+         * it all the same, and a hand-off into it is still followed.
+         */
+        var taken: String? = null
+
+        /** The address a hand-off shows up as: GetPositionInfo reporting it is the only evidence. */
+        val url: String? get() = taken ?: offered
+
+        fun offer(index: Int, id: String, address: String) {
+            armedFor = index
+            taken = null
+            offered = address
+            trackId = id
+        }
+
+        fun forget() {
+            taken = null
+            offered = null
+            trackId = null
+            armedFor = null
+        }
+    }
+
+    private val nextOffer = NextOffer()
 
     /**
      * The renderer holds nothing to resume (the queue ran out there, say). Play
@@ -102,26 +144,23 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     @Volatile
     private var waitingForPlay = false
 
-    /**
-     * The queue index the renderer's next slot has been armed for, or offered
-     * and refused. Arming is tried at every poll near a track's end, so without
-     * this a renderer lacking SetNextAVTransportURI would be asked every second.
-     */
-    private var castNextArmedFor: Int? = null
+    /** The queue index the renderer was on when the link took it away — see [findAgain]. */
+    private var lostAtIndex: Int? = null
+
+    private var job: Job? = null
+
+    // formatChoiceKey -> stream format actually sent + its MIME type.
+    // Concurrent: a source switch clears it from wherever stop was called,
+    // while a cast job on its way out may still be writing it.
+    private val formats = ConcurrentHashMap<String, Pair<StreamFormat, String>>()
 
     /**
-     * The track the offered next address is for, by id. A queue edited since
-     * may have moved it or taken it out, and the slot it was offered for then
-     * names some other song — see [offeredNextIndex].
+     * Whether a track's stream can be seeked, by track and format: mp3 asked of
+     * a flac original is a live transcode, of an mp3 one the file itself, and
+     * only the file seeks. Only settled answers are kept, so a failed probe is
+     * asked again. Concurrent, as [formats] is.
      */
-    private var castNextTrackId: String? = null
-
-    /**
-     * Bumped by every seek, push and change of track, so the check a seek
-     * leaves behind can't act on whatever replaced it — see [verifyCastSeek].
-     * A previous pressed soon after a seek must not read as that seek missing.
-     */
-    private var seekGeneration = 0
+    private val seekableStreams = ConcurrentHashMap<String, Boolean>()
 
     /** Whatever an earlier seek left to check is moot: a seek, a push or a change of track has replaced it. */
     private fun dropSeekChecks() {
@@ -144,8 +183,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      */
     override fun connect(target: OutputTarget, fromMs: Long, play: Boolean) {
         val renderer = (target as DlnaTarget).renderer
-        castJob?.cancel()
-        castJob = host.scope.launch {
+        job?.cancel()
+        job = host.scope.launch {
             undoHush(renderer)
             // The fader takes the renderer's level, and the phone's own follows,
             // so the rocker nudges from where the speaker is.
@@ -182,12 +221,12 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      */
     override fun disconnect(target: OutputTarget, why: Disconnect) {
         val renderer = (target as DlnaTarget).renderer
-        castJob?.cancel()
-        castJob = null
+        job?.cancel()
+        job = null
         dropSeekChecks()
-        castSeekPending = -1L
+        pendingSeek = null
         when (why) {
-            Disconnect.LinkLost -> lostAtIndex = host.index.value
+            Disconnect.LinkLost -> lostAtIndex = host.index.value.takeIf { it >= 0 }
             Disconnect.Leaving -> {
                 forgetCast()
                 // A renderer keeps playing the URI it was handed after the app
@@ -215,30 +254,23 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      */
     override fun stopPlayback() {
         val renderer = steered() ?: return
-        castJob?.cancel()
-        castJob = null
+        job?.cancel()
+        job = null
         dropSeekChecks()
         forgetCast()
         waitingForPlay = true
-        castFormats.clear()
-        castSeekable.clear()
+        formats.clear()
+        seekableStreams.clear()
         log("queue gone — ${renderer.name} stopped, still the output")
         host.scope.launch { DlnaCast.stop(renderer) }
     }
 
     /** Nothing of the queue is on the renderer any more, or nothing on it is followed from here. */
     private fun forgetCast() {
-        castCurrentUrl = null
-        castNextUrl = null
-        castNextOffered = null
-        castNextTrackId = null
-        castNextArmedFor = null
-        castOffsetMs = 0L
-        castSeekPending = -1L
+        stream = null
+        nextOffer.forget()
+        pendingSeek = null
     }
-
-    /** The queue index the renderer was on when the link took it away — see [findAgain]. */
-    private var lostAtIndex = -1
 
     /**
      * The renderer the link took away, found again: on the network under the
@@ -254,8 +286,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         // A muted start the link cut off gives its sound back now, whether or
         // not the speaker is followed from here.
         undoHush(renderer)
-        val current = castCurrentUrl
-        val next = castNextUrl ?: castNextOffered
+        val current = stream
+        val next = nextOffer.url
         repeat(REFOUND_READS) { attempt ->
             if (attempt > 0) delay(CAST_POLL_MS)
             val position = DlnaCast.position(renderer)
@@ -264,8 +296,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             val uri = position.trackUri
             log("${renderer.name} found again: $state on ${DlnaCast.loggable(uri)} at ${position.positionMs}")
             val found = DlnaTarget(renderer)
-            val onCurrent = current != null && DlnaCast.sameUri(uri, current)
-            val onNext = !onCurrent && next != null && DlnaCast.sameUri(uri, next)
+            val onCurrent = DlnaCast.sameUri(uri, current?.url)
+            val onNext = !onCurrent && DlnaCast.sameUri(uri, next)
             // Someone else's sound: left alone.
             if (!onCurrent && !onNext && state != DlnaState.STOPPED) return null
             // Ours, still going: stopped, as an iPhone stops a speaker it finds
@@ -280,11 +312,11 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             // that clears its clock on a stop says 0, and the phone's place stands.
             val index = when {
                 onCurrent -> lostAtIndex
-                onNext -> offeredNextIndex() ?: -1
-                else -> -1
+                onNext -> offeredNextIndex()
+                else -> null
             }
-            val at = position.positionMs + if (onCurrent) castOffsetMs else 0L
-            return if (index >= 0 && (state != DlnaState.STOPPED || position.positionMs > 0L)) {
+            val at = position.positionMs + if (onCurrent) current?.offsetMs ?: 0L else 0L
+            return if (index != null && (state != DlnaState.STOPPED || position.positionMs > 0L)) {
                 Refound(found, index, at)
             } else {
                 Refound(found)
@@ -309,13 +341,13 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     override fun rejoin(found: Refound) {
         val renderer = (found.target as DlnaTarget).renderer
-        castJob?.cancel()
+        job?.cancel()
         dropSeekChecks()
         // Stopped, or holding nothing of ours: a play sends the song afresh
         // from where it had got to — see waitingForPlay.
         waitingForPlay = true
         forgetCast()
-        castJob = host.scope.launch {
+        job = host.scope.launch {
             undoHush(renderer)
             // The fader is the renderer's again, as when a cast begins.
             DlnaCast.volume(renderer)?.let {
@@ -346,8 +378,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val renderer = steered() ?: return
         pressed(playing = true)
         if (waitingForPlay) {
-            castJob?.cancel()
-            castJob = host.scope.launch {
+            job?.cancel()
+            job = host.scope.launch {
                 if (startOrStop(renderer, host.positionMs.value)) pollRenderer(renderer)
             }
             return
@@ -401,8 +433,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val total = host.durationMs.value
         if (total > 0L && total - ms <= CAST_SEEK_END_SLACK_MS) {
             log("seek $ms of $total is the end → next")
-            castJob?.cancel()
-            castJob = host.scope.launch {
+            job?.cancel()
+            job = host.scope.launch {
                 if (advanceCast(renderer)) pollRenderer(renderer) else DlnaCast.stop(renderer)
             }
             return
@@ -410,8 +442,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         host.showPosition(ms)
         // In place when the renderer can, pushed again when it can't — see
         // seekCast. A stop after this is the track's end, not a failed start.
-        castJob?.cancel()
-        castJob = host.scope.launch {
+        job?.cancel()
+        job = host.scope.launch {
             if (seekCast(renderer, ms)) {
                 // Now, not at the poll's first round: a seek into the last few
                 // seconds would have run out by then with nothing to follow it.
@@ -442,8 +474,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         dropSeekChecks()
         host.showIndex(index)
         host.showPosition(0)
-        castJob?.cancel()
-        castJob = host.scope.launch {
+        job?.cancel()
+        job = host.scope.launch {
             if (startOrStop(renderer)) pollRenderer(renderer)
         }
     }
@@ -469,8 +501,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     override fun newQueue() {
         val renderer = steered() ?: return
         dropSeekChecks()
-        castJob?.cancel()
-        castJob = host.scope.launch {
+        job?.cancel()
+        job = host.scope.launch {
             if (startOrStop(renderer)) pollRenderer(renderer)
         }
     }
@@ -478,7 +510,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     override suspend fun upcomingChanged() {
         val renderer = steered() ?: return
         // Whatever the renderer was armed with is stale.
-        castNextArmedFor = null
+        nextOffer.armedFor = null
         armNextIfDue(renderer)
     }
 
@@ -491,20 +523,17 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      */
     private suspend fun seekCast(renderer: DlnaRenderer, ms: Long): Boolean {
         val track = host.queue.value.getOrNull(host.index.value) ?: return false
-        val url = castCurrentUrl
+        val current = stream
         val wanted = if (ms > 1_000L) ms else 0L
-        if (url != null && castOffsetMs == 0L) {
+        if (current != null && current.offsetMs == 0L) {
             val (format, _) = castFormatFor(renderer, track)
-            val seekKey = "${track.id}|${format.id}"
-            val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
-            if (seekable == true) {
+            if (seekable(track, format) == true) {
                 if (DlnaCast.seek(renderer, wanted)) {
                     log("seek in place → $wanted")
                     host.showPosition(wanted)
-                    castStartedAtMs = wanted
-                    castSeekPending = wanted
-                    castSeekPendingAt = SystemClock.elapsedRealtime()
-                    if (wanted > 0L) verifyCastSeek(renderer, wanted, url)
+                    startedAtMs = wanted
+                    pendingSeek = PendingSeek(wanted, SystemClock.elapsedRealtime())
+                    if (wanted > 0L) verifyCastSeek(renderer, wanted, current.url)
                     return true
                 }
                 log("in-place seek refused → push")
@@ -536,7 +565,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             if (steered()?.id != renderer.id) return@launch
             // Moved on — the renderer finished it, or a skip did — so the
             // seek has nothing left to be measured against.
-            if (host.index.value != seekedIndex || castCurrentUrl != url) return@launch
+            if (host.index.value != seekedIndex || stream?.url != url) return@launch
             val info = DlnaCast.position(renderer) ?: return@launch
             if (info.trackUri != null && !DlnaCast.sameUri(info.trackUri, url)) return@launch
             if (DlnaCast.state(renderer) == DlnaState.STOPPED) return@launch
@@ -546,7 +575,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             // must not have its job cancelled and the old position pushed back.
             withContext(Dispatchers.Main.immediate) {
                 if (generation != seekGeneration || steered()?.id != renderer.id) return@withContext
-                if (host.index.value != seekedIndex || castCurrentUrl != url) return@withContext
+                if (host.index.value != seekedIndex || stream?.url != url) return@withContext
                 // A seek taken before play and then not acted on: the renderer
                 // started from the top. It starts muted from here on, and this
                 // track again that way — the stream itself seeks fine, and a
@@ -554,8 +583,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 val muted = url == seekedBeforePlay && seeksBeforePlay[renderer.id] != false
                 if (muted) seeksBeforePlay[renderer.id] = false
                 log("seek missed: at ${info.positionMs} wanted $wanted → ${if (muted) "muted start" else "server"}")
-                castJob?.cancel()
-                castJob = host.scope.launch {
+                job?.cancel()
+                job = host.scope.launch {
                     if (startOrStop(renderer, wanted, askServer = !muted)) {
                         pollRenderer(renderer, playedBefore = true)
                     }
@@ -591,25 +620,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val offset = when {
             askServer -> wanted
             wanted == 0L -> 0L
-            else -> {
-                val seekKey = "${track.id}|${format.id}"
-                val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
-                if (seekable == false) wanted else 0L
-            }
+            else -> if (seekable(track, format) == false) wanted else 0L
         }
-        // No estimated length: a server estimates from duration x the cap
-        // bitrate, an ABR transcode comes in under it, and a renderer stops
-        // where the declared length says, seconds early. Chunked plays to the
-        // end, and the shown duration comes from the DIDL metadata anyway.
-        val url = host.streamUrl(
-            track,
-            format,
-            estimateContentLength = false,
-            timeOffsetSeconds = (offset / 1000).toInt(),
-            // The renderer fetches for itself, with no door to decide it
-            // first — see OutputHost.ownStreamSession.
-            sessionId = host.ownStreamSession(track.id),
-        )?.let { if (fresh) freshAddress(it) else it } ?: return false
+        val url = castUrl(track, format, offset)?.let { if (fresh) freshAddress(it) else it } ?: return false
         val started = if (offset == 0L && wanted > 0L) {
             when (playFrom(renderer, track, url, mime, wanted)) {
                 Start.PLAYING -> true
@@ -619,15 +632,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 Start.UNSEEKABLE -> return startCastTrack(renderer, wanted, askServer = true, fresh = fresh)
             }
         } else {
-            DlnaCast.play(
-                renderer = renderer,
-                url = url,
-                title = track.title,
-                artist = track.artist,
-                album = track.album,
-                durationMs = track.durationMs,
-                mimeType = mime,
-            )
+            DlnaCast.play(renderer, url, track, mime)
         }
         if (!started) return false
         // A start cancelled while its unmute was out still comes back PLAYING
@@ -637,21 +642,17 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         log("pushed idx=${host.index.value} wanted=$wanted offset=$offset ${format.id}")
         host.showPlaying(true)
         host.showDuration(track.durationMs)
-        castOffsetMs = offset
         host.showPosition(wanted)
-        castStartedAtMs = wanted
+        startedAtMs = wanted
         // Whether it really went there is checked a moment later — see
         // verifyCastSeek.
         if (offset == 0L && wanted > 0L) verifyCastSeek(renderer, wanted, url)
         host.announceNowPlaying()
-        castCurrentUrl = url
-        castSeekPending = -1L
+        stream = CastStream(url, offset)
+        pendingSeek = null
         // SetAVTransportURI leaves the next slot empty, and it stays that way
         // until this track is nearly over — see armNextIfDue.
-        castNextUrl = null
-        castNextOffered = null
-        castNextTrackId = null
-        castNextArmedFor = null
+        nextOffer.forget()
         return true
     }
 
@@ -697,9 +698,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         wantedMs: Long,
     ): Start {
         seekedBeforePlay = null
-        if (!DlnaCast.setUri(renderer, url, track.title, track.artist, track.album, track.durationMs, mime)) {
-            return Start.FAILED
-        }
+        if (!DlnaCast.setUri(renderer, url, track, mime)) return Start.FAILED
         if (seeksBeforePlay[renderer.id] != false) {
             if (DlnaCast.seek(renderer, wantedMs)) {
                 seekedBeforePlay = url
@@ -763,7 +762,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      * tried, and false once one refused it, or took it and played from the
      * top anyway — see [playFrom] and [verifyCastSeek].
      */
-    private val seeksBeforePlay = mutableMapOf<String, Boolean>()
+    private val seeksBeforePlay = ConcurrentHashMap<String, Boolean>()
 
     /** The stream last started by a seek before play, which [verifyCastSeek] judges that way of starting by. */
     private var seekedBeforePlay: String? = null
@@ -838,22 +837,44 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     }
 
     /**
-     * Ask the server whether this track's stream can be seeked, and remember it.
+     * The address the renderer fetches [track] in [format] from, [offsetMs]
+     * into it.
+     *
+     * No estimated length: a server estimates from duration x the cap bitrate,
+     * an ABR transcode comes in under it, and a renderer stops where the
+     * declared length says, seconds early. Chunked plays to the end, and the
+     * shown duration comes from the DIDL metadata anyway.
+     *
+     * A session id of its own: the renderer fetches for itself, with no door
+     * to decide it first, and during a hand-off both tracks' transcodes are in
+     * flight at once, where Plex tears down whichever shares an identifier
+     * with the other — see OutputHost.ownStreamSession.
+     */
+    private fun castUrl(track: Track, format: StreamFormat, offsetMs: Long = 0L): String? =
+        host.streamUrl(
+            track,
+            format,
+            estimateContentLength = false,
+            timeOffsetSeconds = (offsetMs / 1000).toInt(),
+            sessionId = host.ownStreamSession(track.id),
+        )
+
+    /**
+     * Whether [track]'s stream in [format] can be seeked: remembered, else
+     * asked of the server and remembered.
      *
      * **Not** with the URL the renderer plays: a second request with the same
      * session id has Plex tear the first down, stopping the music. Without one
      * the probe gets a transcode of its own, closed at once, and the answer is
      * the same: whether the server transcodes depends on the file and format.
      */
-    private suspend fun probeSeekable(
-        track: Track,
-        format: StreamFormat,
-        key: String,
-    ): Boolean? {
+    private suspend fun seekable(track: Track, format: StreamFormat): Boolean? {
+        val key = "${track.id}|${format.id}"
+        seekableStreams[key]?.let { return it }
         // Known without a fetch, which would take the very transcode the
         // speaker is about to ask for — see MusicServer.knownStream.
         host.knownStream(track, format)?.let {
-            castSeekable[key] = it.ranges
+            seekableStreams[key] = it.ranges
             return it.ranges
         }
         val probeUrl = host.streamUrl(
@@ -863,7 +884,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         ) ?: return null
         // The probe goes to the music server, not the speaker, on a stack
         // outside NetworkGate — DlnaCast.allowsNetwork stands in front of it.
-        return DlnaCast.supportsRanges(probeUrl)?.also { castSeekable[key] = it }
+        return DlnaCast.supportsRanges(probeUrl)?.also { seekableStreams[key] = it }
     }
 
     /**
@@ -883,11 +904,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     /**
      * Hand the renderer the following track so it can cross into it seamlessly.
      *
-     * The URL goes in [castNextUrl] so the poll can recognise the hand-off,
-     * whose only evidence is GetPositionInfo reporting the other URI, and in
-     * [castNextOffered] before the reply: a renderer can take the address and
-     * lose the answer (straight after a seek, say), and its hand-off must still
-     * be seen. Call through [armNextIfDue]: a stream handed over early goes stale.
+     * The address goes in [nextOffer] so the poll can recognise the hand-off,
+     * offered before the reply and taken once the renderer says so. Call
+     * through [armNextIfDue]: a stream handed over early goes stale.
      */
     private suspend fun queueNextOnRenderer(renderer: DlnaRenderer) {
         val after = nextIndex()
@@ -902,34 +921,16 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         // Offered once per track. Asking again neither opens a new stream nor
         // changes the renderer's mind, and each attempt nulls the very field the
         // hand-off is recognised by until the SOAP call comes back.
-        if (castNextArmedFor == after) return
+        if (nextOffer.armedFor == after) return
         val (format, mime) = castFormatFor(renderer, track)
-        // Its own id, not the current track's: both transcodes are in flight
-        // at once during the hand-off, and Plex tears down whichever one
-        // shares an identifier with the other — see OutputHost.ownStreamSession.
-        val url = host.streamUrl(
-            track,
-            format,
-            estimateContentLength = false,
-            sessionId = host.ownStreamSession(track.id),
-        ) ?: return
-        if (url == castNextUrl) return
-        castNextArmedFor = after
-        castNextUrl = null
-        castNextOffered = url
-        castNextTrackId = track.id
-        val queued = DlnaCast.setNext(
-            renderer = renderer,
-            url = url,
-            title = track.title,
-            artist = track.artist,
-            album = track.album,
-            durationMs = track.durationMs,
-            mimeType = mime,
-        )
+        // Its own session id, not the current track's — see castUrl.
+        val url = castUrl(track, format) ?: return
+        if (url == nextOffer.taken) return
+        nextOffer.offer(after, track.id, url)
+        val queued = DlnaCast.setNext(renderer, url, track, mime)
         // Renderers without it fault, and the stop-and-restart path carries the
-        // queue. An offer never answered is still looked for — see castNextOffered.
-        if (queued) castNextUrl = url
+        // queue. An offer never answered is still looked for — see NextOffer.offered.
+        if (queued) nextOffer.taken = url
     }
 
     /** Restarts so far, so each one is an address of its own — see [freshAddress]. */
@@ -945,11 +946,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     /** Forget what was offered as the next track, on the renderer as well. */
     private suspend fun dropNext(renderer: DlnaRenderer) {
-        val offered = castNextUrl ?: castNextOffered
-        castNextUrl = null
-        castNextOffered = null
-        castNextTrackId = null
-        castNextArmedFor = null
+        val offered = nextOffer.url
+        nextOffer.forget()
         // A renderer without the call faults, which changes nothing.
         if (offered != null) DlnaCast.clearNext(renderer)
     }
@@ -963,9 +961,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      * Null when it was never offered, or the queue no longer has it.
      */
     private fun offeredNextIndex(): Int? {
-        val id = castNextTrackId ?: return null
+        val id = nextOffer.trackId ?: return null
         val queue = host.queue.value
-        castNextArmedFor?.takeIf { queue.getOrNull(it)?.id == id }?.let { return it }
+        nextOffer.armedFor?.takeIf { queue.getOrNull(it)?.id == id }?.let { return it }
         return queue.indexOfFirst { it.id == id }.takeIf { it >= 0 }
     }
 
@@ -974,6 +972,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      * as long as the renderer can decode what the *server* will send.
      *  - The format name doesn't fix the container (a "flac" transcode can
      *    arrive as Ogg-FLAC), so the MIME type is probed from the server.
+     *    Original is each file's own container, so it is probed per track: a
+     *    FLAC after an MP3 must not go out as audio/mpeg.
      *  - An unsupported format doesn't error, the renderer just stalls, so it
      *    falls back to MP3 when the sink list doesn't cover that MIME.
      * If the device won't list its formats, the user's choice wins.
@@ -983,11 +983,11 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         track: Track,
     ): Pair<StreamFormat, String> {
         val desired = host.streamFormat()
-        val key = "${renderer.id}|${desired.id}"
-        castFormats[key]?.let { return it }
+        val key = formatChoiceKey(renderer.id, desired, track.id)
+        formats[key]?.let { return it }
 
         val sink = runCatching { DlnaCast.sinkFormats(renderer) }.getOrDefault(emptySet())
-        // Same as probeSeekable: this asks the music server; DlnaCast's own
+        // Same as seekable: this asks the music server; DlnaCast's own
         // switch stands in front of it. Not where the server already says.
         val mime = host.knownStream(track, desired)?.mime
             ?: host.streamUrl(track, desired)?.let { DlnaCast.probeMime(it) }
@@ -997,7 +997,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         } else {
             StreamFormat.MP3 to "audio/mpeg"
         }
-        castFormats[key] = choice
+        formats[key] = choice
         return choice
     }
 
@@ -1006,238 +1006,159 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      * finishes: a renderer holds one URI, so the hand-off is driven from here.
      */
     private suspend fun pollRenderer(renderer: DlnaRenderer, playedBefore: Boolean = false) {
-        var settled = false
-        // Whether a stop can only mean the track ended, as for a track pushed
-        // again for a seek: it was playing a moment ago. Otherwise a stop before
-        // any poll saw PLAYING reads as never started, and restarts the track.
-        var played = playedBefore
-        // What the renderer said last time. A position that hasn't moved is not
-        // evidence that anything is playing — see below.
-        var lastPositionMs = -1L
-        // The queue index we have tried to start by hand, and how often, so a
-        // track that refuses to play is asked again a couple of times and
-        // then passed over rather than restarted for ever.
-        var startedIndex = -1
-        var restartsHere = 0
-        // How patient to be with a track that hasn't started. A stream being
-        // opened from scratch deserves a few seconds; one the renderer has
-        // *already* taken from the queue and stopped on does not — see the
-        // hand-off below.
-        var restartAfter = STALLED_POLLS_TO_RESTART
-        // A renderer reports STOPPED for a moment while it re-buffers as well as
-        // at the end of a track, and the two are indistinguishable from one poll.
-        // Two in a row is: the stream really has ended. Readings that went
-        // unanswered are counted separately — see CastStallCounter.
-        val stall = CastStallCounter()
-        // Where the track was last heard playing, for telling a stop part-way
-        // through from its end — see stoppedPartWay.
-        var heardMs = -1L
-        // Stopped part-way and shown paused there, until it plays again.
-        var stoppedThere = false
+        val watch = CastWatch(playedBefore)
         while (coroutineContext.isActive && steered()?.id == renderer.id) {
             delay(CAST_POLL_MS)
             undoHush(renderer)
             val position = DlnaCast.position(renderer)
             val state = DlnaCast.state(renderer)
-            // This reading is of the track we pushed or followed.
-            var oursNow = false
-            if (position != null) {
-                val reported = position.trackUri
-                // The renderer crossed into the track we queued: follow it here
-                // rather than driving it, so nothing interrupts the audio. It has
-                // to be a *different* URI from the current one, since repeat-one
-                // queues the same track. Offered counts as much as confirmed —
-                // see castNextOffered.
-                val next = castNextUrl ?: castNextOffered
-                val moved = next != null &&
-                    !DlnaCast.sameUri(next, castCurrentUrl) &&
-                    DlnaCast.sameUri(reported, next)
-                if (moved) {
-                    dropSeekChecks()
-                    (offeredNextIndex() ?: nextIndex())?.let { host.showIndex(it) }
-                    castCurrentUrl = next
-                    // The queued track was handed over whole, from its start.
-                    castOffsetMs = 0L
-                    castStartedAtMs = 0L
-                    castSeekPending = -1L
-                    host.showDuration(
-                        host.queue.value.getOrNull(host.index.value)?.durationMs
-                            ?: host.durationMs.value,
-                    )
-                    host.announceNowPlaying()
-                    // The slot the renderer just consumed is empty again, and is
-                    // left that way until this track is nearly over.
-                    castNextUrl = null
-                    castNextOffered = null
-                    castNextTrackId = null
-                    castNextArmedFor = null
-                    stall.reset()
-                    // The renderer has taken the queued track but not started it:
-                    // for a second or two it reports STOPPED and the finished
-                    // track's position, which reads as this track ending. So the
-                    // new track gets a fresh start's protection, and the rest of
-                    // this poll, which is about the old one, is skipped.
-                    settled = false
-                    played = false
-                    heardMs = -1L
-                    stoppedThere = false
-                    // Seeded with the reading we just saw, not cleared: cleared,
-                    // the next identical stale reading looks like a change and
-                    // re-arms the very flag this is putting down.
-                    lastPositionMs = position.positionMs
-                    host.showPosition(0L)
-                    // A working hand-off is already PLAYING here, the gapless case.
-                    // A dead one sits stopped on the finished track's position and
-                    // never recovers on its own: one more poll, not the seconds a
-                    // cold stream needs.
-                    restartAfter = if (state == DlnaState.PLAYING) {
-                        STALLED_POLLS_TO_RESTART
-                    } else {
-                        HANDOFF_POLLS_TO_RESTART
-                    }
-                    continue
-                }
-                // Only readings of *our* track: between streams a renderer goes
-                // on reporting the last one's frozen position, sometimes for seconds.
-                val ours = reported == null || DlnaCast.sameUri(reported, castCurrentUrl)
-                oursNow = ours
-                if (ours) {
-                    // Until this track has settled, only a reading near where it
-                    // started is believed: for a poll or two a renderer reports
-                    // the new URI with the *old* clock.
-                    val reading = position.positionMs + castOffsetMs
-                    val pending = castSeekPending
-                    if (pending >= 0L) {
-                        // A seek is in flight, and the renderer reports the old
-                        // clock for a poll or two while it reopens the stream:
-                        // nothing is believed until a reading near the target
-                        // (the seek's own check re-pushes if none comes). Not for
-                        // ever: a seek into the last seconds under repeat-one can
-                        // wrap to 0:00 before any reading near it.
-                        if (abs(reading - pending) <= CAST_START_WINDOW_MS) {
-                            castSeekPending = -1L
-                            host.showPosition(reading)
-                            if (state != DlnaState.STOPPED) heardMs = reading
-                        } else if (SystemClock.elapsedRealtime() - castSeekPendingAt > CAST_SEEK_WAIT_MS) {
-                            log("seek to $pending never seen — following the renderer at $reading")
-                            castSeekPending = -1L
-                            host.showPosition(reading)
-                            if (state != DlnaState.STOPPED) heardMs = reading
-                        }
-                    } else if (settled || abs(reading - castStartedAtMs) <= CAST_START_WINDOW_MS) {
-                        host.showPosition(reading)
-                        if (state != DlnaState.STOPPED) heardMs = reading
-                    }
-                    // A stream that started part-way in reports a short duration:
-                    // the track's own is the honest number.
-                    if (castOffsetMs == 0L && position.durationMs > 0) {
-                        host.showDuration(position.durationMs)
-                    }
-                    // Started means the renderer saying PLAYING (below), or a
-                    // position that has *moved* while not stopped. A stopped
-                    // renderer's position is never evidence: through a hand-off
-                    // it holds the finished track's last one.
-                    if (state != DlnaState.STOPPED &&
-                        position.positionMs > 0 &&
-                        position.positionMs != lastPositionMs
-                    ) {
-                        settled = true
-                    }
-                    lastPositionMs = position.positionMs
-                }
-            }
-            stall.observe(state)
-            when (state) {
-                DlnaState.PLAYING -> {
-                    settled = true
-                    if (oursNow && stoppedThere) {
-                        // Played again from its own remote: followed from
-                        // wherever it plays, nothing left to push from here.
-                        stoppedThere = false
-                        waitingForPlay = false
-                    }
-                    if (!behindPress(playing = true)) host.showPlaying(true)
-                    // Sound, by its own say, once any seek has landed: the
-                    // start is over now, not a second or two later when its
-                    // clock is seen to move.
-                    if (oursNow && castSeekPending < 0L) host.showSounding()
-                }
-                DlnaState.PAUSED -> if (!behindPress(playing = false)) host.showPaused()
-                else -> Unit
-            }
-            when {
-                // Paused part-way (below): nothing ends, restarts or is handed on
-                // until it plays again, or the stale clock would read the cued
-                // track as over and the next song would start under a pause.
-                stoppedThere -> Unit
-                // Stopped part-way through: some remotes pause by STOP, so it is
-                // a pause, not the end. Shown paused where last heard; a play
-                // here pushes the track again from there — see waitingForPlay —
-                // and one on its remote is followed.
-                (settled || played) && stall.stopped >= STOPPED_POLLS_TO_ADVANCE &&
-                    stoppedPartWay(heardMs, host.durationMs.value) -> {
-                    log("stopped at $heardMs of ${host.durationMs.value} → paused there")
-                    stoppedThere = true
-                    waitingForPlay = true
-                    host.showPosition(heardMs)
-                    host.showPaused()
-                    dropNext(renderer)
-                    // Put in again from there, stopped, so its own play and
-                    // a resume from here both go on from where it stopped.
-                    if (cueAt(renderer, heardMs)) waitingForPlay = false
-                    // Until it plays the cued stream it reports the old one's
-                    // clock, which added to the new offset is the stop point
-                    // twice over: only a reading near the cue is believed.
-                    settled = false
-                }
-                // Played, then stopped: the track ended. Only readings the renderer
-                // gave count: going quiet never ends a track that was playing.
-                (settled || played) && stall.stopped >= STOPPED_POLLS_TO_ADVANCE -> {
-                    log("ended idx=${host.index.value} → advance")
-                    if (!advanceCast(renderer)) return
-                    settled = false
-                    played = false
-                    heardMs = -1L
-                    stall.reset()
-                    startedIndex = -1
-                    restartAfter = STALLED_POLLS_TO_RESTART
-                }
-                // Never played: a renderer can take the queued track, transition
-                // to it and then sit stopped for ever, so it is started by hand
-                // rather than stepped over. One that stopped answering counts
-                // too: this decision can afford to be wrong. Three STOPPED
-                // readings in a row is a stream turned away (one still being
-                // fetched says TRANSITIONING). Twice per track: a song turned
-                // away while the stream it replaced was still closing plays on
-                // a second try.
-                !settled && !played &&
-                    (stall.notPlaying >= restartAfter || stall.stopped >= TURNED_AWAY_POLLS) &&
-                    (startedIndex != host.index.value || restartsHere < RESTARTS_BEFORE_PASSING_OVER) -> {
-                    log("never started idx=${host.index.value} → restart")
-                    if (startedIndex != host.index.value) restartsHere = 0
-                    startedIndex = host.index.value
-                    restartsHere++
-                    stall.reset()
-                    restartAfter = STALLED_POLLS_TO_RESTART
-                    if (!startOrStop(renderer, host.positionMs.value, fresh = true)) return
-                }
-                // Asked again and it still won't play: something is wrong with
-                // this track rather than with the hand-off, and sitting in
-                // silence is worse than going on.
-                !settled && !played &&
-                    stall.notPlaying >= restartAfter &&
-                    startedIndex == host.index.value -> {
-                    log("still not playing idx=${host.index.value} → pass over")
-                    if (!advanceCast(renderer)) return
-                    stall.reset()
-                    startedIndex = -1
-                    restartsHere = 0
-                    restartAfter = STALLED_POLLS_TO_RESTART
-                }
-            }
+            // The rest of this poll is about the track the renderer just left.
+            if (position != null && followedHandOff(position, state, watch)) continue
+            val ours = position != null && readClock(position, state, watch)
+            watch.stall.observe(state)
+            showState(state, ours, watch)
+            if (!carryOut(watch.next(host.durationMs.value, host.index.value), renderer, watch)) return
             // Near the end, the next track is handed over — see armNextIfDue.
-            if (!stoppedThere) armNextIfDue(renderer)
+            if (!watch.stoppedThere) armNextIfDue(renderer)
         }
+    }
+
+    /**
+     * Whether the renderer crossed into the track offered next, which is then
+     * followed here rather than driven, so nothing interrupts the audio. It has
+     * to be a *different* URI from the current one, since repeat-one queues the
+     * same track. Offered counts as much as taken — see NextOffer.offered.
+     */
+    private fun followedHandOff(position: DlnaPosition, state: DlnaState, watch: CastWatch): Boolean {
+        val next = nextOffer.url ?: return false
+        if (DlnaCast.sameUri(next, stream?.url) || !DlnaCast.sameUri(position.trackUri, next)) return false
+        dropSeekChecks()
+        (offeredNextIndex() ?: nextIndex())?.let { host.showIndex(it) }
+        // The queued track was handed over whole, from its start.
+        stream = CastStream(next, offsetMs = 0L)
+        startedAtMs = 0L
+        pendingSeek = null
+        host.showDuration(host.queue.value.getOrNull(host.index.value)?.durationMs ?: host.durationMs.value)
+        host.announceNowPlaying()
+        // The slot the renderer just consumed is empty again, and is left that
+        // way until this track is nearly over.
+        nextOffer.forget()
+        watch.handedOff(position.positionMs, playing = state == DlnaState.PLAYING)
+        host.showPosition(0L)
+        return true
+    }
+
+    /**
+     * Show the renderer's clock where [position] is a reading of the track
+     * pushed or followed, and say whether it is. Between streams a renderer
+     * goes on reporting the last one's frozen position, sometimes for seconds.
+     */
+    private fun readClock(position: DlnaPosition, state: DlnaState, watch: CastWatch): Boolean {
+        val current = stream
+        val reported = position.trackUri
+        if (reported != null && !DlnaCast.sameUri(reported, current?.url)) return false
+        val offset = current?.offsetMs ?: 0L
+        val reading = position.positionMs + offset
+        val pending = pendingSeek
+        val believed = when {
+            // Until this track has settled, only a reading near where it started
+            // is believed: for a poll or two a renderer reports the new URI with
+            // the *old* clock.
+            pending == null -> watch.settled || abs(reading - startedAtMs) <= CAST_START_WINDOW_MS
+            // A seek is in flight, and the renderer reports the old clock for a
+            // poll or two while it reopens the stream: nothing is believed until
+            // a reading near the target (the seek's own check re-pushes if none
+            // comes). Not for ever: a seek into the last seconds under
+            // repeat-one can wrap to 0:00 before any reading near it.
+            abs(reading - pending.targetMs) <= CAST_START_WINDOW_MS -> true
+            SystemClock.elapsedRealtime() - pending.sentAt > CAST_SEEK_WAIT_MS -> {
+                log("seek to ${pending.targetMs} never seen — following the renderer at $reading")
+                true
+            }
+            else -> false
+        }
+        if (believed) {
+            if (pending != null) pendingSeek = null
+            host.showPosition(reading)
+            if (state != DlnaState.STOPPED) watch.heardMs = reading
+        }
+        // A stream that started part-way in reports a short duration: the
+        // track's own is the honest number.
+        if (offset == 0L && position.durationMs > 0) host.showDuration(position.durationMs)
+        // Started means the renderer saying PLAYING (see showState), or a
+        // position that has *moved* while not stopped. A stopped renderer's
+        // position is never evidence: through a hand-off it holds the finished
+        // track's last one.
+        if (state != DlnaState.STOPPED &&
+            position.positionMs > 0 &&
+            position.positionMs != watch.lastPositionMs
+        ) {
+            watch.settled = true
+        }
+        watch.lastPositionMs = position.positionMs
+        return true
+    }
+
+    /** Show what the renderer says it is doing, unless that is only it not having caught up with a press. */
+    private fun showState(state: DlnaState, ours: Boolean, watch: CastWatch) {
+        when (state) {
+            DlnaState.PLAYING -> {
+                watch.settled = true
+                if (ours && watch.stoppedThere) {
+                    // Played again from its own remote: followed from wherever
+                    // it plays, nothing left to push from here.
+                    watch.stoppedThere = false
+                    waitingForPlay = false
+                }
+                if (!behindPress(playing = true)) host.showPlaying(true)
+                // Sound, by its own say, once any seek has landed: the start is
+                // over now, not a second or two later when its clock is seen to move.
+                if (ours && pendingSeek == null) host.showSounding()
+            }
+            DlnaState.PAUSED -> if (!behindPress(playing = false)) host.showPaused()
+            else -> Unit
+        }
+    }
+
+    /** Do what the poll decided — see [CastWatch.next]. False when there is nothing left to follow. */
+    private suspend fun carryOut(step: CastStep, renderer: DlnaRenderer, watch: CastWatch): Boolean {
+        when (step) {
+            CastStep.Wait -> Unit
+            is CastStep.PauseThere -> {
+                log("stopped at ${step.atMs} of ${host.durationMs.value} → paused there")
+                // Shown paused where last heard; a play here pushes the track
+                // again from there — see waitingForPlay — and one on its
+                // remote is followed.
+                watch.stoppedThere = true
+                waitingForPlay = true
+                host.showPosition(step.atMs)
+                host.showPaused()
+                dropNext(renderer)
+                // Put in again from there, stopped, so its own play and a
+                // resume from here both go on from where it stopped.
+                if (cueAt(renderer, step.atMs)) waitingForPlay = false
+                // Until it plays the cued stream it reports the old one's clock,
+                // which added to the new offset is the stop point twice over:
+                // only a reading near the cue is believed.
+                watch.settled = false
+            }
+            CastStep.Advance -> {
+                log("ended idx=${host.index.value} → advance")
+                if (!advanceCast(renderer)) return false
+                watch.advanced()
+            }
+            CastStep.Restart -> {
+                log("never started idx=${host.index.value} → restart")
+                watch.restarting(host.index.value)
+                if (!startOrStop(renderer, host.positionMs.value, fresh = true)) return false
+            }
+            CastStep.PassOver -> {
+                log("still not playing idx=${host.index.value} → pass over")
+                if (!advanceCast(renderer)) return false
+                watch.passedOver()
+            }
+        }
+        return true
     }
 
     /**
@@ -1254,25 +1175,16 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     private suspend fun cueAt(renderer: DlnaRenderer, atMs: Long): Boolean {
         val track = host.queue.value.getOrNull(host.index.value) ?: return false
         val (format, mime) = castFormatFor(renderer, track)
-        val seekKey = "${track.id}|${format.id}"
-        val seekable = castSeekable[seekKey] ?: probeSeekable(track, format, seekKey)
-        val byRenderer = seekable == true && seeksBeforePlay[renderer.id] != false
+        val byRenderer = seekable(track, format) == true && seeksBeforePlay[renderer.id] != false
         val offset = if (byRenderer) 0L else atMs / 1000 * 1000
-        val url = host.streamUrl(
-            track,
-            format,
-            estimateContentLength = false,
-            timeOffsetSeconds = (offset / 1000).toInt(),
-            sessionId = host.ownStreamSession(track.id),
-        ) ?: return false
-        if (!DlnaCast.setUri(renderer, url, track.title, track.artist, track.album, track.durationMs, mime)) return false
+        val url = castUrl(track, format, offset) ?: return false
+        if (!DlnaCast.setUri(renderer, url, track, mime)) return false
         // Held now, whatever happens next: its readings are this track's, and
         // a play from its own remote is followed from wherever it starts.
-        castCurrentUrl = url
-        castOffsetMs = offset
-        castSeekPending = -1L
+        stream = CastStream(url, offset)
+        pendingSeek = null
         val there = !byRenderer || DlnaCast.seek(renderer, atMs)
-        castStartedAtMs = if (byRenderer && there) atMs else offset
+        startedAtMs = if (byRenderer && there) atMs else offset
         log(
             "cued idx=${host.index.value} at $atMs " +
                 "${if (!byRenderer) "from the server" else if (there) "seeked" else "but not seeked"}, stopped",
@@ -1282,12 +1194,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
     /** Move to the next queue entry on the renderer; false when the queue ends. */
     private suspend fun advanceCast(renderer: DlnaRenderer): Boolean {
-        val next = when (host.repeatMode.value) {
-            RepeatMode.TRACK -> host.index.value
-            RepeatMode.QUEUE -> (host.index.value + 1) % host.queue.value.size.coerceAtLeast(1)
-            RepeatMode.OFF -> host.index.value + 1
-        }
-        if (next !in host.queue.value.indices) {
+        val next = nextIndex()?.takeIf { it in host.queue.value.indices }
+        if (next == null) {
             log("queue finished")
             // Nothing left to resume — see waitingForPlay. The controller winds
             // back to the top, as it does for the phone.
@@ -1307,15 +1215,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
         /**
          * How long a seek in place is waited for before the renderer's clock is
-         * believed again, wherever it is — see pollRenderer.
+         * believed again, wherever it is — see readClock.
          */
         const val CAST_SEEK_WAIT_MS = 5_000L
-
-        /**
-         * Readings of STOPPED in a row, with nothing opening, that say a pushed
-         * track was turned away — see pollRenderer.
-         */
-        const val TURNED_AWAY_POLLS = 3
 
         /** A cast seek this close to the end, or past it, is the next track: nothing is left to hear. */
         const val CAST_SEEK_END_SLACK_MS = 1_000L
@@ -1328,22 +1230,6 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
         /** How long a renderer gets to act on a play or pause before what it reports counts again. */
         const val PRESS_SETTLE_MS = 3_000L
-
-        /** Consecutive STOPPED readings that mean the track really ended. */
-        const val STOPPED_POLLS_TO_ADVANCE = 2
-
-        /**
-         * Polls a track that has never played is given before it is started by
-         * hand — see pollRenderer. Longer than the advance threshold: a renderer
-         * opening a fresh stream is stopped for a few seconds while it loads.
-         */
-        const val STALLED_POLLS_TO_RESTART = 6
-
-        /**
-         * The same, for a track the renderer took from the queue and stopped on:
-         * it had the whole previous track to load, so that hand-off has failed.
-         */
-        const val HANDOFF_POLLS_TO_RESTART = 2
 
         /**
          * How close to the end of the current track the next one is handed over:
@@ -1373,8 +1259,5 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
         /** How many tries a renderer found again gets to say what it is doing. */
         const val REFOUND_READS = 3
-
-        /** Fresh restarts of a track the renderer won't start, before it is passed over. */
-        const val RESTARTS_BEFORE_PASSING_OVER = 2
     }
 }

@@ -61,13 +61,13 @@ class ReopenRecueTest {
 
     /** The screen carried track 2; the service is on what each case says, 1:40 in. */
     private fun landing(
-        playerIndex: Int,
+        playerRow: Int,
         pickedIndex: Int = -1,
         recued: Boolean = false,
         casting: Boolean = false,
         parked: Boolean = false,
     ) = connectLanding(
-        playerIndex = playerIndex,
+        playerRow = playerRow,
         playerPositionMs = 100_000L,
         shownIndex = 2,
         pickedIndex = pickedIndex,
@@ -83,19 +83,19 @@ class ReopenRecueTest {
      */
     @Test
     fun `a service that moved on is landed on at its own position`() {
-        assertEquals(100_000L, landing(playerIndex = 5))
+        assertEquals(100_000L, landing(playerRow = 5))
     }
 
     @Test
     fun `the same track, an empty player or a re-cue has nothing to land on`() {
-        assertNull(landing(playerIndex = 2))
-        assertNull(landing(playerIndex = NO_MEDIA_ITEM))
-        assertNull(landing(playerIndex = 5, recued = true))
+        assertNull(landing(playerRow = 2))
+        assertNull(landing(playerRow = NO_MEDIA_ITEM))
+        assertNull(landing(playerRow = 5, recued = true))
     }
 
     @Test
     fun `a cast says where playback is itself`() {
-        assertNull(landing(playerIndex = 5, casting = true))
+        assertNull(landing(playerRow = 5, casting = true))
     }
 
     /**
@@ -105,12 +105,12 @@ class ReopenRecueTest {
      */
     @Test
     fun `a park keeps the marker the user moved`() {
-        assertNull(landing(playerIndex = 5, parked = true))
+        assertNull(landing(playerRow = 5, parked = true))
     }
 
     /** Next pressed while the handle connected: the skip reached the service after its snapshot. */
     @Test
     fun `a track a press went to while connecting starts from the top`() {
-        assertEquals(0L, landing(playerIndex = 3, pickedIndex = 3))
+        assertEquals(0L, landing(playerRow = 3, pickedIndex = 3))
     }
 }

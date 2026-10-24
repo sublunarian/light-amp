@@ -13,19 +13,13 @@ import com.sublunar.amp.data.KnownStream
 import com.sublunar.amp.data.LinkRules
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.NetworkGate
-import com.sublunar.amp.data.PendingAction
-import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.SavedQueue
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
-import com.sublunar.amp.data.UNREACHABLE
-import com.sublunar.amp.data.WriteResult
-import com.sublunar.amp.data.attemptWrite
 import com.sublunar.amp.data.db.LibraryDao
-import com.sublunar.amp.data.qualityRank
 import com.sublunar.amp.playback.output.ActiveOutput
 import com.sublunar.amp.playback.output.Disconnect
 import com.sublunar.amp.playback.output.Output
@@ -41,25 +35,18 @@ import com.sublunar.amp.playback.output.Refound
 import com.thelightphone.sdk.audio.LightAudio
 import com.thelightphone.sdk.audio.LightAudioError
 import com.thelightphone.sdk.audio.LightAudioErrorKind
-import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayback
 import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioPlayerAvailability
 import com.thelightphone.sdk.audio.LightAudioSource
-import com.thelightphone.sdk.audio.LightMediaMetadata
 import com.thelightphone.sdk.audio.LightPlayerSpec
-import com.thelightphone.sdk.audio.NO_MEDIA_ITEM
 import java.io.File
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.pow
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -80,21 +67,33 @@ import kotlinx.coroutines.withTimeoutOrNull
  * The app's one playback engine. It drives the detached [LightAudioPlayer]
  * (the SDK's own service, which plays on with the screens gone), owns the
  * queue and every readout the screens show, and steers an [Output] instead
- * while the sound is elsewhere. Queue edits use the player's incremental ops,
- * so changing what plays next never interrupts the current track.
+ * while the sound is elsewhere. The queue is kept whole here and the player
+ * holds a window of it ([window]). Queue edits use the player's incremental
+ * ops, so changing what plays next never interrupts the current track. What
+ * the server is told lives in [ServerReports], where each track plays from in
+ * [TrackSources], and the pure queue arithmetic in QueueMath.kt and
+ * QueueWindow.kt.
  *
  * Two rules hold throughout. The player's looper is Main and it throws on
  * any other thread, so every player call from a coroutine is made on Main,
  * mostly through Dispatchers.Main.immediate. And a released handle throws
  * too, so a deferred block re-reads [player] on Main instead of using a
  * handle it captured: a new activity may have replaced it in between.
+ *
+ * The controller's own state lives on Main too. The collectors that touch
+ * it run there, posted rather than immediate (the failure collector aside),
+ * so each runs after whatever set its flow has finished: the SDK sets its
+ * flows in the middle of its own calls. Three things still reach the state
+ * from other threads, which is what the volatile fields are for: a source
+ * switch's [stop], whose clear is synchronous, the outputs' calls on the
+ * host, and the restore's first look.
  */
 class PlaybackController(
     private val settings: AppSettings,
     private val serverClient: StateFlow<MusicServer?>,
     /** Unused; goes when App stops passing it. */
     daoProvider: () -> LibraryDao,
-    private val downloads: DownloadStore,
+    downloads: DownloadStore,
     private val scope: CoroutineScope,
     /**
      * Whether the server may be spoken to at all — see App.metadataAllowed.
@@ -193,8 +192,8 @@ class PlaybackController(
 
     /**
      * The handle on the detached service. Replaced on Main, by [attach], and
-     * read from Default as well: by the restore, the rules and downloads
-     * collectors, and a source switch's stop.
+     * read off Main by the restore's first look and the outputs' calls on the
+     * host.
      */
     @Volatile
     private var player: LightAudioPlayer? = null
@@ -249,7 +248,20 @@ class PlaybackController(
     /** The queue as it was when shuffle was switched on, to go back to when it's switched off. */
     private var preShuffleOrder: List<Track>? = null
 
-    /** The source each row of the player's queue was last built from, so a no-op rebuild stays a no-op. */
+    /**
+     * The rows of [_queue] the player holds — see [QueueWindow]. Amp keeps
+     * the whole queue; the player gets a window of it, slid along as playback
+     * nears an edge ([keepWindowAround]) and rebuilt around a jump outside it.
+     * Describes the player only while [queuePlayer] holds the queue: the
+     * stand-in replaces it, and the sound coming back rebuilds it.
+     */
+    private var window = QueueWindow.EMPTY
+
+    /**
+     * The source each item in the player was last built from, one per
+     * position in [window], so a no-op rebuild stays a no-op. Kept in step by
+     * every edit made to the player — see [replaceInPlayer].
+     */
     private var queuedSources: List<LightAudioSource> = emptyList()
 
     /** Where the position stood when a start was first seen buffering, and when — see [noteProgress]. */
@@ -297,10 +309,9 @@ class PlaybackController(
      *
      * While set, the player's queue is one item longer than [_queue], so
      * anything that addresses the player by position calls [settleRestartCopy]
-     * first. Written on Main; the collectors read it to tell the copy's start
-     * from a new track.
+     * first. The index collector reads it to tell the copy's start from a new
+     * track.
      */
-    @Volatile
     private var restartCopyAt = -1
 
     /**
@@ -314,39 +325,26 @@ class PlaybackController(
     /** Bumped per seek, so a slow verify can't act on a stale target. */
     private var seekGeneration = 0
 
-    // --- Track source state --------------------------------------------------
+    // --- Server reports and track sources ------------------------------------
 
-    /** Copied from App.rules by the rules collector in [bind]. */
-    @Volatile
-    private var unmetered = false
+    /** What the server is told about playback — see [ServerReports]. */
+    private val reports = ServerReports(
+        scope = scope,
+        serverClient = serverClient,
+        metadataAllowed = metadataAllowed,
+        queue = _queue,
+        index = _index,
+        positionMs = _positionMs,
+        durationMs = _durationMs,
+        isPlaying = _isPlaying,
+        buffering = _buffering,
+        reportsElsewhere = { remote?.reportsItself == true },
+        playbackWanted = ::playbackWanted,
+        handleReady = { player?.availability?.value == LightAudioPlayerAvailability.Ready },
+    )
 
-    /** Downloaded tracks' files and formats, kept current as downloads land, so queue items build synchronously. */
-    private var localFiles: Map<String, Pair<File, StreamFormat>> = emptyMap()
-
-    /**
-     * Latched by [fallBackOffline]: downloads play from disk even where the
-     * stream is better, until the server answers again.
-     */
-    @Volatile
-    private var forceOffline = false
-
-    /** The track [fallBackOffline] last picked up, so it tries each one once. */
-    private var retriedTrackId: String? = null
-
-    /**
-     * Tracks whose stream failed, which play from their download instead.
-     * Narrower than [forceOffline]: for a server that is plainly there but
-     * won't serve this one song.
-     */
-    private val streamFailed = mutableSetOf<String>()
-
-    /**
-     * Songs whose original the server failed on its usual address, fetched
-     * from its other address from then on — see [playOriginalElsewhere]. By
-     * source and id, since two servers can share an id. Kept for the process:
-     * a file refused once is refused on the next queue too.
-     */
-    private val originalElsewhere = mutableSetOf<Pair<String, String>>()
+    /** Where each track plays from, and what has failed — see [TrackSources]. */
+    private val sources = TrackSources(serverClient, downloads, reports::streamSessionIdFor)
 
     // --- Output state --------------------------------------------------------
 
@@ -363,7 +361,6 @@ class PlaybackController(
         index = _index,
         isPlaying = _isPlaying,
         positionMs = _positionMs,
-        item = { track, source -> track.toAudioItem(source) },
     ) { press ->
         // Only while there is somewhere to send it: one arriving as the sound
         // comes back is the stand-in being put away.
@@ -391,7 +388,6 @@ class PlaybackController(
      * runs on through sleep; 0 while it plays or starts, or there is none —
      * see [forgetPausedSpeaker].
      */
-    @Volatile
     private var speakerPausedSinceMs = 0L
 
     /** Lets a paused speaker go on time, while the phone is awake to run it. */
@@ -404,66 +400,6 @@ class PlaybackController(
     /** The search for [lost], while one runs. */
     @Volatile
     private var rejoinJob: Job? = null
-
-    // --- Server report state -------------------------------------------------
-
-    /**
-     * The id the server knows playback by, on timeline reports and on the
-     * streams they report on — see [MusicServer.streamUrl]. The server says
-     * which of two policies ([MusicServer.oneSessionPerPlayer]):
-     *
-     * - One session for the whole listening, changing song as it goes, as
-     *   Plex wants and Plexamp does: this id, minted once per process and again
-     *   after [stop]. An id per song put a dashboard entry per song, and with
-     *   one remote stream allowed per user the next song was refused (503)
-     *   while the last one was still listed (#20).
-     * - One per song, as Jellyfin keeps: [playbackSession] plus the song's id,
-     *   new with each queue. Derived rather than stored, because the whole
-     *   queue becomes audio items at once and each item's URL has to agree
-     *   with the timeline however far ahead it was built.
-     *
-     * A "stopped" never works these out again: it goes out under the id that
-     * was announced — see [sessions].
-     */
-    @Volatile
-    private var listeningSession: String = newSessionId()
-
-    /** The queue's part of a per-song id; a flow, so a new queue of the same songs is still seen — see [bind]. */
-    private val playbackSession = MutableStateFlow(newSessionId())
-
-    /**
-     * The timeline reports on their way to the server, sent one at a time in
-     * the order they were decided, so a song's "stopped" can't overtake the
-     * next one's "playing".
-     */
-    private val timelineOut = Channel<TimelineSend>(Channel.UNLIMITED)
-
-    private sealed interface TimelineSend {
-        /** [report], to the server that was current when it was decided. */
-        class Report(val client: MusicServer, val report: TimelineReport) : TimelineSend
-
-        /** Everything queued before this has been sent — see [timelineSent]. */
-        class Flush(val done: CompletableDeferred<Unit>) : TimelineSend
-    }
-
-    /**
-     * The session the server was last told is open, kept as it was announced
-     * — see [SessionHandOver]. Every report goes through it, so a change of
-     * song or an end to playback stops exactly the session said before it.
-     */
-    private val sessions = SessionHandOver(::queueTimeline)
-
-    /** The track whose play was last submitted — see [maybeSubmitPlay]. */
-    private var lastScrobbledId: String? = null
-
-    /** The track last announced as playing now — see [announceNowPlaying]. */
-    private var nowPlayingId: String? = null
-
-    /** The sources a refused play has been said for this run — see [maybeSubmitPlay]. */
-    private val playRefusalSaid: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-    /** Identity of the queue last handed to the server — see [pushQueueToServer]. */
-    private var lastSavedQueueKey: Int? = null
 
     // --- Derived state -------------------------------------------------------
 
@@ -497,21 +433,12 @@ class PlaybackController(
      */
     private val remote: OutputControls? get() = _active.value?.output
 
+    /** The source the player was given for queue [row], or null when it doesn't hold the row. */
+    private fun queuedSourceAt(row: Int): LightAudioSource? = window.positionOf(row)?.let(queuedSources::getOrNull)
+
     init {
-        // Sends the timeline reports, in order — see [timelineOut].
-        scope.launch {
-            for (send in timelineOut) {
-                when (send) {
-                    is TimelineSend.Report -> runCatching {
-                        val r = send.report
-                        send.client.reportTimeline(r.sessionId, r.trackId, r.state, r.positionMs, r.durationMs)
-                    }
-                    is TimelineSend.Flush -> send.done.complete(Unit)
-                }
-            }
-        }
         // Times how long a speaker the phone owns has sat paused — see [forgetPausedSpeaker].
-        scope.launch {
+        scope.launch(Dispatchers.Main) {
             combine(_active, _isPlaying, _buffering) { a, playing, starting ->
                 a != null && a.family in Outputs.phone && !playing && !starting
             }.distinctUntilChanged().collect { paused ->
@@ -523,7 +450,7 @@ class PlaybackController(
                 speakerPausedSinceMs = SystemClock.elapsedRealtime()
                 forgetJob = launch {
                     delay(FORGET_PAUSED_SPEAKER_MS)
-                    withContext(Dispatchers.Main.immediate) { forgetPausedSpeaker() }
+                    forgetPausedSpeaker()
                 }
             }
         }
@@ -559,18 +486,12 @@ class PlaybackController(
         bindJob?.cancel()
         val bound = SupervisorJob(scope.coroutineContext[Job])
         bindJob = bound
+        // Posted to Main, where the state they touch lives. The upcoming
+        // notice, the link poll and the snapshot touch none and stay off it.
+        val onMain = bound + Dispatchers.Main
         // What the screen carried across a reopen: the re-cue in attachHandle
         // puts it back if the service came back empty.
-        val carried = _queue.value
-        val carriedIndex = _index.value
-        val carriedPositionMs = _positionMs.value
-        // Detached: playback lives in the SDK's service and survives the screen
-        // and the activity going away.
-        val p = audio.newPlayer(LightPlayerSpec(playback = LightAudioPlayback.Detached))
-        p.playbackGain = appliedGain
-        player = p
-        handleOwner = audio
-        attachHandle(p, carried, carriedIndex, carriedPositionMs)
+        openHandle(audio, _queue.value, _index.value, _positionMs.value)
         // Anything that changes what plays next has to reach an output holding
         // a URI chosen earlier. Debounced: one edit moves several of these.
         @OptIn(kotlinx.coroutines.FlowPreview::class)
@@ -578,16 +499,6 @@ class PlaybackController(
             combine(_queue, _index, _repeatMode) { _, _, _ -> Unit }
                 .debounce(UPCOMING_DEBOUNCE_MS)
                 .collect { remote?.upcomingChanged() }
-        }
-        // The server answering again ends the pins to local files.
-        scope.launch(bound) {
-            App.serverReachable.collect { reachable ->
-                if (reachable) {
-                    forceOffline = false
-                    retriedTrackId = null
-                    streamFailed.clear()
-                }
-            }
         }
         // The connectivity callback misses the default moving from a weak Wi-Fi
         // to cellular while both stay up, which decides the next track's format
@@ -608,7 +519,7 @@ class PlaybackController(
         }
         // The door coming up or going down moves every stream's address, and a
         // track parked for want of it can be cued again.
-        scope.launch(bound) {
+        scope.launch(onMain) {
             App.streamProxy.state.collect { state ->
                 reresolveQueue()
                 if (state is StreamProxy.State.On) cueIfParked()
@@ -616,7 +527,7 @@ class PlaybackController(
         }
         // Nothing waits on "buffering" for ever. Counted from the start, not from
         // when this collector saw it: a reopen replaces it mid-start.
-        scope.launch(bound) {
+        scope.launch(onMain) {
             _buffering.collectLatest { on ->
                 if (on) {
                     val elapsed = SystemClock.elapsedRealtime() - bufferingSinceMs
@@ -628,18 +539,12 @@ class PlaybackController(
         // Everything the rules can change (the link, its price, the mode, the
         // server), heard in the same moment the library and the queue view hear
         // it — see LinkRules.
-        scope.launch(bound) {
+        scope.launch(onMain) {
             App.rules.collect { rules ->
-                unmetered = rules.unmetered
-                if (rules.mayStream) {
-                    // Nothing learnt while streaming wasn't allowed outlives
-                    // that. Cleared here, not only when the server answers
-                    // again: "reachable" never changes while a ping keeps
-                    // succeeding.
-                    forceOffline = false
-                    retriedTrackId = null
-                    streamFailed.clear()
-                }
+                // Nothing learnt while streaming wasn't allowed outlives that.
+                // Cleared here, not only when the server answers again:
+                // "reachable" never changes while a ping keeps succeeding.
+                if (rules.mayStream) sources.forgetFailures()
                 reresolveQueue()
                 val out = remote
                 if (!rules.mayUseLan) {
@@ -653,41 +558,27 @@ class PlaybackController(
                         // leaving the house is not a press of play. With Wi-Fi
                         // back it is taken back.
                         Log.i(out.logTag, "Wi-Fi gone — cast let go, to be taken back")
-                        withContext(Dispatchers.Main.immediate) {
-                            if (remote?.needsLan == true) dropOutput(Disconnect.LinkLost)
-                        }
+                        dropOutput(Disconnect.LinkLost)
                     }
                 } else if (lost != null) {
                     rejoinLost()
                 }
                 if (rules.mayStream) {
                     cueIfParked()
-                } else {
+                } else if (parked && !parkedOnTheTrackItself) {
                     // Still parked, maybe for another reason now, so the words
-                    // stay true; only a wait about the link is reworded. On Main
-                    // with every other writer, so this can't re-park a player
-                    // un-parked in between.
-                    withContext(Dispatchers.Main.immediate) {
-                        if (parked && !parkedOnTheTrackItself) {
-                            _waitingFor.value = rules.waitingFor ?: _waitingFor.value
-                        }
-                    }
+                    // stay true; only a wait about the link is reworded.
+                    _waitingFor.value = rules.waitingFor ?: _waitingFor.value
                 }
             }
         }
         // The library's read of the active source's downloads, shared.
-        scope.launch(bound) {
+        scope.launch(onMain) {
             App.library.downloadFiles.collect { rows ->
-                localFiles = rows.mapNotNull { row ->
-                    downloads.existing(App.source.value.id, row.fileName)?.let { file ->
-                        row.trackId to (file to StreamFormat.fromId(row.format))
-                    }
-                }.toMap()
+                sources.downloadsChanged(rows)
                 reresolveQueue()
             }
         }
-        // A play counts part-way through — see maybeSubmitPlay.
-        scope.launch(bound) { _positionMs.collect { maybeSubmitPlay(it) } }
         // A snapshot every few seconds survives a kill without writing to
         // DataStore at every position tick.
         scope.launch(bound) {
@@ -696,33 +587,7 @@ class PlaybackController(
                 persistState()
             }
         }
-        // The heartbeat: Plex drops a session nothing pings for a while. Only
-        // while playing, and only with a handle connected: without one nothing
-        // here sees what the service plays, and a heartbeat would go on
-        // reporting a frozen song for as long as the process lived. release
-        // closes the session instead, and the reopen opens it again. On Main,
-        // where every change of queue and song is made, so a report never reads
-        // a new queue's session against the old queue's song.
-        scope.launch(bound) {
-            while (true) {
-                delay(TIMELINE_INTERVAL_MS)
-                withContext(Dispatchers.Main.immediate) {
-                    if (_isPlaying.value && player?.availability?.value == LightAudioPlayerAvailability.Ready) {
-                        reportTimeline(TimelineState.PLAYING)
-                    }
-                }
-            }
-        }
-        // The one place a change of song reaches the server, however it came
-        // about: a tap, next, gapless, a skip, a restore, a removal, the speaker
-        // moving on. The queue's session is watched too, so the same song tapped
-        // in a new list is the new session it is where the server keeps one per
-        // song. On Main and not immediate: it runs after whatever set the queue
-        // and the index, and never reads a new queue under the old index.
-        scope.launch(bound + Dispatchers.Main) {
-            combine(_queue, _index, playbackSession) { _, _, _ -> }
-                .collect { followCurrentSong() }
-        }
+        reports.follow(bound)
         _bound.value = true
     }
 
@@ -743,8 +608,8 @@ class PlaybackController(
      * left unbound: the new controller binds at once, while the old one's
      * unbind is only posted (that unbind is what throws when the old activity
      * is gone). [player] goes from the old handle straight to the new one,
-     * never through null: the restore and the re-resolution read it from
-     * Default, and a restore that saw none would give up for good.
+     * never through null: the restore reads it from Default, and one that
+     * saw none would give up for good.
      */
     private fun handOver(old: LightAudioPlayer, audio: LightAudio) {
         settleRestartCopy()
@@ -760,12 +625,22 @@ class PlaybackController(
         handleJob = null
         standIn.unbind()
         old.release()
+        openHandle(audio, carried, carriedIndex, carriedPositionMs)
+    }
+
+    /**
+     * Make [audio]'s handle on the service, seeded with the gain the service
+     * last had, and attach it with what the screen shows as it is made — see
+     * [attachHandle]. Main only. A failure is thrown on: the activity doesn't
+     * start without its player. Left behind is no handle, not a released one
+     * that throws at the next press.
+     */
+    private fun openHandle(audio: LightAudio, carried: List<Track>, carriedIndex: Int, carriedPositionMs: Long) {
         val p = try {
+            // Detached: playback lives in the SDK's service and survives the
+            // screen and the activity going away.
             audio.newPlayer(LightPlayerSpec(playback = LightAudioPlayback.Detached))
         } catch (e: Throwable) {
-            // Thrown on, as a first bind's failure is: the activity doesn't start
-            // without its player. Left behind is no handle, not a released one
-            // that throws at the next press.
             player = null
             handleOwner = null
             throw e
@@ -779,8 +654,8 @@ class PlaybackController(
     /**
      * Everything that lives on one handle: the volume follower and, once the
      * handle has connected, the re-cue or the landing and the collectors of
-     * its flows. Run for each new handle, by [bind] and [handOver], and
-     * cancelled with it through [handleJob].
+     * its flows. Run for each new handle, by [openHandle], and cancelled
+     * with it through [handleJob].
      *
      * Until the handle connects its flows hold placeholders (nothing playing,
      * 0:00, no track); the SDK fills them from the service before it calls the
@@ -863,25 +738,28 @@ class PlaybackController(
             // on the failed track, and the screen shows where the user moved
             // since. Read once, as a resume could change it half-way.
             val heldByPark = parked
-            val connectedOn = p.currentMediaItemIndex.value
+            val connectedOn = window.rowAt(p.currentMediaItemIndex.value)
             connectLanding(
-                playerIndex = connectedOn,
+                playerRow = connectedOn,
                 playerPositionMs = p.positionMs.value,
                 shownIndex = _index.value,
                 pickedIndex = pickedIndex,
                 recued = recue,
                 casting = isCasting,
                 parked = heldByPark,
-            )?.let { startMs -> landedOn(p, connectedOn, startMs) }
+            )?.let { startMs ->
+                landedOn(p, connectedOn, startMs)
+                // The service played on with no handle to slide its window.
+                keepWindowAround()
+            }
             collectHandle(p, handle, heldByPark)
             // The service can be seen again: a back-out closed the server's
             // session while it played on, and this opens it again on what is
             // actually playing, where it has got to, to be stopped later.
-            followCurrentSong(atMs = if (isCasting) _positionMs.value else p.positionMs.value + streamOffsetMs)
+            reports.followCurrentSong(atMs = if (isCasting) _positionMs.value else p.positionMs.value + streamOffsetMs)
             // Re-resolutions asked for while the handle connected were turned
-            // away, by reresolveQueue's wait for Ready or by a handover replacing
-            // the handle they read; this pass sends them. A re-cue has just built
-            // the queue from fresh answers.
+            // away by reresolveQueue's wait for Ready; this pass sends them. A
+            // re-cue has just built the queue from fresh answers.
             if (!recue) reresolveQueue()
         }
     }
@@ -895,6 +773,7 @@ class PlaybackController(
      * directly, or the resume's own rebuild, still moves the screen.
      */
     private fun collectHandle(p: LightAudioPlayer, handle: Job, heldByPark: Boolean) {
+        val onMain = handle + Dispatchers.Main
         // A failure is the error going from none to one. The flow repeats an
         // error when the queue moves under it, and a retry clears it first, so a
         // second failure counts again. One there at connect was noted in
@@ -908,21 +787,25 @@ class PlaybackController(
         }
         // While casting, the output is the truth for these readings; the paused
         // local player would report 0:00 and not-playing over it.
-        scope.launch(handle) {
+        scope.launch(onMain) {
+            // Whether this handle has heard it play, so a stop at connect isn't
+            // taken for one seen happen — see rewindIfQueueFinished.
+            var sounded = false
             p.isPlaying.collect { playing ->
                 if (!playerSpeaks) return@collect
                 _isPlaying.value = playing
                 if (playing) {
                     heardSound()
                 } else if (hasPlayed) {
-                    rewindIfQueueFinished(p)
+                    rewindIfQueueFinished(p, stoppedHere = sounded)
                 }
+                sounded = playing
             }
         }
         // A server-seeked stream starts at 0:00 of a shorter file, so the
         // readouts are shifted back into the track's own timeline. Not on the
         // restart copy, which is the song from its start.
-        scope.launch(handle) {
+        scope.launch(onMain) {
             var snapshot = heldByPark
             p.positionMs.collect {
                 if (snapshot) {
@@ -935,13 +818,13 @@ class PlaybackController(
                 }
             }
         }
-        scope.launch(handle) {
+        scope.launch(onMain) {
             p.durationMs.collect { reported ->
                 if (!playerSpeaks) return@collect
                 // The library's length, real before a byte has arrived.
                 val current = _queue.value.getOrNull(_index.value)
                 val known = current?.durationMs ?: 0L
-                val fromFile = current?.id?.let { localFiles.containsKey(it) } == true
+                val fromFile = current?.id?.let(sources::hasDownload) == true
                 // Never on the restart copy: read as an ignored offset below, it
                 // sent the copy to the seek point and repeat-one played the tail
                 // twice.
@@ -956,12 +839,9 @@ class PlaybackController(
                     known > 0L &&
                     reported >= known - IGNORED_OFFSET_SLACK_MS
                 ) {
-                    val target = offset
                     streamOffsetMs = 0L
-                    // Whichever handle holds the service by then: the offset has
-                    // already left the readouts, so the seek mustn't be dropped.
-                    scope.launch(Dispatchers.Main.immediate) { player?.seekTo(target) }
                     _durationMs.value = reported
+                    p.seekTo(offset)
                     return@collect
                 }
                 _durationMs.value = when {
@@ -981,28 +861,26 @@ class PlaybackController(
         // ReplayGain: the playing track's gain becomes the player's volume,
         // attenuate-only (clamped at unity), so nothing is boosted into
         // clipping. While casting the stand-in is item 0 and its silence gets
-        // the first track's gain, which is harmless.
+        // the gain of the window's first track, which is harmless.
         //
         // No index is no answer. A handle that hasn't connected, or an empty
         // player, reads -1, and unity for it would overwrite the gain the
         // handle was seeded with.
-        scope.launch(handle) {
+        scope.launch(onMain) {
             combine(p.currentMediaItemIndex, _queue, replayGain) { idx, q, on ->
                 if (idx < 0) return@combine null
                 // The restart copy is the song in the slot before it.
                 val slot = if (restartCopyAt in 0..idx) idx - 1 else idx
-                val db = if (on) q.getOrNull(slot)?.gainDb else null
+                val db = if (on) q.getOrNull(window.rowAt(slot))?.gainDb else null
                 db?.let { 10.0.pow(it / 20.0).toFloat().coerceAtMost(1f) } ?: 1f
             }.filterNotNull().distinctUntilChanged().collect { factor ->
-                withContext(Dispatchers.Main.immediate) {
-                    // A replaced handle's number mustn't be carried onto the next.
-                    if (player !== p) return@withContext
-                    p.playbackGain = factor
-                    appliedGain = factor
-                }
+                // A replaced handle's number mustn't be carried onto the next.
+                if (player !== p) return@collect
+                p.playbackGain = factor
+                appliedGain = factor
             }
         }
-        scope.launch(handle) {
+        scope.launch(onMain) {
             var snapshot = heldByPark
             p.currentMediaItemIndex.collect { idx ->
                 if (!playerSpeaks) return@collect
@@ -1015,27 +893,25 @@ class PlaybackController(
                     // The remainder ending into the copy is the song starting
                     // over, not a new track. Anywhere else the queue goes back
                     // in step first, and a later slot is one less on screen.
-                    val slot: Int? = withContext(Dispatchers.Main.immediate) {
-                        val copy = restartCopyAt
-                        when {
-                            player !== p || copy < 0 -> idx
-                            idx == copy -> {
-                                finishRestart(p, copy)
-                                null
-                            }
-                            idx == copy - 1 -> idx
-                            else -> {
-                                settleRestartCopy()
-                                if (idx > copy) idx - 1 else idx
-                            }
+                    val copy = restartCopyAt
+                    val slot = when {
+                        player !== p -> idx
+                        idx == copy -> {
+                            finishRestart(p, copy)
+                            return@collect
+                        }
+                        idx == copy - 1 -> idx
+                        else -> {
+                            settleRestartCopy()
+                            if (idx > copy) idx - 1 else idx
                         }
                     }
-                    if (slot == null) return@collect
-                    if (slot >= 0 && slot != _index.value) landedOn(p, slot, startMs = 0L)
-                } else if (idx >= 0 && idx != _index.value) {
-                    landedOn(p, idx, startMs = 0L)
+                    val row = window.rowAt(slot)
+                    if (slot >= 0 && row != _index.value) landedOn(p, row, startMs = 0L)
+                } else if (idx >= 0 && window.rowAt(idx) != _index.value) {
+                    landedOn(p, window.rowAt(idx), startMs = 0L)
                 }
-                announceNowPlaying()
+                keepWindowAround()
             }
         }
     }
@@ -1078,14 +954,17 @@ class PlaybackController(
                 if (stubIdx >= 0 && original != null) {
                     scope.launch(Dispatchers.Main.immediate) {
                         // A handle that replaced this one steers the same queue.
+                        // Outside the window there is nothing to put back: a
+                        // row is built afresh as the window takes it in.
                         val cur = player ?: return@launch
-                        cur.replaceMediaItem(stubIdx, original.toAudioItem())
+                        val position = window.positionOf(stubIdx) ?: return@launch
+                        cur.replaceMediaItem(position, sources.item(original))
                     }
                 }
             }
         }
         seedDuration(_queue.value.getOrNull(idx))
-        // The server hears of the new song through followCurrentSong.
+        // The server hears of the new song through ServerReports.followCurrentSong.
     }
 
     /**
@@ -1140,10 +1019,10 @@ class PlaybackController(
         // a last snapshot are waited for together, so a slow server can't spend
         // the snapshot's time, and bounded: the process may not outlive this by
         // much.
-        sessions.close()
+        reports.close()
         runBlocking {
             withTimeoutOrNull(SAVE_STATE_TIMEOUT_MS) {
-                val stopped = launch { timelineSent() }
+                val stopped = launch { reports.flush() }
                 persistState(final = true)
                 stopped.join()
             }
@@ -1166,12 +1045,14 @@ class PlaybackController(
 
     // --- The saved queue -----------------------------------------------------
 
-    /** Write the queue, index and position so the next launch can pick them up. */
+    /** Write the queue, index and position so the next launch can pick them up — see [savedRows]. */
     private suspend fun persistState(final: Boolean = false) {
         val tracks = _queue.value
         if (tracks.isEmpty()) return
-        settings.saveQueue(tracks.map { it.id }, _index.value, _positionMs.value)
-        pushQueueToServer(tracks, force = final)
+        val at = _index.value
+        val kept = savedRows(tracks.size, at)
+        settings.saveQueue(tracks.slice(kept).map { it.id }, at - kept.first, _positionMs.value)
+        reports.pushQueue(tracks, force = final)
     }
 
     /**
@@ -1217,8 +1098,6 @@ class PlaybackController(
             val p = player ?: return@withContext
             _queue.value = tracks
             preShuffleOrder = null
-            lastScrobbledId = null
-            nowPlayingId = null
             // The track the user left on: if it can't be had now it waits here
             // rather than being skipped. The position goes in with the rebuild,
             // as a seek this early would clamp to 0.
@@ -1231,7 +1110,12 @@ class PlaybackController(
 
     // --- Controls ------------------------------------------------------------
 
-    /** Replace the queue with [tracks] and start at [startIndex]; see [queueName]. */
+    /**
+     * Replace the queue with [tracks], all of them, and start at
+     * [startIndex]; see [queueName]. The queue is a copy, never the caller's
+     * list or a view of it: a sublist kept as the queue kept the whole sorted
+     * library it came from alive after the library had moved on.
+     */
     fun playQueue(tracks: List<Track>, startIndex: Int = 0, name: String? = null) {
         if (tracks.isEmpty()) return
         // A tap on the row that is still starting is left alone: a rebuild
@@ -1241,103 +1125,56 @@ class PlaybackController(
         if (_buffering.value && !_shuffle.value) {
             val playing = _queue.value
             val at = _index.value
-            // The same list, not just the same song: every list of five hundred
-            // or more is the same length once capped, so the name and the rows
-            // either side are compared too.
+            // The same list, not just the same song: two lists can be the same
+            // length, so the name and the rows either side are compared too.
             if (name == _queueName.value &&
                 tracks.getOrNull(startIndex)?.id == playing.getOrNull(at)?.id &&
                 tracks.getOrNull(startIndex + 1)?.id == playing.getOrNull(at + 1)?.id &&
                 tracks.getOrNull(startIndex - 1)?.id == playing.getOrNull(at - 1)?.id &&
-                playing.size == minOf(tracks.size, MAX_QUEUE)
+                playing.size == tracks.size
             ) {
                 Log.i("AmpNet", "tap on a row that is already starting — left alone")
                 return
             }
         }
         _queueName.value = name
-        // A new queue is a new session where the server keeps one per song, so
-        // the same track an hour later isn't the old session still going. Where
-        // it keeps one per listening (Plex), that one carries on.
-        playbackSession.value = newSessionId()
+        reports.newQueue()
         val start = startIndex.coerceIn(0, tracks.lastIndex)
         if (_shuffle.value) {
-            // Shuffled as positions, the tapped one first, so the window has an
-            // order to go back to when shuffle is switched off: its songs as the
-            // list had them. Set after setQueue, which clears the last queue's.
-            val rest = IntArray(tracks.size - 1) { if (it < start) it else it + 1 }.apply { shuffle() }
-            val picked = listOf(start) + rest.take(MAX_QUEUE - 1)
-            setQueue(picked.map { tracks[it] }, 0)
-            preShuffleOrder = picked.sorted().map { tracks[it] }
+            // The tapped one first. The list as it was is the order to go back
+            // to when shuffle is switched off; set after setQueue, which clears
+            // the last queue's.
+            setQueue(shuffledFrom(tracks.size, start).map { tracks[it] }, 0)
+            preShuffleOrder = tracks.toList()
         } else {
-            val (window, index) = capped(tracks, start)
-            setQueue(window, index)
+            setQueue(tracks.toList(), start)
         }
-    }
-
-    /**
-     * Trim a queue to what the player can hold, centred on the starting track
-     * with a little history behind it. Media3 mirrors the whole timeline into
-     * the legacy MediaSession queue, loading artwork for every entry: eight
-     * thousand tracks ran the process out of memory there, and building that
-     * many stream URLs blocked the tap for seconds.
-     *
-     * A copy either way, never the caller's list or a view of it: a sublist
-     * kept as the queue kept the whole sorted library it came from alive after
-     * the library had moved on.
-     */
-    private fun capped(tracks: List<Track>, startIndex: Int): Pair<List<Track>, Int> {
-        if (tracks.size <= MAX_QUEUE) return tracks.toList() to startIndex
-        val first = (startIndex - QUEUE_LOOKBACK).coerceIn(0, tracks.size - MAX_QUEUE)
-        return tracks.subList(first, first + MAX_QUEUE).toList() to (startIndex - first)
     }
 
     fun togglePlayPause() {
         forgetPausedSpeaker()
-        remote?.let { out ->
-            val wasPlaying = _isPlaying.value
-            _isPlaying.value = !wasPlaying
-            if (wasPlaying) {
-                cancelPendingStart()
-                out.pause()
-            } else {
-                // A resume carries on a stream the far end has open. Where
-                // nothing has played yet (the queue ran out there, or holds
-                // nothing), play is a start, and says so.
-                if (!hasPlayed) markStartingElsewhere()
-                out.play()
-            }
-            reportTimeline(if (wasPlaying) TimelineState.PAUSED else TimelineState.PLAYING)
-            return
+        val playing = when {
+            remote != null -> _isPlaying.value
+            player == null -> return
+            // Parked: a play on the player as it stands is silence — see [play].
+            parked -> false
+            // "Playing" includes a start that hasn't sounded yet: a press while a
+            // stream buffers means stop trying, not try again.
+            else -> _isPlaying.value || _buffering.value
         }
-        val p = player ?: return
-        // Parked: a play on the player as it stands is silence — see [play].
-        if (parked) {
-            play()
-            return
-        }
-        // "Playing" includes a start that hasn't sounded yet: a press while a
-        // stream buffers means stop trying, not try again.
-        val wasPlaying = _isPlaying.value || _buffering.value
-        // A resume waits for the server's decision, as [play] does, and starts
-        // whichever handle holds the service when the answer comes.
-        if (wasPlaying) {
-            cancelPendingStart()
-            p.pause()
-        } else {
-            markStarting(_index.value)
-            withStreamDecision { player?.play() }
-        }
-        reportTimeline(if (wasPlaying) TimelineState.PAUSED else TimelineState.PLAYING)
+        if (playing) pause() else play()
     }
 
     private fun play() {
         forgetPausedSpeaker()
         remote?.let { out ->
             _isPlaying.value = true
-            // A start rather than a resume — see togglePlayPause.
+            // A resume carries on a stream the far end has open. Where nothing
+            // has played yet (the queue ran out there, or holds nothing), play
+            // is a start, and says so.
             if (!hasPlayed) markStartingElsewhere()
             out.play()
-            reportTimeline(TimelineState.PLAYING)
+            reports.timeline(TimelineState.PLAYING)
             return
         }
         // Parked: the player is in its error state, and playing it is silence.
@@ -1352,10 +1189,8 @@ class PlaybackController(
             resumeAfterWait(play = true)
             return
         }
-        // The decision first, then the sound — see withStreamDecision.
-        markStarting(_index.value)
-        withStreamDecision { player?.play() }
-        reportTimeline(TimelineState.PLAYING)
+        startWhenDecided(_index.value)
+        reports.timeline(TimelineState.PLAYING)
     }
 
     private fun pause() {
@@ -1363,12 +1198,12 @@ class PlaybackController(
             _isPlaying.value = false
             cancelPendingStart()
             out.pause()
-            reportTimeline(TimelineState.PAUSED)
+            reports.timeline(TimelineState.PAUSED)
             return
         }
         cancelPendingStart()
         player?.pause()
-        reportTimeline(TimelineState.PAUSED)
+        reports.timeline(TimelineState.PAUSED)
     }
 
     /**
@@ -1385,7 +1220,7 @@ class PlaybackController(
             // As on the phone, only a seek in a track that is playing waits.
             if (_isPlaying.value) markStartingElsewhere()
             out.seekTo(ms)
-            reportSeek(ms)
+            reports.seeked(ms)
             return
         }
         val p = player ?: return
@@ -1396,11 +1231,11 @@ class PlaybackController(
             bufferAfterSeek(p)
             // Trusted, then checked — see verifyNativeSeek.
             if (track != null) verifyNativeSeek(p, track, ms)
-            reportSeek(ms)
+            reports.seeked(ms)
             return
         }
         serverSeek(p, track, ms)
-        reportSeek(ms)
+        reports.seeked(ms)
     }
 
     fun next() {
@@ -1417,10 +1252,15 @@ class PlaybackController(
             return
         }
         pickedIndex = wrapped(_index.value + 1)
+        val p = player ?: return
+        if (!playerStepsTo(pickedIndex, step = +1)) {
+            moveOutside(p, pickedIndex)
+            return
+        }
         // Only if it is meant to be making sound: next on a paused player
         // starts nothing, and would be left "buffering".
-        if (player?.playWhenReady == true) markStarting(pickedIndex)
-        player?.skipToNext()
+        if (p.playWhenReady) markStarting(pickedIndex)
+        p.skipToNext()
     }
 
     /** Restart the current track if past the intro, otherwise go to the previous one. */
@@ -1432,8 +1272,12 @@ class PlaybackController(
             val moves = restarts || _index.value - 1 in _queue.value.indices
             if (_isPlaying.value && moves) markStartingElsewhere()
             out.previous()
-            // Back to the start is a seek to it, and said as one.
-            if (restarts) reportSeek(0L)
+            // Back to the start is a seek to it, and said as one, and the song
+            // starting over.
+            if (restarts) {
+                reports.seeked(0L)
+                reports.songStarted()
+            }
             return
         }
         settleRestartCopy()
@@ -1444,13 +1288,32 @@ class PlaybackController(
         pickedIndex = if (_positionMs.value > PREVIOUS_RESTARTS_AFTER_MS) _index.value else wrapped(_index.value - 1)
         val p = player ?: return
         if (_positionMs.value > PREVIOUS_RESTARTS_AFTER_MS) {
+            reports.songStarted()
             // The controller's seek, not the player's: a server-seeked stream
             // begins mid-track, so the player's 0 is the offset, and every press
             // would restart it without ever reaching the previous track.
             seekTo(0)
-        } else {
+        } else if (playerStepsTo(pickedIndex, step = -1)) {
             p.skipToPrevious()
+        } else {
+            moveOutside(p, pickedIndex)
         }
+    }
+
+    /**
+     * Whether the player's own next or previous ([step]) gets to queue row
+     * [target]. Not when the player doesn't hold it next door: at an edge of
+     * the window, or the repeat-queue wrap of a window that isn't the whole
+     * queue. A target off the queue's ends is the player's to refuse.
+     */
+    private fun playerStepsTo(target: Int, step: Int): Boolean =
+        target !in _queue.value.indices || window.stepReaches(_index.value, step, target, loops = playerLoops)
+
+    /** Main only. Go to queue [row], which the player doesn't hold next door, playing on if it was. */
+    private fun moveOutside(p: LightAudioPlayer, row: Int) {
+        val wanted = p.playWhenReady
+        rebuildQueueAt(p, _queue.value, row, 0L)
+        playOrCue(p, row, wanted)
     }
 
     /** Jump to a queue position: a tap on a queue row. */
@@ -1471,8 +1334,15 @@ class PlaybackController(
             return
         }
         pickedIndex = index
-        p.seekToDefaultPosition(index)
-        _index.value = index
+        val position = window.positionOf(index)
+        if (position != null) {
+            p.seekToDefaultPosition(position)
+            _index.value = index
+        } else {
+            rebuildQueueAt(p, _queue.value, index, 0L)
+        }
+        // From its start, the playing row too.
+        reports.songStarted()
         if (cannotStreamNow(index)) {
             blockedAtCurrent()
             return
@@ -1497,7 +1367,7 @@ class PlaybackController(
         // The open session ends where playback got to, under the id it was
         // announced as.
         val stopping = _queue.value.getOrNull(_index.value)
-        sessions.close(stopping?.id, _positionMs.value, _durationMs.value)
+        reports.close(stopping?.id, _positionMs.value, _durationMs.value)
         // The output is told to stop, and the queue it was given goes with this one.
         val kept = _active.value?.takeIf { keepOutput && it.family in Outputs.phone }
         if (kept != null) {
@@ -1516,15 +1386,13 @@ class PlaybackController(
         _index.value = -1
         _waitingFor.value = null
         pickedIndex = -1
+        window = QueueWindow.EMPTY
         queuedSources = emptyList()
         streamOffsetMs = 0
         offsetItemTrackId = null
         _positionMs.value = 0
         _durationMs.value = 0
-        // What plays next is a listening of its own, under a new id where the
-        // server keeps one per listening. Minted once the queue is gone, so
-        // nothing reads it against the old songs.
-        listeningSession = newSessionId()
+        reports.newListening()
         // The player's own calls on Main, immediate so a caller already there
         // stays synchronous. Not dropped when the caller is elsewhere: the
         // service would play the old source's queue under an empty screen.
@@ -1535,10 +1403,8 @@ class PlaybackController(
             // stand-in, which empties itself as the queue goes.
             if (_active.value != null && standIn.active) return@launch
             standIn.stop()
-            // The SDK's stop() clears playWhenReady itself, so the pause is
-            // redundant; either way a new queue waits for its stream decision
-            // before making a sound.
-            cur.pause()
+            // The SDK's stop() clears playWhenReady too, so a new queue waits
+            // for its stream decision before making a sound.
             cur.stop()
             cur.setMediaQueue(emptyList())
         }
@@ -1583,7 +1449,7 @@ class PlaybackController(
 
     /** Mark a start at [index]: buffering only if that row is a stream. */
     private fun markStarting(index: Int) {
-        _buffering.value = queuedSources.getOrNull(index) is LightAudioSource.UrlSource
+        _buffering.value = queuedSourceAt(index) is LightAudioSource.UrlSource
         if (_buffering.value) bufferingSinceMs = SystemClock.elapsedRealtime()
     }
 
@@ -1608,7 +1474,7 @@ class PlaybackController(
      */
     private fun bufferAfterSeek(p: LightAudioPlayer) {
         if (!p.playWhenReady) return
-        if (queuedSources.getOrNull(_index.value) !is LightAudioSource.UrlSource) return
+        if (queuedSourceAt(_index.value) !is LightAudioSource.UrlSource) return
         val generation = ++seekBufferingGeneration
         scope.launch(Dispatchers.Main.immediate) {
             delay(SEEK_BUFFERING_GRACE_MS)
@@ -1641,7 +1507,7 @@ class PlaybackController(
         // From the queue itself: currentTrack is derived, and is still the last
         // track just after a new queue is set.
         val track = _queue.value.getOrNull(_index.value)
-        val source = queuedSources.getOrNull(_index.value)
+        val source = queuedSourceAt(_index.value)
         val client = serverClient.value
         val generation = ++decisionGeneration
         if (track == null || client == null || source !is LightAudioSource.UrlSource) {
@@ -1650,9 +1516,9 @@ class PlaybackController(
         }
         awaitedDecision = generation
         // Under the id the queued stream carries. Where the door decides each
-        // stream itself (see playerUrl) this is asked twice, harmlessly.
-        val format = effectiveFormat()
-        val sid = streamSessionIdFor(track.id, decidesAtDoor(client, track, format))
+        // stream itself (see TrackSources.playerUrl) this is asked twice, harmlessly.
+        val format = sources.effectiveFormat()
+        val sid = reports.streamSessionIdFor(track.id, sources.decidesAtDoor(client, track, format))
         scope.launch {
             withTimeoutOrNull(STREAM_DECISION_TIMEOUT_MS) {
                 client.prepareStream(track.id, format, sid)
@@ -1664,6 +1530,16 @@ class PlaybackController(
                 if (generation == decisionGeneration) start()
             }
         }
+    }
+
+    /**
+     * Start the track at [index], the current one: the server's decision
+     * first, then the sound, on whichever handle holds the service when the
+     * answer comes — see [withStreamDecision].
+     */
+    private fun startWhenDecided(index: Int) {
+        markStarting(index)
+        withStreamDecision { player?.play() }
     }
 
     /** Play [p] from [index] if [play], marked as a start, otherwise leave it paused. Main only. */
@@ -1689,9 +1565,8 @@ class PlaybackController(
         }
         _buffering.value = false
         settleRestartCopy()
-        val source = queuedSources.getOrNull(_index.value)
+        val source = queuedSourceAt(_index.value)
         val fromFile = source is LightAudioSource.FileSource
-        val network = error.kind == LightAudioErrorKind.Source
         val outcome = _queue.value.getOrNull(_index.value)?.let { App.streamProxy.lastOutcome(it.id) }
         val status = (outcome as? StreamProxy.Outcome.Answered)?.status
         Log.i(
@@ -1699,30 +1574,31 @@ class PlaybackController(
             "player error ${error.diagnostic}${status?.let { " (HTTP $it)" }.orEmpty()} " +
                 "at idx=${_index.value} (${if (fromFile) "file" else "stream"})",
         )
-        val serverAnswered = error.diagnostic == BAD_HTTP_STATUS
-        if (fromFile || !network) {
-            // A file on the phone, or audio that arrived and wouldn't decode:
-            // nothing about the link or the server can change it, so it is
-            // neither retried nor blamed on them. It says what it is, and
-            // playback moves on if it was moving.
-            blockedAtCurrent(because = if (fromFile) CANT_PLAY_FILE else CANT_PLAY_FORMAT)
-        } else if (
-            outcome == StreamProxy.Outcome.Refused ||
-            !App.streamProxy.isOn ||
-            (source as? LightAudioSource.UrlSource)?.url == StreamProxy.UNAVAILABLE_URL
-        ) {
-            // The app's own rule at the door, or no door yet: the server isn't
-            // unreachable, it is unasked, so there is nothing to fall back to
-            // or latch.
-            blockedAtCurrent()
-        } else if (serverAnswered && status in 500..599 && playOriginalElsewhere(p)) {
+        val failure = playFailure(
+            fromFile = fromFile,
+            networkError = error.kind == LightAudioErrorKind.Source,
+            badHttpStatus = error.diagnostic == BAD_HTTP_STATUS,
+            status = status,
+            doorRefused = outcome == StreamProxy.Outcome.Refused ||
+                !App.streamProxy.isOn ||
+                (source as? LightAudioSource.UrlSource)?.url == StreamProxy.UNAVAILABLE_URL,
+        )
+        when (failure) {
+            // Neither retried nor blamed on the link or the server. It says what
+            // it is, and playback moves on if it was moving.
+            PlayFailure.FILE -> blockedAtCurrent(because = CANT_PLAY_FILE)
+            PlayFailure.FORMAT -> blockedAtCurrent(because = CANT_PLAY_FORMAT)
+            // The server isn't unreachable, it is unasked, so there is nothing
+            // to fall back to or latch.
+            PlayFailure.UNASKED -> blockedAtCurrent()
             // Rebuilt on the server's other address for the same file. Only a
-            // failure there as well comes down to the path below.
-        } else {
+            // failure there as well comes down to the fallback.
+            PlayFailure.SERVER_ERROR -> if (!playOriginalElsewhere(p)) fallBackOffline(serverAnswered = true)
             // A bad HTTP status proves the server is there: it isn't taken as
             // unreachable, which would put the whole library on downloads only
             // over one bad URL.
-            fallBackOffline(serverAnswered = serverAnswered)
+            PlayFailure.BAD_STATUS -> fallBackOffline(serverAnswered = true)
+            PlayFailure.NO_ANSWER -> fallBackOffline(serverAnswered = false)
         }
     }
 
@@ -1769,7 +1645,7 @@ class PlaybackController(
             // stopped, or its dashboard goes on showing it. Whatever session
             // is open, as announced: after a tap onto this song that can still
             // be the last song's.
-            sessions.close()
+            reports.close()
             return
         }
         _waitingFor.value = null
@@ -1782,9 +1658,9 @@ class PlaybackController(
     /** The next queue position after [from] whose track can play; wraps only under repeat-queue. */
     private fun nextPlayableAfter(from: Int, rules: LinkRules): Int? {
         val tracks = _queue.value
-        val ahead = (from + 1..tracks.lastIndex).firstOrNull { isPlayable(tracks[it], rules) }
+        val ahead = (from + 1..tracks.lastIndex).firstOrNull { sources.isPlayable(tracks[it], rules) }
         if (ahead != null || _repeatMode.value != RepeatMode.QUEUE) return ahead
-        return (0 until from).firstOrNull { isPlayable(tracks[it], rules) }
+        return (0 until from).firstOrNull { sources.isPlayable(tracks[it], rules) }
     }
 
     /**
@@ -1803,7 +1679,7 @@ class PlaybackController(
         }
         val track = tracks[index]
         val rules = App.rulesNow()
-        if (!isPlayable(track, rules) || (!hasLocalCopy(track) && !NetworkGate.isOpen())) {
+        if (!sources.isPlayable(track, rules) || (!sources.hasLocalCopy(track) && !NetworkGate.isOpen())) {
             // Still not allowed: say why as of now, and leave the player alone.
             _waitingFor.value = rules.waitingFor ?: _waitingFor.value
             return
@@ -1811,7 +1687,7 @@ class PlaybackController(
         // On the phone, but the stream would be preferred and can't be had:
         // play the copy, or source() hands out the URL again and the track
         // parks with its file on disk.
-        if (!rules.mayStream && localFiles.containsKey(track.id)) streamFailed += track.id
+        if (!rules.mayStream && sources.hasDownload(track.id)) sources.preferDownload(track.id)
         _waitingFor.value = null
         // Asked for, by a press or by the rules opening on the track the user
         // waited on: refused after all, it parks again rather than skipping.
@@ -1825,9 +1701,9 @@ class PlaybackController(
      * Cued, not started, as Wi-Fi coming back is not a press of play; one
      * press then plays, where a parked player answers a press with silence.
      */
-    private suspend fun cueIfParked() {
+    private fun cueIfParked() {
         if (!parked || isCasting || parkedOnTheTrackItself) return
-        withContext(Dispatchers.Main.immediate) { resumeAfterWait(play = false) }
+        resumeAfterWait(play = false)
     }
 
     /**
@@ -1842,10 +1718,8 @@ class PlaybackController(
     }
 
     /** [index] as the player will take it: wrapped under repeat-queue, otherwise as given. */
-    private fun wrapped(index: Int): Int {
-        val size = _queue.value.size
-        return if (size > 0 && _repeatMode.value == RepeatMode.QUEUE) ((index % size) + size) % size else index
-    }
+    private fun wrapped(index: Int): Int =
+        wrappedIndex(index, _queue.value.size, repeatQueue = _repeatMode.value == RepeatMode.QUEUE)
 
     /** Move to [target] by hand while parked: a file plays, a stream parks there instead. */
     private fun goWhileParked(target: Int) {
@@ -1857,7 +1731,7 @@ class PlaybackController(
 
     /** The row at [index] is a stream, and the rules, read now, or a closed door forbid streaming. */
     private fun cannotStreamNow(index: Int): Boolean =
-        queuedSources.getOrNull(index) is LightAudioSource.UrlSource &&
+        queuedSourceAt(index) is LightAudioSource.UrlSource &&
             (!NetworkGate.isOpen() || !App.rulesNow().mayStream || !App.streamProxy.isOn)
 
     /**
@@ -1878,12 +1752,10 @@ class PlaybackController(
     private fun playOriginalElsewhere(p: LightAudioPlayer): Boolean {
         if (isCasting) return false
         settleRestartCopy()
-        val index = p.currentMediaItemIndex.value
+        val index = window.rowAt(p.currentMediaItemIndex.value)
         val track = _queue.value.getOrNull(index) ?: return false
-        if (queuedSources.getOrNull(index) !is LightAudioSource.UrlSource) return false
-        if (effectiveFormat() != StreamFormat.RAW || track.originalKey() in originalElsewhere) return false
-        if (serverClient.value?.alternateOriginalUrl(track) == null) return false
-        originalElsewhere += track.originalKey()
+        if (queuedSourceAt(index) !is LightAudioSource.UrlSource) return false
+        if (!sources.moveOriginal(track)) return false
         Log.i(
             "AmpNet",
             "server failed the original at idx=$index — playing it from its other address from now on",
@@ -1893,12 +1765,7 @@ class PlaybackController(
         if (index != _index.value) landedOn(p, index, startMs = 0L)
         val wanted = p.playWhenReady
         rebuildQueueAt(p, _queue.value, index, _positionMs.value)
-        if (wanted) {
-            markStarting(index)
-            withStreamDecision { player?.play() }
-        } else {
-            p.pause()
-        }
+        if (wanted) startWhenDecided(index) else p.pause()
         return true
     }
 
@@ -1908,14 +1775,14 @@ class PlaybackController(
      * the server is asked whether it is still there before the track is given
      * up on.
      *
-     * [forceOffline] latches when the server didn't answer, as the next track
-     * would otherwise resolve to a URL and fail the same way.
+     * [TrackSources.forceOffline] latches when the server didn't answer, as
+     * the next track would otherwise resolve to a URL and fail the same way.
      */
     private fun fallBackOffline(serverAnswered: Boolean) {
         val p = player ?: return
         val track = _queue.value.getOrNull(_index.value) ?: return
         val resumeAt = _positionMs.value
-        if (!localFiles.containsKey(track.id)) {
+        if (!sources.hasDownload(track.id)) {
             // Nothing local to fall back to. A bad status is the server's own
             // answer about this track, and stands. Silence is what a Wi-Fi to
             // cellular handover sounds like from here, so the server is asked,
@@ -1928,13 +1795,12 @@ class PlaybackController(
                 blockedAtCurrent(because = CANT_PLAY_THIS)
                 return
             }
-            if (retriedTrackId == track.id) {
+            if (!sources.firstRetryOf(track.id)) {
                 // Picked up once and died again: it waits, and playback moves
                 // on if it can.
                 blockedAtCurrent()
                 return
             }
-            retriedTrackId = track.id
             scope.launch {
                 // Bounded: the ping may queue behind one already out on the
                 // dead link while the player sits silent. Three answers: yes,
@@ -1966,17 +1832,18 @@ class PlaybackController(
             return
         }
         // Once per track, so a file that won't decode can't spin here.
-        if (retriedTrackId == track.id) return
-        retriedTrackId = track.id
-        streamFailed += track.id
+        if (!sources.firstRetryOf(track.id)) return
+        sources.preferDownload(track.id)
         // Only a server that never answered pins everything to local files,
         // and only until it is asked and answers.
         if (!serverAnswered) {
-            forceOffline = true
+            sources.forceOffline = true
             scope.launch {
                 if (withTimeoutOrNull(VERIFY_WAIT_MS) { App.reachability.verify() } == true) {
-                    forceOffline = false
-                    reresolveQueue()
+                    withContext(Dispatchers.Main.immediate) {
+                        sources.forceOffline = false
+                        reresolveQueue()
+                    }
                 } else {
                     // Keep asking; the rules collector lifts the pin when the
                     // server answers.
@@ -1988,8 +1855,10 @@ class PlaybackController(
             // Read before the rebuild: a stream can die while paused (the player
             // buffers regardless), which is no reason to start the copy playing.
             val wanted = p.playWhenReady
-            p.setMediaQueueAt(_queue.value.map { it.toAudioItem() }, _index.value, resumeAt)
-            if (wanted) p.play() else p.pause()
+            // A rebuild like any other, so what the controller holds for the row
+            // says file, as what plays now is.
+            rebuildQueueAt(p, _queue.value, _index.value, resumeAt)
+            playOrCue(p, _index.value, wanted)
         }
     }
 
@@ -2004,7 +1873,7 @@ class PlaybackController(
      * asked for before it hears this.
      */
     private fun queueFinished() {
-        sessions.close()
+        reports.close()
         _isPlaying.value = false
         _buffering.value = false
         _index.value = 0
@@ -2015,7 +1884,12 @@ class PlaybackController(
 
     /**
      * A queue that ran out on this phone goes back to its first track — see
-     * [queueFinished]. Under repeat the player loops and never ends.
+     * [queueFinished]. Under repeat the player loops and never ends, except
+     * under repeat-queue with a window shorter than the queue ([playerLoops]):
+     * that one ends, and is wrapped here, playing on from the first track, if
+     * [stoppedHere] (this handle heard it play) and it still wants to play: a
+     * pause in the last second is not the end. One that ended while no handle
+     * listened is left where it stopped: opening the app starts nothing.
      *
      * The SDK doesn't surface STATE_ENDED, so this reads the evidence Media3
      * would: stopped on the last item at its end, with little enough slack
@@ -2024,10 +1898,12 @@ class PlaybackController(
      * played, and rewinding that would lose the track the app was reopened to
      * go on with.
      */
-    private fun rewindIfQueueFinished(p: LightAudioPlayer) {
+    private fun rewindIfQueueFinished(p: LightAudioPlayer, stoppedHere: Boolean) {
         if (!playerSpeaks) return
         if (!hasPlayed) return
-        if (_repeatMode.value != RepeatMode.OFF) return
+        val wraps = _repeatMode.value == RepeatMode.QUEUE && !playerLoops
+        if (_repeatMode.value != RepeatMode.OFF && !wraps) return
+        if (wraps && (!stoppedHere || !p.playWhenReady)) return
         val last = _queue.value.lastIndex
         if (last < 0 || _index.value != last) return
         // The player's duration when it has one. A chunked transcode may never
@@ -2041,18 +1917,17 @@ class PlaybackController(
             known > 0L && _positionMs.value >= known - QUEUE_END_SLACK_MS
         }
         if (!endReached) return
-        // The state is set here, not in the Main block below, so a second
-        // emission can't queue a second rewind, and the session closes before
-        // the player moves.
-        queueFinished()
-        scope.launch(Dispatchers.Main.immediate) {
-            // A handle that replaced this one steers the same service.
-            val cur = player ?: return@launch
-            // Paused first: a seek out of the ended state with playWhenReady
-            // still set starts the queue over instead of waiting there.
-            cur.pause()
-            cur.seekToDefaultPosition(0)
+        if (wraps) {
+            rebuildQueueAt(p, _queue.value, 0, 0L)
+            playOrCue(p, 0, play = true)
+            return
         }
+        queueFinished()
+        // Paused first: a seek out of the ended state with playWhenReady still
+        // set starts the queue over instead of waiting there.
+        p.pause()
+        val first = window.positionOf(0)
+        if (first != null) p.seekToDefaultPosition(first) else rebuildQueueAt(p, _queue.value, 0, 0L)
     }
 
     /** The library's length for [track], shown at once: a chunked stream may never report one. */
@@ -2064,11 +1939,11 @@ class PlaybackController(
 
     /** Whether the player can't be trusted to seek within this track's stream, so the server must. */
     private fun needsServerSeek(track: Track, askDoor: Boolean = true): Boolean {
-        if (track.source() is LightAudioSource.FileSource) return false
+        if (sources.source(track) is LightAudioSource.FileSource) return false
         if (track.id in seekNeedsReload) return true
         // A queue being rebuilt is about to fetch afresh: what the door saw was
         // the stream it held before.
-        if (!askDoor) return effectiveFormat() != StreamFormat.RAW
+        if (!askDoor) return sources.effectiveFormat() != StreamFormat.RAW
         // Ask the door what arrived. Asked for mp3 and given it with a length,
         // the server sent the file untouched, with byte ranges, and ignores
         // timeOffset as it isn't transcoding. "Not RAW, so a transcode" would
@@ -2078,7 +1953,7 @@ class PlaybackController(
         val answered = App.streamProxy.lastOutcome(track.id) as? StreamProxy.Outcome.Answered
         if (answered != null && answered.status in 200..299 && answered.lengthKnown) return false
         // Nothing fetched yet to ask about: go by the request.
-        return effectiveFormat() != StreamFormat.RAW
+        return sources.effectiveFormat() != StreamFormat.RAW
     }
 
     /**
@@ -2094,7 +1969,7 @@ class PlaybackController(
         awaitStream: Boolean = false,
     ) {
         val generation = ++seekGeneration
-        scope.launch {
+        scope.launch(Dispatchers.Main) {
             // A queue just built answers with the asked position until its
             // stream declares itself, so the check would pass a seek about to be
             // dropped: wait for that, within reason.
@@ -2121,10 +1996,10 @@ class PlaybackController(
     private fun serverSeek(p: LightAudioPlayer, track: Track, ms: Long) {
         if (serverClient.value == null) return
         val target = ms.coerceAtLeast(0L)
-        // No estimated length, as for every stream (see playerUrl): here it
-        // would also have ExoPlayer take the transcode as range-seekable and
-        // probe its end, which Navidrome answers with 416.
-        val url = playerUrl(track, effectiveFormat(), timeOffsetSeconds = (target / 1000).toInt())
+        // No estimated length, as for every stream (see TrackSources.playerUrl):
+        // here it would also have ExoPlayer take the transcode as
+        // range-seekable and probe its end, which Navidrome answers with 416.
+        val url = sources.playerUrl(track, timeOffsetSeconds = (target / 1000).toInt())
         streamOffsetMs = target
         offsetItemTrackId = track.id.takeIf { target > 0L }
         _positionMs.value = target
@@ -2136,8 +2011,7 @@ class PlaybackController(
             // Intent, not the momentary state: isPlaying is false during a
             // rebuffer, and a seek then left the new stream paused.
             val wasPlaying = p.playWhenReady
-            val at = _index.value
-            if (at < 0) return@launch
+            val at = window.positionOf(_index.value) ?: return@launch
             // Repeat-one is lifted for the swap. With the playing item replaced,
             // Media3 looks for what plays after it, under repeat-one that same
             // item, now gone, and jumps to the first track of the queue.
@@ -2164,10 +2038,10 @@ class PlaybackController(
         }
     }
 
-    /** Main only. Queue the whole song after the remainder at [at], with the player's repeat off — see [restartCopyAt]. */
+    /** Main only. Queue the whole song after the remainder at player position [at], with the player's repeat off — see [restartCopyAt]. */
     private fun armRestartCopy(p: LightAudioPlayer, at: Int, track: Track) {
         p.repeatMode = Player.REPEAT_MODE_OFF
-        p.addMediaItem(at + 1, track.toAudioItem())
+        p.addMediaItem(at + 1, sources.item(track))
         restartCopyAt = at + 1
     }
 
@@ -2216,9 +2090,9 @@ class PlaybackController(
         if (restartCopyAt >= 0 || !playerSpeaks || parked) return
         if (_repeatMode.value != RepeatMode.TRACK) return
         val p = player ?: return
-        val at = _index.value
-        val track = _queue.value.getOrNull(at) ?: return
+        val track = _queue.value.getOrNull(_index.value) ?: return
         if (streamOffsetMs <= 0L || offsetItemTrackId != track.id) return
+        val at = window.positionOf(_index.value) ?: return
         if (p.currentMediaItemIndex.value != at) return
         armRestartCopy(p, at, track)
     }
@@ -2241,21 +2115,25 @@ class PlaybackController(
         _queue.value = tracks
         // The order shuffle would go back to is the last queue's, not this one's.
         preShuffleOrder = null
-        lastScrobbledId = null
         // Into the player unless it holds the stand-in: the queue goes back in
         // with the sound — see takeOverHere. Each source is resolved once and
         // handed on, not again per item, on Main.
-        val sources = tracks.map { it.source() }
-        queuedSources = sources
-        queuePlayer?.setMediaQueue(tracks.mapIndexed { i, track -> track.toAudioItem(sources[i]) }, startIndex)
+        window = windowAround(tracks.size, startIndex)
+        val rows = tracks.slice(window.start until window.end)
+        val resolved = rows.map(sources::source)
+        queuedSources = resolved
+        queuePlayer?.let {
+            it.setMediaQueue(itemsFrom(rows, resolved), startIndex - window.start)
+            syncQueueRepeat(it)
+        }
         _index.value = startIndex
+        reports.songStarted()
         // A new queue plays from the start of whatever it opens on. A leftover
         // offset would be added to a clock starting at 0:00, and the index
         // collector won't clear it when the new queue opens on the same index.
         streamOffsetMs = 0
         offsetItemTrackId = null
-        // Something new to play is reason enough to try the server again.
-        streamFailed.clear()
+        sources.forgetStreamFailures()
         // A new queue is prepared afresh: a park on the old one is over, and
         // where it starts is where the user asked it to.
         _waitingFor.value = null
@@ -2276,10 +2154,7 @@ class PlaybackController(
             blockedAtCurrent()
             return
         }
-        // The decision first, then the sound, on the handle current when the
-        // answer comes — see withStreamDecision.
-        markStarting(startIndex)
-        withStreamDecision { player?.play() }
+        startWhenDecided(startIndex)
     }
 
     /**
@@ -2297,7 +2172,12 @@ class PlaybackController(
         settleRestartCopy()
         val track = tracks[index]
         val at = positionMs.coerceAtLeast(0L)
-        queuedSources = tracks.map { it.source() }
+        window = windowAround(tracks.size, index)
+        val rows = tracks.slice(window.start until window.end)
+        val position = index - window.start
+        // Each source resolved once, for the memo and the items alike.
+        val resolved = rows.map(sources::source)
+        queuedSources = resolved
         // Set before the player moves: the index collector would read the move
         // as a new track and clear the offset set below. That is also why the
         // duration is seeded here.
@@ -2307,33 +2187,35 @@ class PlaybackController(
         val client = serverClient.value
         if (at > 1_000L && client != null && needsServerSeek(track, askDoor = false)) {
             // No estimated length — see serverSeek.
-            val url = playerUrl(track, effectiveFormat(), timeOffsetSeconds = (at / 1000).toInt())
+            val url = sources.playerUrl(track, timeOffsetSeconds = (at / 1000).toInt())
             streamOffsetMs = at
             offsetItemTrackId = track.id
             p.setMediaQueue(
-                tracks.mapIndexed { i, it ->
-                    if (i == index) it.toAudioItem(LightAudioSource.UrlSource(url)) else it.toAudioItem()
+                rows.mapIndexed { i, it ->
+                    it.toAudioItem(if (i == position) LightAudioSource.UrlSource(url) else resolved[i])
                 },
-                index,
+                position,
             )
         } else {
             streamOffsetMs = 0
             offsetItemTrackId = null
-            p.setMediaQueueAt(tracks.map { it.toAudioItem() }, index, at)
+            p.setMediaQueueAt(itemsFrom(rows, resolved), position, at)
             if (at > 0L) verifyNativeSeek(p, track, at, awaitStream = true)
         }
+        syncQueueRepeat(p)
         rearmSoon()
     }
 
     /**
-     * Rebuild the queue's sources when "file or stream?" may have changed.
-     * The answer ([source]) hangs on things that move while a queue plays:
+     * Rebuild the window's sources when "file or stream?" may have changed.
+     * The answer ([TrackSources.source]) hangs on things that move while a queue plays:
      * Wi-Fi going, a download finishing, the data mode. A queue built on Wi-Fi
      * went on asking the network for tracks by then on disk, which offline
      * means a socket timeout for every one.
      *
      * The playing item is left alone: replacing it would restart the track
-     * under the listener. Everything around it is corrected.
+     * under the listener. On either side of it only the stretch that changed
+     * is replaced, so a finished download is one small edit.
      */
     private fun reresolveQueue() {
         val p = player ?: return
@@ -2344,41 +2226,80 @@ class PlaybackController(
         // again once connected.
         if (p.availability.value != LightAudioPlayerAvailability.Ready) return
         val tracks = _queue.value
-        if (tracks.isEmpty()) return
-        val current = _index.value.coerceIn(0, tracks.lastIndex)
+        if (tracks.isEmpty() || window.end > tracks.size) return
+        val rows = tracks.subList(window.start, window.end)
         // Nothing to do unless an answer moved: this runs on every finished
         // download, and most change nothing.
-        val rebuilt = tracks.map { it.source() }
+        val rebuilt = rows.map(sources::source)
+        if (rebuilt == queuedSources) return
+        settleRestartCopy()
+        val playing = window.positionOf(_index.value) ?: return
         val held = queuedSources
-        if (rebuilt == held) return
         queuedSources = rebuilt
-        scope.launch(Dispatchers.Main.immediate) {
-            if (player !== p) {
-                // The handle changed on the way (a handover, a back-out, the SDK
-                // dropping one that never connected), so none of this reached
-                // the service. The memo goes back to what the service still
-                // holds, unless something wrote it since, and the ask is
-                // repeated: a connected handle gets the edits now, one still
-                // connecting in attachHandle's pass. Left as it was, that pass
-                // found a match and sent nothing, and a track downloaded
-                // meanwhile stayed a stream.
-                if (queuedSources === rebuilt) queuedSources = held
-                reresolveQueue()
-                return@launch
+        // The tail first, so the head's positions still hold. A memo out of
+        // step with the window, never expected, has its whole side replaced.
+        for (side in listOf(playing + 1 until rows.size, 0 until playing)) {
+            val stretch = when {
+                side.isEmpty() -> continue
+                held.size != rebuilt.size -> side
+                else -> changedStretch(held.slice(side), rebuilt.slice(side))
+                    ?.let { (changed, _) -> (side.first + changed.first)..(side.first + changed.last) }
+                    ?: continue
             }
-            settleRestartCopy()
-            if (current > 0) {
-                p.replaceRange(0, current, tracks.subList(0, current).map { it.toAudioItem() })
-            }
-            if (current + 1 <= tracks.lastIndex) {
-                p.replaceRange(
-                    current + 1,
-                    tracks.size,
-                    tracks.subList(current + 1, tracks.size).map { it.toAudioItem() },
-                )
-            }
-            rearmSoon()
+            p.replaceRange(stretch.first, stretch.last + 1, itemsFrom(rows.slice(stretch), rebuilt.slice(stretch)))
         }
+        rearmSoon()
+    }
+
+    /**
+     * Main only. Slide the window when playback has come near an edge of it
+     * with more queue beyond, or an edit grew it past its bound — see
+     * [QueueWindow.slidFor]. Only the ends change; the playing item plays on.
+     */
+    private fun keepWindowAround() {
+        val p = queuePlayer ?: return
+        // Parked, the player sits on the failed track while the screen may
+        // show another, and resuming rebuilds the window anyway.
+        if (!playerSpeaks || parked) return
+        // A handle still connecting may yet find the service empty — see
+        // reresolveQueue — and a player holding nothing has nothing to slide.
+        if (p.availability.value != LightAudioPlayerAvailability.Ready) return
+        if (p.currentMediaItemIndex.value < 0) return
+        val tracks = _queue.value
+        val at = _index.value
+        if (at !in window || window.end > tracks.size) return
+        val to = window.slidFor(tracks.size, at) ?: return
+        settleRestartCopy()
+        for (edit in slideEdits(window, to)) replaceInPlayer(p, edit.from, edit.to, tracks.slice(edit.rows))
+        window = to
+        syncQueueRepeat(p)
+        rearmSoon()
+    }
+
+    /**
+     * Main only. The player's positions [from] until [to] become [rows], in
+     * one queue update, with [queuedSources] kept in step. The window's
+     * bounds are the caller's to set.
+     */
+    private fun replaceInPlayer(p: LightAudioPlayer, from: Int, to: Int, rows: List<Track>) {
+        val resolved = rows.map(sources::source)
+        p.replaceRange(from, to, itemsFrom(rows, resolved))
+        queuedSources = queuedSources.take(from) + resolved + queuedSources.drop(to)
+    }
+
+    /**
+     * Main only. The player follows a rearranged [queue] whose playing row is
+     * now [row], without touching the playing item — see [followingEdit].
+     * Called before [_queue] is set: the window it holds is in the old queue's
+     * rows. The caller syncs the repeat once the queue is set.
+     */
+    private fun followInPlayer(p: LightAudioPlayer, queue: List<Track>, row: Int) {
+        val heldAt = window.positionOf(_index.value) ?: return
+        if (row !in queue.indices || window.end > _queue.value.size) return
+        val held = _queue.value.subList(window.start, window.end)
+        val (followed, edits) = followingEdit(held, heldAt, queue, row)
+        for (edit in edits) replaceInPlayer(p, edit.from, edit.to, queue.slice(edit.rows))
+        window = followed
     }
 
     // --- Editing the queue ---------------------------------------------------
@@ -2391,17 +2312,14 @@ class PlaybackController(
             return
         }
         settleRestartCopy()
-        _queue.value = _queue.value + tracks
-        queuePlayer?.addItems(tracks.map { it.toAudioItem() })
+        // Into the player as far as its window has room at the queue's end;
+        // the rest comes in as it slides.
+        rearrange(_queue.value + tracks, _index.value)
         remote?.queueEdited(QueueEdit.Appended(tracks.map { it.id }))
         rearmSoon()
     }
 
-    /**
-     * Put these tracks straight after the one playing. A track already in the
-     * queue is moved rather than copied: "play next" on something queued for
-     * later means bring it forward, not play it twice.
-     */
+    /** Put these tracks straight after the one playing — see [playedNext]. */
     fun playNext(tracks: List<Track>) {
         pickedIndex = -1 // indices are about to move under it
         player ?: return
@@ -2411,37 +2329,16 @@ class PlaybackController(
             return
         }
         settleRestartCopy()
-        // Each goes after the one before it, so an album played next keeps its
-        // order.
-        var slot = _index.value + 1
-        val added = mutableListOf<String>()
-        for (track in tracks) {
-            val from = _queue.value.indexOfFirst { it.id == track.id }
-            if (from < 0) {
-                val at = slot.coerceIn(0, _queue.value.size)
-                _queue.value = _queue.value.toMutableList().apply { add(at, track) }
-                queuePlayer?.addMediaItem(at, track.toAudioItem())
-                added += track.id
-                slot = at + 1
-                continue
-            }
-            if (from == _index.value) continue
-            // Destinations are read after the removal, so a track pulled from in
-            // front of the slot lands one place earlier than one from behind it.
-            val to = if (from < slot) slot - 1 else slot
-            moveInQueue(from, to)
-            slot = to + 1
-        }
-        // One edit for the lot, in order, so an output keeps the album's order too.
-        if (added.isNotEmpty()) remote?.queueEdited(QueueEdit.PlayNext(added))
+        val next = playedNext(_queue.value, _index.value, tracks)
+        rearrange(next.queue, next.row)
+        next.told.forEach { remote?.queueEdited(it) }
         rearmSoon()
     }
 
     /**
      * Keep what is playing and replace everything after it: a radio started
      * from the playing song becomes what follows. The queue's name changes
-     * with its contents — see [queueName]. One range replace, not an edit per
-     * track, each of which would rebuild the session queue.
+     * with its contents — see [queueName].
      */
     fun replaceUpcoming(tracks: List<Track>, name: String? = null) {
         player ?: return
@@ -2453,104 +2350,139 @@ class PlaybackController(
             return
         }
         val droppedIds = q.drop(cur + 1).map { it.id }
-        queuePlayer?.replaceRange(cur + 1, q.size, tracks.map { it.toAudioItem() })
-        _queue.value = q.take(cur + 1) + tracks
+        rearrange(q.take(cur + 1) + tracks, cur)
         _queueName.value = name
         remote?.queueEdited(QueueEdit.UpcomingReplaced(droppedIds, tracks.map { it.id }))
         rearmSoon()
     }
 
+    /**
+     * Make [queue] the queue, its playing row now [row], with the player
+     * following it while it holds the queue — see [followInPlayer]. Main only.
+     */
+    private fun rearrange(queue: List<Track>, row: Int) {
+        queuePlayer?.let { followInPlayer(it, queue, row) }
+        _queue.value = queue
+        _index.value = row
+        queuePlayer?.let(::syncQueueRepeat)
+    }
+
     fun removeFromQueue(index: Int) {
-        pickedIndex = -1 // indices are about to move under it
-        player ?: return
-        settleRestartCopy()
-        val q = _queue.value
-        if (index !in q.indices) return
-        val playingId = q.getOrNull(_index.value)?.id
-        val goneId = q[index].id
-        queuePlayer?.removeMediaItem(index)
-        val newQueue = q.toMutableList().apply { removeAt(index) }
-        _queue.value = newQueue
-        _index.value = indexAfterEdit(newQueue, playingId)
-        remote?.queueEdited(QueueEdit.Removed(listOf(goneId)))
-        rearmSoon()
+        editQueue { q ->
+            if (index !in q.indices) return@editQueue null
+            RowEdit(
+                queue = q.toMutableList().apply { removeAt(index) },
+                told = QueueEdit.Removed(listOf(q[index].id)),
+            ) { held -> removeFromPlayer(held, listOf(index)) }
+        }
     }
 
     /**
-     * Drop several tracks at once: removed from the player back to front, so
-     * no removal shifts the ones still to go, and the surviving list worked
-     * out here rather than read back from the player mid-edit.
+     * Drop several tracks at once, the surviving list worked out here rather
+     * than read back from the player mid-edit.
      */
     fun removeFromQueue(ids: Set<String>) {
-        pickedIndex = -1 // indices are about to move under it
-        player ?: return
-        settleRestartCopy()
-        if (ids.isEmpty()) return
-        val q = _queue.value
-        val targets = q.indices.filter { q[it].id in ids }
-        if (targets.isEmpty()) return
-        val playingId = q.getOrNull(_index.value)?.id
-        queuePlayer?.let { held -> targets.sortedDescending().forEach { held.removeMediaItem(it) } }
-        val gone = targets.toSet()
-        val goneIds = targets.map { q[it].id }
-        val newQueue = q.filterIndexed { i, _ -> i !in gone }
-        _queue.value = newQueue
-        _index.value = indexAfterEdit(newQueue, playingId)
-        remote?.queueEdited(QueueEdit.Removed(goneIds))
-        rearmSoon()
+        editQueue { q ->
+            val targets = q.indices.filter { q[it].id in ids }
+            if (targets.isEmpty()) return@editQueue null
+            val gone = targets.toSet()
+            RowEdit(
+                queue = q.filterIndexed { i, _ -> i !in gone },
+                told = QueueEdit.Removed(targets.map { q[it].id }),
+            ) { held -> removeFromPlayer(held, targets) }
+        }
     }
 
-    private fun moveInQueue(from: Int, to: Int) {
+    /**
+     * Move several tracks (by index) as a block to [insertAt] among the rest.
+     * Within the window the player is given one move at a time, as it has no
+     * batch move; a block that comes from or goes to beyond the window's edge
+     * is followed as any rearrangement is — see [followInPlayer].
+     */
+    fun moveGroupInQueue(fromIndices: Set<Int>, insertAt: Int) {
+        editQueue { q ->
+            val (newQueue, landsAt) = movedAsBlock(q, fromIndices, insertAt) ?: return@editQueue null
+            // An output is told what the block's first track now follows:
+            // nothing at the front.
+            val movedIds = newQueue.subList(landsAt, landsAt + fromIndices.size).map { it.id }
+            RowEdit(
+                queue = newQueue,
+                told = QueueEdit.Moved(movedIds, newQueue.getOrNull(landsAt - 1)?.id),
+            ) { held ->
+                val w = window
+                val inside = w.end <= q.size && fromIndices.all { it in w } &&
+                    landsAt >= w.start && landsAt + fromIndices.size <= w.end
+                if (inside) {
+                    stepwiseMoves(q.subList(w.start, w.end), newQueue.subList(w.start, w.end))
+                        .forEach { (from, to) -> moveInPlayer(held, from, to) }
+                } else {
+                    followInPlayer(held, newQueue, rowAfterBlockMove(_index.value, fromIndices, landsAt))
+                }
+            }
+        }
+    }
+
+    /** Rows removed or moved: the new queue, what an output is told, and the same change made to the player. */
+    private class RowEdit(
+        val queue: List<Track>,
+        val told: QueueEdit,
+        val onPlayer: (LightAudioPlayer) -> Unit,
+    )
+
+    /**
+     * Remove or move rows. [edit] works out the change from the queue as it
+     * is, or null when there is nothing to do. The player is changed only
+     * while it holds the queue, and the playing track stays the one playing —
+     * see [indexAfterEdit].
+     */
+    private fun editQueue(edit: (List<Track>) -> RowEdit?) {
         pickedIndex = -1 // indices are about to move under it
-        player ?: return
+        val p = player ?: return
         settleRestartCopy()
         val q = _queue.value
-        if (from !in q.indices || to !in q.indices || from == to) return
+        val change = edit(q) ?: return
         val playingId = q.getOrNull(_index.value)?.id
-        val movedId = q[from].id
-        queuePlayer?.moveMediaItem(from, to)
-        val newQueue = q.toMutableList().apply { add(to, removeAt(from)) }
-        _queue.value = newQueue
-        _index.value = indexAfterEdit(newQueue, playingId)
-        // An output is told what the track now follows: nothing at the front.
-        val afterId = newQueue.getOrNull(to - 1)?.id
-        remote?.queueEdited(QueueEdit.Moved(listOf(movedId), afterId))
+        val wanted = p.playWhenReady
+        val held = queuePlayer?.let {
+            change.onPlayer(it)
+            window
+        }
+        _queue.value = change.queue
+        _index.value = indexAfterEdit(change.queue, playingId)
+        queuePlayer?.let(::syncQueueRepeat)
+        remote?.queueEdited(change.told)
+        if (held != null && held.size == 0 && change.queue.isNotEmpty()) {
+            // Every row the player held went, the playing one with them. It
+            // carries on from the row that followed, as it would have from a
+            // removed playing row in its own queue, or stops on the last.
+            rebuildQueueAt(p, change.queue, _index.value, 0L)
+            playOrCue(p, _index.value, play = wanted && held.start < change.queue.size)
+        } else {
+            keepWindowAround()
+        }
         rearmSoon()
     }
 
     /**
-     * Move several tracks (by index) as a block to [insertAt] among the rest,
-     * applied to the player one move at a time, as it has no batch move.
+     * Main only. Remove queue [rows] from the player where its window holds
+     * them, back to front, so no removal shifts the ones still to go. A row
+     * before the window only moves it.
      */
-    fun moveGroupInQueue(fromIndices: Set<Int>, insertAt: Int) {
-        pickedIndex = -1 // indices are about to move under it
-        player ?: return
-        settleRestartCopy()
-        if (fromIndices.isEmpty()) return
-        val q = _queue.value
-        if (fromIndices.any { it !in q.indices }) return
-        val playingId = q.getOrNull(_index.value)?.id
-        val moving = q.filterIndexed { i, _ -> i in fromIndices }
-        if (moving.size == q.size) return
-        val remaining = q.filterIndexed { i, _ -> i !in fromIndices }
-        val landsAt = insertAt.coerceIn(0, remaining.size)
-        val newQueue = remaining.toMutableList().apply { addAll(landsAt, moving) }
-        if (newQueue == q) return
-        val working = q.toMutableList()
-        newQueue.forEachIndexed { target, track ->
-            val current = working.indexOfFirst { it === track }
-            if (current != target) {
-                queuePlayer?.moveMediaItem(current, target)
-                working.add(target, working.removeAt(current))
+    private fun removeFromPlayer(p: LightAudioPlayer, rows: List<Int>) {
+        for (row in rows.sortedDescending()) {
+            val (after, position) = window.removing(row)
+            window = after
+            if (position != null) {
+                p.removeMediaItem(position)
+                queuedSources = queuedSources.toMutableList().apply { removeAt(position) }
             }
         }
-        _queue.value = newQueue
-        _index.value = indexAfterEdit(newQueue, playingId)
-        // An output is told what the block's first track now follows: nothing
-        // at the front.
-        val anchorId = newQueue.getOrNull(landsAt - 1)?.id
-        remote?.queueEdited(QueueEdit.Moved(moving.map { it.id }, anchorId))
-        rearmSoon()
+    }
+
+    /** Main only. Move the player's item at [from] to [to], with [queuedSources] kept in step. */
+    private fun moveInPlayer(p: LightAudioPlayer, from: Int, to: Int) {
+        p.moveMediaItem(from, to)
+        queuedSources = queuedSources.toMutableList().apply { add(to, removeAt(from)) }
     }
 
     /**
@@ -2565,13 +2497,16 @@ class PlaybackController(
             val byId = newQueue.indexOfFirst { it.id == playingId }
             return if (byId >= 0) byId else _index.value.coerceIn(0, newQueue.lastIndex)
         }
-        return (player?.currentMediaItemIndex?.value ?: _index.value).coerceIn(0, newQueue.lastIndex)
+        val position = player?.currentMediaItemIndex?.value ?: return _index.value.coerceIn(0, newQueue.lastIndex)
+        // Holding nothing, it had the row after the ones that went.
+        return (if (position >= 0) window.rowAt(position) else window.start).coerceIn(0, newQueue.lastIndex)
     }
 
     /**
-     * Shuffle or unshuffle the upcoming part of the queue only: history and
-     * the playing track stay put, so the playing track is never re-prepared.
-     * Switching off puts the upcoming tracks back in their earlier order.
+     * Shuffle or unshuffle the upcoming part of the queue only, the whole of
+     * it, not just the window: history and the playing track stay put, so the
+     * playing track is never re-prepared. Switching off puts the upcoming
+     * tracks back in their earlier order.
      */
     fun toggleShuffle() {
         pickedIndex = -1 // indices are about to move under it
@@ -2595,20 +2530,9 @@ class PlaybackController(
             if (original == null) tail else restoreOrder(tail, original)
         }
         if (tail.isEmpty()) return
-        _queue.value = head + newTail
-        // One replace rather than a move per track: a few hundred moves are a
-        // timeline update each, which locks Main and, with artwork, exhausts
-        // the heap.
-        queuePlayer?.replaceRange(head.size, q.size, newTail.map { it.toAudioItem() })
+        rearrange(head + newTail, current)
         remote?.queueEdited(QueueEdit.Reordered)
         rearmSoon()
-    }
-
-    /** Sort [tracks] back into the relative order they had in [original]. */
-    private fun restoreOrder(tracks: List<Track>, original: List<Track>): List<Track> {
-        val rank = original.withIndex().associate { (i, t) -> t.id to i }
-        // Tracks queued after shuffling have no pre-shuffle rank; keep them last.
-        return tracks.sortedBy { rank[it.id] ?: Int.MAX_VALUE }
     }
 
     // --- Repeat and volume ---------------------------------------------------
@@ -2631,6 +2555,27 @@ class PlaybackController(
         queuePlayer?.repeatMode = mode.forPlayer()
         if (mode == RepeatMode.TRACK) rearmSoon()
         remote?.repeatChanged(mode)
+    }
+
+    private fun RepeatMode.forPlayer(): Int = when (this) {
+        RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+        RepeatMode.TRACK -> Player.REPEAT_MODE_ONE
+        RepeatMode.QUEUE -> if (window.isWhole(_queue.value.size)) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
+    }
+
+    /**
+     * Whether the player loops by itself: under repeat-queue, only a window
+     * that is the whole queue. A shorter one plays to its end, and
+     * [rewindIfQueueFinished] wraps it.
+     */
+    private val playerLoops: Boolean
+        get() = _repeatMode.value == RepeatMode.QUEUE && window.isWhole(_queue.value.size)
+
+    /** Main only, once [_queue] and [window] are set. The player's repeat-queue kept in step with whether its window is the whole queue. */
+    private fun syncQueueRepeat(p: LightAudioPlayer) {
+        if (_repeatMode.value != RepeatMode.QUEUE) return
+        val wanted = RepeatMode.QUEUE.forPlayer()
+        if (p.repeatMode != wanted) p.repeatMode = wanted
     }
 
     /**
@@ -2694,7 +2639,7 @@ class PlaybackController(
         // A far end that reports its own playback does so as a session of its
         // own, and the phone's ends: left open, nothing would report on it and
         // it would sit on the dashboard beside the far end's until it timed out.
-        if (next.reportsItself) sessions.close()
+        if (next.reportsItself) reports.close()
         // One route at a time: whatever has the sound hands over quietly, a
         // second speaker of the same kind included.
         val current = _active.value
@@ -2778,7 +2723,7 @@ class PlaybackController(
         if (why == Disconnect.LinkLost) {
             lost = Lost(
                 active = a,
-                session = playbackSession.value,
+                session = reports.playbackSession.value,
                 sourceId = App.source.value.id,
                 index = _index.value,
                 positionMs = at,
@@ -2882,12 +2827,12 @@ class PlaybackController(
         if (rejoinJob?.isActive == true) return
         val out = gone.active.output
         val name = gone.active.target.name
+        if (SystemClock.elapsedRealtime() - gone.atMs > LOST_OUTPUT_KEPT_MS) {
+            Log.i(out.logTag, "Wi-Fi back, but $name went too long ago — left")
+            lost = null
+            return
+        }
         rejoinJob = scope.launch {
-            if (SystemClock.elapsedRealtime() - gone.atMs > LOST_OUTPUT_KEPT_MS) {
-                Log.i(out.logTag, "Wi-Fi back, but $name went too long ago — left")
-                if (lost === gone) lost = null
-                return@launch
-            }
             Log.i(out.logTag, "Wi-Fi back — looking for $name")
             // Bounded. A link that goes again meanwhile cancels this and keeps
             // the memory for the next time it comes back.
@@ -2912,7 +2857,7 @@ class PlaybackController(
     private fun movedOn(gone: Lost): Boolean =
         _active.value != null ||
             App.source.value.id != gone.sourceId ||
-            playbackSession.value != gone.session ||
+            reports.playbackSession.value != gone.session ||
             _index.value != gone.index ||
             abs(_positionMs.value - gone.positionMs) > REJOIN_POSITION_SLACK_MS ||
             _isPlaying.value || _buffering.value || player?.playWhenReady == true
@@ -2933,7 +2878,7 @@ class PlaybackController(
         _waitingFor.value = null
         _active.value = ActiveOutput(gone.active.family, found.target, out)
         // Before the song, so the change of song is announced as what it is —
-        // see followCurrentSong.
+        // see ServerReports.followCurrentSong.
         _isPlaying.value = false
         if (found.index in _queue.value.indices) {
             _index.value = found.index
@@ -2963,7 +2908,7 @@ class PlaybackController(
             _isPlaying.value = playing
             // Resumed by the far end's own remote: the server hears it as it
             // would a play pressed here, which reports for itself.
-            if (resumed) reportTimeline(TimelineState.PLAYING)
+            if (resumed) reports.timeline(TimelineState.PLAYING)
         }
 
         override fun showSounding() {
@@ -2975,7 +2920,7 @@ class PlaybackController(
 
         override fun showPaused() {
             // Not pressed here, so not reported yet.
-            if (markStopped()) reportTimeline(TimelineState.PAUSED)
+            if (markStopped()) reports.timeline(TimelineState.PAUSED)
         }
 
         // The far end's clock moving is its sound, which ends "Buffering…" as
@@ -3012,9 +2957,9 @@ class PlaybackController(
 
         override fun mayTalkToServer(): Boolean = metadataAllowed()
 
-        override fun streamFormat(): StreamFormat = effectiveFormat()
+        override fun streamFormat(): StreamFormat = sources.effectiveFormat()
 
-        // The server's own address, never playerUrl's: the door is on this
+        // The server's own address, never the player's: the door is on this
         // phone's loopback, where a speaker can't reach it.
         override fun streamUrl(
             track: Track,
@@ -3022,15 +2967,15 @@ class PlaybackController(
             timeOffsetSeconds: Int,
             estimateContentLength: Boolean,
             sessionId: String?,
-        ): String? = serverClient.value?.playableUrl(track, format, timeOffsetSeconds, estimateContentLength, sessionId)
+        ): String? = sources.serverUrl(track, format, timeOffsetSeconds, estimateContentLength, sessionId)
 
         override fun knownStream(track: Track, format: StreamFormat): KnownStream? =
             serverClient.value?.knownStream(track, format)
 
-        override fun ownStreamSession(trackId: String): String = streamSessionIdFor(trackId, decidedFirst = false)
+        override fun ownStreamSession(trackId: String): String = reports.streamSessionIdFor(trackId, decidedFirst = false)
 
         override fun announceNowPlaying() {
-            this@PlaybackController.announceNowPlaying()
+            reports.announceNowPlaying()
         }
 
         override fun queueFinished(output: Output) {
@@ -3050,7 +2995,7 @@ class PlaybackController(
             faderBackToPhone()
             // A far end that reports itself had its own session; this one was
             // the phone's, which the server would go on showing as playing.
-            if (was && !a.output.reportsItself) reportTimeline(TimelineState.PAUSED)
+            if (was && !a.output.reportsItself) reports.timeline(TimelineState.PAUSED)
             // Nothing played there, so what the phone was waiting for before the
             // cast still holds, on the same song.
             waitBeforeCast?.let { (why, at) -> if (_index.value == at) _waitingFor.value = why }
@@ -3061,7 +3006,7 @@ class PlaybackController(
 
         override fun couldNotPlay(output: Output) {
             if (steering(output) == null) return
-            if (markStopped()) reportTimeline(TimelineState.PAUSED)
+            if (markStopped()) reports.timeline(TimelineState.PAUSED)
         }
 
         override fun endedOnItsOwn(output: Output, target: OutputTarget) {
@@ -3072,86 +3017,6 @@ class PlaybackController(
     }
 
     // --- What the server is told ---------------------------------------------
-
-    /** The id the server knows this song's playback by, which every timeline report about it carries. */
-    private fun sessionIdFor(trackId: String): String =
-        if (serverClient.value?.oneSessionPerPlayer == true) listeningSession else "${playbackSession.value}:$trackId"
-
-    /**
-     * The id a stream of this song carries. On a server with one session per
-     * player, the listening session's own id, but only on a stream the
-     * loopback door decides first ([decidedFirst]; see [playerUrl]): Plex
-     * refuses a transcode under a session it tracks unless a decision for that
-     * very song came first. Anything else that fetches on its own (a speaker,
-     * the player while the door is down) gets an id of its own that no
-     * timeline names. That also keeps apart two transcodes in flight at once,
-     * as a speaker's next song is: Plex keeps one per id and tears the other
-     * down.
-     */
-    private fun streamSessionIdFor(trackId: String, decidedFirst: Boolean): String =
-        if (serverClient.value?.oneSessionPerPlayer == true && !decidedFirst) {
-            "$listeningSession:$trackId"
-        } else {
-            sessionIdFor(trackId)
-        }
-
-    /**
-     * Tell the server this session is playing or paused, through [sessions],
-     * so a session open under another id is stopped first. Queued, not
-     * awaited: a dropped heartbeat only leaves the dashboard stale until the
-     * next one.
-     */
-    private fun reportTimeline(state: TimelineState, positionMs: Long = _positionMs.value) {
-        // A far end that reports itself (a Companion player) would have every
-        // play counted twice.
-        if (remote?.reportsItself == true) return
-        val track = _queue.value.getOrNull(_index.value) ?: return
-        // A phone file has nothing on the server to report on.
-        if (PhoneFiles.isPhoneFile(track.id)) return
-        sessions.report(
-            TimelineReport(sessionIdFor(track.id), track.id, state, positionMs, _durationMs.value),
-        )
-    }
-
-    /**
-     * A seek moved the place in the song, here or wherever the sound is: the
-     * server hears it now, not at the next heartbeat, as a server that keeps
-     * the place (Navidrome) would read a jump ahead as that much listened.
-     * Only for a session already open: a cued queue that never played opens
-     * none.
-     */
-    private fun reportSeek(ms: Long) {
-        if (sessions.openSession == null) return
-        val live = _isPlaying.value || _buffering.value
-        // Within the song: Plex refuses a time past its length.
-        val at = ms.coerceIn(0L, _durationMs.value.takeIf { it > 0L } ?: Long.MAX_VALUE)
-        reportTimeline(if (live) TimelineState.PLAYING else TimelineState.PAUSED, positionMs = at)
-    }
-
-    /**
-     * Bring the server's session up to the song playback is on now — see the
-     * collector in [bind]. Says nothing unless what the server shows has to
-     * change. Main only: the queue, the index and the player's intent are
-     * read together. [atMs] is where in the song playback is, when that is
-     * the song's own reading rather than the last song's.
-     */
-    private fun followCurrentSong(atMs: Long = 0L) {
-        if (remote?.reportsItself == true) return
-        val track = _queue.value.getOrNull(_index.value)
-        if (track == null || PhoneFiles.isPhoneFile(track.id)) {
-            // Nothing of the server's plays any more: an emptied queue, or the
-            // last song taken out of it.
-            sessions.close()
-            return
-        }
-        sessions.songIs(
-            sessionIdFor(track.id),
-            track.id,
-            live = playbackWanted(),
-            positionMs = atMs,
-            durationMs = track.durationMs,
-        )
-    }
 
     /**
      * Whether the song playback is on is playing or about to, which is what a
@@ -3166,250 +3031,7 @@ class PlaybackController(
         return p.isPlaying.value || p.playWhenReady || _buffering.value
     }
 
-    /**
-     * Queue [report] for the server that is current now, the one it is about,
-     * even if a source switch swaps the client before it goes. Called by
-     * [sessions] as it decides; false when it can't go, and the session is
-     * then left as it was.
-     */
-    private fun queueTimeline(report: TimelineReport, news: Boolean): Boolean {
-        // Not where the mode forbids talking to the server. A heartbeat
-        // replayed later would be worse than none, and a stop held back isn't
-        // lost: the session stays open in [sessions], and the next report that
-        // may go stops it. The play itself is kept — see maybeSubmitPlay.
-        if (!metadataAllowed()) return false
-        val client = serverClient.value ?: return false
-        if (news) {
-            Log.i(
-                "AmpSession",
-                "${report.state.name.lowercase()} ${report.trackId} under ${report.sessionId}",
-            )
-        }
-        return timelineOut.trySend(TimelineSend.Report(client, report)).isSuccess
-    }
-
-    /** Wait until every timeline report queued so far has been sent, or has failed. */
-    private suspend fun timelineSent() {
-        val done = CompletableDeferred<Unit>()
-        if (timelineOut.trySend(TimelineSend.Flush(done)).isSuccess) done.await()
-    }
-
-    /**
-     * Say what is playing, the moment it starts — see [MusicServer.scrobble].
-     * Never kept for a retry: "playing this now" replayed an hour later is
-     * false, where a play is true whenever it arrives.
-     */
-    private fun announceNowPlaying() {
-        // A far end that reports itself tells the server.
-        if (remote?.reportsItself == true) return
-        val track = _queue.value.getOrNull(_index.value) ?: return
-        // A phone file: no server to tell.
-        if (PhoneFiles.isPhoneFile(track.id)) return
-        if (track.id == nowPlayingId) return
-        if (!metadataAllowed()) return
-        nowPlayingId = track.id
-        val client = serverClient.value ?: return
-        scope.launch { runCatching { client.scrobble(track.id, submission = false) } }
-    }
-
-    /**
-     * How much of a track has to be heard before the play counts: half of it
-     * or four minutes, whichever comes first (Last.fm's rule, which the server
-     * applies to whatever it forwards). Four minutes for a stream that never
-     * declared its length.
-     */
-    private fun submitAfterMs(durationMs: Long): Long =
-        if (durationMs <= 0L) SUBMIT_AFTER_MS else minOf(durationMs / 2, SUBMIT_AFTER_MS)
-
-    /** Submit the play once enough of the track has been heard — see [submitAfterMs]. */
-    private fun maybeSubmitPlay(positionMs: Long) {
-        val track = _queue.value.getOrNull(_index.value) ?: return
-        if (PhoneFiles.isPhoneFile(track.id)) return
-        if (track.id == lastScrobbledId) return
-        if (positionMs < submitAfterMs(_durationMs.value)) return
-        lastScrobbledId = track.id
-        // Stamped now, sent whenever: a play made offline still belongs at the
-        // time it happened.
-        val at = System.currentTimeMillis()
-        val client = serverClient.value
-        // The source the play was heard on, the only one it is ever sent to.
-        val source = App.source.value.id
-        scope.launch {
-            // Local first, so the library's order follows the listening whether
-            // or not the server ever hears of it.
-            runCatching { App.library.markPlayed(track.id) }
-            // A play is durable as a heartbeat isn't: where the mode forbids the
-            // bytes it is queued, as for an unreachable server, not dropped. A
-            // gate that can't be read errs towards the queue.
-            val allowed = runCatching { metadataAllowed() }.getOrDefault(false)
-            val result = if (allowed && client != null) {
-                attemptWrite { client.scrobble(track.id, at) }
-            } else {
-                WriteResult.Unreachable(UNREACHABLE)
-            }
-            when (result) {
-                WriteResult.Saved -> Unit
-                // Guarded: a play can land before App has finished wiring itself up.
-                is WriteResult.Unreachable -> runCatching {
-                    App.pending.add(
-                        PendingAction(PendingAction.Kind.SCROBBLE, track.id, atMs = at, sourceId = source),
-                    )
-                }
-                // Not kept, as the server would refuse it every time. Said once
-                // per source and run: a server that refuses one play tends to
-                // refuse them all.
-                is WriteResult.Refused -> {
-                    Log.w("AmpSync", "play of ${track.id} refused: ${result.reason}")
-                    if (playRefusalSaid.add(source)) runCatching { App.tell("Couldn't save\n${result.reason}") }
-                }
-            }
-        }
-    }
-
-    /**
-     * Hand the queue to the server, so another client can pick it up. Only
-     * when the queue or its track changed, unlike the local snapshot, as this
-     * is a round trip; the position riding along is from the change of track,
-     * and exact when leaving forces a last push.
-     */
-    private suspend fun pushQueueToServer(tracks: List<Track>, force: Boolean) {
-        val client = serverClient.value ?: return
-        val at = _index.value.coerceAtLeast(0)
-        val currentId = tracks.getOrNull(at)?.id
-        // A window from the playing track on: Subsonic takes one URL parameter
-        // per id, and a long queue would be a request the server, or a proxy
-        // in front of it, refuses silently. What is ahead is what another
-        // device can use.
-        val ids = if (tracks.size <= MAX_SAVED_QUEUE) {
-            tracks.map { it.id }
-        } else {
-            tracks.subList(at, minOf(at + MAX_SAVED_QUEUE, tracks.size)).map { it.id }
-        }
-        val key = 31 * ids.hashCode() + currentId.hashCode()
-        if (!force && key == lastSavedQueueKey) return
-        lastSavedQueueKey = key
-        runCatching { client.savePlayQueue(ids, currentId, _positionMs.value) }
-    }
-
-    // --- Where each track plays from -----------------------------------------
-
-    /**
-     * The format to ask for: the source's Wi-Fi format on an unmetered link,
-     * its cellular format otherwise. Two stated choices, never a mode quietly
-     * capping one: asked for lossless on cellular, lossless is what comes.
-     */
-    private fun effectiveFormat(): StreamFormat {
-        val source = App.source.value
-        return if (unmetered) source.wifiFormat else source.cellularFormat
-    }
-
-    /** Whether [track] can play under [rules]: from the phone, or streamed through the door. */
-    private fun isPlayable(track: Track, rules: LinkRules): Boolean =
-        hasLocalCopy(track) || (rules.mayStream && App.streamProxy.isOn)
-
-    /** A phone file or a download: playable with no server. */
-    private fun hasLocalCopy(track: Track): Boolean =
-        PhoneFiles.isPhoneFile(track.id) || localFiles.containsKey(track.id)
-
-    /** Whether the door will ask the server's decision for this stream right before fetching it — see [playerUrl]. */
-    private fun decidesAtDoor(client: MusicServer, track: Track, format: StreamFormat): Boolean =
-        client.oneSessionPerPlayer && App.streamProxy.isOn && client.streamNeedsDecision(track, format)
-
-    /** This song's entry in [originalElsewhere]: the source playing it, and its id there. */
-    private fun Track.originalKey(): Pair<String, String> = App.source.value.id to id
-
-    /**
-     * [MusicServer.streamUrl], except for a song moved to its server's other
-     * address for the original — see [playOriginalElsewhere]. Every URL this
-     * controller plays, casts or probes is made here, so a moved song stays
-     * moved however it is reached next.
-     */
-    private fun MusicServer.playableUrl(
-        track: Track,
-        format: StreamFormat,
-        timeOffsetSeconds: Int,
-        estimateContentLength: Boolean,
-        sessionId: String?,
-    ): String {
-        val moved = format == StreamFormat.RAW && track.originalKey() in originalElsewhere
-        return (if (moved) alternateOriginalUrl(track) else null)
-            ?: streamUrl(track, format, timeOffsetSeconds, estimateContentLength, sessionId)
-    }
-
-    /**
-     * Where to play a track from. A download wins, and is passed over only
-     * when the chosen streaming format is better than the copy and the bytes
-     * are free: an unmetered link, whatever the mode. Even Make it Hurt plays
-     * a download from its file.
-     */
-    private fun Track.source(): LightAudioSource {
-        // A phone file is the file, always: no stream to prefer, no server to ask.
-        PhoneFiles.fileOf(id)?.let { return LightAudioSource.FileSource(it) }
-        val local = localFiles[id]
-        if (local != null) {
-            val (file, downloadedFormat) = local
-            val streamed = effectiveFormat()
-            val preferStream = !forceOffline && id !in streamFailed && unmetered &&
-                streamed.qualityRank > downloadedFormat.qualityRank
-            if (!preferStream) return LightAudioSource.FileSource(file)
-        }
-        return LightAudioSource.UrlSource(playerUrl(this, effectiveFormat()))
-    }
-
-    /**
-     * The address the player is handed for [track] in [format]: through the
-     * loopback door when it is up (see StreamProxy), so the player only ever
-     * holds this phone's address.
-     *
-     * Where the server keeps one session per player, the door also asks the
-     * server's decision for this very song right before fetching it, under
-     * that session's id: Plex holds a session it tracks to a decision per
-     * song, and the player fetches ahead and on its own, so nothing in front
-     * of it can know when to ask. Without the door the stream gets an id of
-     * its own — see [streamSessionIdFor].
-     */
-    private fun playerUrl(track: Track, format: StreamFormat, timeOffsetSeconds: Int = 0): String {
-        val client = serverClient.value ?: return ""
-        val decideFirst = decidesAtDoor(client, track, format)
-        val sid = streamSessionIdFor(track.id, decideFirst)
-        val url = client.playableUrl(
-            track,
-            format,
-            timeOffsetSeconds = timeOffsetSeconds,
-            // No estimated Content-Length: declaring one for a transcode makes
-            // the server finish the encode first, so a long track took minutes
-            // to start. Seeks go through the server, not by byte, so nothing
-            // needs it. Only Subsonic reads the flag.
-            estimateContentLength = false,
-            sessionId = sid,
-        )
-        // Asked of whichever client is current at fetch time: one rebuilt for
-        // the same source since (a new address, a renewed token) is the one
-        // that can still be heard.
-        val decision: (suspend () -> Unit)? =
-            if (decideFirst) ({ serverClient.value?.prepareStream(track.id, format, sid) }) else null
-        return App.streamProxy.wrap(url, group = track.id, prepare = decision)
-    }
-
-    private fun Track.toAudioItem(from: LightAudioSource = source()): LightAudioItem = LightAudioItem(
-        source = from,
-        metadata = LightMediaMetadata(
-            title = title,
-            artist = artist,
-            album = album,
-            durationMs = durationMs,
-        ),
-    )
-
-    private fun RepeatMode.forPlayer(): Int = when (this) {
-        RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-        RepeatMode.TRACK -> Player.REPEAT_MODE_ONE
-        RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
-    }
-
     companion object {
-        private fun newSessionId(): String = UUID.randomUUID().toString()
-
         // Why a track is parked, in the screen's words.
 
         /** The server refused the track: a bad status, not a bad link. */
@@ -3472,10 +3094,6 @@ class PlaybackController(
 
         // The queue.
 
-        /** The most tracks the player is given at once, and how many before the start are kept — see capped. */
-        private const val MAX_QUEUE = 500
-        private const val QUEUE_LOOKBACK = 50
-
         /** Settling time before an output hears that what plays next has changed. */
         private const val UPCOMING_DEBOUNCE_MS = 400L
 
@@ -3502,83 +3120,5 @@ class PlaybackController(
 
         /** How far the phone's place may have drifted since and still be where the output was lost. */
         private const val REJOIN_POSITION_SLACK_MS = 3_000L
-
-        // What the server is told.
-
-        /** How often a live session is re-announced; Plexamp does about this. */
-        private const val TIMELINE_INTERVAL_MS = 10_000L
-
-        /** The most that has to be heard for a play to count — see submitAfterMs. */
-        private const val SUBMIT_AFTER_MS = 4 * 60 * 1000L
-
-        /**
-         * How many of the queue's tracks the server is told about: a few
-         * kilobytes of ids in a URL, under the eight that proxies commonly cut
-         * off, and far enough ahead for another device to resume.
-         */
-        private const val MAX_SAVED_QUEUE = 100
     }
-}
-
-/** The most a far end's last report is carried on: one that stopped reporting isn't carried into the next song. */
-private const val CARRY_ON_CAP_MS = 2_000L
-
-/**
- * Where a far end that reported [reportedMs] has got to [sinceReportMs]
- * later: carried on while [playing], as its song is, by at most
- * [CARRY_ON_CAP_MS], and never past [durationMs] where that is known.
- */
-internal fun carriedOn(
-    reportedMs: Long,
-    sinceReportMs: Long,
-    playing: Boolean,
-    durationMs: Long,
-): Long {
-    if (!playing) return reportedMs
-    val at = reportedMs + sinceReportMs.coerceIn(0L, CARRY_ON_CAP_MS)
-    return if (durationMs > 0L) at.coerceAtMost(durationMs) else at
-}
-
-/**
- * Whether a reopen has to put the queue back into the player — see the
- * re-cue in [PlaybackController.attachHandle]. Only for a handle that
- * connected holding nothing and making no sound, under the very queue and
- * track the controller carried across. Silence is asked for as well as
- * emptiness: a service making sound has a queue, and cueing over it would
- * stop the music the user came back to.
- */
-internal fun needsRecue(
-    carriedOver: Boolean,
-    playerIndex: Int,
-    playerPlaying: Boolean,
-    casting: Boolean,
-    parked: Boolean,
-): Boolean = carriedOver && playerIndex == NO_MEDIA_ITEM && !playerPlaying && !casting && !parked
-
-/**
- * Where in its track a handle that has just connected leaves playback, when
- * the service is on another track than the screen shows — see the landing
- * in [PlaybackController.attachHandle]. Null when there is nothing to land
- * on: the same track, an empty player, a queue just cued back in, a cast
- * (its renderer says where playback is), or a park (the service sits on the
- * failed track, and the screen's marker is the one the user moved).
- *
- * The service's own position, read from the same snapshot as its index.
- * Except on the track a next or previous pressed while the handle connected
- * went to ([pickedIndex]): that press reached the service after the
- * snapshot, so the track starts from the top.
- */
-internal fun connectLanding(
-    playerIndex: Int,
-    playerPositionMs: Long,
-    shownIndex: Int,
-    pickedIndex: Int,
-    recued: Boolean,
-    casting: Boolean,
-    parked: Boolean,
-): Long? = when {
-    recued || casting || parked -> null
-    playerIndex < 0 || playerIndex == shownIndex -> null
-    playerIndex == pickedIndex -> 0L
-    else -> playerPositionMs
 }
