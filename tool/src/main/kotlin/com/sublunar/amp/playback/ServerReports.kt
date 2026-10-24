@@ -22,7 +22,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * What the server is told about playback: the timeline (the session a
@@ -144,29 +143,29 @@ internal class ServerReports(
 
     /** Start following playback for the server, on [bound]: the plays that count, the heartbeat and the song. */
     fun follow(bound: Job) {
-        scope.launch(bound) { positionMs.collect { heard(it) } }
+        // All three on Main, where every change of queue and song is made and
+        // songStarted is called: a report never reads a new queue's session
+        // against the old queue's song, and plays are counted on one thread.
+        val onMain = bound + Dispatchers.Main
+        scope.launch(onMain) { positionMs.collect { heard(it) } }
         // The heartbeat: Plex drops a session nothing pings for a while. Only
         // while playing, and only with a handle connected: without one nothing
         // here sees what the service plays, and a heartbeat would go on
         // reporting a frozen song for as long as the process lived. Leaving
-        // closes the session instead, and the reopen opens it again. On Main,
-        // where every change of queue and song is made, so a report never reads
-        // a new queue's session against the old queue's song.
-        scope.launch(bound) {
+        // closes the session instead, and the reopen opens it again.
+        scope.launch(onMain) {
             while (true) {
                 delay(TIMELINE_INTERVAL_MS)
-                withContext(Dispatchers.Main.immediate) {
-                    if (isPlaying.value && handleReady()) timeline(TimelineState.PLAYING)
-                }
+                if (isPlaying.value && handleReady()) timeline(TimelineState.PLAYING)
             }
         }
         // The one place a change of song reaches the server, however it came
         // about: a tap, next, gapless, a skip, a restore, a removal, the speaker
         // moving on. The queue's session is watched too, so the same song tapped
         // in a new list is the new session it is where the server keeps one per
-        // song. On Main and not immediate: it runs after whatever set the queue
-        // and the index, and never reads a new queue under the old index.
-        scope.launch(bound + Dispatchers.Main) {
+        // song. Not immediate: it runs after whatever set the queue and the
+        // index, and never reads a new queue under the old index.
+        scope.launch(onMain) {
             combine(queue, index, playbackSession) { _, _, _ -> }
                 .collect { followCurrentSong() }
         }

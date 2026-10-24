@@ -13,7 +13,9 @@ import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightMediaMetadata
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
 
 /**
  * Where each track plays from: the phone's own file, its download, or a
@@ -34,7 +36,6 @@ internal class TrackSources(
      * Latched by the controller's fallBackOffline: downloads play from disk
      * even where the stream is better, until the server answers again.
      */
-    @Volatile
     var forceOffline = false
 
     /** The track fallBackOffline last picked up, so it tries each one once — see [firstRetryOf]. */
@@ -55,13 +56,19 @@ internal class TrackSources(
      */
     private val originalElsewhere = mutableSetOf<Pair<String, String>>()
 
-    /** The active source's downloads changed: note which are on disk, and in which format. */
-    fun downloadsChanged(rows: List<DownloadFile>) {
-        localFiles = rows.mapNotNull { row ->
-            downloads.existing(App.source.value.id, row.fileName)?.let { file ->
-                row.trackId to (file to StreamFormat.fromId(row.format))
-            }
-        }.toMap()
+    /**
+     * The active source's downloads changed: note which are on disk, and in
+     * which format. The files are looked at off Main, and the answer kept on
+     * the caller's thread.
+     */
+    suspend fun downloadsChanged(rows: List<DownloadFile>) {
+        localFiles = withContext(Dispatchers.IO) {
+            rows.mapNotNull { row ->
+                downloads.existing(App.source.value.id, row.fileName)?.let { file ->
+                    row.trackId to (file to StreamFormat.fromId(row.format))
+                }
+            }.toMap()
+        }
     }
 
     /** Streaming may be tried again: nothing learnt while it failed or wasn't allowed outlives that. */

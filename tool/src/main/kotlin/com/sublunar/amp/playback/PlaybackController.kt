@@ -77,6 +77,14 @@ import kotlinx.coroutines.withTimeoutOrNull
  * mostly through Dispatchers.Main.immediate. And a released handle throws
  * too, so a deferred block re-reads [player] on Main instead of using a
  * handle it captured: a new activity may have replaced it in between.
+ *
+ * The controller's own state lives on Main too. The collectors that touch
+ * it run there, posted rather than immediate (the failure collector aside),
+ * so each runs after whatever set its flow has finished: the SDK sets its
+ * flows in the middle of its own calls. Three things still reach the state
+ * from other threads, which is what the volatile fields are for: a source
+ * switch's [stop], whose clear is synchronous, the outputs' calls on the
+ * host, and the restore's first look.
  */
 class PlaybackController(
     private val settings: AppSettings,
@@ -182,8 +190,8 @@ class PlaybackController(
 
     /**
      * The handle on the detached service. Replaced on Main, by [attach], and
-     * read from Default as well: by the restore, the rules and downloads
-     * collectors, and a source switch's stop.
+     * read off Main by the restore's first look and the outputs' calls on the
+     * host.
      */
     @Volatile
     private var player: LightAudioPlayer? = null
@@ -286,10 +294,9 @@ class PlaybackController(
      *
      * While set, the player's queue is one item longer than [_queue], so
      * anything that addresses the player by position calls [settleRestartCopy]
-     * first. Written on Main; the collectors read it to tell the copy's start
-     * from a new track.
+     * first. The index collector reads it to tell the copy's start from a new
+     * track.
      */
-    @Volatile
     private var restartCopyAt = -1
 
     /**
@@ -366,7 +373,6 @@ class PlaybackController(
      * runs on through sleep; 0 while it plays or starts, or there is none —
      * see [forgetPausedSpeaker].
      */
-    @Volatile
     private var speakerPausedSinceMs = 0L
 
     /** Lets a paused speaker go on time, while the phone is awake to run it. */
@@ -414,7 +420,7 @@ class PlaybackController(
 
     init {
         // Times how long a speaker the phone owns has sat paused — see [forgetPausedSpeaker].
-        scope.launch {
+        scope.launch(Dispatchers.Main) {
             combine(_active, _isPlaying, _buffering) { a, playing, starting ->
                 a != null && a.family in Outputs.phone && !playing && !starting
             }.distinctUntilChanged().collect { paused ->
@@ -426,7 +432,7 @@ class PlaybackController(
                 speakerPausedSinceMs = SystemClock.elapsedRealtime()
                 forgetJob = launch {
                     delay(FORGET_PAUSED_SPEAKER_MS)
-                    withContext(Dispatchers.Main.immediate) { forgetPausedSpeaker() }
+                    forgetPausedSpeaker()
                 }
             }
         }
@@ -462,6 +468,9 @@ class PlaybackController(
         bindJob?.cancel()
         val bound = SupervisorJob(scope.coroutineContext[Job])
         bindJob = bound
+        // Posted to Main, where the state they touch lives. The upcoming
+        // notice, the link poll and the snapshot touch none and stay off it.
+        val onMain = bound + Dispatchers.Main
         // What the screen carried across a reopen: the re-cue in attachHandle
         // puts it back if the service came back empty.
         openHandle(audio, _queue.value, _index.value, _positionMs.value)
@@ -492,7 +501,7 @@ class PlaybackController(
         }
         // The door coming up or going down moves every stream's address, and a
         // track parked for want of it can be cued again.
-        scope.launch(bound) {
+        scope.launch(onMain) {
             App.streamProxy.state.collect { state ->
                 reresolveQueue()
                 if (state is StreamProxy.State.On) cueIfParked()
@@ -500,7 +509,7 @@ class PlaybackController(
         }
         // Nothing waits on "buffering" for ever. Counted from the start, not from
         // when this collector saw it: a reopen replaces it mid-start.
-        scope.launch(bound) {
+        scope.launch(onMain) {
             _buffering.collectLatest { on ->
                 if (on) {
                     val elapsed = SystemClock.elapsedRealtime() - bufferingSinceMs
@@ -512,7 +521,7 @@ class PlaybackController(
         // Everything the rules can change (the link, its price, the mode, the
         // server), heard in the same moment the library and the queue view hear
         // it — see LinkRules.
-        scope.launch(bound) {
+        scope.launch(onMain) {
             App.rules.collect { rules ->
                 // Nothing learnt while streaming wasn't allowed outlives that.
                 // Cleared here, not only when the server answers again:
@@ -531,30 +540,22 @@ class PlaybackController(
                         // leaving the house is not a press of play. With Wi-Fi
                         // back it is taken back.
                         Log.i(out.logTag, "Wi-Fi gone — cast let go, to be taken back")
-                        withContext(Dispatchers.Main.immediate) {
-                            if (remote?.needsLan == true) dropOutput(Disconnect.LinkLost)
-                        }
+                        dropOutput(Disconnect.LinkLost)
                     }
                 } else if (lost != null) {
                     rejoinLost()
                 }
                 if (rules.mayStream) {
                     cueIfParked()
-                } else {
+                } else if (parked && !parkedOnTheTrackItself) {
                     // Still parked, maybe for another reason now, so the words
-                    // stay true; only a wait about the link is reworded. On Main
-                    // with every other writer, so this can't re-park a player
-                    // un-parked in between.
-                    withContext(Dispatchers.Main.immediate) {
-                        if (parked && !parkedOnTheTrackItself) {
-                            _waitingFor.value = rules.waitingFor ?: _waitingFor.value
-                        }
-                    }
+                    // stay true; only a wait about the link is reworded.
+                    _waitingFor.value = rules.waitingFor ?: _waitingFor.value
                 }
             }
         }
         // The library's read of the active source's downloads, shared.
-        scope.launch(bound) {
+        scope.launch(onMain) {
             App.library.downloadFiles.collect { rows ->
                 sources.downloadsChanged(rows)
                 reresolveQueue()
@@ -589,8 +590,8 @@ class PlaybackController(
      * left unbound: the new controller binds at once, while the old one's
      * unbind is only posted (that unbind is what throws when the old activity
      * is gone). [player] goes from the old handle straight to the new one,
-     * never through null: the restore and the re-resolution read it from
-     * Default, and a restore that saw none would give up for good.
+     * never through null: the restore reads it from Default, and one that
+     * saw none would give up for good.
      */
     private fun handOver(old: LightAudioPlayer, audio: LightAudio) {
         settleRestartCopy()
@@ -735,9 +736,8 @@ class PlaybackController(
             // actually playing, where it has got to, to be stopped later.
             reports.followCurrentSong(atMs = if (isCasting) _positionMs.value else p.positionMs.value + streamOffsetMs)
             // Re-resolutions asked for while the handle connected were turned
-            // away, by reresolveQueue's wait for Ready or by a handover replacing
-            // the handle they read; this pass sends them. A re-cue has just built
-            // the queue from fresh answers.
+            // away by reresolveQueue's wait for Ready; this pass sends them. A
+            // re-cue has just built the queue from fresh answers.
             if (!recue) reresolveQueue()
         }
     }
@@ -751,6 +751,7 @@ class PlaybackController(
      * directly, or the resume's own rebuild, still moves the screen.
      */
     private fun collectHandle(p: LightAudioPlayer, handle: Job, heldByPark: Boolean) {
+        val onMain = handle + Dispatchers.Main
         // A failure is the error going from none to one. The flow repeats an
         // error when the queue moves under it, and a retry clears it first, so a
         // second failure counts again. One there at connect was noted in
@@ -764,7 +765,7 @@ class PlaybackController(
         }
         // While casting, the output is the truth for these readings; the paused
         // local player would report 0:00 and not-playing over it.
-        scope.launch(handle) {
+        scope.launch(onMain) {
             p.isPlaying.collect { playing ->
                 if (!playerSpeaks) return@collect
                 _isPlaying.value = playing
@@ -778,7 +779,7 @@ class PlaybackController(
         // A server-seeked stream starts at 0:00 of a shorter file, so the
         // readouts are shifted back into the track's own timeline. Not on the
         // restart copy, which is the song from its start.
-        scope.launch(handle) {
+        scope.launch(onMain) {
             var snapshot = heldByPark
             p.positionMs.collect {
                 if (snapshot) {
@@ -791,7 +792,7 @@ class PlaybackController(
                 }
             }
         }
-        scope.launch(handle) {
+        scope.launch(onMain) {
             p.durationMs.collect { reported ->
                 if (!playerSpeaks) return@collect
                 // The library's length, real before a byte has arrived.
@@ -812,12 +813,9 @@ class PlaybackController(
                     known > 0L &&
                     reported >= known - IGNORED_OFFSET_SLACK_MS
                 ) {
-                    val target = offset
                     streamOffsetMs = 0L
-                    // Whichever handle holds the service by then: the offset has
-                    // already left the readouts, so the seek mustn't be dropped.
-                    scope.launch(Dispatchers.Main.immediate) { player?.seekTo(target) }
                     _durationMs.value = reported
+                    p.seekTo(offset)
                     return@collect
                 }
                 _durationMs.value = when {
@@ -842,7 +840,7 @@ class PlaybackController(
         // No index is no answer. A handle that hasn't connected, or an empty
         // player, reads -1, and unity for it would overwrite the gain the
         // handle was seeded with.
-        scope.launch(handle) {
+        scope.launch(onMain) {
             combine(p.currentMediaItemIndex, _queue, replayGain) { idx, q, on ->
                 if (idx < 0) return@combine null
                 // The restart copy is the song in the slot before it.
@@ -850,15 +848,13 @@ class PlaybackController(
                 val db = if (on) q.getOrNull(slot)?.gainDb else null
                 db?.let { 10.0.pow(it / 20.0).toFloat().coerceAtMost(1f) } ?: 1f
             }.filterNotNull().distinctUntilChanged().collect { factor ->
-                withContext(Dispatchers.Main.immediate) {
-                    // A replaced handle's number mustn't be carried onto the next.
-                    if (player !== p) return@withContext
-                    p.playbackGain = factor
-                    appliedGain = factor
-                }
+                // A replaced handle's number mustn't be carried onto the next.
+                if (player !== p) return@collect
+                p.playbackGain = factor
+                appliedGain = factor
             }
         }
-        scope.launch(handle) {
+        scope.launch(onMain) {
             var snapshot = heldByPark
             p.currentMediaItemIndex.collect { idx ->
                 if (!playerSpeaks) return@collect
@@ -871,22 +867,19 @@ class PlaybackController(
                     // The remainder ending into the copy is the song starting
                     // over, not a new track. Anywhere else the queue goes back
                     // in step first, and a later slot is one less on screen.
-                    val slot: Int? = withContext(Dispatchers.Main.immediate) {
-                        val copy = restartCopyAt
-                        when {
-                            player !== p || copy < 0 -> idx
-                            idx == copy -> {
-                                finishRestart(p, copy)
-                                null
-                            }
-                            idx == copy - 1 -> idx
-                            else -> {
-                                settleRestartCopy()
-                                if (idx > copy) idx - 1 else idx
-                            }
+                    val copy = restartCopyAt
+                    val slot = when {
+                        player !== p -> idx
+                        idx == copy -> {
+                            finishRestart(p, copy)
+                            return@collect
+                        }
+                        idx == copy - 1 -> idx
+                        else -> {
+                            settleRestartCopy()
+                            if (idx > copy) idx - 1 else idx
                         }
                     }
-                    if (slot == null) return@collect
                     if (slot >= 0 && slot != _index.value) landedOn(p, slot, startMs = 0L)
                 } else if (idx >= 0 && idx != _index.value) {
                     landedOn(p, idx, startMs = 0L)
@@ -1644,9 +1637,9 @@ class PlaybackController(
      * Cued, not started, as Wi-Fi coming back is not a press of play; one
      * press then plays, where a parked player answers a press with silence.
      */
-    private suspend fun cueIfParked() {
+    private fun cueIfParked() {
         if (!parked || isCasting || parkedOnTheTrackItself) return
-        withContext(Dispatchers.Main.immediate) { resumeAfterWait(play = false) }
+        resumeAfterWait(play = false)
     }
 
     /**
@@ -1783,8 +1776,10 @@ class PlaybackController(
             sources.forceOffline = true
             scope.launch {
                 if (withTimeoutOrNull(VERIFY_WAIT_MS) { App.reachability.verify() } == true) {
-                    sources.forceOffline = false
-                    reresolveQueue()
+                    withContext(Dispatchers.Main.immediate) {
+                        sources.forceOffline = false
+                        reresolveQueue()
+                    }
                 } else {
                     // Keep asking; the rules collector lifts the pin when the
                     // server answers.
@@ -1851,18 +1846,11 @@ class PlaybackController(
             known > 0L && _positionMs.value >= known - QUEUE_END_SLACK_MS
         }
         if (!endReached) return
-        // The state is set here, not in the Main block below, so a second
-        // emission can't queue a second rewind, and the session closes before
-        // the player moves.
         queueFinished()
-        scope.launch(Dispatchers.Main.immediate) {
-            // A handle that replaced this one steers the same service.
-            val cur = player ?: return@launch
-            // Paused first: a seek out of the ended state with playWhenReady
-            // still set starts the queue over instead of waiting there.
-            cur.pause()
-            cur.seekToDefaultPosition(0)
-        }
+        // Paused first: a seek out of the ended state with playWhenReady still
+        // set starts the queue over instead of waiting there.
+        p.pause()
+        p.seekToDefaultPosition(0)
     }
 
     /** The library's length for [track], shown at once: a chunked stream may never report one. */
@@ -1904,7 +1892,7 @@ class PlaybackController(
         awaitStream: Boolean = false,
     ) {
         val generation = ++seekGeneration
-        scope.launch {
+        scope.launch(Dispatchers.Main) {
             // A queue just built answers with the asked position until its
             // stream declares itself, so the check would pass a seek about to be
             // dropped: wait for that, within reason.
@@ -2157,36 +2145,20 @@ class PlaybackController(
         // Nothing to do unless an answer moved: this runs on every finished
         // download, and most change nothing.
         val rebuilt = tracks.map(sources::source)
-        val held = queuedSources
-        if (rebuilt == held) return
+        if (rebuilt == queuedSources) return
         queuedSources = rebuilt
-        scope.launch(Dispatchers.Main.immediate) {
-            if (player !== p) {
-                // The handle changed on the way (a handover, a back-out, the SDK
-                // dropping one that never connected), so none of this reached
-                // the service. The memo goes back to what the service still
-                // holds, unless something wrote it since, and the ask is
-                // repeated: a connected handle gets the edits now, one still
-                // connecting in attachHandle's pass. Left as it was, that pass
-                // found a match and sent nothing, and a track downloaded
-                // meanwhile stayed a stream.
-                if (queuedSources === rebuilt) queuedSources = held
-                reresolveQueue()
-                return@launch
-            }
-            settleRestartCopy()
-            if (current > 0) {
-                p.replaceRange(0, current, itemsFrom(tracks.subList(0, current), rebuilt.subList(0, current)))
-            }
-            if (current + 1 <= tracks.lastIndex) {
-                p.replaceRange(
-                    current + 1,
-                    tracks.size,
-                    itemsFrom(tracks.subList(current + 1, tracks.size), rebuilt.subList(current + 1, tracks.size)),
-                )
-            }
-            rearmSoon()
+        settleRestartCopy()
+        if (current > 0) {
+            p.replaceRange(0, current, itemsFrom(tracks.subList(0, current), rebuilt.subList(0, current)))
         }
+        if (current + 1 <= tracks.lastIndex) {
+            p.replaceRange(
+                current + 1,
+                tracks.size,
+                itemsFrom(tracks.subList(current + 1, tracks.size), rebuilt.subList(current + 1, tracks.size)),
+            )
+        }
+        rearmSoon()
     }
 
     // --- Editing the queue ---------------------------------------------------
@@ -2679,12 +2651,12 @@ class PlaybackController(
         if (rejoinJob?.isActive == true) return
         val out = gone.active.output
         val name = gone.active.target.name
+        if (SystemClock.elapsedRealtime() - gone.atMs > LOST_OUTPUT_KEPT_MS) {
+            Log.i(out.logTag, "Wi-Fi back, but $name went too long ago — left")
+            lost = null
+            return
+        }
         rejoinJob = scope.launch {
-            if (SystemClock.elapsedRealtime() - gone.atMs > LOST_OUTPUT_KEPT_MS) {
-                Log.i(out.logTag, "Wi-Fi back, but $name went too long ago — left")
-                if (lost === gone) lost = null
-                return@launch
-            }
             Log.i(out.logTag, "Wi-Fi back — looking for $name")
             // Bounded. A link that goes again meanwhile cancels this and keeps
             // the memory for the next time it comes back.

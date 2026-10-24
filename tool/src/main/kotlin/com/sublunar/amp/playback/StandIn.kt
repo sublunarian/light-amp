@@ -47,7 +47,6 @@ internal class StandIn(
      * whichever handle that is. The queue is the controller's alone until
      * [stop] puts it back.
      */
-    @Volatile
     var active = false
         private set
 
