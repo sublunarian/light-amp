@@ -156,14 +156,15 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     /**
      * The player is one of the bar's three destinations, so it records itself
-     * while up and hands the section back on the way out, since only this screen
-     * knows when it stops showing — see [LastSection].
+     * while up and hands the section back once it is gone, since only this
+     * screen knows when that is — see [LastSection]. Not when a sheet covers it
+     * (willHide): the player is still where Amp should reopen.
      */
     override fun willShow() {
         LibraryNav.record(LastSection.NOW_PLAYING)
     }
 
-    override fun willHide() {
+    override fun onScreenDestroy() {
         LibraryNav.record(
             if (LibraryNav.searchActive.value) LastSection.SEARCH else LastSection.LIBRARY,
         )
