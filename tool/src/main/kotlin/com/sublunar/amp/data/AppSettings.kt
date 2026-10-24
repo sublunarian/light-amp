@@ -135,8 +135,13 @@ class AppSettings(
 
     private val sourcesJson = Json { ignoreUnknownKeys = true }
 
-    /** The store as it was when this was built: where every [Stored.state] starts. */
-    private val loaded: Preferences = runBlocking { dataStore.data.first() }
+    /**
+     * The store as it was when this was built: where every [Stored.state]
+     * starts. Let go once they all have (see the init block after the last
+     * of them), as it holds the cached playlists and up to a thousand queue ids.
+     */
+    private var launchSnapshot: Preferences? = runBlocking { dataStore.data.first() }
+    private val loaded: Preferences get() = checkNotNull(launchSnapshot) { "settings read after construction" }
 
     // --- Sources -------------------------------------------------------------
 
@@ -403,6 +408,11 @@ class AppSettings(
 
     /** The user's own hold on downloading, kept across launches. */
     val downloadsPaused: Pref<Boolean> = bool("pref.downloadsPaused", false)
+
+    // After the last stored value: one declared below this would find no snapshot.
+    init {
+        launchSnapshot = null
+    }
 
     // --- Saved state ---------------------------------------------------------
 
