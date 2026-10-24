@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
@@ -137,10 +138,14 @@ class StreamProxy(
         synchronized(outcomes) { outcomes[group] = outcome }
     }
 
-    /** Bring the door up and prove it, off the calling thread. Idempotent. */
+    /** The start in progress, so a second call while it runs doesn't open a second door. */
+    private var starting: Job? = null
+
+    /** Bring the door up and prove it, off the calling thread. Idempotent: nothing while it is up or coming up. */
+    @Synchronized
     fun start(scope: CoroutineScope) {
-        if (server != null) return
-        scope.launch(Dispatchers.IO) {
+        if (server != null || starting?.isActive == true) return
+        starting = scope.launch(Dispatchers.IO) {
             try {
                 val socket = ServerSocket(0, BACKLOG, InetAddress.getByName(HOST))
                 server = socket
@@ -211,7 +216,8 @@ class StreamProxy(
     }
 
     private fun serve(client: Socket) {
-        val input = client.getInputStream()
+        // Buffered: the head is read a byte at a time, and nothing else reads it.
+        val input = client.getInputStream().buffered()
         val output = client.getOutputStream()
         val head = readHead(input) ?: return
         val lines = head.split("\r\n")
