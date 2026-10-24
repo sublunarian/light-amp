@@ -6,7 +6,6 @@ import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.Json
 
 /**
@@ -37,23 +36,35 @@ object LyricsRepository {
         data object NotFetched : Outcome
     }
 
-    /** Settled answers only — a failed lookup is never remembered. */
-    private val cache = ConcurrentHashMap<String, Outcome>()
+    /**
+     * Settled answers only — a failed lookup is never remembered. Keyed by source
+     * and track: two servers' ids can be the same (Plex's are small numbers).
+     * The most recent [CACHE_ENTRIES], in access order.
+     */
+    private val cache = object : LinkedHashMap<Pair<String, String>, Outcome>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<String, String>, Outcome>) =
+            size > CACHE_ENTRIES
+    }
+
+    private const val CACHE_ENTRIES = 200
 
     /**
-     * [allowNetwork] is the caller's "may this spend data" (see App.metadataAllowed).
-     * False still returns anything downloaded with the song.
+     * [track] of [sourceId], which [client] serves. [allowNetwork] is the
+     * caller's "may this spend data" (see App.metadataAllowed). False still
+     * returns anything downloaded with the song.
      */
     suspend fun forTrack(
         track: Track,
+        sourceId: String,
         client: MusicServer?,
         allowNetwork: Boolean = true,
     ): Outcome {
-        cache[track.id]?.let { return it }
+        val key = sourceId to track.id
+        synchronized(cache) { cache[key] }?.let { return it }
         val resolved = resolve(track, client, allowNetwork)
         // An outage and a question never asked are not answers to remember.
         if (resolved != Outcome.Unavailable && resolved != Outcome.NotFetched) {
-            cache[track.id] = resolved
+            synchronized(cache) { cache[key] = resolved }
         }
         return resolved
     }

@@ -239,6 +239,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : SimpleLightScreen<Unit>(se
             loading = true
             outcome = LyricsRepository.forTrack(
                 current,
+                App.source.value.id,
                 App.serverClient.value,
                 allowNetwork = App.metadataAllowed(),
             )
