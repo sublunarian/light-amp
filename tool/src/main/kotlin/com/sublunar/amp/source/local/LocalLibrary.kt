@@ -2,6 +2,8 @@ package com.sublunar.amp.source.local
 
 import android.media.MediaMetadataRetriever
 import com.sublunar.amp.source.PhoneAccess
+import com.sublunar.amp.source.PhoneLibrary
+import com.sublunar.amp.source.PhonePlaylists
 import com.sublunar.amp.source.PhoneScan
 import com.thelightphone.sdk.checkPermission
 import com.thelightphone.sdk.hasRuntimePermission
@@ -27,7 +29,7 @@ import com.sublunar.amp.data.Track
  *
  * Ids are the file's own path: see [PhoneFiles].
  */
-object LocalLibrary {
+object LocalLibrary : PhoneLibrary {
 
     /**
      * The folder this app claims inside the shared music directory,
@@ -35,7 +37,13 @@ object LocalLibrary {
      * Only this folder: the phone's other audio isn't a library, and another
      * tool's folder is that tool's library.
      */
-    const val FOLDER = "Music/Amp"
+    private const val FOLDER = "Music/Amp"
+
+    override val folderLabel: String get() = FOLDER
+
+    override val permission: String get() = "android.permission.READ_MEDIA_AUDIO"
+
+    override val playlists: PhonePlaylists get() = LocalPlaylists
 
     /** [FOLDER] on the phone's shared storage. */
     internal val MUSIC_DIR = File("/storage/emulated/0", FOLDER)
@@ -63,9 +71,6 @@ object LocalLibrary {
     /** How deep to walk. Deep enough for Artist/Album/Disc, shallow enough to end. */
     private const val MAX_DEPTH = 6
 
-    /** The permission that makes any of this readable — see lighttool.toml. */
-    const val PERMISSION = "android.permission.READ_MEDIA_AUDIO"
-
     /**
      * Whether the app may actually read the music folder, and if not, why.
      *
@@ -78,9 +83,9 @@ object LocalLibrary {
      * process can't say, or to tell a block from a missing grant. Both are
      * logged side by side for a report where they disagree.
      */
-    suspend fun access(): PhoneAccess {
-        val held = hasRuntimePermission(PERMISSION)
-        val lightOs = checkPermission(PERMISSION).asKotlinResult
+    override suspend fun access(): PhoneAccess {
+        val held = hasRuntimePermission(permission)
+        val lightOs = checkPermission(permission).asKotlinResult
             .map { it.permissionResult }
             .getOrNull()
         Log.i(TAG, "Music access: grant=${held ?: "unknown"} lightos=${lightOs ?: "no answer"}")
@@ -104,7 +109,7 @@ object LocalLibrary {
      * Walk the folders and read every file's tags, on IO and cancellable
      * between files: a few thousand tracks is a few thousand retriever opens.
      */
-    suspend fun scan(onProgress: (Int) -> Unit): PhoneScan = withContext(Dispatchers.IO) {
+    override suspend fun scan(onProgress: (Int) -> Unit): PhoneScan = withContext(Dispatchers.IO) {
         ensureFolder()
         val roots = roots()
         val files = mutableListOf<File>()
@@ -115,16 +120,20 @@ object LocalLibrary {
 
         val retriever = MediaMetadataRetriever()
         val tracks = mutableListOf<Track>()
+        val modifiedMs = mutableMapOf<String, Long>()
         try {
             files.forEachIndexed { index, file ->
                 coroutineContext.ensureActive()
-                readTrack(retriever, file)?.let(tracks::add)
+                readTrack(retriever, file)?.let { track ->
+                    tracks += track
+                    modifiedMs[track.id] = file.lastModified()
+                }
                 if (index % PROGRESS_EVERY == 0) onProgress(index)
             }
         } finally {
             runCatching { retriever.release() }
         }
-        PhoneScan(tracks, albumsFrom(tracks))
+        PhoneScan(tracks, albumsFrom(tracks, modifiedMs))
     }
 
     private fun collect(dir: File, depth: Int, into: MutableList<File>) {
@@ -180,8 +189,8 @@ object LocalLibrary {
         null
     }
 
-    /** Albums are derived from the tags, the way the Artists list already is. */
-    private fun albumsFrom(tracks: List<Track>): List<Album> =
+    /** Albums are derived from the tags, the way the Artists list already is. [modifiedMs] is each track's file date. */
+    private fun albumsFrom(tracks: List<Track>, modifiedMs: Map<String, Long>): List<Album> =
         tracks.groupBy { it.albumId }
             .mapNotNull { (id, group) ->
                 if (id == null) return@mapNotNull null
@@ -197,7 +206,7 @@ object LocalLibrary {
                     releaseDate = 0L,
                     // Newest file in the album, so "Recently Added" means what it
                     // does everywhere else.
-                    createdMs = group.mapNotNull { PhoneFiles.fileOf(it.id)?.lastModified() }.maxOrNull() ?: 0L,
+                    createdMs = group.mapNotNull { modifiedMs[it.id] }.maxOrNull() ?: 0L,
                 )
             }
 

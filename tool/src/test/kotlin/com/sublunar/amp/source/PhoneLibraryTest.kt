@@ -3,7 +3,7 @@ package com.sublunar.amp.source
 import com.sublunar.amp.source.local.LocalPlaylists
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SourceKind
-import com.sublunar.amp.source.local.LocalPhoneLibrary
+import com.sublunar.amp.source.local.LocalLibrary
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
@@ -31,6 +31,6 @@ class PhoneLibraryTest {
 
     @Test
     fun `its playlists are the m3u8 files`() {
-        assertSame<PhonePlaylists>(LocalPlaylists, LocalPhoneLibrary.playlists)
+        assertSame<PhonePlaylists>(LocalPlaylists, LocalLibrary.playlists)
     }
 }

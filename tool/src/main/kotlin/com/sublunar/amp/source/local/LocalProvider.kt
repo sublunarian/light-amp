@@ -9,10 +9,7 @@ import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
 import com.sublunar.amp.source.ConnectionRow
-import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.PhoneLibrary
-import com.sublunar.amp.source.PhonePlaylists
-import com.sublunar.amp.source.PhoneScan
 import com.sublunar.amp.source.SourceCapabilities
 import com.sublunar.amp.source.SourceProvider
 import com.sublunar.amp.source.SourceUi
@@ -58,20 +55,7 @@ object LocalProvider : SourceProvider {
 
     override val ui: SourceUi get() = LocalUi
 
-    override val phoneLibrary: PhoneLibrary get() = LocalPhoneLibrary
-}
-
-/** The phone's music folder and its playlists: see [LocalLibrary] and [LocalPlaylists]. */
-internal object LocalPhoneLibrary : PhoneLibrary {
-    override val folderLabel: String get() = LocalLibrary.FOLDER
-
-    override val permission: String get() = LocalLibrary.PERMISSION
-
-    override suspend fun access(): PhoneAccess = LocalLibrary.access()
-
-    override suspend fun scan(onProgress: (Int) -> Unit): PhoneScan = LocalLibrary.scan(onProgress)
-
-    override val playlists: PhonePlaylists get() = LocalPlaylists
+    override val phoneLibrary: PhoneLibrary get() = LocalLibrary
 }
 
 private object LocalUi : SourceUi {
