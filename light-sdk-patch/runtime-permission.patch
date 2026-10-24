@@ -1,40 +1,31 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightPermissions.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightPermissions.kt
 new file mode 100644
-index 0000000..1a7e680
+index 0000000..b1d03ad
 --- /dev/null
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightPermissions.kt
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,13 @@
 +package com.thelightphone.sdk
 +
 +import android.content.pm.PackageManager
 +import androidx.core.content.ContextCompat
 +
 +/**
-+ * SDK PATCH (additive, upstreamable): whether this process holds [permission].
-+ *
-+ * [checkPermission] asks the server, and the server answers from its own policy
-+ * before it looks at the grant — BlockedByServer where the tool isn't meant to
-+ * have the permission, Unknown where it can't say. What decides whether a file
-+ * can be read is the grant itself, which the process can ask about directly,
-+ * and which the user may have made in Android's own settings without the
-+ * server hearing of it. A tool that only asked the server told such a phone to
-+ * allow access it already had, and sent it to a prompt with nothing to change.
-+ *
-+ * Null until the SDK is bound and has a context to ask.
++ * SDK PATCH: whether this process holds [permission], which [checkPermission]'s
++ * policy answer doesn't say. Null until the SDK is bound.
 + */
 +fun hasRuntimePermission(permission: String): Boolean? =
 +    LightServiceConnection.applicationContext?.let {
 +        ContextCompat.checkSelfPermission(it, permission) == PackageManager.PERMISSION_GRANTED
 +    }
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightServiceConnection.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightServiceConnection.kt
-index d4f5750..564b4b0 100644
+index d4f5750..cf3a355 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightServiceConnection.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightServiceConnection.kt
 @@ -39,6 +39,9 @@ internal object LightServiceConnection : ServiceConnection {
      private var appContext: Context? = null
      private var serverPackage: String? = null
  
-+    // SDK PATCH (additive, upstreamable): see hasRuntimePermission in LightPermissions.kt.
++    // SDK PATCH: for hasRuntimePermission.
 +    internal val applicationContext: Context? get() = appContext
 +
      fun bind(context: Context, serverPackage: String) {
