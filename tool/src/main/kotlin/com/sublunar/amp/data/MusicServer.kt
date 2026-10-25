@@ -307,7 +307,9 @@ interface MusicServer {
     suspend fun createPlaylist(name: String, songIds: List<String> = emptyList()): String? = throw RefusedWrite()
     suspend fun renamePlaylist(id: String, name: String): Unit = throw RefusedWrite()
     suspend fun deletePlaylist(id: String): Unit = throw RefusedWrite()
-    suspend fun addToPlaylist(id: String, songId: String): Unit = throw RefusedWrite()
+
+    /** Append [songIds], in order, in one request. */
+    suspend fun addToPlaylist(id: String, songIds: List<String>): Unit = throw RefusedWrite()
 
     /**
      * Remove the entries [at] these positions — in the playlist as the server

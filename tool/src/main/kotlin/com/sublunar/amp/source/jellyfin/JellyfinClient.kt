@@ -603,8 +603,8 @@ class JellyfinClient(
         write(HttpMethod.Delete, "/Items/$id")
     }
 
-    override suspend fun addToPlaylist(id: String, songId: String) {
-        write(HttpMethod.Post, "/Playlists/$id/Items", listOf("ids" to songId, "userId" to userId))
+    override suspend fun addToPlaylist(id: String, songIds: List<String>) {
+        write(HttpMethod.Post, "/Playlists/$id/Items", listOf("ids" to songIds.joinToString(","), "userId" to userId))
     }
 
     /**

@@ -766,8 +766,8 @@ class PlexClient(
         write(HttpMethod.Delete, "/playlists/$id")
     }
 
-    override suspend fun addToPlaylist(id: String, songId: String) {
-        write(HttpMethod.Put, "/playlists/$id/items", listOf("uri" to itemUri(listOf(songId))))
+    override suspend fun addToPlaylist(id: String, songIds: List<String>) {
+        write(HttpMethod.Put, "/playlists/$id/items", listOf("uri" to itemUri(songIds)))
     }
 
     /**
