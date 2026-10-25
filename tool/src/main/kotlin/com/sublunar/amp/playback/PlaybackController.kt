@@ -748,6 +748,9 @@ class PlaybackController(
                 // The service played on with no handle to slide its window.
                 keepWindowAround()
             }
+            // A back-out may have left the player looping its window — see
+            // leaveWindowAhead. With a handle, the controller wraps the queue.
+            queuePlayer?.let(::syncQueueRepeat)
             collectHandle(p, handle, heldByPark)
             // The service can be seen again: a back-out closed the server's
             // session while it played on, and this opens it again on what is
@@ -1009,6 +1012,7 @@ class PlaybackController(
                 cur.pause()
             }
         }
+        leaveWindowAhead()
         // The session closes now, though detached audio may play on: from here
         // nothing can see what it plays, and the reopen opens it again on
         // whatever plays by then. The stop (after anything said before it) and
@@ -2281,6 +2285,29 @@ class PlaybackController(
         window = to
         syncQueueRepeat(p)
         rearmSoon()
+    }
+
+    /**
+     * Main only, as the handle is let go: nothing slides the window or wraps
+     * the queue for a service playing on alone. So the window is centred on
+     * the playing row, for the most rows ahead, and under repeat-queue the
+     * player loops what it holds. The next handle gives the wrap back to the
+     * controller — see [attachHandle].
+     */
+    private fun leaveWindowAhead() {
+        val p = queuePlayer ?: return
+        if (!playerSpeaks || parked) return
+        if (p.availability.value != LightAudioPlayerAvailability.Ready) return
+        if (p.currentMediaItemIndex.value < 0) return
+        val tracks = _queue.value
+        val at = _index.value
+        if (at !in window || window.end > tracks.size) return
+        val to = windowAround(tracks.size, at)
+        if (to != window) {
+            for (edit in slideEdits(window, to)) replaceInPlayer(p, edit.from, edit.to, tracks.slice(edit.rows))
+            window = to
+        }
+        if (_repeatMode.value == RepeatMode.QUEUE) p.repeatMode = Player.REPEAT_MODE_ALL
     }
 
     /**
