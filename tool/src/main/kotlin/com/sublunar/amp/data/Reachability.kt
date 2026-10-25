@@ -29,6 +29,12 @@ class Reachability(
     private val client: () -> MusicServer?,
     /** Whether the rules allow speaking to the server at all — see LinkRules. */
     private val mayAsk: () -> Boolean,
+    /**
+     * The server's other addresses, where it has any — see [SourceRoute]. A miss is tried
+     * against them before it counts, and an answer is followed by a look at
+     * the ones ranked above the address in use.
+     */
+    private val route: SourceRoute? = null,
 ) {
     private val _reachable = MutableStateFlow(true)
     val reachable: StateFlow<Boolean> = _reachable
@@ -36,15 +42,32 @@ class Reachability(
     private val pinging = Mutex()
     private var retry: Job? = null
 
+    /**
+     * Pings in a row that a server last known to be there failed to answer.
+     *
+     * One is not enough to call it gone. On cellular the first request after a
+     * switch or a wake pays for the radio coming up, the name and the TLS
+     * handshake, and regularly runs past [PING_TIMEOUT_MS] for a server that
+     * answers the next ping in three seconds. Read as "gone", that one slow
+     * ping narrowed the library to downloads and parked streams for as long as
+     * the retry took — the flicker that made Low Data feel unpredictable.
+     */
+    private var misses = 0
+
     /** Something just proved it either way: a sync that finished, a request that was answered. */
     fun report(reachable: Boolean) {
-        if (reachable) retry?.cancel()
+        if (reachable) {
+            retry?.cancel()
+            misses = 0
+        }
+        if (_reachable.value != reachable) log("reported ${if (reachable) "reachable" else "gone"} by ${Trace.caller("Reachability", "App.reportServerReachable")}")
         _reachable.value = reachable
     }
 
     /** A new source: nothing is known about it, so assume it is there and find out. */
     fun reset() {
         retry?.cancel()
+        misses = 0
         _reachable.value = true
         check(delayMs = 0L)
     }
@@ -56,7 +79,7 @@ class Reachability(
      */
     fun check(delayMs: Long = SETTLE_MS) {
         retry?.cancel()
-        log("check in ${delayMs}ms (was ${if (_reachable.value) "reachable" else "gone"})")
+        log("check in ${delayMs}ms (was ${if (_reachable.value) "reachable" else "gone"}) from ${Trace.caller("Reachability", "App.reportServerReachable")}")
         retry = scope.launch {
             delay(delayMs)
             var attempt = 0
@@ -65,8 +88,25 @@ class Reachability(
                 // Null: the rules forbid asking (Wi-Fi Only on cellular, or no
                 // link). Not an answer about the server — leave what is known
                 // alone; the next network change asks again.
-                if (verdict == null || verdict) return@launch
-                val wait = RETRY_MS.getOrNull(attempt++) ?: return@launch
+                if (verdict == null) return@launch
+                if (verdict) {
+                    // Answering, but maybe on the public address it moved to
+                    // while away. A check follows every network change, which
+                    // is the moment the LAN one can have come back.
+                    try {
+                        route?.upgrade()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        log("moving back failed: ${e::class.simpleName}: ${e.message}")
+                    }
+                    return@launch
+                }
+                val wait = RETRY_MS.getOrNull(attempt++)
+                    ?: run {
+                        log("gave up after $attempt pings; waiting for a network change or a press")
+                        return@launch
+                    }
                 delay(wait)
             }
         }
@@ -83,20 +123,54 @@ class Reachability(
             // one, so it is dropped: kept, a "gone" learnt on a dying Wi-Fi
             // would survive the switch to a mode that may use cellular, with
             // nothing left to question it.
+            if (!_reachable.value) log("rules forbid asking — dropping the old \"gone\"")
+            misses = 0
             _reachable.value = true
             return null
         }
-        val server = client() ?: return null
+        val server = client() ?: return null.also { log("no client to ask") }
         val ping = askServer(server)
         log("ping → ${ping.answered ?: "no verdict"} in ${ping.tookMs}ms (${ping.why})")
-        ping.answered?.let { _reachable.value = it }
-        ping.answered
+        var answered = ping.answered
+        // Silent at this address isn't silent at every address: a LAN one
+        // never answers on cellular. Another that answered is the server
+        // answering — the source is saved onto it, which rebuilds the client.
+        if (answered == false && route != null) {
+            val moved = try {
+                route.recover()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log("rerouting failed: ${e::class.simpleName}: ${e.message}")
+                false
+            }
+            if (moved) answered = true
+        }
+        when (answered) {
+            true -> {
+                misses = 0
+                _reachable.value = true
+            }
+            // The verdict is still returned as it was — a caller deciding
+            // what to do with one stalled track should hear "no" — but the
+            // state every screen reads waits for a second miss. The retry in
+            // [check] is what asks again.
+            false -> if (_reachable.value && ++misses < MISSES_TO_GONE) {
+                log("first miss, holding \"reachable\" until the retry")
+            } else {
+                _reachable.value = false
+            }
+            null -> {}
+        }
+        answered
     }
 
     private fun log(text: String) = Log.i("AmpNet", "reachability: $text")
 
     private companion object {
         const val SETTLE_MS = 400L
+        /** See [misses]. */
+        const val MISSES_TO_GONE = 2
         /** Then silence, until something changes. About two minutes in all. */
         val RETRY_MS = listOf(2_000L, 5_000L, 15_000L, 30_000L, 60_000L)
     }

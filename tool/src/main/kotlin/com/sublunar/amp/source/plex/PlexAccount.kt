@@ -83,6 +83,17 @@ object PlexAccount {
         firstReachable(candidates(resource), resource.accessToken ?: token, clientIdentifier)
 
     /**
+     * One server's addresses as plex.tv lists them now, best first — null when
+     * plex.tv couldn't be asked or doesn't list it. See [PlexRoute], which
+     * asks this instead of a sync when the address in use stops answering.
+     */
+    suspend fun advertised(machineIdentifier: String, token: String, clientIdentifier: String): List<String>? =
+        resources(token, clientIdentifier)
+            .firstOrNull { it.clientIdentifier == machineIdentifier }
+            ?.let(::candidates)
+            ?.takeIf { it.isNotEmpty() }
+
+    /**
      * The best-ranked of [uris] that answers.
      *
      * From any one place some of a server's addresses lead nowhere, and tried

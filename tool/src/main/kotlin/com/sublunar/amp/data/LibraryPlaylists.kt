@@ -5,6 +5,7 @@ import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.sublunar.amp.data.db.PlaylistTrackEntity
 import com.sublunar.amp.source.PhonePlaylists
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -26,6 +28,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 
 /**
@@ -150,10 +153,14 @@ class LibraryPlaylists(
      * disk. What loads is marked stale, to be read again when the server can be asked.
      */
     private suspend fun seedPlaylistTrackIds(from: LibraryDao) {
-        val stored = runCatching { from.storedPlaylistTracks() }.getOrNull() ?: return
-        if (stored.isEmpty() || daos.value !== from) return
+        val stored = runCatching { from.storedPlaylistTracks() }
+            .onFailure { Trace.w("playlists", "stored membership unreadable", it) }
+            .getOrNull() ?: return
+        if (stored.isEmpty()) return Trace.i("playlists", "no stored membership on disk")
+        if (daos.value !== from) return
         val grouped = stored.groupBy({ it.playlistId }, { it.trackId })
         val seeded = grouped.keys - membership.value.keys
+        Trace.i("playlists", "stored membership: ${grouped.size} playlists, ${stored.size} rows")
         membership.update { known -> grouped + known }
         staleMembership.update { it + seeded }
     }
@@ -237,7 +244,15 @@ class LibraryPlaylists(
             return
         }
         val d = daos.value
-        val fetched = if (!metadataAllowed()) null else runCatching { serverClient.value?.getPlaylists(libraryId.first()) }.getOrNull()
+        val fetched = if (!metadataAllowed()) {
+            Trace.i("playlists", "refresh skipped: metadata not allowed; showing the stored list")
+            null
+        } else {
+            runCatching { serverClient.value?.getPlaylists(libraryId.first()) }
+                .onFailure { Trace.w("playlists", "refresh failed", it) }
+                .getOrNull()
+                .also { Trace.i("playlists", "refresh: server gave ${it?.size ?: "nothing"}; held ${_playlists.value.size}") }
+        }
         if (fetched != null) {
             _playlists.value = fetched
             settings.setCachedPlaylists(sourceId, json.encodeToString(fetched))
@@ -262,6 +277,7 @@ class LibraryPlaylists(
     /** Restores the last known playlists so a cold start offline isn't blank. */
     suspend fun primePlaylists() {
         if (_playlists.value.isEmpty()) _playlists.value = loadCachedPlaylists()
+        Trace.i("playlists", "primed from the saved list: ${_playlists.value.size}")
     }
 
     private suspend fun loadCachedPlaylists(): List<Playlist> {
@@ -281,7 +297,41 @@ class LibraryPlaylists(
     /** [playlistTracks] plus whether it's the whole playlist — see [PlaylistView]. */
     suspend fun playlistView(id: String): PlaylistView {
         val d = daos.value
-        val (tracks, whole) = fetchPlaylistTracks(id)
+        return present(d, id, fetchPlaylistTracks(id))
+    }
+
+    /**
+     * What a playlist page shows, over time: the stored copy at once, then the
+     * server's when it answers — see [playlistUpdates].
+     *
+     * The page used to wait for the server before showing anything. Off the
+     * network the request hung on an address that couldn't answer, the page
+     * sat on "Loading…", and whoever left it after a few seconds cancelled the
+     * rebuild queued behind the request too — so a playlist whose songs were
+     * all downloaded opened empty, every time, while the albums beside it
+     * filled straight from the database.
+     */
+    fun playlistViews(id: String): Flow<PlaylistView> = flow {
+        val d = daos.value
+        awaitPlaylistWrites()
+        val phone = phonePlaylists()
+        if (phone != null) {
+            emit(present(d, id, phonePlaylist(phone, id)))
+            return@flow
+        }
+        traceOpen(id)
+        playlistUpdates(stored = { rebuildPlaylist(id) }, server = { askServer(id) })
+            .collect { emit(present(d, id, it)) }
+    }
+
+    /**
+     * Keep what [view] says about the playlist, then narrow it to what the
+     * page can show: the chosen library's songs, and only what is on the phone
+     * while the lists are narrowed to downloads. [d] is the database the
+     * caller started with — see [storeMembership].
+     */
+    private suspend fun present(d: LibraryDao?, id: String, view: PlaylistView): PlaylistView {
+        val (tracks, whole) = view
         // Held at full membership, narrowed on the way out: the badge needs what
         // the playlist *is*, the page what it can play.
         val ids = tracks.map { track -> track.id }
@@ -298,11 +348,14 @@ class LibraryPlaylists(
         val inView = inLibraryView(d, tracks)
         // A song from the phone's own folder plays whatever the connection is.
         val downloaded = if (library.offline.value) library.downloadedTrackIds.value else null
-        return PlaylistView(
-            tracks,
-            whole,
-            tracks.map { inView(it) && (downloaded == null || it.id in downloaded || PhoneFiles.isPhoneFile(it.id)) },
+        val shown = tracks.map { inView(it) && (downloaded == null || it.id in downloaded || PhoneFiles.isPhoneFile(it.id)) }
+        Trace.i(
+            "playlist",
+            "$id shown: ${shown.count { it }} of ${tracks.size} songs " +
+                if (downloaded == null) "(online, whole=$whole)"
+                else "(offline: downloads only; ${downloaded.size} downloaded tracks known, whole=$whole)",
         )
+        return PlaylistView(tracks, whole, shown)
     }
 
     /**
@@ -331,31 +384,82 @@ class LibraryPlaylists(
         }
     }
 
-    /** A playlist's songs, and whether they are the playlist entire rather than what could be recovered. */
-    private data class FetchedPlaylist(val tracks: List<Track>, val whole: Boolean)
-
-    private suspend fun fetchPlaylistTracks(id: String): FetchedPlaylist {
+    /** The songs, and whether they're the playlist entire rather than what could be recovered. */
+    private suspend fun fetchPlaylistTracks(id: String): PlaylistView {
         awaitPlaylistWrites()
-        val phone = phonePlaylists()
-        if (phone != null) {
-            val ids = phone.trackIds(id)
-            val tracks = library.getTracksByIds(ids)
-            return FetchedPlaylist(tracks, tracks.size == ids.size)
+        phonePlaylists()?.let { return phonePlaylist(it, id) }
+        traceOpen(id)
+        return askServer(id) ?: rebuildPlaylist(id)
+    }
+
+    private suspend fun phonePlaylist(phone: PhonePlaylists, id: String): PlaylistView {
+        val ids = phone.trackIds(id)
+        val tracks = library.getTracksByIds(ids)
+        return PlaylistView(tracks, tracks.size == ids.size)
+    }
+
+    private fun traceOpen(id: String) = Trace.i(
+        "playlist",
+        "$id open: metadataAllowed=${metadataAllowed()} client=${serverClient.value != null} offline=${library.offline.value} " +
+            "membershipHeld=${membership.value[id]?.size} listed=${_playlists.value.any { it.id == id }}",
+    )
+
+    /**
+     * The server's copy of a playlist, or null when it can't be had: the mode
+     * forbids asking, the server is known not to be answering, the request
+     * failed, or it ran past [PLAYLIST_FETCH_CAP_MS] with a stored copy to fall
+     * back on.
+     */
+    private suspend fun askServer(id: String): PlaylistView? {
+        // Asked only when the mode allows, as the playlist list is.
+        if (!metadataAllowed()) return null
+        // Nor while the lists are narrowed to downloads. That is the server
+        // already found silent, and asking it again here was a wait of up to
+        // the connect timeout on an address that wasn't going to answer.
+        if (library.offline.value) {
+            Trace.i("playlist", "$id server not asked: the lists are narrowed to downloads")
+            return null
         }
-        // Asked only when the mode allows, as the playlist list is; otherwise
-        // straight to the rebuild below, which needs no network.
-        if (metadataAllowed()) {
-            serverClient.value?.let { client ->
-                runCatching { client.getPlaylistTracks(id) }.getOrNull()
-                    ?.let { return FetchedPlaylist(it, whole = true) }
-            }
-        }
+        val client = serverClient.value ?: return null
+        val startedMs = System.currentTimeMillis()
+        val tracks = try {
+            // Capped only when there is something to fall back on. Without a
+            // stored copy the rebuild is empty, and a large playlist on a slow
+            // link is worth the wait.
+            fetchWithin(if (id in membership.value) PLAYLIST_FETCH_CAP_MS else null) {
+                client.getPlaylistTracks(id)
+            }.also { if (it == null) Trace.w("playlist", "$id server fetch gave up after ${PLAYLIST_FETCH_CAP_MS}ms; using the stored copy") }
+        } catch (e: CancellationException) {
+            // The screen went away: that is the caller cancelled, not the
+            // server failing, and it has to reach the caller as such.
+            throw e
+        } catch (e: Exception) {
+            Trace.w("playlist", "$id server fetch failed after ${System.currentTimeMillis() - startedMs}ms", e)
+            null
+        } ?: return null
+        Trace.i("playlist", "$id server answered ${tracks.size} songs in ${System.currentTimeMillis() - startedMs}ms")
+        return PlaylistView(tracks, complete = true)
+    }
+
+    /** A playlist rebuilt from the membership already held, against the local library. */
+    private suspend fun rebuildPlaylist(id: String): PlaylistView {
         // A rebuild is a guess at what the server holds — membership can be stale
         // and the library missing rows — so nothing built here is safe to edit
         // against. Held membership first: [Playlist.trackIds] is usually empty.
-        val ids = membership.value[id]
-            ?: (_playlists.value.firstOrNull { it.id == id } ?: return FetchedPlaylist(emptyList(), false)).trackIds
-        return FetchedPlaylist(library.getTracksByIds(ids), whole = false)
+        val held = membership.value[id]
+        val listed = _playlists.value.firstOrNull { it.id == id }
+        if (held == null && listed == null) {
+            Trace.w("playlist", "$id rebuild: no membership held and not in the playlist list — empty")
+            return PlaylistView(emptyList(), false)
+        }
+        val ids = held ?: listed!!.trackIds
+        val rebuilt = library.getTracksByIds(ids)
+        Trace.i(
+            "playlist",
+            "$id rebuild from ${if (held != null) "held membership" else "the list's own trackIds"}: " +
+                "${ids.size} ids → ${rebuilt.size} found in the library table",
+        )
+        return PlaylistView(rebuilt, complete = false)
     }
 
     /**
@@ -416,7 +520,10 @@ class LibraryPlaylists(
         // after the sync, so on a metered link outside Make it Hurt it waits for
         // Wi-Fi (opening one playlist goes by metadataAllowed instead). Until
         // then the playlist_tracks rows serve — see storeMembership.
-        if (!bulkAllowed() && phonePlaylists() == null) return@coroutineScope
+        if (!bulkAllowed() && phonePlaylists() == null) {
+            Trace.i("playlists", "membership prime of ${ids.size} skipped: bulk not allowed on this link")
+            return@coroutineScope
+        }
         val gate = Semaphore(SYNC_CONCURRENCY)
         ids.filter { membershipWanted(it) }
             .map { id ->
@@ -626,4 +733,33 @@ class LibraryPlaylists(
         daos.value?.clearAllPlaylistTracks()
         forget()
     }
+}
+
+/**
+ * How long opening a playlist waits on the server when a stored copy is
+ * already there to show instead — see LibraryPlaylists.askServer.
+ */
+internal const val PLAYLIST_FETCH_CAP_MS = 4_000L
+
+/** [fetch]'s answer, or null when it ran past [capMs]. No cap at all when [capMs] is null. */
+internal suspend fun <T : Any> fetchWithin(capMs: Long?, fetch: suspend () -> T): T? =
+    if (capMs == null) fetch() else withTimeoutOrNull(capMs) { fetch() }
+
+/**
+ * A playlist page's answers, in order: [stored] straight away when it holds
+ * any songs, then [server]'s copy if it gives one. When neither has anything,
+ * the stored answer — empty — still comes, once, so the page stops loading.
+ *
+ * The stored copy first because it needs no network, and offline it is all
+ * there will be; waiting on the server to show it is what left downloaded
+ * playlists empty.
+ */
+internal fun playlistUpdates(
+    stored: suspend () -> PlaylistView,
+    server: suspend () -> PlaylistView?,
+): Flow<PlaylistView> = flow {
+    val held = stored()
+    if (held.tracks.isNotEmpty()) emit(held)
+    val fresh = server()
+    if (fresh != null) emit(fresh) else if (held.tracks.isEmpty()) emit(held)
 }

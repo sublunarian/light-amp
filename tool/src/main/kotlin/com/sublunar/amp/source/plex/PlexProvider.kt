@@ -84,6 +84,13 @@ object PlexProvider : SourceProvider {
             ?: return null
         return if (found == source.baseUrl) null else source.copy(baseUrl = found)
     }
+
+    /** What plex.tv lists for this server now — see PlexAccount.advertised. */
+    override suspend fun advertisedAddresses(source: MusicSource): List<String>? =
+        PlexAccount.advertised(source.machineIdentifier, source.token, source.plexClientIdentifier)
+
+    override suspend fun firstAnswering(uris: List<String>, source: MusicSource): String? =
+        PlexAccount.firstReachable(uris, source.token, source.plexClientIdentifier)
 }
 
 /**

@@ -18,6 +18,7 @@ import com.sublunar.amp.data.LibraryPlaylists
 import com.sublunar.amp.data.LibraryRepository
 import com.sublunar.amp.data.LibrarySync
 import com.sublunar.amp.data.LinkRules
+import com.sublunar.amp.data.LogFile
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.NetworkGate
@@ -26,8 +27,10 @@ import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.PlaylistSort
 import com.sublunar.amp.data.Reachability
 import com.sublunar.amp.data.SongSort
+import com.sublunar.amp.data.SourceRoute
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.TagFilter
+import com.sublunar.amp.data.Trace
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.LibraryDatabase
@@ -70,6 +73,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -303,7 +307,18 @@ object App {
 
     /** Whether the browsed server is answering — see [Reachability]. */
     val reachability: Reachability by lazy {
-        Reachability(scope, client = { serverClient.value }, mayAsk = { rules.value.mayTalkToServer })
+        Reachability(
+            scope,
+            client = { serverClient.value },
+            mayAsk = { rules.value.mayTalkToServer },
+            route = SourceRoute(
+                source = { settings.activeSource.first() },
+                advertised = { s -> s.provider.advertisedAddresses(s) },
+                firstAnswering = { uris, s -> s.provider.firstAnswering(uris, s) },
+                save = { s -> settings.saveSource(s) },
+                onLan = { rules.value.let { it.connected && it.wifi } },
+            ),
+        )
     }
 
     /**
@@ -311,6 +326,7 @@ object App {
      * that died, one sync that failed), settled by asking the server at once.
      */
     private fun reportServerReachable(reachable: Boolean) {
+        if (!reachable) Trace.i("reach", "suspicion from ${Trace.caller("App.reportServerReachable")} → asking now")
         if (reachable) reachability.report(true) else reachability.check(delayMs = 0L)
     }
 
@@ -320,6 +336,15 @@ object App {
      */
     val rules: StateFlow<LinkRules> by lazy {
         combine(Connectivity.network, settings.dataMode.state, reachability.reachable, LinkRules::from)
+            .distinctUntilChanged()
+            .onEach { r ->
+                Trace.i(
+                    "rules",
+                    "connected=${r.connected} wifi=${r.wifi} unmetered=${r.unmetered} mode=${r.mode} " +
+                        "serverReachable=${r.serverReachable} → talk=${r.mayTalkToServer} " +
+                        "stream=${r.mayStream} heavy=${r.mayMoveHeavyBytes} waitingFor=${r.waitingFor}",
+                )
+            }
             .stateIn(scope, SharingStarted.Eagerly, LinkRules.UNKNOWN)
     }
 
@@ -450,6 +475,8 @@ object App {
         // LateUnbindGuard for why it has to be a raw post from right here.
         LateUnbindGuard.install()
         if (!coreReady) {
+            // First, so the boot itself is in it — see LogFile.
+            LogFile.start(context.filesDir)
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             settings = AppSettings(context.dataStore, scope)
             lightContext = context
@@ -610,6 +637,28 @@ object App {
                         // ...and every parked download server, which nothing else asks.
                         downloader.linkChanged()
                     }
+            }
+            // Tracing: the moment the lists narrow to downloads, and which
+            // address the browsed server is being reached at.
+            scope.launch {
+                offlineOnly.collect { off ->
+                    val r = rules.value
+                    Trace.i(
+                        "offline",
+                        if (!off) "lists show the whole library"
+                        else "lists narrowed to downloads (talk=${r.mayTalkToServer}, serverReachable=${r.serverReachable})",
+                    )
+                }
+            }
+            scope.launch {
+                _source.collect { s ->
+                    val others = (s.connections - s.baseUrl).joinToString { Trace.host(it) }
+                    Trace.i(
+                        "source",
+                        "${s.kind} \"${s.name}\" at ${Trace.host(s.baseUrl)}" +
+                            if (others.isEmpty()) "" else "; other addresses: $others",
+                    )
+                }
             }
             // Held writes also go whenever there is both a client and a
             // connection: reachability starts out true and may never change, so
