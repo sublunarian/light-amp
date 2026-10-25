@@ -144,7 +144,7 @@ class ArtworkLoader(
         if (need == ArtworkNeed.FOCUSED || bytes == null) {
             val outcome = when (answer) {
                 is CoverFetch.Got -> "${answer.bytes.size / 1024} KB"
-                CoverFetch.None -> "FAILED (none)"
+                is CoverFetch.None -> "FAILED (${answer.why})"
                 is CoverFetch.Failed -> "FAILED (${answer.why})"
             }
             android.util.Log.i(
@@ -161,7 +161,7 @@ class ArtworkLoader(
      * again) — see [CoverFetch].
      */
     private suspend fun download(url: String?): CoverFetch {
-        if (url == null) return CoverFetch.None
+        if (url == null) return CoverFetch.None("no url")
         return try {
             val response = http.get(url)
             val status = response.status.value
@@ -170,12 +170,12 @@ class ArtworkLoader(
                     val bytes = response.body<ByteArray>()
                     // Whether they are a picture is settled in [writeDisk]: Subsonic
                     // says "not found" with a 200.
-                    if (bytes.isNotEmpty()) CoverFetch.Got(bytes) else CoverFetch.None
+                    if (bytes.isNotEmpty()) CoverFetch.Got(bytes) else CoverFetch.None("empty body")
                 }
                 // Refusals about *us* or about the moment, not about the cover.
                 status == 401 || status == 403 || status == 408 || status == 429 || status >= 500 ->
                     CoverFetch.Failed("HTTP $status")
-                else -> CoverFetch.None
+                else -> CoverFetch.None("HTTP $status")
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e

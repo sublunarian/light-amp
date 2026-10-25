@@ -25,7 +25,7 @@ class CoverSyncTest {
 
         fun sync() = CoverSync(
             isOnDisk = { it in disk },
-            fetch = { id -> asked += id; server[id] ?: CoverFetch.None },
+            fetch = { id -> asked += id; server[id] ?: CoverFetch.None("HTTP 404") },
             store = { id, bytes -> (bytes.isNotEmpty()).also { ok -> if (ok) { disk += id; diskBytes += bytes.size } } },
             cacheBytes = { diskBytes },
             makeRoom = { roomMade++; diskBytes = minOf(diskBytes, maxOf(floorBytes, budget / 2)); diskBytes },
