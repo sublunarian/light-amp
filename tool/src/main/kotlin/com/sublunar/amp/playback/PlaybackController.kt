@@ -2362,12 +2362,15 @@ class PlaybackController(
     /**
      * Make [queue] the queue, its playing row now [row], with the player
      * following it while it holds the queue — see [followInPlayer]. Main only.
+     * Then the window slides if it has to: a full one playing its last row
+     * takes nothing in, and no track change would slide it.
      */
     private fun rearrange(queue: List<Track>, row: Int) {
         queuePlayer?.let { followInPlayer(it, queue, row) }
         _queue.value = queue
         _index.value = row
         queuePlayer?.let(::syncQueueRepeat)
+        keepWindowAround()
     }
 
     fun removeFromQueue(index: Int) {

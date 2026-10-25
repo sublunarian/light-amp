@@ -150,6 +150,23 @@ class QueueWindowTest {
     }
 
     @Test
+    fun `a full window playing its queue's last row takes the added rows in by sliding`() {
+        for (size in listOf(PLAYER_WINDOW, PLAYER_WINDOW + 20)) {
+            val queue = tracks(size)
+            val last = queue.lastIndex
+            val held = windowAround(size, last)
+            val grown = queue + tracks(3, prefix = "n")
+            val (window, edits) = followingEdit(queue.subList(held.start, held.end), held.positionOf(last)!!, grown, last)
+            assertEquals(emptyList(), edits)
+            val to = window.slidFor(grown.size, last)!!
+            val slide = slideEdits(window, to)
+            assertEquals(grown.subList(to.start, to.end), grown.subList(window.start, window.end).edited(slide, grown))
+            assertPlayingUntouched(slide, window.positionOf(last)!!)
+            assertEquals(grown.size, to.end)
+        }
+    }
+
+    @Test
     fun `a rearranged queue is followed with one edit after the playing row, which stays put`() {
         val queue = tracks(2_000)
         val held = queue.subList(950, 1_450)
