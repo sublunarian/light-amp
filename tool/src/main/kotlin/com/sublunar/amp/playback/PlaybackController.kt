@@ -242,8 +242,16 @@ class PlaybackController(
      * nears an edge ([keepWindowAround]) and rebuilt around a jump outside it.
      * Describes the player only while [queuePlayer] holds the queue: the
      * stand-in replaces it, and the sound coming back rebuilds it.
+     *
+     * Observable for the ReplayGain follower: a rebuild often leaves the
+     * player on the same position, so only the window says the row changed.
      */
-    private var window = QueueWindow.EMPTY
+    private val windowState = MutableStateFlow(QueueWindow.EMPTY)
+    private var window: QueueWindow
+        get() = windowState.value
+        set(value) {
+            windowState.value = value
+        }
 
     /**
      * The source each item in the player was last built from, one per
@@ -855,11 +863,11 @@ class PlaybackController(
         // player, reads -1, and unity for it would overwrite the gain the
         // handle was seeded with.
         scope.launch(onMain) {
-            combine(p.currentMediaItemIndex, _queue, settings.replayGain.state) { idx, q, on ->
+            combine(p.currentMediaItemIndex, windowState, _queue, settings.replayGain.state) { idx, w, q, on ->
                 if (idx < 0) return@combine null
                 // The restart copy is the song in the slot before it.
                 val slot = if (restartCopyAt in 0..idx) idx - 1 else idx
-                val db = if (on) q.getOrNull(window.rowAt(slot))?.gainDb else null
+                val db = if (on) q.getOrNull(w.rowAt(slot))?.gainDb else null
                 db?.let { 10.0.pow(it / 20.0).toFloat().coerceAtMost(1f) } ?: 1f
             }.filterNotNull().distinctUntilChanged().collect { factor ->
                 // A replaced handle's number mustn't be carried onto the next.
