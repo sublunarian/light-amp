@@ -9,6 +9,7 @@ import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.previousRestarts
+import com.sublunar.amp.playback.output.previousRow
 import com.sublunar.amp.playback.output.Refound
 import com.sublunar.amp.playback.output.VolumeControl
 import java.util.concurrent.ConcurrentHashMap
@@ -461,7 +462,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     }
 
     override fun previous() {
-        val index = host.index.value - 1
+        val index = host.previousRow()
         if (previousRestarts(host.positionMs.value, index, host.queue.value.size)) seekTo(0) else jumpTo(index)
     }
 

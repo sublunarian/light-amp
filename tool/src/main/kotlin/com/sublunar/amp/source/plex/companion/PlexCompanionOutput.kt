@@ -8,6 +8,7 @@ import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.previousRestarts
+import com.sublunar.amp.playback.output.previousRow
 import com.sublunar.amp.playback.output.QueueEdit
 import com.sublunar.amp.playback.output.VolumeControl
 import com.sublunar.amp.source.plex.PlexClient
@@ -213,9 +214,10 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     override fun previous() {
         val target = steered() ?: return
         host.scope.launch {
-            if (previousRestarts(host.positionMs.value, host.index.value - 1, host.queue.value.size)) {
+            if (previousRestarts(host.positionMs.value, host.previousRow(), host.queue.value.size)) {
                 plexClient()?.companionSeek(target, 0, nextCommandId())
             } else {
+                // From the first song the player wraps under its own repeat.
                 plexClient()?.companionCommand(target, "skipPrevious", nextCommandId())
             }
         }
