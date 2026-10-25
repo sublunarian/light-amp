@@ -1059,12 +1059,13 @@ class PlaybackController(
      */
     suspend fun restoreState(library: () -> List<Track>) {
         if (player == null || _queue.value.isNotEmpty()) return
-        // The downloads first: decided before the database answers, a
-        // downloaded track would be queued as a stream, which offline never
-        // plays. Bounded, so a database that never answers can't cost the
-        // restore.
+        // The downloads first, as far as the file map here: decided before
+        // that is built from the database's answer, a downloaded track would
+        // be queued as a stream, which offline never plays. Bounded, so a
+        // database that never answers can't cost the restore.
         withTimeoutOrNull(DOWNLOADS_READY_TIMEOUT_MS) {
             App.library.downloadsLoaded.first { it }
+            sources.appliedRows.first { it == App.library.downloadFiles.value }
         }
         // And the loopback door, for the same reason: built a moment early, the
         // current track's address would be the server's own.
