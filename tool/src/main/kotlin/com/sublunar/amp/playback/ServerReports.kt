@@ -395,6 +395,9 @@ internal class ServerReports(
         if (countedPlay == play) return
         if (positionMs < submitAfterMs(durationMs.value)) return
         countedPlay = play
+        // A far end that reports itself (a Companion player) counts the play
+        // on the server; sent from here as well, every play counted twice.
+        val elsewhere = reportsElsewhere()
         // Stamped now, sent whenever: a play made offline still belongs at the
         // time it happened.
         val at = System.currentTimeMillis()
@@ -405,6 +408,7 @@ internal class ServerReports(
             // Local first, so the library's order follows the listening whether
             // or not the server ever hears of it.
             runCatching { App.library.markPlayed(track.id) }
+            if (elsewhere) return@launch
             // A play is durable as a heartbeat isn't: where the mode forbids the
             // bytes it is queued, as for an unreachable server, not dropped. A
             // gate that can't be read errs towards the queue.
