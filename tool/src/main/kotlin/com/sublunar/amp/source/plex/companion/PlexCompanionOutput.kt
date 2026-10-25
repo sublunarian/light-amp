@@ -216,14 +216,16 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
 
     override fun previous() {
         val target = steered() ?: return
-        host.scope.launch {
-            val size = host.queue.value.size
-            val index = wrappedIndex(host.index.value - 1, size, repeatQueue = host.repeatMode.value == RepeatMode.QUEUE)
-            if (previousRestarts(host.positionMs.value, index, size)) {
-                plexClient()?.companionSeek(target, 0, nextCommandId())
-            } else {
-                plexClient()?.companionCommand(target, "skipPrevious", nextCommandId())
-            }
+        val size = host.queue.value.size
+        val before = host.index.value - 1
+        val index = wrappedIndex(before, size, repeatQueue = host.repeatMode.value == RepeatMode.QUEUE)
+        when {
+            previousRestarts(host.positionMs.value, index, size) ->
+                host.scope.launch { plexClient()?.companionSeek(target, 0, nextCommandId()) }
+            // Round to the queue's last song: the player's own wrap lands on the
+            // end of the window it holds, which for a long queue isn't that.
+            index != before -> jumpTo(index)
+            else -> host.scope.launch { plexClient()?.companionCommand(target, "skipPrevious", nextCommandId()) }
         }
     }
 
