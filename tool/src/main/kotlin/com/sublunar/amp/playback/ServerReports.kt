@@ -336,6 +336,13 @@ internal class ServerReports(
     }
 
     /**
+     * The sound moved: to an output, or back to this phone. A play whose
+     * now-playing was skipped at its start (metadata not allowed then, or a
+     * Companion player had the sound) is announced now, once. Main only.
+     */
+    fun soundMoved() = announceNowPlaying()
+
+    /**
      * A new position for the song playing. A song that ended into its own
      * start (repeat-one, or a speaker repeating it) never changes the index,
      * so this is where it is seen: the last reading near the end and this

@@ -2673,6 +2673,7 @@ class PlaybackController(
         // nothing queued waits for the queue, and one chosen paused for a play.
         if (play && _queue.value.getOrNull(_index.value) != null) markStartingElsewhere()
         next.connect(target, fromMs = _positionMs.value, play = play)
+        reports.soundMoved()
         return true
     }
 
@@ -2745,7 +2746,10 @@ class PlaybackController(
         faderBackToPhone()
         when (why) {
             // The phone carries on as the far end was, playing or paused.
-            Disconnect.HandBack -> takeOverHere(a.family.logTag, "hand-back", at, play = wasPlaying)
+            Disconnect.HandBack -> {
+                takeOverHere(a.family.logTag, "hand-back", at, play = wasPlaying)
+                scope.launch(Dispatchers.Main.immediate) { reports.soundMoved() }
+            }
             // Shown paused where the speaker was, not "playing" over a silent
             // phone on the song the cast began with.
             Disconnect.LinkLost -> takeOverHere(a.family.logTag, "Wi-Fi gone", at, play = false)
