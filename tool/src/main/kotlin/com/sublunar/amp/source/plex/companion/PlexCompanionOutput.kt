@@ -332,7 +332,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     private suspend fun pollPlayer(client: PlexClient, target: PlexPlayer) {
         var misses = 0
         while (coroutineContext.isActive && steered()?.id == target.id) {
-            // While the player pushes, the loop is only the heartbeat that notices it stop.
+            // While the player pushes, the loop only notices it go quiet and tops up a long queue.
             if (subscribed && !pushedStopped) {
                 misses = 0
                 delay(SUBSCRIBED_CHECK_MS)
@@ -340,6 +340,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
                     log("no pushes for a while — polling again")
                     subscribed = false
                 }
+                topUpWindow(client, target)
                 continue
             }
             val t = client.companionTimeline(target, nextCommandId())
