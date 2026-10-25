@@ -39,6 +39,9 @@ internal data class QueueWindow(val start: Int, val end: Int) {
 
     fun isWhole(queueSize: Int): Boolean = start == 0 && end == queueSize
 
+    /** Whether [row] is this window's last with more of the queue after it: a player that ends there ends short of the queue. */
+    fun endsShortAt(row: Int, queueSize: Int): Boolean = row >= 0 && row == end - 1 && end < queueSize
+
     /** This window once queue [row] is removed, and the player position to remove with it, if it holds the row. */
     fun removing(row: Int): Pair<QueueWindow, Int?> = when {
         row < start -> QueueWindow(start - 1, end - 1) to null

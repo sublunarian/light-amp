@@ -735,7 +735,7 @@ class PlaybackController(
             // since. Read once, as a resume could change it half-way.
             val heldByPark = parked
             val connectedOn = window.rowAt(p.currentMediaItemIndex.value)
-            connectLanding(
+            val landing = connectLanding(
                 playerRow = connectedOn,
                 playerPositionMs = p.positionMs.value,
                 shownIndex = _index.value,
@@ -743,8 +743,20 @@ class PlaybackController(
                 recued = recue,
                 casting = isCasting,
                 parked = heldByPark,
-            )?.let { startMs ->
-                landedOn(p, connectedOn, startMs)
+            )
+            if (landing != null) landedOn(p, connectedOn, landing)
+            if (!recue && !heldByPark && playerSpeaks && !p.isPlaying.value &&
+                window.endsShortAt(connectedOn, _queue.value.size) &&
+                endReached(p, p.positionMs.value + streamOffsetMs)
+            ) {
+                // It played its window out with no handle to slide it. The
+                // place is kept: the next row cued, paused first, as a rebuild
+                // with playWhenReady still set would start it, and the server
+                // is never told the finished song plays.
+                Log.i("AmpLife", "reopened at the end of the player's window, idx=$connectedOn — next row cued")
+                p.pause()
+                rebuildQueueAt(p, _queue.value, connectedOn + 1, 0L)
+            } else if (landing != null) {
                 // The service played on with no handle to slide its window.
                 keepWindowAround()
             }
@@ -1917,17 +1929,7 @@ class PlaybackController(
         if (wraps && (!stoppedHere || !p.playWhenReady)) return
         val last = _queue.value.lastIndex
         if (last < 0 || _index.value != last) return
-        // The player's duration when it has one. A chunked transcode may never
-        // report any, so then the library's, in the track's own timeline as the
-        // readouts are.
-        val reported = p.durationMs.value
-        val endReached = if (reported > 0L) {
-            p.positionMs.value >= reported - QUEUE_END_SLACK_MS
-        } else {
-            val known = _durationMs.value
-            known > 0L && _positionMs.value >= known - QUEUE_END_SLACK_MS
-        }
-        if (!endReached) return
+        if (!endReached(p, _positionMs.value)) return
         if (wraps) {
             rebuildQueueAt(p, _queue.value, 0, 0L)
             playOrCue(p, 0, play = true)
@@ -1939,6 +1941,19 @@ class PlaybackController(
         p.pause()
         val first = window.positionOf(0)
         if (first != null) p.seekToDefaultPosition(first) else rebuildQueueAt(p, _queue.value, 0, 0L)
+    }
+
+    /**
+     * Whether [p] is at the end of its item: by the player's duration when it
+     * has one. A chunked transcode may never report any, so then by the
+     * library's, with [trackPositionMs] in the track's own timeline as the
+     * readouts are.
+     */
+    private fun endReached(p: LightAudioPlayer, trackPositionMs: Long): Boolean {
+        val reported = p.durationMs.value
+        if (reported > 0L) return p.positionMs.value >= reported - QUEUE_END_SLACK_MS
+        val known = _durationMs.value
+        return known > 0L && trackPositionMs >= known - QUEUE_END_SLACK_MS
     }
 
     /** The library's length for [track], shown at once: a chunked stream may never report one. */

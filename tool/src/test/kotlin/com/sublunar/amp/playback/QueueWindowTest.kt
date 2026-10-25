@@ -101,6 +101,15 @@ class QueueWindowTest {
     }
 
     @Test
+    fun `only the last row of a window with more queue after it ends short of the queue`() {
+        val window = QueueWindow(950, 1_450)
+        assertTrue(window.endsShortAt(1_449, 2_000))
+        assertFalse(window.endsShortAt(1_448, 2_000))
+        assertFalse(QueueWindow(1_500, 2_000).endsShortAt(1_999, 2_000))
+        assertFalse(QueueWindow.EMPTY.endsShortAt(-1, 0))
+    }
+
+    @Test
     fun `a removed row leaves the player alone unless it holds it`() {
         val window = QueueWindow(10, 20)
         assertEquals(QueueWindow(9, 19) to null, window.removing(3))
