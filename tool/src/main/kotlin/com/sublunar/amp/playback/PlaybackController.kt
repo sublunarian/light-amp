@@ -1279,6 +1279,9 @@ class PlaybackController(
         pickedIndex = if (restarts) _index.value else wrapped(_index.value - 1)
         val p = player ?: return
         if (restarts) {
+            // Zeroed before the new play: a position reading already on its way
+            // would otherwise count the restart at the old place.
+            _positionMs.value = 0L
             reports.songStarted()
             // The controller's seek, not the player's: a server-seeked stream
             // begins mid-track, so the player's 0 is the offset, and every press

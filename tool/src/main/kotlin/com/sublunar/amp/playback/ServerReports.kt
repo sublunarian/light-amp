@@ -346,6 +346,12 @@ internal class ServerReports(
      * and its next play begins when it is played. Main only.
      */
     private fun heard(positionMs: Long) {
+        // A play starts here when the follower hasn't seen the song yet: a
+        // restore or a rejoin sets the song and its position in one turn, and
+        // this hears the position first.
+        val q = queue.value
+        val i = index.value
+        q.getOrNull(i)?.let { if (startsAPlay(playAt, q, i, it)) songStarted() }
         val before = lastHeard
         lastHeard = play to positionMs
         if (before != null && before.first == play && endedIntoItself(before.second, positionMs, durationMs.value)) {
