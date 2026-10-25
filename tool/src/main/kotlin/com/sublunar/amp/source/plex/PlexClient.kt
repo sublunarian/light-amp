@@ -326,8 +326,9 @@ class PlexClient(
 
     /**
      * Artist name to the section it lives in and its rating key. Kept only
-     * when every section was read: one that failed would leave its artists
-     * without Popular songs until the client is rebuilt.
+     * when every section was read and some artist found: a failed section, or
+     * a library still scanning, would leave artists without Popular songs
+     * until the client is rebuilt.
      */
     private var artistKeys: Map<String, Pair<String, String>>? = null
     private val artistKeyLock = Mutex()
@@ -347,7 +348,7 @@ class PlexClient(
                     .getOrDefault(emptyList())
                     .forEach { keys.putIfAbsent(it.title, section.id to it.ratingKey) }
             }
-            if (whole) artistKeys = keys
+            if (whole && keys.isNotEmpty()) artistKeys = keys
             keys[name]
         }
 
