@@ -752,8 +752,8 @@ class SubsonicClient(
         request("deletePlaylist", listOf("id" to id))
     }
 
-    override suspend fun addToPlaylist(id: String, songId: String) {
-        request("updatePlaylist", listOf("playlistId" to id, "songIdToAdd" to songId))
+    override suspend fun addToPlaylist(id: String, songIds: List<String>) {
+        request("updatePlaylist", listOf("playlistId" to id) + songIds.map { "songIdToAdd" to it })
     }
 
     /**
