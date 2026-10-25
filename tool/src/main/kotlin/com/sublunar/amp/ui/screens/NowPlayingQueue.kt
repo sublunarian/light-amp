@@ -80,7 +80,15 @@ private const val QUEUE_START_PX = LIST_EDGE_PX + ROW_LEAD_PX
 private const val QUEUE_ROW_PX = 160
 
 /** A queue row's key. The same track can be queued twice, so its place is part of it. */
-private fun queueKey(index: Int, track: Track) = "$index-${track.id}"
+internal fun queueKey(index: Int, track: Track) = "$index-${track.id}"
+
+/**
+ * The row [key] names in [queue], read back from the key's own place rather than
+ * a lookup built over a queue that can be the whole library; null once that
+ * place holds another track.
+ */
+internal fun queueIndexOf(key: String, queue: List<Track>): Int? =
+    key.substringBefore('-').toIntOrNull()?.takeIf { it in queue.indices && queueKey(it, queue[it]) == key }
 
 /**
  * The queue: a header naming the page (while selecting, the count and the
@@ -121,7 +129,7 @@ internal fun SimpleLightScreen<*>.QueuePlayer(queue: List<Track>, index: Int, on
                         // Only with something current: "0 of 12" would be a
                         // position no row is at.
                         subtitle = if (index in queue.indices) {
-                            "${index + 1} of ${queue.size}"
+                            "%,d of %,d".format(index + 1, queue.size)
                         } else {
                             null
                         },
@@ -245,7 +253,6 @@ private fun SimpleLightScreen<*>.QueueView(
     // Only the upcoming part of the queue, past the current track, can be dragged into.
     val minIndex = index + 1
     val orderedKeys = remember(queue) { queue.mapIndexed(::queueKey) }
-    val indexOfKey = remember(orderedKeys) { orderedKeys.withIndex().associate { (i, key) -> key to i } }
     val dropTarget = drag.dropTarget(orderedKeys, rowPx, minIndex)
 
     // The playing track stays at the top. Opening the page jumps there
@@ -269,7 +276,7 @@ private fun SimpleLightScreen<*>.QueueView(
                 rowPx = rowPx,
                 minIndex = minIndex,
                 groupOf = { hitKey ->
-                    val hitId = indexOfKey[hitKey]?.let { queue.getOrNull(it) }?.id
+                    val hitId = queueIndexOf(hitKey, queue)?.let { queue[it] }?.id
                     if (hitId != null && hitId in selection.selected && selection.count > 1) {
                         orderedKeys.filterIndexed { i, _ -> i >= minIndex && queue[i].id in selection.selected }
                             .toSet()
@@ -337,7 +344,7 @@ private fun SimpleLightScreen<*>.QueueView(
         }
         if (drag.draggingIndex != null) {
             // Found by key rather than by walking the queue, in queue order.
-            val dragged = drag.draggingKeys.mapNotNull { indexOfKey[it] }.sorted()
+            val dragged = drag.draggingKeys.mapNotNull { queueIndexOf(it, queue) }.sorted()
             DragOverlay(queue, dragged, drag.dragStartTops, drag.fingerOffsetY, artworkHidden, selection)
         }
     }

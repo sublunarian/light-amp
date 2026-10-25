@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -257,7 +258,9 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     // stay legible — see ON_COVER_ALPHA.
                     val dim = if (coverOnly) ON_COVER_ALPHA else DIM_ALPHA
                     if (coverOnly) ControlScrim()
-                    SeekBand(alpha = if (coverOnly) ON_COVER_ALPHA else 1f)
+                    // A new song drops a scrub still held, rather than seeking
+                    // the new song to where the finger lifts.
+                    key(current.id) { SeekBand(alpha = if (coverOnly) ON_COVER_ALPHA else 1f) }
                     TransportRow()
                     SecondaryRow(current, alpha = dim)
                 }

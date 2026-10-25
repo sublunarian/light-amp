@@ -44,10 +44,11 @@ internal fun LyricsOverlay(current: Track, modifier: Modifier) {
     // for something nobody asked to download, so Wi-Fi Only doesn't. Words
     // downloaded with the song are read either way: the decision is passed
     // down, so the free copy is never withheld along with the paid one.
-    // The rule is App.metadataAllowed's. Keyed on it and on the server
-    // answering, so a lookup that reached nothing is tried again once it can.
+    // The rule is App.metadataAllowed's. Keyed on it, on the server answering
+    // and on a Wi-Fi/cellular hop, so a lookup that reached nothing is tried
+    // again once it might; a restart with the answer cached costs nothing.
     val rules by App.rules.collectAsState()
-    LaunchedEffect(current.id, rules.mayTalkToServer, rules.serverReachable) {
+    LaunchedEffect(current.id, rules.mayTalkToServer, rules.serverReachable, rules.unmetered) {
         loading = true
         outcome = LyricsRepository.forTrack(
             current,
