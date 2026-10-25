@@ -1256,9 +1256,9 @@ class PlaybackController(
     /** Restart the current track if past the intro, otherwise go to the previous one. */
     fun previous() {
         remote?.let { out ->
-            // Back to the start, or to the track before where there is one: the
-            // rule every output's previous keeps.
-            val restarts = previousRestarts(_positionMs.value, _index.value - 1, _queue.value.size)
+            // Back to the start, or to the track before where there is one,
+            // wrapping under repeat-queue: the rule every output's previous keeps.
+            val restarts = previousRestarts(_positionMs.value, wrapped(_index.value - 1), _queue.value.size)
             if (_isPlaying.value) markStartingElsewhere()
             out.previous()
             // Back to the start is a seek to it, and said as one, and the song
