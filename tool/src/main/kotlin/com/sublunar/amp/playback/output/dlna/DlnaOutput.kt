@@ -1010,11 +1010,18 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      */
     private suspend fun pollRenderer(renderer: DlnaRenderer, playedBefore: Boolean = false) {
         val watch = CastWatch(playedBefore)
+        // Until it plays, each new state the renderer reports is logged: a track
+        // that never starts says why (stuck TRANSITIONING, STOPPED, no media).
+        var saidState: DlnaState? = null
         while (coroutineContext.isActive && steered()?.id == renderer.id) {
             delay(CAST_POLL_MS)
             undoHush(renderer)
             val position = DlnaCast.position(renderer)
             val state = DlnaCast.state(renderer)
+            if (!watch.settled && state != saidState) {
+                saidState = state
+                log("starting on ${renderer.name}: $state at ${position?.positionMs} of ${position?.durationMs}")
+            }
             // The rest of this poll is about the track the renderer just left.
             if (position != null && followedHandOff(position, state, watch)) continue
             val ours = position != null && readClock(position, state, watch)
