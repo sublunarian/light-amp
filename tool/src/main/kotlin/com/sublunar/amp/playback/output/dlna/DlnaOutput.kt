@@ -2,6 +2,7 @@ package com.sublunar.amp.playback.output.dlna
 
 import android.os.SystemClock
 import android.util.Log
+import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.playback.output.Disconnect
@@ -11,6 +12,7 @@ import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.previousRestarts
 import com.sublunar.amp.playback.output.Refound
 import com.sublunar.amp.playback.output.VolumeControl
+import com.sublunar.amp.playback.wrappedIndex
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 import kotlin.math.abs
@@ -461,8 +463,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     }
 
     override fun previous() {
-        val index = host.index.value - 1
-        if (previousRestarts(host.positionMs.value, index, host.queue.value.size)) seekTo(0) else jumpTo(index)
+        val size = host.queue.value.size
+        val index = wrappedIndex(host.index.value - 1, size, repeatQueue = host.repeatMode.value == RepeatMode.QUEUE)
+        if (previousRestarts(host.positionMs.value, index, size)) seekTo(0) else jumpTo(index)
     }
 
     override fun jumpTo(index: Int) {

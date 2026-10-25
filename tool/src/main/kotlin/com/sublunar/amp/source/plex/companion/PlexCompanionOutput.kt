@@ -10,6 +10,7 @@ import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.previousRestarts
 import com.sublunar.amp.playback.output.QueueEdit
 import com.sublunar.amp.playback.output.VolumeControl
+import com.sublunar.amp.playback.wrappedIndex
 import com.sublunar.amp.source.plex.PlexClient
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.coroutineContext
@@ -216,7 +217,9 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     override fun previous() {
         val target = steered() ?: return
         host.scope.launch {
-            if (previousRestarts(host.positionMs.value, host.index.value - 1, host.queue.value.size)) {
+            val size = host.queue.value.size
+            val index = wrappedIndex(host.index.value - 1, size, repeatQueue = host.repeatMode.value == RepeatMode.QUEUE)
+            if (previousRestarts(host.positionMs.value, index, size)) {
                 plexClient()?.companionSeek(target, 0, nextCommandId())
             } else {
                 plexClient()?.companionCommand(target, "skipPrevious", nextCommandId())
