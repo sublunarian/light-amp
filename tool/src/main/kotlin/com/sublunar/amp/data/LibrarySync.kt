@@ -216,8 +216,13 @@ class LibrarySync(
             // Read before the first write — see reportDroppedCovers.
             val coversBefore = coverIdsOrNull(dao)
             val hidden = source?.hiddenLibraries.orEmpty()
-            // Asked once a run: for the fan-out here, and the libraries remembered at the end.
-            val folders = if (musicFolderId == null) client.getMusicFolders() else null
+            // Asked once a run, for the fan-out here and the libraries remembered
+            // at the end; up front, as learnServerFeatures may close this client.
+            val folders = when {
+                musicFolderId == null -> client.getMusicFolders()
+                source?.supportsLibraries == true -> runCatching { client.getMusicFolders() }.getOrNull()
+                else -> null
+            }
             // "All libraries" is fanned out per folder and merged: an unscoped
             // getAlbumList2 returns only the server's default library. A hidden
             // library is left out — not wanted on this phone, data included.
@@ -265,7 +270,7 @@ class LibrarySync(
 
             finishRun(dao, client, source, coversBefore, wrote)
             onSyncSucceeded()
-            rememberLibraries(client, source, folders)
+            rememberLibraries(source, folders)
         } catch (e: CancellationException) {
             // A switch cancelled this sync; not an error.
             _syncState.update { it.copy(syncing = false) }
@@ -428,18 +433,17 @@ class LibrarySync(
     }
 
     /**
-     * Whatever folders the server reports, remembered on the source the run was
-     * for, so the Sources page can list them instantly and offline: [folders]
-     * when the run asked already, asked now when it didn't (a sync of one library).
+     * Whatever folders the server reported, remembered on [source], so the
+     * Sources page can list them instantly and offline. Null when it wasn't asked
+     * or didn't answer.
      */
-    private suspend fun rememberLibraries(client: MusicServer, source: MusicSource?, folders: List<MusicFolder>?) {
+    private suspend fun rememberLibraries(source: MusicSource?, folders: List<MusicFolder>?) {
         if (source == null || !source.supportsLibraries) return
-        val reported = folders ?: runCatching { client.getMusicFolders() }.getOrNull() ?: return
         // Empty means "couldn't ask" (a network failure, a client not up yet)
         // as often as "none", and written through it would wipe libraries
         // already found. None looks the same anyway.
-        if (reported.isEmpty()) return
-        runCatching { settings.setSourceLibraries(source.id, reported.map { SourceLibrary(it.id, it.name) }) }
+        if (folders.isNullOrEmpty()) return
+        runCatching { settings.setSourceLibraries(source.id, folders.map { SourceLibrary(it.id, it.name) }) }
     }
 
     /**
@@ -653,6 +657,12 @@ class LibrarySync(
                 if (!force && System.currentTimeMillis() - last in 0 until floor) {
                     android.util.Log.i("AmpSync", "launch sync skipped: last one ${(System.currentTimeMillis() - last) / 60_000} min ago")
                     _syncState.update { it.copy(syncing = false, phase = "", lastSyncedMs = last) }
+                    // No sync to read the libraries, so they are asked for alone.
+                    val source = settings.activeSource.first()
+                    if (source != null && source.supportsLibraries && metadataAllowed()) {
+                        val client = clientFor(source)
+                        rememberLibraries(source, client?.let { runCatching { it.getMusicFolders() }.getOrNull() })
+                    }
                     return@launch
                 }
                 sync()
