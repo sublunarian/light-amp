@@ -26,7 +26,7 @@ import com.sublunar.amp.playback.output.OutputFamily
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.Outputs
-import com.sublunar.amp.playback.output.PREVIOUS_RESTARTS_AFTER_MS
+import com.sublunar.amp.playback.output.previousRestarts
 import com.sublunar.amp.playback.output.QueueEdit
 import com.sublunar.amp.playback.output.Refound
 import com.thelightphone.sdk.audio.LightAudio
@@ -1249,9 +1249,8 @@ class PlaybackController(
         remote?.let { out ->
             // Back to the start, or to the track before where there is one: the
             // rule every output's previous keeps.
-            val restarts = _positionMs.value > PREVIOUS_RESTARTS_AFTER_MS
-            val moves = restarts || _index.value - 1 in _queue.value.indices
-            if (_isPlaying.value && moves) markStartingElsewhere()
+            val restarts = previousRestarts(_positionMs.value, _index.value - 1, _queue.value.size)
+            if (_isPlaying.value) markStartingElsewhere()
             out.previous()
             // Back to the start is a seek to it, and said as one, and the song
             // starting over.
@@ -1262,13 +1261,16 @@ class PlaybackController(
             return
         }
         settleRestartCopy()
+        // On the first song with nothing to wrap to, the player's own previous
+        // does nothing: the song starts over instead.
+        val restarts = previousRestarts(_positionMs.value, wrapped(_index.value - 1), _queue.value.size)
         if (parked) {
-            stepWhileWaiting(if (_positionMs.value > PREVIOUS_RESTARTS_AFTER_MS) 0 else -1)
+            stepWhileWaiting(if (restarts) 0 else -1)
             return
         }
-        pickedIndex = if (_positionMs.value > PREVIOUS_RESTARTS_AFTER_MS) _index.value else wrapped(_index.value - 1)
+        pickedIndex = if (restarts) _index.value else wrapped(_index.value - 1)
         val p = player ?: return
-        if (_positionMs.value > PREVIOUS_RESTARTS_AFTER_MS) {
+        if (restarts) {
             reports.songStarted()
             // The controller's seek, not the player's: a server-seeked stream
             // begins mid-track, so the player's 0 is the offset, and every press
