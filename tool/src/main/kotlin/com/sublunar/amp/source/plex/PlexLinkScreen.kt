@@ -61,8 +61,12 @@ class PlexLinkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     // the manual page would otherwise ask for a new code and forget the
     // account's servers.
 
-    /** The code being waited on, kept so a page composed again waits on the same one. */
+    /**
+     * The code being waited on, kept so a page composed again waits on the same
+     * one while it is still live (see [PIN_REUSE_MS]).
+     */
     private var pin: PlexPin? = null
+    private var pinAskedMs = 0L
 
     /** The code on show, until it is claimed. */
     private var code by mutableStateOf<String?>(null)
@@ -138,14 +142,19 @@ class PlexLinkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     /**
      * Ask for a code, wait for it to be claimed, then find the account's
      * servers. Run while the page is composed, and picked up where it was left
-     * when it is composed again: the same code is waited on, and a claimed one
-     * isn't asked for again.
+     * when it is composed again: the same code is waited on while it is live,
+     * and a claimed one isn't asked for again.
      */
     private suspend fun link() {
         if (token != null) return
-        val asked = pin ?: PlexAccount.requestPin(clientId)?.also { pin = it }
+        val kept = pin?.takeIf { System.currentTimeMillis() - pinAskedMs < PIN_REUSE_MS }
+        val asked = kept ?: PlexAccount.requestPin(clientId)?.also {
+            pin = it
+            pinAskedMs = System.currentTimeMillis()
+        }
         if (asked == null) {
             status = "Couldn't reach plex.tv."
+            code = null
             return
         }
         code = asked.code
@@ -315,6 +324,13 @@ private fun Throwable.plexStatus(): Int? =
     causes().filterIsInstance<PlexException>().firstOrNull()?.status
 
 private val REFUSED_STATUSES = setOf(401, 403)
+
+/**
+ * Plex expires a PIN after about fifteen minutes. One kept longer than this is
+ * asked for again, so with [PlexAccount.awaitToken]'s wait on top the code on
+ * show is still live.
+ */
+private const val PIN_REUSE_MS = 10 * 60 * 1000L
 
 private const val NOT_PLEX = "That address answered, but it isn't a Plex server. Check the address and port."
 
