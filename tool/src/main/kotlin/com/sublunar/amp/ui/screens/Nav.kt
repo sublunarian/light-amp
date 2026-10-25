@@ -199,8 +199,8 @@ fun SimpleLightScreen<*>.editSearch(current: String) {
 fun SimpleLightScreen<*>.newPlaylist(trackIds: List<String> = emptyList(), onCreated: () -> Unit = {}) {
     editText("New Playlist", "") { name ->
         if (name.isBlank()) return@editText
-        // The songs are part of the create, not a second pass: a failed create
-        // can't half-succeed, and Plex makes playlists no other way.
+        // The songs are part of the create, not a second pass: Plex makes
+        // playlists no other way. Past a hundred the rest follow — see createInChunks.
         App.scope.launch { App.playlists.createPlaylist(name, trackIds) }
         onCreated()
     }

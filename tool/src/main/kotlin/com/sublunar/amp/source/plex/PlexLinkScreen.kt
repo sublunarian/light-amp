@@ -1,5 +1,6 @@
 package com.sublunar.amp.source.plex
 
+import android.os.SystemClock
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -147,14 +148,15 @@ class PlexLinkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
      */
     private suspend fun link() {
         if (token != null) return
-        val kept = pin?.takeIf { System.currentTimeMillis() - pinAskedMs < PIN_REUSE_MS }
+        val kept = pin?.takeIf { SystemClock.elapsedRealtime() - pinAskedMs < PIN_REUSE_MS }
+        // A code too old to keep isn't shown while its replacement is asked for.
+        if (kept == null) code = null
         val asked = kept ?: PlexAccount.requestPin(clientId)?.also {
             pin = it
-            pinAskedMs = System.currentTimeMillis()
+            pinAskedMs = SystemClock.elapsedRealtime()
         }
         if (asked == null) {
             status = "Couldn't reach plex.tv."
-            code = null
             return
         }
         code = asked.code

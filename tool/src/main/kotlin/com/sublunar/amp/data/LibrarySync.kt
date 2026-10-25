@@ -212,13 +212,14 @@ class LibrarySync(
         _syncingDao.value = dao
         // What the run wrote, so the re-read at its end covers that and no more.
         val wrote = SyncWrites()
+        // Asked once a run, for the fan-out and for the libraries remembered at
+        // the end (a failed run's too); up front, as learnServerFeatures may close this client.
+        var folders: List<MusicFolder>? = null
         try {
             // Read before the first write — see reportDroppedCovers.
             val coversBefore = coverIdsOrNull(dao)
             val hidden = source?.hiddenLibraries.orEmpty()
-            // Asked once a run, for the fan-out here and the libraries remembered
-            // at the end; up front, as learnServerFeatures may close this client.
-            val folders = when {
+            folders = when {
                 musicFolderId == null -> client.getMusicFolders()
                 source?.supportsLibraries == true -> runCatching { client.getMusicFolders() }.getOrNull()
                 else -> null
@@ -287,6 +288,7 @@ class LibrarySync(
             }
             _syncState.update { it.copy(syncing = false, error = syncErrorMessage(e)) }
             onSyncFailed(isAuthFailure(e))
+            rememberLibraries(source, folders)
         } finally {
             _syncingDao.compareAndSet(dao, null)
         }
