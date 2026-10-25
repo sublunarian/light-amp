@@ -2322,7 +2322,7 @@ class PlaybackController(
             for (edit in slideEdits(window, to)) replaceInPlayer(p, edit.from, edit.to, tracks.slice(edit.rows))
             window = to
         }
-        if (_repeatMode.value == RepeatMode.QUEUE) p.repeatMode = Player.REPEAT_MODE_ALL
+        syncQueueRepeat(p, alone = true)
     }
 
     /**
@@ -2629,10 +2629,14 @@ class PlaybackController(
     private val playerLoops: Boolean
         get() = _repeatMode.value == RepeatMode.QUEUE && window.isWhole(_queue.value.size)
 
-    /** Main only, once [_queue] and [window] are set. The player's repeat-queue kept in step with whether its window is the whole queue. */
-    private fun syncQueueRepeat(p: LightAudioPlayer) {
+    /**
+     * Main only, once [_queue] and [window] are set. The player's repeat-queue
+     * kept in step with whether its window is the whole queue, or, [alone]
+     * with no handle to wrap the queue, looping the window it holds.
+     */
+    private fun syncQueueRepeat(p: LightAudioPlayer, alone: Boolean = false) {
         if (_repeatMode.value != RepeatMode.QUEUE) return
-        val wanted = RepeatMode.QUEUE.forPlayer()
+        val wanted = if (alone) Player.REPEAT_MODE_ALL else RepeatMode.QUEUE.forPlayer()
         if (p.repeatMode != wanted) p.repeatMode = wanted
     }
 
