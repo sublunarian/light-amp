@@ -6,6 +6,7 @@ import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.Track
+import com.sublunar.amp.playback.wrappedIndex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 
@@ -314,6 +315,10 @@ const val PREVIOUS_RESTARTS_AFTER_MS = 3_000L
  */
 fun previousRestarts(positionMs: Long, previousIndex: Int, queueSize: Int): Boolean =
     positionMs > PREVIOUS_RESTARTS_AFTER_MS || previousIndex !in 0 until queueSize
+
+/** The row previous goes back to from the playing one: the row before, wrapped under repeat-queue as on the phone. */
+internal fun OutputHost.previousRow(): Int =
+    wrappedIndex(index.value - 1, queue.value.size, repeatQueue = repeatMode.value == RepeatMode.QUEUE)
 
 /** One edit of the queue, by track id, for an output that holds a queue of its own. */
 sealed interface QueueEdit {

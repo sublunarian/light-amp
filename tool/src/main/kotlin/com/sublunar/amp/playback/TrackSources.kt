@@ -14,6 +14,7 @@ import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightMediaMetadata
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 
@@ -31,6 +32,11 @@ internal class TrackSources(
 ) {
     /** Downloaded tracks' files and formats, kept current as downloads land, so queue items build synchronously. */
     private var localFiles: Map<String, Pair<File, StreamFormat>> = emptyMap()
+
+    private val _appliedRows = MutableStateFlow<List<DownloadFile>?>(null)
+
+    /** The download rows [localFiles] was last built from, null before the first — see [downloadsChanged]. */
+    val appliedRows: StateFlow<List<DownloadFile>?> = _appliedRows
 
     /**
      * Latched by the controller's fallBackOffline: downloads play from disk
@@ -69,6 +75,7 @@ internal class TrackSources(
                 }
             }.toMap()
         }
+        _appliedRows.value = rows
     }
 
     /** Streaming may be tried again: nothing learnt while it failed or wasn't allowed outlives that. */

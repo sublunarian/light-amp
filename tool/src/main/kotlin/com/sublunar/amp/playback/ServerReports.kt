@@ -336,6 +336,13 @@ internal class ServerReports(
     }
 
     /**
+     * The sound moved: to an output, or back to this phone. A play whose
+     * now-playing was skipped at its start (metadata not allowed then, or a
+     * Companion player had the sound) is announced now, once. Main only.
+     */
+    fun soundMoved() = announceNowPlaying()
+
+    /**
      * A new position for the song playing. A song that ended into its own
      * start (repeat-one, or a speaker repeating it) never changes the index,
      * so this is where it is seen: the last reading near the end and this
@@ -346,6 +353,12 @@ internal class ServerReports(
      * and its next play begins when it is played. Main only.
      */
     private fun heard(positionMs: Long) {
+        // A play starts here when the follower hasn't seen the song yet: a
+        // restore or a rejoin sets the song and its position in one turn, and
+        // this hears the position first.
+        val q = queue.value
+        val i = index.value
+        q.getOrNull(i)?.let { if (startsAPlay(playAt, q, i, it)) songStarted() }
         val before = lastHeard
         lastHeard = play to positionMs
         if (before != null && before.first == play && endedIntoItself(before.second, positionMs, durationMs.value)) {
@@ -389,6 +402,9 @@ internal class ServerReports(
         if (countedPlay == play) return
         if (positionMs < submitAfterMs(durationMs.value)) return
         countedPlay = play
+        // A far end that reports itself (a Companion player) counts the play
+        // on the server; sent from here as well, every play counted twice.
+        val elsewhere = reportsElsewhere()
         // Stamped now, sent whenever: a play made offline still belongs at the
         // time it happened.
         val at = System.currentTimeMillis()
@@ -399,6 +415,7 @@ internal class ServerReports(
             // Local first, so the library's order follows the listening whether
             // or not the server ever hears of it.
             runCatching { App.library.markPlayed(track.id) }
+            if (elsewhere) return@launch
             // A play is durable as a heartbeat isn't: where the mode forbids the
             // bytes it is queued, as for an unreachable server, not dropped. A
             // gate that can't be read errs towards the queue.
