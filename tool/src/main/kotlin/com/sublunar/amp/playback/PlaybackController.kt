@@ -1318,7 +1318,11 @@ class PlaybackController(
         val position = window.positionOf(index)
         if (position != null) {
             p.seekToDefaultPosition(position)
-            _index.value = index
+            // Landed on here, not by the index collector, which finds _index
+            // already moved: the last song's server-seek offset must go with it,
+            // or the new song's clock starts at it and the ignored-offset check
+            // seeks the new song there.
+            landedOn(p, index, startMs = 0L)
         } else {
             rebuildQueueAt(p, _queue.value, index, 0L)
         }
@@ -1857,9 +1861,17 @@ class PlaybackController(
         reports.close()
         _isPlaying.value = false
         _buffering.value = false
-        _index.value = 0
-        _positionMs.value = 0L
-        seedDuration(_queue.value.firstOrNull())
+        // Back to the first song as a landing, so a server-seeked last song's
+        // offset doesn't carry over to it; the index collector won't see this
+        // as a change once _index is 0.
+        val p = player
+        if (p != null && playerSpeaks) {
+            landedOn(p, 0, startMs = 0L)
+        } else {
+            _index.value = 0
+            _positionMs.value = 0L
+            seedDuration(_queue.value.firstOrNull())
+        }
         hasPlayed = false
     }
 
