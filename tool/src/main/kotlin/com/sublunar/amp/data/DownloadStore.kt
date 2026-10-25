@@ -163,17 +163,19 @@ class DownloadStore(private val filesDir: File) {
         }
 
     suspend fun delete(sourceId: String, fileName: String) = withContext(Dispatchers.IO) {
-        deletionCount.incrementAndGet()
-        File(rootFor(sourceId), fileName).delete()
+        File(rootFor(sourceId), fileName).delete().also { deletionCount.incrementAndGet() }
     }
 
     /** Throw away one source's audio entirely — see App.forgetSource. */
     fun deleteSource(id: String) {
-        deletionCount.incrementAndGet()
         File(downloadsDir, id).deleteRecursively()
+        deletionCount.incrementAndGet()
     }
 
-    /** Bumped by every deletion, so a running total of [usedBytesEverywhere] knows to measure again. */
+    /**
+     * Bumped once each deletion has finished, so a running total of
+     * [usedBytesEverywhere] measured while one was under way is measured again.
+     */
     val deletions: Int get() = deletionCount.get()
     private val deletionCount = AtomicInteger()
 
