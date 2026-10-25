@@ -78,16 +78,19 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     @Volatile
     private var lastPush = 0L
 
+    /**
+     * Whether the last push said stopped. A player can report stopped while it
+     * loads a queue, so one push doesn't end the cast: the poll confirms it.
+     */
+    @Volatile
+    private var pushedStopped = false
+
     /** The little HTTP server a subscription pushes to. Built once: a port per cast would leak. */
     private val listener = PlexCompanionListener { body ->
         lastPush = System.currentTimeMillis()
         plexTimelineFrom(body)?.let { t ->
-            if (t.state == "stopped") {
-                // The one push acted on rather than mirrored.
-                host.scope.launch(Dispatchers.Main.immediate) { castEnded() }
-            } else {
-                host.scope.launch(Dispatchers.Main.immediate) { adoptTimeline(t) }
-            }
+            pushedStopped = t.state == "stopped"
+            if (!pushedStopped) host.scope.launch(Dispatchers.Main.immediate) { adoptTimeline(t) }
         }
     }
 
@@ -185,8 +188,8 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         playQueue = null
         windowEnd = -1
         // A player whose pushes keep failing doesn't stay well (see playerLock
-        // in PlexClient), and its own "stopped" push can't clean up: castEnded
-        // returns once the controller has let go, as it has.
+        // in PlexClient), and with the controller let go nothing else ends the
+        // subscription: castEnded returns once it has.
         endSubscription(client, player)
         host.scope.launch { client?.companionCommand(player, "stop", nextCommandId()) }
     }
@@ -213,13 +216,15 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
 
     override fun previous() {
         val target = steered() ?: return
-        host.scope.launch {
-            if (previousRestarts(host.positionMs.value, host.previousRow(), host.queue.value.size)) {
-                plexClient()?.companionSeek(target, 0, nextCommandId())
-            } else {
-                // From the first song the player wraps under its own repeat.
-                plexClient()?.companionCommand(target, "skipPrevious", nextCommandId())
-            }
+        val before = host.index.value - 1
+        val index = host.previousRow()
+        when {
+            previousRestarts(host.positionMs.value, index, host.queue.value.size) ->
+                host.scope.launch { plexClient()?.companionSeek(target, 0, nextCommandId()) }
+            // Round to the queue's last song: the player's own wrap lands on the
+            // end of the window it holds, which for a long queue isn't that.
+            index != before -> jumpTo(index)
+            else -> host.scope.launch { plexClient()?.companionCommand(target, "skipPrevious", nextCommandId()) }
         }
     }
 
@@ -325,19 +330,21 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
 
     /**
      * Mirror the player's timeline until it stops being the one steered.
-     * Subscribes first, and polls only while the player isn't pushing; a
-     * paused player is asked less often.
+     * Polls only while the player isn't pushing, or to confirm a stop it
+     * pushed; a paused player is asked less often.
      */
     private suspend fun pollPlayer(client: PlexClient, target: PlexPlayer) {
         var misses = 0
         while (coroutineContext.isActive && steered()?.id == target.id) {
-            // While the player pushes, the loop is only the heartbeat that notices it stop.
-            if (subscribed) {
+            // While the player pushes, the loop only notices it go quiet and tops up a long queue.
+            if (subscribed && !pushedStopped) {
+                misses = 0
                 delay(SUBSCRIBED_CHECK_MS)
                 if (System.currentTimeMillis() - lastPush > PUSH_SILENCE_MS) {
                     log("no pushes for a while — polling again")
                     subscribed = false
                 }
+                topUpWindow(client, target)
                 continue
             }
             val t = client.companionTimeline(target, nextCommandId())
@@ -350,6 +357,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
                 }
             } else {
                 misses = 0
+                pushedStopped = false
                 adoptTimeline(t)
                 topUpWindow(client, target)
             }
@@ -497,6 +505,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
             return
         }
         lastPush = System.currentTimeMillis()
+        pushedStopped = false
         subscribed = client.companionSubscribe(target, port, nextCommandId())
         log(
             if (subscribed) "subscribed; ${target.name} pushes to ${listener.localAddress()}:$port"
