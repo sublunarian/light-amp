@@ -2450,14 +2450,14 @@ class PlaybackController(
         settleRestartCopy()
         val q = _queue.value
         val change = edit(q) ?: return
-        val playingId = q.getOrNull(_index.value)?.id
+        val playing = q.getOrNull(_index.value)
         val wanted = p.playWhenReady
         val held = queuePlayer?.let {
             change.onPlayer(it)
             window
         }
         _queue.value = change.queue
-        _index.value = indexAfterEdit(change.queue, playingId)
+        _index.value = indexAfterEdit(change.queue, playing?.id)
         queuePlayer?.let(::syncQueueRepeat)
         remote?.queueEdited(change.told)
         if (held != null && held.size == 0 && change.queue.isNotEmpty()) {
@@ -2467,6 +2467,12 @@ class PlaybackController(
             rebuildQueueAt(p, change.queue, _index.value, 0L)
             playOrCue(p, _index.value, play = wanted && held.start < change.queue.size)
         } else {
+            // The playing row went and the player moved on to the next. Landed
+            // on here, as the index collector finds _index already set, so the
+            // last song's server-seek offset doesn't carry over. By identity:
+            // the queue can hold the same song twice.
+            val now = change.queue.getOrNull(_index.value)
+            if (playerSpeaks && now != null && now !== playing) landedOn(p, _index.value, startMs = 0L)
             keepWindowAround()
         }
         rearmSoon()
