@@ -320,6 +320,10 @@ fun previousRestarts(positionMs: Long, previousIndex: Int, queueSize: Int): Bool
 internal fun OutputHost.previousRow(): Int =
     wrappedIndex(index.value - 1, queue.value.size, repeatQueue = repeatMode.value == RepeatMode.QUEUE)
 
+/** The row next goes to: the one after, wrapped to the first under repeat-queue as on the phone. */
+internal fun OutputHost.nextRow(): Int =
+    wrappedIndex(index.value + 1, queue.value.size, repeatQueue = repeatMode.value == RepeatMode.QUEUE)
+
 /** One edit of the queue, by track id, for an output that holds a queue of its own. */
 sealed interface QueueEdit {
     /** Added at the end. */

@@ -8,6 +8,7 @@ import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.previousRestarts
+import com.sublunar.amp.playback.output.nextRow
 import com.sublunar.amp.playback.output.previousRow
 import com.sublunar.amp.playback.output.QueueEdit
 import com.sublunar.amp.playback.output.VolumeControl
@@ -212,7 +213,16 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         host.scope.launch { plexClient()?.companionSeek(target, ms, nextCommandId()) }
     }
 
-    override fun next() = command("skipNext")
+    override fun next() {
+        val index = host.nextRow()
+        when {
+            index !in host.queue.value.indices -> Unit
+            // Round to the queue's first song: the player's own wrap lands on the
+            // start of the window it holds, which for a long queue isn't that.
+            index != host.index.value + 1 -> jumpTo(index)
+            else -> command("skipNext")
+        }
+    }
 
     override fun previous() {
         val target = steered() ?: return

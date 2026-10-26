@@ -9,6 +9,7 @@ import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.previousRestarts
+import com.sublunar.amp.playback.output.nextRow
 import com.sublunar.amp.playback.output.previousRow
 import com.sublunar.amp.playback.output.Refound
 import com.sublunar.amp.playback.output.VolumeControl
@@ -454,10 +455,8 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         }
     }
 
-    // Only within the queue, as the controller's own jumpTo has it: a next
-    // at the end of the queue doesn't wrap.
     override fun next() {
-        val index = host.index.value + 1
+        val index = host.nextRow()
         if (index in host.queue.value.indices) jumpTo(index)
     }
 

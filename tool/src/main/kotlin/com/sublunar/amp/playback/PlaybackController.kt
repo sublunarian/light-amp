@@ -1248,7 +1248,7 @@ class PlaybackController(
         remote?.let { out ->
             // As on the phone: only a track that is playing waits, and only
             // where there is a next one to go to.
-            if (_isPlaying.value && _index.value + 1 in _queue.value.indices) markStartingElsewhere()
+            if (_isPlaying.value && wrapped(_index.value + 1) in _queue.value.indices) markStartingElsewhere()
             out.next()
             return
         }
