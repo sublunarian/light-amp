@@ -22,12 +22,17 @@
 - Navidrome now sees each play, pause and seek, so its Now Playing stays
   right.
 - The QR scan for a username and password is offered for Bandcamp only.
+- Leaving Wi-Fi mid-song moves that song to its downloaded copy at the same
+  spot, as the songs after it already do (#27, thanks @wsturgiss).
 - Built on Light's SDK 0.2.1.
 
 ### Fixed
 
-- Downloaded playlists open with their songs when you're offline (#19, thanks
+- Playlists open at once with their saved songs, offline too, and no longer
+  sit on Loading… when the server can't be reached (#19, #27, thanks
   @wsturgiss).
+- A Plex server linked at home is reached away from home too, without a
+  Sync Now (#27, thanks @wsturgiss).
 - Many casting fixes: seeking, pausing from the speaker's own remote, Wi-Fi
   dropping out, and switching speaker or source.
 - Seeking with repeat-one on no longer jumps to the first song, and Play Next
