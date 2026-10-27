@@ -18,7 +18,6 @@ import com.sublunar.amp.data.LibraryPlaylists
 import com.sublunar.amp.data.LibraryRepository
 import com.sublunar.amp.data.LibrarySync
 import com.sublunar.amp.data.LinkRules
-import com.sublunar.amp.data.LogFile
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.NetworkGate
@@ -475,8 +474,6 @@ object App {
         // LateUnbindGuard for why it has to be a raw post from right here.
         LateUnbindGuard.install()
         if (!coreReady) {
-            // First, so the boot itself is in it — see LogFile.
-            LogFile.start(context.filesDir)
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             settings = AppSettings(context.dataStore, scope)
             lightContext = context
