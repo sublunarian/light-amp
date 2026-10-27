@@ -80,8 +80,9 @@ object PlexProvider : SourceProvider {
      */
     override suspend fun relocate(source: MusicSource): MusicSource? {
         if (source.connections.isEmpty()) return null
-        val found = PlexAccount.firstReachable(relocationOrder(source), source.token, source.plexClientIdentifier)
-            ?: return null
+        val found = PlexAccount.firstReachable(
+            relocationOrder(source), source.token, source.plexClientIdentifier, source.machineIdentifier,
+        ) ?: return null
         return if (found == source.baseUrl) null else source.copy(baseUrl = found)
     }
 
@@ -90,7 +91,7 @@ object PlexProvider : SourceProvider {
         PlexAccount.advertised(source.machineIdentifier, source.token, source.plexClientIdentifier)
 
     override suspend fun firstAnswering(uris: List<String>, source: MusicSource): String? =
-        PlexAccount.firstReachable(uris, source.token, source.plexClientIdentifier)
+        PlexAccount.firstReachable(uris, source.token, source.plexClientIdentifier, source.machineIdentifier)
 }
 
 /**

@@ -5,12 +5,14 @@ import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.source.subsonic.SubsonicProvider
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 
 /**
- * Which addresses a Plex source tries after a failed sync, and in what order.
- * Nothing here reaches the network: what does is only asked with addresses.
+ * Which addresses a Plex source tries when the one in use fails, in what
+ * order, and what counts as one answering. Nothing here reaches the network.
  */
 class PlexRelocationTest {
 
@@ -40,6 +42,17 @@ class PlexRelocationTest {
     @Test
     fun `with nothing else advertised there is nowhere to go`() = runBlocking {
         assertNull(PlexProvider.relocate(plex(lan, emptyList())))
+    }
+
+    @Test
+    fun `only Plex's identity answers, and the server's own when it is known`() {
+        val identity = """{"MediaContainer":{"size":0,"claimed":true,"machineIdentifier":"m1","version":"1.40.0"}}"""
+        assertTrue(PlexAccount.isIdentityOf(identity, "m1"))
+        assertTrue(PlexAccount.isIdentityOf(identity, ""))
+        assertFalse(PlexAccount.isIdentityOf(identity, "m2"))
+        assertFalse(PlexAccount.isIdentityOf("<html><body>Sign in to this Wi-Fi</body></html>", ""))
+        assertFalse(PlexAccount.isIdentityOf("""{"MediaContainer":{"size":0}}""", ""))
+        assertFalse(PlexAccount.isIdentityOf("", ""))
     }
 
     @Test
