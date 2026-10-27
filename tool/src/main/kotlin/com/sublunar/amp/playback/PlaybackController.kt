@@ -2255,11 +2255,9 @@ class PlaybackController(
      * under the listener. On either side of it only the stretch that changed
      * is replaced, so a finished download is one small edit.
      *
-     * Except when [includeCurrent] — the bytes just stopped being free — and
-     * the playing item is a stream of a track whose file is on the phone.
-     * Finishing it would spend cellular data on audio already here, so it moves
-     * to the file at the same position. Paused, it is only cued there: leaving
-     * the house is not a press of play. A parked player is left to [cueIfParked].
+     * Except with [includeCurrent], when the bytes just stopped being free: a playing
+     * stream whose file is on the phone moves to the file at the same spot, only cued if
+     * paused, since leaving the house is not a press of play. A parked one is left to [cueIfParked].
      */
     private fun reresolveQueue(includeCurrent: Boolean = false) {
         val p = player ?: return

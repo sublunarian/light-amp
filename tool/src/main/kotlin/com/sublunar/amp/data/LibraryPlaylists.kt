@@ -286,17 +286,7 @@ class LibraryPlaylists(
         return present(d, id, fetchPlaylistTracks(id))
     }
 
-    /**
-     * What a playlist page shows, over time: the stored copy at once, then the
-     * server's when it answers — see [playlistUpdates].
-     *
-     * The page used to wait for the server before showing anything. Off the
-     * network the request hung on an address that couldn't answer, the page
-     * sat on "Loading…", and whoever left it after a few seconds cancelled the
-     * rebuild queued behind the request too — so a playlist whose songs were
-     * all downloaded opened empty, every time, while the albums beside it
-     * filled straight from the database.
-     */
+    /** What a playlist page shows over time: the stored copy at once, then the server's — see [playlistUpdates]. */
     fun playlistViews(id: String): Flow<PlaylistView> = flow {
         val d = daos.value
         awaitPlaylistWrites()
@@ -379,24 +369,18 @@ class LibraryPlaylists(
         return PlaylistView(tracks, tracks.size == ids.size)
     }
 
-    /**
-     * The server's copy of a playlist, or null when it can't be had: the mode
-     * forbids asking, the server is known not to be answering, or the request
-     * failed.
-     */
+    /** The server's copy, or null when the mode forbids asking, the server is silent, or the request fails. */
     private suspend fun askServer(id: String): PlaylistView? {
         // Asked only when the mode allows, as the playlist list is.
         if (!metadataAllowed()) return null
-        // Nor while the lists are narrowed to downloads. That is the server
-        // already found silent, and asking it again here was a wait of up to
-        // the connect timeout on an address that wasn't going to answer.
+        // Nor while the lists are down to downloads: the server was found silent, and
+        // asking again would wait out the connect timeout.
         if (library.offline.value) return null
         val client = serverClient.value ?: return null
         val tracks = try {
             client.getPlaylistTracks(id)
         } catch (e: CancellationException) {
-            // The screen went away: that is the caller cancelled, not the
-            // server failing, and it has to reach the caller as such.
+            // The page closed: the caller's cancellation, not the server failing.
             throw e
         } catch (e: Exception) {
             return null
@@ -687,13 +671,8 @@ class LibraryPlaylists(
 }
 
 /**
- * A playlist page's answers, in order: [stored] straight away when it holds
- * any songs, then [server]'s copy if it gives one. When neither has anything,
- * the stored answer — empty — still comes, once, so the page stops loading.
- *
- * The stored copy first because it needs no network, and offline it is all
- * there will be; waiting on the server to show it is what left downloaded
- * playlists empty.
+ * A playlist page's answers: [stored] at once when it has songs, as it needs no network,
+ * then [server]'s. With neither, the empty stored copy comes once, so the page stops loading.
  */
 internal fun playlistUpdates(
     stored: suspend () -> PlaylistView,

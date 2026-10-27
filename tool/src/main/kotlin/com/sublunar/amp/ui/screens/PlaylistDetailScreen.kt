@@ -81,13 +81,11 @@ class PlaylistDetailScreen(
     // PlaylistView). Removing and reordering address the server's copy by position,
     // so neither is offered on a rebuild. Rows another library holds are in [entries]
     // too, just not shown, so a playlist narrowed to one library is still whole.
-    // Set with each answer the list is shown from, which is the same snapshot the
-    // list itself is: false for the stored copy shown first, true once the server's arrives.
+    // Set with each answer, the same snapshot as the list: false for the stored copy.
     private val wholeList = mutableStateOf(true)
 
-    // Whether the last answer has come — see LibraryPlaylists.playlistViews. Until it
-    // has, coming back to the page asks again: leaving it while the server was still
-    // being waited on cancelled that wait, and the stored copy alone would stand.
+    // Whether the last answer has come. Until it has, coming back to the page asks again:
+    // leaving it cancelled the wait for the server.
     private var settled = false
 
     // Whether the library is down to its downloads, kept live: a playlist left open
@@ -104,11 +102,7 @@ class PlaylistDetailScreen(
     private var nextEntryKey = 0
     private fun newEntryKey(): String = "e${nextEntryKey++}"
 
-    /**
-     * Put an answer on screen: the stored copy first, then the server's in its place.
-     * The same songs in the same order keep their rows, so the server agreeing with
-     * the stored copy moves nothing and only makes the list editable.
-     */
+    // The same songs in the same order keep their rows, so a server that agrees only makes the list editable.
     private fun show(view: PlaylistView) {
         wholeList.value = view.complete
         val current = entries.value

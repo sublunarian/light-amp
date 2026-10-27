@@ -8,11 +8,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 
-/**
- * What a playlist page is shown, and when. The case that started it: off the
- * network, with every song downloaded, the page waited on a server that
- * couldn't answer and opened empty.
- */
+/** What a playlist page is shown, and when. */
 class PlaylistUpdatesTest {
 
     private fun track(id: String) = Track(
