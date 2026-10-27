@@ -60,7 +60,6 @@ class Reachability(
             retry?.cancel()
             misses = 0
         }
-        if (_reachable.value != reachable) log("reported ${if (reachable) "reachable" else "gone"} by ${Trace.caller("Reachability", "App.reportServerReachable")}")
         _reachable.value = reachable
     }
 
@@ -79,7 +78,7 @@ class Reachability(
      */
     fun check(delayMs: Long = SETTLE_MS) {
         retry?.cancel()
-        log("check in ${delayMs}ms (was ${if (_reachable.value) "reachable" else "gone"}) from ${Trace.caller("Reachability", "App.reportServerReachable")}")
+        log("check in ${delayMs}ms (was ${if (_reachable.value) "reachable" else "gone"})")
         retry = scope.launch {
             delay(delayMs)
             var attempt = 0
@@ -98,15 +97,11 @@ class Reachability(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        log("moving back failed: ${e::class.simpleName}: ${e.message}")
+                        log("moving back failed: ${e::class.simpleName}")
                     }
                     return@launch
                 }
-                val wait = RETRY_MS.getOrNull(attempt++)
-                    ?: run {
-                        log("gave up after $attempt pings; waiting for a network change or a press")
-                        return@launch
-                    }
+                val wait = RETRY_MS.getOrNull(attempt++) ?: return@launch
                 delay(wait)
             }
         }
@@ -123,12 +118,11 @@ class Reachability(
             // one, so it is dropped: kept, a "gone" learnt on a dying Wi-Fi
             // would survive the switch to a mode that may use cellular, with
             // nothing left to question it.
-            if (!_reachable.value) log("rules forbid asking — dropping the old \"gone\"")
             misses = 0
             _reachable.value = true
             return null
         }
-        val server = client() ?: return null.also { log("no client to ask") }
+        val server = client() ?: return null
         val ping = askServer(server)
         log("ping → ${ping.answered ?: "no verdict"} in ${ping.tookMs}ms (${ping.why})")
         var answered = ping.answered
@@ -141,7 +135,7 @@ class Reachability(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                log("rerouting failed: ${e::class.simpleName}: ${e.message}")
+                log("rerouting failed: ${e::class.simpleName}")
                 false
             }
             if (moved) answered = true

@@ -153,14 +153,10 @@ class LibraryPlaylists(
      * disk. What loads is marked stale, to be read again when the server can be asked.
      */
     private suspend fun seedPlaylistTrackIds(from: LibraryDao) {
-        val stored = runCatching { from.storedPlaylistTracks() }
-            .onFailure { Trace.w("playlists", "stored membership unreadable", it) }
-            .getOrNull() ?: return
-        if (stored.isEmpty()) return Trace.i("playlists", "no stored membership on disk")
-        if (daos.value !== from) return
+        val stored = runCatching { from.storedPlaylistTracks() }.getOrNull() ?: return
+        if (stored.isEmpty() || daos.value !== from) return
         val grouped = stored.groupBy({ it.playlistId }, { it.trackId })
         val seeded = grouped.keys - membership.value.keys
-        Trace.i("playlists", "stored membership: ${grouped.size} playlists, ${stored.size} rows")
         membership.update { known -> grouped + known }
         staleMembership.update { it + seeded }
     }
@@ -244,15 +240,7 @@ class LibraryPlaylists(
             return
         }
         val d = daos.value
-        val fetched = if (!metadataAllowed()) {
-            Trace.i("playlists", "refresh skipped: metadata not allowed; showing the stored list")
-            null
-        } else {
-            runCatching { serverClient.value?.getPlaylists(libraryId.first()) }
-                .onFailure { Trace.w("playlists", "refresh failed", it) }
-                .getOrNull()
-                .also { Trace.i("playlists", "refresh: server gave ${it?.size ?: "nothing"}; held ${_playlists.value.size}") }
-        }
+        val fetched = if (!metadataAllowed()) null else runCatching { serverClient.value?.getPlaylists(libraryId.first()) }.getOrNull()
         if (fetched != null) {
             _playlists.value = fetched
             settings.setCachedPlaylists(sourceId, json.encodeToString(fetched))
@@ -277,7 +265,6 @@ class LibraryPlaylists(
     /** Restores the last known playlists so a cold start offline isn't blank. */
     suspend fun primePlaylists() {
         if (_playlists.value.isEmpty()) _playlists.value = loadCachedPlaylists()
-        Trace.i("playlists", "primed from the saved list: ${_playlists.value.size}")
     }
 
     private suspend fun loadCachedPlaylists(): List<Playlist> {
@@ -319,7 +306,6 @@ class LibraryPlaylists(
             emit(present(d, id, phonePlaylist(phone, id)))
             return@flow
         }
-        traceOpen(id)
         playlistUpdates(stored = { rebuildPlaylist(id) }, server = { askServer(id) })
             .collect { emit(present(d, id, it)) }
     }
@@ -348,14 +334,11 @@ class LibraryPlaylists(
         val inView = inLibraryView(d, tracks)
         // A song from the phone's own folder plays whatever the connection is.
         val downloaded = if (library.offline.value) library.downloadedTrackIds.value else null
-        val shown = tracks.map { inView(it) && (downloaded == null || it.id in downloaded || PhoneFiles.isPhoneFile(it.id)) }
-        Trace.i(
-            "playlist",
-            "$id shown: ${shown.count { it }} of ${tracks.size} songs " +
-                if (downloaded == null) "(online, whole=$whole)"
-                else "(offline: downloads only; ${downloaded.size} downloaded tracks known, whole=$whole)",
+        return PlaylistView(
+            tracks,
+            whole,
+            tracks.map { inView(it) && (downloaded == null || it.id in downloaded || PhoneFiles.isPhoneFile(it.id)) },
         )
-        return PlaylistView(tracks, whole, shown)
     }
 
     /**
@@ -388,7 +371,6 @@ class LibraryPlaylists(
     private suspend fun fetchPlaylistTracks(id: String): PlaylistView {
         awaitPlaylistWrites()
         phonePlaylists()?.let { return phonePlaylist(it, id) }
-        traceOpen(id)
         return askServer(id) ?: rebuildPlaylist(id)
     }
 
@@ -397,12 +379,6 @@ class LibraryPlaylists(
         val tracks = library.getTracksByIds(ids)
         return PlaylistView(tracks, tracks.size == ids.size)
     }
-
-    private fun traceOpen(id: String) = Trace.i(
-        "playlist",
-        "$id open: metadataAllowed=${metadataAllowed()} client=${serverClient.value != null} offline=${library.offline.value} " +
-            "membershipHeld=${membership.value[id]?.size} listed=${_playlists.value.any { it.id == id }}",
-    )
 
     /**
      * The server's copy of a playlist, or null when it can't be had: the mode
@@ -416,28 +392,22 @@ class LibraryPlaylists(
         // Nor while the lists are narrowed to downloads. That is the server
         // already found silent, and asking it again here was a wait of up to
         // the connect timeout on an address that wasn't going to answer.
-        if (library.offline.value) {
-            Trace.i("playlist", "$id server not asked: the lists are narrowed to downloads")
-            return null
-        }
+        if (library.offline.value) return null
         val client = serverClient.value ?: return null
-        val startedMs = System.currentTimeMillis()
         val tracks = try {
             // Capped only when there is something to fall back on. Without a
             // stored copy the rebuild is empty, and a large playlist on a slow
             // link is worth the wait.
             fetchWithin(if (id in membership.value) PLAYLIST_FETCH_CAP_MS else null) {
                 client.getPlaylistTracks(id)
-            }.also { if (it == null) Trace.w("playlist", "$id server fetch gave up after ${PLAYLIST_FETCH_CAP_MS}ms; using the stored copy") }
+            }
         } catch (e: CancellationException) {
             // The screen went away: that is the caller cancelled, not the
             // server failing, and it has to reach the caller as such.
             throw e
         } catch (e: Exception) {
-            Trace.w("playlist", "$id server fetch failed after ${System.currentTimeMillis() - startedMs}ms", e)
             null
         } ?: return null
-        Trace.i("playlist", "$id server answered ${tracks.size} songs in ${System.currentTimeMillis() - startedMs}ms")
         return PlaylistView(tracks, complete = true)
     }
 
@@ -446,20 +416,9 @@ class LibraryPlaylists(
         // A rebuild is a guess at what the server holds — membership can be stale
         // and the library missing rows — so nothing built here is safe to edit
         // against. Held membership first: [Playlist.trackIds] is usually empty.
-        val held = membership.value[id]
-        val listed = _playlists.value.firstOrNull { it.id == id }
-        if (held == null && listed == null) {
-            Trace.w("playlist", "$id rebuild: no membership held and not in the playlist list — empty")
-            return PlaylistView(emptyList(), false)
-        }
-        val ids = held ?: listed!!.trackIds
-        val rebuilt = library.getTracksByIds(ids)
-        Trace.i(
-            "playlist",
-            "$id rebuild from ${if (held != null) "held membership" else "the list's own trackIds"}: " +
-                "${ids.size} ids → ${rebuilt.size} found in the library table",
-        )
-        return PlaylistView(rebuilt, complete = false)
+        val ids = membership.value[id]
+            ?: (_playlists.value.firstOrNull { it.id == id } ?: return PlaylistView(emptyList(), false)).trackIds
+        return PlaylistView(library.getTracksByIds(ids), complete = false)
     }
 
     /**
@@ -520,10 +479,7 @@ class LibraryPlaylists(
         // after the sync, so on a metered link outside Make it Hurt it waits for
         // Wi-Fi (opening one playlist goes by metadataAllowed instead). Until
         // then the playlist_tracks rows serve — see storeMembership.
-        if (!bulkAllowed() && phonePlaylists() == null) {
-            Trace.i("playlists", "membership prime of ${ids.size} skipped: bulk not allowed on this link")
-            return@coroutineScope
-        }
+        if (!bulkAllowed() && phonePlaylists() == null) return@coroutineScope
         val gate = Semaphore(SYNC_CONCURRENCY)
         ids.filter { membershipWanted(it) }
             .map { id ->

@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import java.net.URI
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -67,14 +68,9 @@ class SourceRoute(
         // The list is kept even when nothing answered: plex.tv's is the newer
         // one, and the next try should start from it.
         if (next != current) save(next)
-        log(
-            when {
-                found == null -> "nothing answered of ${ordered.size} (${if (fresh != null) "as advertised" else "stored"})"
-                found == current.baseUrl -> "${Trace.host(found)} answered after all"
-                else -> "moved ${Trace.host(current.baseUrl)} → ${Trace.host(found)}"
-            },
-        )
-        found != null && found != current.baseUrl
+        val moved = found != null && found != current.baseUrl
+        if (moved) log("moved ${hostOf(current.baseUrl)} → ${hostOf(found)}")
+        moved
     }
 
     /**
@@ -91,7 +87,7 @@ class SourceRoute(
         if (better.isEmpty() || !onLan()) return false
         val found = firstAnswering(better, current) ?: return false
         save(current.copy(baseUrl = found))
-        log("moved back ${Trace.host(current.baseUrl)} → ${Trace.host(found)}")
+        log("moved back ${hostOf(current.baseUrl)} → ${hostOf(found)}")
         true
     }
 
@@ -111,6 +107,8 @@ class SourceRoute(
         askedDirectoryMs = now
         return advertised(current)?.takeIf { it.isNotEmpty() }
     }
+
+    private fun hostOf(url: String?): String = url?.let { runCatching { URI(it).host }.getOrNull() } ?: "?"
 
     companion object {
         const val DIRECTORY_EVERY_MS = 60_000L
