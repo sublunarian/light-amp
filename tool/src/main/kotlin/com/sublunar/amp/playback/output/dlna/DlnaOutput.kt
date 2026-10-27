@@ -51,7 +51,10 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
          * readouts shift back.
          */
         val offsetMs: Long,
-    )
+    ) {
+        /** When the renderer was first seen playing this stream — see readClock. */
+        var playingSinceMs: Long? = null
+    }
 
     /** What the renderer is playing, or null when nothing of the queue is on it. */
     private var stream: CastStream? = null
@@ -1067,7 +1070,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val reported = position.trackUri
         if (reported != null && !DlnaCast.sameUri(reported, current?.url)) return false
         val offset = current?.offsetMs ?: 0L
-        val reading = position.positionMs + offset
+        val now = SystemClock.elapsedRealtime()
+        if (state == DlnaState.PLAYING && current != null && current.playingSinceMs == null) current.playingSinceMs = now
+        val reading = castReading(position.positionMs, offset, startedAtMs, current?.playingSinceMs, now, CAST_CLOCK_SLACK_MS)
         val pending = pendingSeek
         val believed = when {
             // Until this track has settled, only a reading near where it started
@@ -1080,7 +1085,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             // comes). Not for ever: a seek into the last seconds under
             // repeat-one can wrap to 0:00 before any reading near it.
             abs(reading - pending.targetMs) <= CAST_START_WINDOW_MS -> true
-            SystemClock.elapsedRealtime() - pending.sentAt > CAST_SEEK_WAIT_MS -> {
+            now - pending.sentAt > CAST_SEEK_WAIT_MS -> {
                 log("seek to ${pending.targetMs} never seen — following the renderer at $reading")
                 true
             }
@@ -1234,6 +1239,9 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
 
         /** How far a just-started track's first readings may stray from its start before being disbelieved. */
         const val CAST_START_WINDOW_MS = 15_000L
+
+        /** How far a stream from a server offset may read ahead of the time it has been playing — see readClock. */
+        const val CAST_CLOCK_SLACK_MS = 3_000L
 
         const val CAST_POLL_MS = 1_000L
 

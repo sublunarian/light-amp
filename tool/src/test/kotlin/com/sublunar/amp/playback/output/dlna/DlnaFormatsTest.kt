@@ -97,4 +97,24 @@ class DlnaFormatsTest {
         assertFalse(stoppedPartWay(heardMs = 77_000L, totalMs = 0L))
         assertFalse(stoppedPartWay(heardMs = -1L, totalMs = 163_000L))
     }
+
+    @Test
+    fun `a stream from an offset never reads ahead of the time it has played`() {
+        // Started at 13:19, playing for 5 s, the renderer claims 4 minutes in.
+        assertEquals(
+            799_000L + 5_000L + 3_000L,
+            castReading(positionMs = 240_000L, offsetMs = 799_000L, startedAtMs = 799_000L, playingSinceMs = 10_000L, nowMs = 15_000L, slackMs = 3_000L),
+        )
+        // An honest reading passes untouched.
+        assertEquals(
+            799_000L + 4_000L,
+            castReading(positionMs = 4_000L, offsetMs = 799_000L, startedAtMs = 799_000L, playingSinceMs = 10_000L, nowMs = 15_000L, slackMs = 3_000L),
+        )
+    }
+
+    @Test
+    fun `a stream from the start, or not yet playing, is read as reported`() {
+        assertEquals(240_000L, castReading(240_000L, offsetMs = 0L, startedAtMs = 0L, playingSinceMs = 10_000L, nowMs = 15_000L, slackMs = 3_000L))
+        assertEquals(799_000L + 240_000L, castReading(240_000L, offsetMs = 799_000L, startedAtMs = 799_000L, playingSinceMs = null, nowMs = 15_000L, slackMs = 3_000L))
+    }
 }
