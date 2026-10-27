@@ -596,10 +596,12 @@ class LibraryPlaylists(
      * answer how it went, for a caller with more to do after.
      */
     suspend fun createPlaylist(name: String, trackIds: List<String>): WriteResult = playlistMutex.withLock {
-        val result = playlistWrite(
-            phone = { it.create(name.trim(), trackIds) != null },
-            server = { it.createPlaylist(name.trim(), trackIds) },
-        )
+        val files = phonePlaylists()
+        val result = if (files != null) {
+            fileWrite(files.create(name.trim(), trackIds) != null)
+        } else {
+            serverClient.value?.let { createInChunks(it, name.trim(), trackIds) } ?: WriteResult.Unreachable(UNREACHABLE)
+        }
         refreshPlaylists()
         said("createPlaylist", result)
     }
@@ -633,7 +635,7 @@ class LibraryPlaylists(
         val d = daos.value
         val result = playlistWrite(
             phone = { it.add(id, trackId) },
-            server = { it.addToPlaylist(id, trackId) },
+            server = { it.addToPlaylist(id, listOf(trackId)) },
         )
         if (result == WriteResult.Saved) editMembership(d, id) { it + trackId }
         said("addToPlaylist($id)", result)
@@ -763,3 +765,32 @@ internal fun playlistUpdates(
     val fresh = server()
     if (fresh != null) emit(fresh) else if (held.tracks.isEmpty()) emit(held)
 }
+
+/**
+ * Make playlist [name] holding [ids] on [client]: created with the first
+ * [PLAYLIST_IDS_PER_REQUEST] and the rest appended as many at a time. Subsonic
+ * and Plex put every id in the URL, and a library-sized queue in one request
+ * is one a server, or a proxy in front of it, refuses. A save that stops after
+ * the playlist was made says how many songs went in.
+ */
+internal suspend fun createInChunks(client: MusicServer, name: String, ids: List<String>): WriteResult {
+    val chunks = ids.chunked(PLAYLIST_IDS_PER_REQUEST)
+    var saved = -1
+    val result = attemptWrite {
+        val id = client.createPlaylist(name, chunks.firstOrNull().orEmpty())
+        saved = chunks.firstOrNull()?.size ?: 0
+        for (chunk in chunks.drop(1)) {
+            client.addToPlaylist(id ?: throw RefusedWrite("The server didn't say which playlist it made"), chunk)
+            saved += chunk.size
+        }
+    }
+    if (saved < 0) return result
+    val partly = "Only $saved of ${ids.size} songs saved"
+    return when (result) {
+        WriteResult.Saved -> result
+        is WriteResult.Unreachable -> result.copy(reason = "$partly. ${result.reason}")
+        is WriteResult.Refused -> result.copy(reason = "$partly. ${result.reason}")
+    }
+}
+
+private const val PLAYLIST_IDS_PER_REQUEST = 100

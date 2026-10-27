@@ -69,7 +69,8 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val dataMode by App.settings.dataMode.state.collectAsState()
         val downloadLimit by App.settings.downloadLimit.state.collectAsState()
         // Off the disk, once per visit: what the phone actually holds. A walk of
-        // every downloaded file, so off Main, and the row waits for it.
+        // every downloaded file, so off Main; a blank value until it returns keeps
+        // the row label-over-value, so nothing below it moves when it lands.
         val used = produceState<Long?>(null) {
             value = withContext(Dispatchers.IO) { App.downloads.usedBytesEverywhere() }
         }.value
@@ -107,7 +108,7 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         TextRow(
                             title = "Offline",
                             value = when (used) {
-                                null -> null
+                                null -> " "
                                 0L -> "Nothing downloaded"
                                 else -> "${formatGb(used)} / ${formatGb(downloadLimit)}"
                             },
@@ -290,10 +291,10 @@ class DataScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 class OfflineScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     // Off the disk rather than the index, and off Main; null until first
-    // measured. Held on the screen, not in a remember: pushing the confirmation
-    // tears this page's composition down (see ARCHITECTURE.md, the SDK composes
-    // only the top of the back stack), so state written by the Delete callback
-    // would never be read.
+    // measured, and shown blank so the row keeps its shape. Held on the screen,
+    // not in a remember: pushing the confirmation tears this page's composition
+    // down (see ARCHITECTURE.md, the SDK composes only the top of the back
+    // stack), so state written by the Delete callback would never be read.
     private var used by mutableStateOf<Long?>(null)
 
     @Composable
@@ -314,7 +315,7 @@ class OfflineScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     TextRow(
                         title = "Downloads",
                         value = when (val bytes = used) {
-                            null -> null
+                            null -> " "
                             0L -> "Nothing downloaded yet"
                             else -> formatBytes(bytes)
                         },

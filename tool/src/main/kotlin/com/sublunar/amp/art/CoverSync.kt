@@ -6,9 +6,9 @@ sealed interface CoverFetch {
 
     /**
      * The server answered, and has no such picture — a 404, or a 200 that is
-     * not an image. Asking again tomorrow gets the same answer.
+     * not an image. Asking again tomorrow gets the same answer. [why] is for the log.
      */
-    data object None : CoverFetch
+    data class None(val why: String) : CoverFetch
 
     /** No usable answer: a timeout, a 5xx, the rule closing. Worth another try, another day. */
     data class Failed(val why: String) : CoverFetch
@@ -91,7 +91,7 @@ class CoverSync(
                         }
                     }
                 }
-                CoverFetch.None -> {
+                is CoverFetch.None -> {
                     failuresInARow = 0
                     knownMissing += id
                 }

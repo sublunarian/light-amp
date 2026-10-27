@@ -19,7 +19,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
@@ -49,6 +51,8 @@ import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SimpleLightScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * The bar's search button. Simplified gets the full-screen editor: its bar is the
@@ -77,12 +81,16 @@ internal fun SimpleLightScreen<*>.SearchView(
     val live = if (typing) state.text.toString() else query
     LaunchedEffect(live, typing) { if (typing) LibraryNav.setQuery(live) }
 
-    // Keyed on every list search reads, so a re-sync or a switch that keeps the
-    // track count still refreshes the results.
+    // A keystroke searches at once. A change to any list search reads (a re-sync,
+    // a switch, a play count) searches again off Main: a new track list means
+    // folding every song again, and the results shown stay up meanwhile.
     val tracks by App.library.tracks.collectAsState()
     val albums by App.library.albums.collectAsState()
     val artists by App.library.artists.collectAsState()
-    val results = remember(live, tracks, albums, artists) { App.library.search(live) }
+    var results by remember(live) { mutableStateOf(App.library.search(live)) }
+    LaunchedEffect(live, tracks, albums, artists) {
+        results = withContext(Dispatchers.Default) { App.library.search(live) }
+    }
     val listState = rememberListAnchor("search")
 
     // The rows take the scrollbar's lane back individually, so the list itself

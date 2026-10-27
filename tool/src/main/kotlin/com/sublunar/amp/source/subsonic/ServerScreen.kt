@@ -235,9 +235,8 @@ class ServerScreen(
             val said = when (outcome) {
                 is SignInOutcome.Settled -> outcome.reason
                 is SignInOutcome.Missed -> outcome.reason
-                // Leaving the form is also abandoning it.
                 is SignInOutcome.Found -> when {
-                    gone -> return@launch
+                    // Saved even if the user has left meanwhile: the check passed.
                     editing != null -> saveEdit(editing, outcome.server.source)
                     else -> {
                         // Back on Main, and only if this page is still up:

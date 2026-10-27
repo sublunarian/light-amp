@@ -6,6 +6,7 @@ import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.Track
+import com.sublunar.amp.playback.wrappedIndex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 
@@ -306,6 +307,22 @@ data class OutputFamilies(val ofSource: List<OutputFamily>, val ofPhone: List<Ou
 
 /** How long a track has to have played before previous restarts it rather than going back — on every output. */
 const val PREVIOUS_RESTARTS_AFTER_MS = 3_000L
+
+/**
+ * Whether previous starts the song over rather than going back: once it has
+ * played a little, and always when there is no row [previousIndex] to go back
+ * to (the first song, with nothing to wrap to). The rule on every output.
+ */
+fun previousRestarts(positionMs: Long, previousIndex: Int, queueSize: Int): Boolean =
+    positionMs > PREVIOUS_RESTARTS_AFTER_MS || previousIndex !in 0 until queueSize
+
+/** The row previous goes back to from the playing one: the row before, wrapped under repeat-queue as on the phone. */
+internal fun OutputHost.previousRow(): Int =
+    wrappedIndex(index.value - 1, queue.value.size, repeatQueue = repeatMode.value == RepeatMode.QUEUE)
+
+/** The row next goes to: the one after, wrapped to the first under repeat-queue as on the phone. */
+internal fun OutputHost.nextRow(): Int =
+    wrappedIndex(index.value + 1, queue.value.size, repeatQueue = repeatMode.value == RepeatMode.QUEUE)
 
 /** One edit of the queue, by track id, for an output that holds a queue of its own. */
 sealed interface QueueEdit {

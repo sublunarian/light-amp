@@ -101,6 +101,15 @@ class QueueWindowTest {
     }
 
     @Test
+    fun `only the last row of a window with more queue after it ends short of the queue`() {
+        val window = QueueWindow(950, 1_450)
+        assertTrue(window.endsShortAt(1_449, 2_000))
+        assertFalse(window.endsShortAt(1_448, 2_000))
+        assertFalse(QueueWindow(1_500, 2_000).endsShortAt(1_999, 2_000))
+        assertFalse(QueueWindow.EMPTY.endsShortAt(-1, 0))
+    }
+
+    @Test
     fun `a removed row leaves the player alone unless it holds it`() {
         val window = QueueWindow(10, 20)
         assertEquals(QueueWindow(9, 19) to null, window.removing(3))
@@ -147,6 +156,23 @@ class QueueWindowTest {
         val (window, edits) = followingEdit(queue, heldAt = 3, queue = queue + tracks(5, prefix = "n"), row = 3)
         assertEquals(emptyList(), edits)
         assertEquals(QueueWindow(0, PLAYER_WINDOW), window)
+    }
+
+    @Test
+    fun `a full window playing its queue's last row takes the added rows in by sliding`() {
+        for (size in listOf(PLAYER_WINDOW, PLAYER_WINDOW + 20)) {
+            val queue = tracks(size)
+            val last = queue.lastIndex
+            val held = windowAround(size, last)
+            val grown = queue + tracks(3, prefix = "n")
+            val (window, edits) = followingEdit(queue.subList(held.start, held.end), held.positionOf(last)!!, grown, last)
+            assertEquals(emptyList(), edits)
+            val to = window.slidFor(grown.size, last)!!
+            val slide = slideEdits(window, to)
+            assertEquals(grown.subList(to.start, to.end), grown.subList(window.start, window.end).edited(slide, grown))
+            assertPlayingUntouched(slide, window.positionOf(last)!!)
+            assertEquals(grown.size, to.end)
+        }
     }
 
     @Test

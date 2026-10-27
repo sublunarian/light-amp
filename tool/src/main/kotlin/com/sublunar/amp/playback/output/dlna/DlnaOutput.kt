@@ -8,7 +8,9 @@ import com.sublunar.amp.playback.output.Disconnect
 import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
-import com.sublunar.amp.playback.output.PREVIOUS_RESTARTS_AFTER_MS
+import com.sublunar.amp.playback.output.previousRestarts
+import com.sublunar.amp.playback.output.nextRow
+import com.sublunar.amp.playback.output.previousRow
 import com.sublunar.amp.playback.output.Refound
 import com.sublunar.amp.playback.output.VolumeControl
 import java.util.concurrent.ConcurrentHashMap
@@ -453,20 +455,14 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         }
     }
 
-    // Only within the queue, as the controller's own jumpTo has it: a next
-    // at the end of the queue doesn't wrap.
     override fun next() {
-        val index = host.index.value + 1
+        val index = host.nextRow()
         if (index in host.queue.value.indices) jumpTo(index)
     }
 
     override fun previous() {
-        if (host.positionMs.value > PREVIOUS_RESTARTS_AFTER_MS) {
-            seekTo(0)
-        } else {
-            val index = host.index.value - 1
-            if (index in host.queue.value.indices) jumpTo(index)
-        }
+        val index = host.previousRow()
+        if (previousRestarts(host.positionMs.value, index, host.queue.value.size)) seekTo(0) else jumpTo(index)
     }
 
     override fun jumpTo(index: Int) {
@@ -1014,11 +1010,18 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      */
     private suspend fun pollRenderer(renderer: DlnaRenderer, playedBefore: Boolean = false) {
         val watch = CastWatch(playedBefore)
+        // Until it plays, each new state the renderer reports is logged: a track
+        // that never starts says why (stuck TRANSITIONING, STOPPED, no media).
+        var saidState: DlnaState? = null
         while (coroutineContext.isActive && steered()?.id == renderer.id) {
             delay(CAST_POLL_MS)
             undoHush(renderer)
             val position = DlnaCast.position(renderer)
             val state = DlnaCast.state(renderer)
+            if (!watch.settled && state != saidState) {
+                saidState = state
+                log("starting on ${renderer.name}: $state at ${position?.positionMs} of ${position?.durationMs}")
+            }
             // The rest of this poll is about the track the renderer just left.
             if (position != null && followedHandOff(position, state, watch)) continue
             val ours = position != null && readClock(position, state, watch)

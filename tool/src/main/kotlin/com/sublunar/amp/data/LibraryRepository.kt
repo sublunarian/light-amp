@@ -169,13 +169,13 @@ class LibraryRepository(
      * see [LibraryDao.observeDownloads].
      */
     val downloadFiles: StateFlow<List<DownloadFile>> =
-        observing(emptyList()) { it.observeDownloads() }
-            .onEach { downloadsLoaded.value = true }
+        observing(emptyList()) { dao -> dao.observeDownloads().onEach { downloadsLoaded.value = true } }
             .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     /**
      * Whether [downloadFiles] has heard from the database yet: its empty seed and
-     * "no downloads" are the same value. Playback must wait for this before it
+     * "no downloads" are the same value, so this is set by the table's own answer,
+     * never by the seed [observing] puts first. Playback must wait for this before it
      * chooses between a file and a stream, or it streams tracks that are on the
      * disk — see PlaybackController.
      */
