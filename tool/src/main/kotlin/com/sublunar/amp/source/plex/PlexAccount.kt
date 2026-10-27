@@ -84,8 +84,7 @@ object PlexAccount {
 
     /**
      * One server's addresses as plex.tv lists them now, best first — null when
-     * plex.tv couldn't be asked or doesn't list it. See [PlexRoute], which
-     * asks this instead of a sync when the address in use stops answering.
+     * plex.tv couldn't be asked or doesn't list it. Asked by SourceRoute.
      */
     suspend fun advertised(machineIdentifier: String, token: String, clientIdentifier: String): List<String>? =
         resources(token, clientIdentifier)

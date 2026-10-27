@@ -10,9 +10,7 @@ import kotlinx.coroutines.runBlocking
 
 /**
  * Which of a Plex server's addresses the source moves to when the one in use
- * goes quiet, and back to when a better one answers again. The case that
- * started it: linked at home on the LAN address, then a morning on cellular
- * where only the public one could answer.
+ * goes quiet, and back to when a better one answers again.
  */
 class SourceRouteTest {
 

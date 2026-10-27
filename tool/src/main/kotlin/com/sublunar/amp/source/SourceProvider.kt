@@ -82,10 +82,8 @@ interface SourceProvider {
     suspend fun relocate(source: MusicSource): MusicSource? = null
 
     /**
-     * [source]'s addresses as its server's directory lists them now, best
-     * first — null where there is no directory to ask, it couldn't be asked,
-     * or it doesn't list this server. Asked, at most once a minute, when the
-     * address in use stops answering — see SourceRoute.
+     * [source]'s addresses as its server's directory lists them now, best first — null where there
+     * is no directory, or it couldn't be asked or doesn't list this server. See SourceRoute.
      */
     suspend fun advertisedAddresses(source: MusicSource): List<String>? = null
 

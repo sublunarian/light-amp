@@ -29,11 +29,7 @@ class Reachability(
     private val client: () -> MusicServer?,
     /** Whether the rules allow speaking to the server at all — see LinkRules. */
     private val mayAsk: () -> Boolean,
-    /**
-     * The server's other addresses, where it has any — see [SourceRoute]. A miss is tried
-     * against them before it counts, and an answer is followed by a look at
-     * the ones ranked above the address in use.
-     */
+    /** The server's other addresses, where it has any — see [SourceRoute]. */
     private val route: SourceRoute? = null,
 ) {
     private val _reachable = MutableStateFlow(true)
@@ -73,9 +69,8 @@ class Reachability(
                 // alone; the next network change asks again.
                 if (verdict == null) return@launch
                 if (verdict) {
-                    // Answering, but maybe on the public address it moved to
-                    // while away. A check follows every network change, which
-                    // is the moment the LAN one can have come back.
+                    // Answering, but perhaps not at its best address: a check
+                    // follows every network change, when the LAN one can come back.
                     try {
                         route?.upgrade()
                     } catch (e: CancellationException) {
@@ -112,9 +107,8 @@ class Reachability(
         val ping = askServer(server)
         log("ping → ${ping.answered ?: "no verdict"} in ${ping.tookMs}ms (${ping.why})")
         var answered = ping.answered
-        // Silent at this address isn't silent at every address: a LAN one
-        // never answers on cellular. Another that answered is the server
-        // answering — the source is saved onto it, which rebuilds the client.
+        // A LAN address never answers on cellular: another that does is the
+        // server answering, and the source moves onto it.
         if (answered == false && reroute && route != null) {
             val moved = try {
                 route.recover()
