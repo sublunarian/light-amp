@@ -79,8 +79,8 @@ object PlexAccount {
             .distinct()
 
     /** The best-ranked of [resource]'s addresses that answers. */
-    suspend fun reachable(resource: PlexResource, token: String, clientIdentifier: String): String? =
-        firstReachable(candidates(resource), resource.accessToken ?: token, clientIdentifier, resource.clientIdentifier)
+    suspend fun reachable(resource: PlexResource, clientIdentifier: String): String? =
+        firstReachable(candidates(resource), clientIdentifier, resource.clientIdentifier)
 
     /**
      * One server's addresses as plex.tv lists them now, best first — null when
@@ -103,12 +103,11 @@ object PlexAccount {
      */
     suspend fun firstReachable(
         uris: List<String>,
-        token: String,
         clientIdentifier: String,
         machineIdentifier: String,
         quickOnly: Boolean = false,
     ): String? {
-        val probe: suspend (String) -> Boolean = { answers(it, token, clientIdentifier, machineIdentifier) }
+        val probe: suspend (String) -> Boolean = { answers(it, clientIdentifier, machineIdentifier) }
         val quick = coroutineScope {
             val probes = uris.map { uri ->
                 async { withTimeoutOrNull(QUICK_PROBE_MS) { probe(uri) } == true }
@@ -122,16 +121,16 @@ object PlexAccount {
         return uris.firstOrNull { probe(it) }?.trimEnd('/')
     }
 
+    /**
+     * No token: /identity answers without one, and a plain-http address on someone else's network is
+     * whatever device holds it there. The identifier match is what tells the server apart.
+     */
     private suspend fun answers(
         uri: String,
-        token: String,
         clientIdentifier: String,
         machineIdentifier: String,
     ): Boolean = runCatching {
-        val response = http.get(uri.trimEnd('/') + "/identity") {
-            plexHeaders(clientIdentifier)
-            header("X-Plex-Token", token)
-        }
+        val response = http.get(uri.trimEnd('/') + "/identity") { plexHeaders(clientIdentifier) }
         response.status.isSuccess() && isIdentityOf(response.bodyAsText(), machineIdentifier)
     }.getOrDefault(false)
 
