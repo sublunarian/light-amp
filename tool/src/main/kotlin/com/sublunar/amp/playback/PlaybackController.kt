@@ -571,7 +571,9 @@ class PlaybackController(
                 } else if (lost != null) {
                     rejoinLost()
                 }
-                if (rules.mayStream) {
+                // Leaving free bytes, a parked song with its file on the phone is cued on it,
+                // whatever streaming is allowed: resumeAfterWait says why when it can't.
+                if (rules.mayStream || lostFreeBytes) {
                     cueIfParked()
                 } else if (parked && !parkedOnTheTrackItself) {
                     // Still parked, maybe for another reason now, so the words
