@@ -13,6 +13,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -179,13 +181,15 @@ class LibrarySync(
     }
 
     /**
-     * The active source's client, if a reachability check moved [started] to another address under
-     * this run (see SourceRoute): the run's client was closed, and relocating could pick a worse address.
+     * The active source's client, if [started]'s record changed under this run, which closes the
+     * run's client: a reachability check moved it to another address (see SourceRoute), where
+     * relocating could pick a worse one, or, with [clientClosed], any change at all.
      */
-    private suspend fun movedDuringRun(started: MusicSource?): MusicServer? {
+    private suspend fun movedDuringRun(started: MusicSource?, clientClosed: Boolean = false): MusicServer? {
         val now = settings.activeSource.first() ?: return null
-        if (started == null || now.id != started.id || now.baseUrl == started.baseUrl) return null
-        android.util.Log.i("AmpSync", "the address moved during the sync; trying again there")
+        if (started == null || now.id != started.id) return null
+        if (!clientClosed && now.baseUrl == started.baseUrl) return null
+        android.util.Log.i("AmpSync", "the source changed during the sync; trying again on its new client")
         return clientFor(now)
     }
 
@@ -284,7 +288,14 @@ class LibrarySync(
             onSyncSucceeded()
             rememberLibraries(source, folders)
         } catch (e: CancellationException) {
-            // A switch cancelled this sync; not an error.
+            // A switch cancelled this sync; not an error. With the run still active it is the
+            // run's client closed under it, by a new record for the source: tried again on the new one.
+            if (repointed == null && currentCoroutineContext().isActive) {
+                movedDuringRun(source, clientClosed = true)?.let { replaced ->
+                    runSync(musicFolderId, repointed = replaced)
+                    return
+                }
+            }
             _syncState.update { it.copy(syncing = false) }
             throw e
         } catch (e: Exception) {
