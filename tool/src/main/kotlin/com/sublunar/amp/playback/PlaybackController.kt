@@ -52,6 +52,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -519,6 +520,14 @@ class PlaybackController(
             App.streamProxy.state.collect { state ->
                 reresolveQueue()
                 if (state is StreamProxy.State.On) cueIfParked()
+            }
+        }
+        // So does a new client for the same source (another address, a renewed
+        // token). A source switch empties the queue before it swaps the client.
+        scope.launch(onMain) {
+            serverClient.drop(1).collect {
+                reresolveQueue()
+                cueIfParked()
             }
         }
         // Nothing waits on "buffering" for ever. Counted from the start, not from
