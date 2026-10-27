@@ -157,7 +157,7 @@ class StreamProxy(
                 runCatching { server?.close() }
                 server = null
                 _state.value = State.Off(e.message ?: e.toString())
-                log("proxy off: $e")
+                log("proxy off: ${e::class.simpleName}")
             }
         }
     }
@@ -197,7 +197,7 @@ class StreamProxy(
                     runCatching { socket.close() }
                     server = null
                     _state.value = State.Off("accept failed: ${e.message}")
-                    log("proxy off: accept failed: $e")
+                    log("proxy off: accept failed: ${e::class.simpleName}")
                 }
                 break
             }

@@ -1096,7 +1096,7 @@ class Downloader(
         if (format == StreamFormat.MP3) {
             runCatching { withContext(Dispatchers.IO) { Mp3VbrIndex.index(file) } }
                 .onSuccess { if (it is Mp3VbrIndex.Outcome.Written) Log.i("AmpMp3", "indexed ${file.name}: ${it.frames} frames") }
-                .onFailure { Log.w("AmpMp3", "couldn't index ${file.name}", it) }
+                .onFailure { Log.w("AmpMp3", "couldn't index ${file.name}: ${it::class.simpleName}") }
         }
         // The sleeve is part of having the record offline — this
         // source's sleeve, from this source's server.
