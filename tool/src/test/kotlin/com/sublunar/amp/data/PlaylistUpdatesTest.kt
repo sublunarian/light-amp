@@ -1,15 +1,9 @@
 package com.sublunar.amp.data
 
-import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -69,46 +63,5 @@ class PlaylistUpdatesTest {
     fun `a playlist the server says is empty is shown empty`() = runBlocking {
         val emptied = view(complete = true)
         assertEquals(listOf(stored, emptied), playlistUpdates(stored = { stored }, server = { emptied }).toList())
-    }
-
-    @Test
-    fun `a capped fetch slower than its cap gives up`() = runBlocking {
-        assertNull(fetchWithin(50L) { delay(5_000); "late" })
-    }
-
-    @Test
-    fun `a capped fetch inside its cap answers`() = runBlocking {
-        assertEquals("on time", fetchWithin(5_000L) { "on time" })
-    }
-
-    @Test
-    fun `no cap waits as long as it takes`() = runBlocking {
-        assertEquals("slow", fetchWithin(null) { delay(100); "slow" })
-    }
-
-    @Test
-    fun `a failure inside the cap is the caller's to see`() {
-        assertFailsWith<IOException> { runBlocking { fetchWithin(5_000L) { throw IOException("no route") } } }
-    }
-
-    @Test
-    fun `cancelling the caller cancels the fetch rather than reading as a timeout`() = runBlocking {
-        // The screen leaving: the caller's own cancellation must come through
-        // as one, not be taken for the cap running out (a null answer) and acted on.
-        var outcome: String? = "untouched"
-        var thrown: Throwable? = null
-        val job = launch {
-            try {
-                outcome = fetchWithin(5_000L) { delay(1_000); "finished" }
-            } catch (e: CancellationException) {
-                thrown = e
-                throw e
-            }
-        }
-        delay(50)
-        job.cancel()
-        job.join()
-        assertTrue(thrown is CancellationException)
-        assertEquals("untouched", outcome)
     }
 }

@@ -28,7 +28,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 
 /**
@@ -382,9 +381,8 @@ class LibraryPlaylists(
 
     /**
      * The server's copy of a playlist, or null when it can't be had: the mode
-     * forbids asking, the server is known not to be answering, the request
-     * failed, or it ran past [PLAYLIST_FETCH_CAP_MS] with a stored copy to fall
-     * back on.
+     * forbids asking, the server is known not to be answering, or the request
+     * failed.
      */
     private suspend fun askServer(id: String): PlaylistView? {
         // Asked only when the mode allows, as the playlist list is.
@@ -395,19 +393,14 @@ class LibraryPlaylists(
         if (library.offline.value) return null
         val client = serverClient.value ?: return null
         val tracks = try {
-            // Capped only when there is something to fall back on. Without a
-            // stored copy the rebuild is empty, and a large playlist on a slow
-            // link is worth the wait.
-            fetchWithin(if (id in membership.value) PLAYLIST_FETCH_CAP_MS else null) {
-                client.getPlaylistTracks(id)
-            }
+            client.getPlaylistTracks(id)
         } catch (e: CancellationException) {
             // The screen went away: that is the caller cancelled, not the
             // server failing, and it has to reach the caller as such.
             throw e
         } catch (e: Exception) {
-            null
-        } ?: return null
+            return null
+        }
         return PlaylistView(tracks, complete = true)
     }
 
@@ -692,16 +685,6 @@ class LibraryPlaylists(
         forget()
     }
 }
-
-/**
- * How long opening a playlist waits on the server when a stored copy is
- * already there to show instead — see LibraryPlaylists.askServer.
- */
-internal const val PLAYLIST_FETCH_CAP_MS = 4_000L
-
-/** [fetch]'s answer, or null when it ran past [capMs]. No cap at all when [capMs] is null. */
-internal suspend fun <T : Any> fetchWithin(capMs: Long?, fetch: suspend () -> T): T? =
-    if (capMs == null) fetch() else withTimeoutOrNull(capMs) { fetch() }
 
 /**
  * A playlist page's answers, in order: [stored] straight away when it holds
