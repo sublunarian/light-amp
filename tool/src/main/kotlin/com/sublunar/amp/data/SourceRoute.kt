@@ -33,7 +33,9 @@ class SourceRoute(
         val fresh = askDirectory(current)
         val ordered = fresh ?: current.connections
         if (ordered.isEmpty()) return false
-        val found = firstAnswering(ordered, current, false)
+        // A quick look: this follows every check's first miss, and a patient pass is up to a
+        // minute per check on cellular while the server is off. A failed sync's relocate waits longer.
+        val found = firstAnswering(ordered, current, true)
         val baseUrl = found ?: current.baseUrl
         // The list is kept even when nothing answered: plex.tv's is the newer
         // one, and the next try should start from it.

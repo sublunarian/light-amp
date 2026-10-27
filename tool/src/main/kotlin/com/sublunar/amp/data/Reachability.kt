@@ -18,11 +18,12 @@ import kotlinx.coroutines.withTimeoutOrNull
  * at the moments the answer can have changed.
  *
  * A failure is a *suspicion*, settled at once by one ping (a single small
- * authenticated request), and every network change asks again; nothing waits
- * for a sync to prove the server back. While the server stays silent the ping
- * is retried a few times with a growing gap and then left alone until
- * something else happens — a network change, a press, a sync — so a server that
- * is simply away costs nothing to keep waiting for.
+ * authenticated request), then for a server with other addresses by a few
+ * seconds' look at those — see [SourceRoute]. Every network change asks again;
+ * nothing waits for a sync to prove the server back. While the server stays
+ * silent the ping alone is retried a few times with a growing gap and then left
+ * alone until something else happens — a network change, a press, a sync — so a
+ * server that is simply away costs next to nothing to keep waiting for.
  */
 class Reachability(
     private val scope: CoroutineScope,

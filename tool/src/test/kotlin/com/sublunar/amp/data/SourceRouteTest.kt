@@ -67,8 +67,8 @@ class SourceRouteTest {
         // Every address, in rank: the ranking, not the order they answer in,
         // decides between public and relay.
         assertEquals(listOf(lan, docker, public, relay), probed.single())
-        // Patiently: a slow link is when this matters most.
-        assertEquals(listOf(false), quickOnly)
+        // A quick look: it follows every missed check. A failed sync's relocate is the patient one.
+        assertEquals(listOf(true), quickOnly)
     }
 
     @Test
