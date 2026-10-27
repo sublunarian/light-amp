@@ -26,7 +26,7 @@ class SourceRoute(
 
     /**
      * The address in use didn't answer: move to the best-ranked one that does, the one in use
-     * included, so a LAN address that answers after all is kept. True when the source moved.
+     * included, so a LAN address that answers after all is kept. True when one answered.
      */
     suspend fun recover(): Boolean = busy.withLock {
         val current = routed() ?: return false
@@ -40,9 +40,8 @@ class SourceRoute(
         if (baseUrl != current.baseUrl || ordered != current.connections) {
             save(current.id, current.baseUrl, baseUrl, ordered)
         }
-        val moved = found != null && found != current.baseUrl
-        if (moved) log("moved ${hostOf(current.baseUrl)} → ${hostOf(found)}")
-        moved
+        if (found != null && found != current.baseUrl) log("moved ${hostOf(current.baseUrl)} → ${hostOf(found)}")
+        found != null
     }
 
     /**

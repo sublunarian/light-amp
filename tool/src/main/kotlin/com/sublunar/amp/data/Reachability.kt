@@ -111,7 +111,7 @@ class Reachability(
         if (ping.answered != false || !reroute || route == null) return ping.answered
         // A LAN address never answers on cellular: another that does is the
         // server answering, and the source moves onto it.
-        val moved = try {
+        val answered = try {
             route.recover()
         } catch (e: CancellationException) {
             throw e
@@ -119,8 +119,8 @@ class Reachability(
             log("rerouting failed: ${e::class.simpleName}")
             false
         }
-        if (moved) _reachable.value = true
-        moved
+        if (answered) _reachable.value = true
+        answered
     }
 
     private fun log(text: String) = Log.i("AmpNet", "reachability: $text")

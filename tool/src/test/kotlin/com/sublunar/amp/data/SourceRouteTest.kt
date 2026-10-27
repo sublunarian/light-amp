@@ -92,7 +92,8 @@ class SourceRouteTest {
     @Test
     fun `a LAN address that answers after all is kept`() = runBlocking {
         answering = setOf(lan, public)
-        assertFalse(route.recover())
+        // Answered, so the server is there, though nothing moved.
+        assertTrue(route.recover())
         assertTrue(saved.isEmpty())
     }
 
