@@ -10,6 +10,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -380,8 +382,10 @@ class LibraryPlaylists(
         val tracks = try {
             client.getPlaylistTracks(id)
         } catch (e: CancellationException) {
-            // The page closed: the caller's cancellation, not the server failing.
-            throw e
+            // The page closing goes on. Otherwise it is the client closed under the
+            // request, its source having moved: a failure like any other.
+            currentCoroutineContext().ensureActive()
+            return null
         } catch (e: Exception) {
             return null
         }
