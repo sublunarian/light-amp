@@ -179,6 +179,17 @@ class LibrarySync(
     }
 
     /**
+     * The active source's client, if a reachability check moved [started] to another address under
+     * this run (see SourceRoute): the run's client was closed, and relocating could pick a worse address.
+     */
+    private suspend fun movedDuringRun(started: MusicSource?): MusicServer? {
+        val now = settings.activeSource.first() ?: return null
+        if (started == null || now.id != started.id || now.baseUrl == started.baseUrl) return null
+        android.util.Log.i("AmpSync", "the address moved during the sync; trying again there")
+        return clientFor(now)
+    }
+
+    /**
      * The sync itself, of [musicFolderId] (null = all libraries); callers
      * serialize through [syncMutex].
      *
@@ -278,10 +289,10 @@ class LibrarySync(
             throw e
         } catch (e: Exception) {
             android.util.Log.w("AmpSync", "sync failed: ${e::class.simpleName}: ${e.message}", e)
-            // The address may simply have moved — see repoint. Only once, so a
-            // dead server can't loop.
+            // The address may simply have moved, under this run or away from
+            // it. Only once, so a dead server can't loop.
             if (repointed == null) {
-                repoint()?.let { moved ->
+                (movedDuringRun(source) ?: repoint())?.let { moved ->
                     runSync(musicFolderId, repointed = moved)
                     return
                 }
