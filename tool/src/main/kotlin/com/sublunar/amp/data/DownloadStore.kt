@@ -155,7 +155,7 @@ class DownloadStore(private val filesDir: File) {
                 }
                 Fetched.Saved(target)
             } catch (e: Exception) {
-                Log.w(TAG, "download failed after ${partial.length()} bytes for $trackId", e)
+                Log.w(TAG, "download failed after ${partial.length()} bytes for $trackId: ${e::class.simpleName}")
                 partial.delete()
                 // No `javaClass` here — the plugin sandbox forbids reflection.
                 Fetched.Failed(e.message ?: "Download failed")

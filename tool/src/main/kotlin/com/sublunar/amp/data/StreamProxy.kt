@@ -286,7 +286,7 @@ class StreamProxy(
         } catch (e: IOException) {
             // Dropping the connection is the answer — see above — but the
             // player only ever learns "network error", so the cause is said here.
-            log("upstream unreachable for ${firstCall.request().url.encodedPath}: $e")
+            log("upstream unreachable for ${firstCall.request().url.encodedPath}: ${e::class.simpleName}")
             remember(group, headOnly, Outcome.Unreachable)
             throw e
         }
@@ -322,7 +322,7 @@ class StreamProxy(
             // A plain thread that lets an exception escape takes the whole
             // process with it. run() catches everything; this is the net under
             // the net.
-            setUncaughtExceptionHandler { _, e -> log("feeder died: $e") }
+            setUncaughtExceptionHandler { _, e -> log("feeder died: ${e::class.simpleName}") }
             start()
         }
         try {
@@ -432,7 +432,7 @@ class StreamProxy(
                 // wait for room in the pipe — and that is the end of the job,
                 // not an error.
             } catch (e: Throwable) {
-                if (!cancelled) log("upstream failed: $e")
+                if (!cancelled) log("upstream failed: ${e::class.simpleName}")
             } finally {
                 runCatching { response.close() }
                 pipe.end(clean)
@@ -495,7 +495,7 @@ class StreamProxy(
                     return null
                 } catch (e: IOException) {
                     if (cancelled) return null
-                    log("upstream broke at $at, pickup #$pickups failed: $e")
+                    log("upstream broke at $at, pickup #$pickups failed: ${e::class.simpleName}")
                     runCatching { response.close() }
                 }
             }

@@ -159,12 +159,12 @@ internal suspend fun askServer(server: MusicServer): Ping {
         // No route, no name, no TLS, no reply: nobody there — unless the
         // wall shut every socket while this was out, which is our doing
         // and not the server's.
-        why = "${e::class.simpleName}: ${e.message}"
+        why = "${e::class.simpleName}"
         if (NetworkGate.slammedSince(askedAtMs)) null.also { why = "our own slam" } else false
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        why = "${e::class.simpleName}: ${e.message}"
+        why = "${e::class.simpleName}"
         answeredBy(e)
     }
     return Ping(answered, why, monotonicMs() - askedAtMs)

@@ -336,7 +336,7 @@ class JellyfinClient(
             "/Items/$songId/InstantMix",
             listOf("userId" to userId, "Fields" to FIELDS, "Limit" to RADIO_LENGTH.toString()),
         ).items.filter { it.type == TRACK_TYPE }.map { it.toTrack() }
-    }.onFailure { android.util.Log.w("AmpRadio", "jellyfin instant mix failed: ${it.message}") }
+    }.onFailure { android.util.Log.w("AmpRadio", "jellyfin instant mix failed: ${it::class.simpleName}") }
         .getOrDefault(emptyList())
 
     /**

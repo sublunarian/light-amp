@@ -288,7 +288,7 @@ class LibrarySync(
             _syncState.update { it.copy(syncing = false) }
             throw e
         } catch (e: Exception) {
-            android.util.Log.w("AmpSync", "sync failed: ${e::class.simpleName}: ${e.message}", e)
+            android.util.Log.w("AmpSync", "sync failed: ${e::class.simpleName}")
             // The address may simply have moved, under this run or away from
             // it. Only once, so a dead server can't loop.
             if (repointed == null) {
@@ -313,7 +313,7 @@ class LibrarySync(
     private suspend fun readStarred(client: MusicServer, folderIds: List<String?>): Starred? =
         runCatching { folderIds.map { client.getStarred(it) }.mergeStarred() }
             .noteOom("sync: favourites")
-            .onFailure { android.util.Log.w("AmpSync", "favourites unread, likes kept: $it") }
+            .onFailure { android.util.Log.w("AmpSync", "favourites unread, likes kept: ${it::class.simpleName}") }
             .getOrNull()
 
     /** The server's albums across [folderIds], and which folder each came from. */
@@ -393,7 +393,7 @@ class LibrarySync(
         if (check == null) return null
         return runCatching { client.songChangesSince(check.mark, folderIds) }
             .noteOom("sync: song changes")
-            .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: $it") }
+            .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: ${it::class.simpleName}") }
             .getOrNull()
     }
 

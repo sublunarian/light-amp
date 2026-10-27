@@ -192,7 +192,7 @@ class Downloader(
 
     private fun park(source: MusicSource, error: String?) {
         _holds.update { it + (source.id to Hold.Parked(error, source)) }
-        Log.i("AmpDl", "parked ${source.name} after ${SourceBackOff.PARK_AFTER_FAILURES} failures (${error ?: "no reason"})")
+        Log.i("AmpDl", "parked ${source.name} after ${SourceBackOff.PARK_AFTER_FAILURES} failures")
     }
 
     /** Clears the back-off either way; true when the source was parked. */
@@ -595,7 +595,7 @@ class Downloader(
             if (!source.mayDownload || source.offlineMode == OfflineMode.MANUAL) continue
             runCatching { topUp(source) }
                 .noteOom("top-up ${source.name}")
-                .onFailure { Log.w("AmpDl", "top-up failed for ${source.name}", it) }
+                .onFailure { Log.w("AmpDl", "top-up failed for ${source.name}: ${it::class.simpleName}") }
         }
     }
 

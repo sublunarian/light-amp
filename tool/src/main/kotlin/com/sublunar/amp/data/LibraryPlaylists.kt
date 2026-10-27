@@ -644,7 +644,7 @@ class LibraryPlaylists(
         val files = phonePlaylists()
         if (files != null) return phone(files)
         return runCatching { serverClient.value?.let { server(it) } ?: false }
-            .onFailure { android.util.Log.w("AmpSync", "$what failed: ${it.message}", it) }
+            .onFailure { android.util.Log.w("AmpSync", "$what failed: ${it::class.simpleName}") }
             .getOrDefault(false)
     }
 
