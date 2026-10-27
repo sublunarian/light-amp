@@ -38,6 +38,7 @@ class SourceRouteTest {
     /** The addresses that answer from wherever the phone is. */
     private var answering = setOf<String>()
     private val probed = mutableListOf<List<String>>()
+    private val quickOnly = mutableListOf<Boolean>()
 
     private var wifi = false
     private var clock = 0L
@@ -46,7 +47,11 @@ class SourceRouteTest {
     private val route = SourceRoute(
         source = { source },
         advertised = { plexTvAsks++; plexTv },
-        firstAnswering = { uris, _ -> probed += uris; uris.firstOrNull { it in answering } },
+        firstAnswering = { uris, _, quick ->
+            probed += uris
+            quickOnly += quick
+            uris.firstOrNull { it in answering }
+        },
         save = { _, _, baseUrl, connections ->
             saved += baseUrl
             source = source?.copy(baseUrl = baseUrl, connections = connections)
@@ -64,6 +69,8 @@ class SourceRouteTest {
         // Every address, in rank: the ranking, not the order they answer in,
         // decides between public and relay.
         assertEquals(listOf(lan, docker, public, relay), probed.single())
+        // Patiently: a slow link is when this matters most.
+        assertEquals(listOf(false), quickOnly)
     }
 
     @Test
@@ -121,8 +128,10 @@ class SourceRouteTest {
         answering = setOf(lan, public)
         assertTrue(route.upgrade())
         assertEquals(lan, source?.baseUrl)
-        // Only what ranks above the address in use is asked.
+        // Only what ranks above the address in use is asked, and only for a
+        // few seconds: on another Wi-Fi it never answers.
         assertEquals(listOf(lan, docker), probed.single())
+        assertEquals(listOf(true), quickOnly)
     }
 
     @Test
@@ -183,7 +192,7 @@ class SourceRouteTest {
     private fun storedRoute(settings: AppSettings, meanwhile: suspend () -> Unit) = SourceRoute(
         source = { settings.activeSource.first() },
         advertised = { null },
-        firstAnswering = { uris, _ -> meanwhile(); uris.firstOrNull { it == public } },
+        firstAnswering = { uris, _, _ -> meanwhile(); uris.firstOrNull { it == public } },
         save = settings::setSourceAddress,
         onLan = { false },
         log = {},

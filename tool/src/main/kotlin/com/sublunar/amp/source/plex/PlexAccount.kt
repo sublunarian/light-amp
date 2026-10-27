@@ -100,13 +100,14 @@ object PlexAccount {
      * in turn each of those has to time out before the next is asked. So all
      * are probed at once with a short limit, the ranking still deciding which
      * wins, and only when none answers that fast (a slow link) do they get a
-     * patient pass in turn.
+     * patient pass in turn — unless [quickOnly].
      */
     suspend fun firstReachable(
         uris: List<String>,
         token: String,
         clientIdentifier: String,
         machineIdentifier: String,
+        quickOnly: Boolean = false,
     ): String? {
         val probe: suspend (String) -> Boolean = { answers(it, token, clientIdentifier, machineIdentifier) }
         val quick = coroutineScope {
@@ -118,6 +119,7 @@ object PlexAccount {
             winner
         }
         if (quick != null) return uris[quick].trimEnd('/')
+        if (quickOnly) return null
         return uris.firstOrNull { probe(it) }?.trimEnd('/')
     }
 

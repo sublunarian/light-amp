@@ -90,8 +90,10 @@ object PlexProvider : SourceProvider {
     override suspend fun advertisedAddresses(source: MusicSource): List<String>? =
         PlexAccount.advertised(source.machineIdentifier, source.token, source.plexClientIdentifier)
 
-    override suspend fun firstAnswering(uris: List<String>, source: MusicSource): String? =
-        PlexAccount.firstReachable(uris, source.token, source.plexClientIdentifier, source.machineIdentifier)
+    override suspend fun firstAnswering(uris: List<String>, source: MusicSource, quickOnly: Boolean): String? =
+        PlexAccount.firstReachable(
+            uris, source.token, source.plexClientIdentifier, source.machineIdentifier, quickOnly = quickOnly,
+        )
 }
 
 /**

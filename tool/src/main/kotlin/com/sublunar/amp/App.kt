@@ -311,7 +311,7 @@ object App {
             route = SourceRoute(
                 source = { settings.activeSource.first() },
                 advertised = { s -> s.provider.advertisedAddresses(s) },
-                firstAnswering = { uris, s -> s.provider.firstAnswering(uris, s) },
+                firstAnswering = { uris, s, quickOnly -> s.provider.firstAnswering(uris, s, quickOnly) },
                 save = settings::setSourceAddress,
                 onLan = { rules.value.let { it.connected && it.wifi } },
             ),

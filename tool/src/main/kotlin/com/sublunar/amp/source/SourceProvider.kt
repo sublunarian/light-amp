@@ -92,8 +92,9 @@ interface SourceProvider {
     /**
      * The first of [uris], in their order, at which [source]'s server answers —
      * null where none does, and for every kind that keeps only the one address.
+     * [quickOnly]: a few seconds' look, with no patient pass for a slow link.
      */
-    suspend fun firstAnswering(uris: List<String>, source: MusicSource): String? = null
+    suspend fun firstAnswering(uris: List<String>, source: MusicSource, quickOnly: Boolean): String? = null
 }
 
 /** What a kind of source can do — read through the matching `supports…` on MusicSource, which is what the screens ask. */
