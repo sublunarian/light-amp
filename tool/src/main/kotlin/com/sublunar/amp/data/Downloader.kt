@@ -217,6 +217,13 @@ class Downloader(
         _holds.getAndUpdate { emptyMap() }.forEach { (id, hold) -> if (hold is Hold.Parked) clearBackOff(id) }
     }
 
+    /**
+     * [sourceId]'s client, for its record as stored this moment. One read earlier can have been
+     * replaced since (a Plex source moving address), and clientFor would close the newer client for it.
+     */
+    private suspend fun clientNow(sourceId: String): MusicServer? =
+        settings.sources.first().firstOrNull { it.id == sourceId }?.let(clientFor)
+
     private fun parkedIds(): List<String> = _holds.value.filterValues { it is Hold.Parked }.keys.toList()
 
     /** Whether [source]'s downloads are still held under the record it has now. */
@@ -526,7 +533,7 @@ class Downloader(
      */
     suspend fun refillMissingLyrics() {
         val source = activeSource()
-        val client = clientFor(source) ?: return
+        val client = clientNow(source.id) ?: return
         val dao = daoFor(source)
         val ids = dao.downloadsMissingLyrics(LYRICS_REFILL_PER_RUN)
         if (ids.isEmpty()) return
@@ -663,7 +670,7 @@ class Downloader(
     /** Every track id in any of [source]'s playlists, as far as they can be known. */
     private suspend fun playlistTrackIdsFor(source: MusicSource): Set<String> {
         if (source.id == activeSource().id) return browsedPlaylistTrackIds()
-        val client = clientFor(source) ?: return emptySet()
+        val client = clientNow(source.id) ?: return emptySet()
         // The list, once, behind the metadata gate a sync waits on.
         val known = backgroundPlaylistTracks[source.id] ?: run {
             if (!metadataAllowed()) return emptySet()
@@ -780,7 +787,7 @@ class Downloader(
                     unpark(id)
                     continue
                 }
-                val client = clientFor(source) ?: continue
+                val client = clientNow(id) ?: continue
                 // Asked again per server: the rule can close part-way.
                 if (!heavyDataAllowed()) continue
                 val ping = askServer(client)
@@ -1014,7 +1021,7 @@ class Downloader(
             currentSource = source.name,
         )
 
-        val client = clientFor(source)
+        val client = clientNow(source.id)
         if (client == null) {
             // Nothing to ask — a record with no server behind it. Back to
             // the front of its own lane, and its source waits its turn like
