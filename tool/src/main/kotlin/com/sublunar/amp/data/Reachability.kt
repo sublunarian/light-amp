@@ -106,22 +106,21 @@ class Reachability(
         val server = client() ?: return null
         val ping = askServer(server)
         log("ping → ${ping.answered ?: "no verdict"} in ${ping.tookMs}ms (${ping.why})")
-        var answered = ping.answered
+        // Published before any rerouting, a miss too: playback acts on the first one.
+        ping.answered?.let { _reachable.value = it }
+        if (ping.answered != false || !reroute || route == null) return ping.answered
         // A LAN address never answers on cellular: another that does is the
         // server answering, and the source moves onto it.
-        if (answered == false && reroute && route != null) {
-            val moved = try {
-                route.recover()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                log("rerouting failed: ${e::class.simpleName}")
-                false
-            }
-            if (moved) answered = true
+        val moved = try {
+            route.recover()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log("rerouting failed: ${e::class.simpleName}")
+            false
         }
-        answered?.let { _reachable.value = it }
-        answered
+        if (moved) _reachable.value = true
+        moved
     }
 
     private fun log(text: String) = Log.i("AmpNet", "reachability: $text")
