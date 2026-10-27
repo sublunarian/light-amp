@@ -67,7 +67,7 @@ class Reachability(
             delay(delayMs)
             var attempt = 0
             while (true) {
-                val verdict = verify()
+                val verdict = verify(reroute = attempt == 0)
                 // Null: the rules forbid asking (Wi-Fi Only on cellular, or no
                 // link). Not an answer about the server — leave what is known
                 // alone; the next network change asks again.
@@ -94,8 +94,11 @@ class Reachability(
     /**
      * Ask once, now. True/false is the server's answer; null means the rules
      * did not allow the question. The state is updated either way.
+     *
+     * [reroute]: a miss also tries the server's other addresses. Once per [check],
+     * not on its retries, so waiting out a server that is off stays a plain ping.
      */
-    suspend fun verify(): Boolean? = pinging.withLock {
+    suspend fun verify(reroute: Boolean = false): Boolean? = pinging.withLock {
         if (!mayAsk()) {
             // The rules forbid asking — Wi-Fi Only on cellular, or no link. A
             // verdict reached on an earlier link says nothing about the next
@@ -112,7 +115,7 @@ class Reachability(
         // Silent at this address isn't silent at every address: a LAN one
         // never answers on cellular. Another that answered is the server
         // answering — the source is saved onto it, which rebuilds the client.
-        if (answered == false && route != null) {
+        if (answered == false && reroute && route != null) {
             val moved = try {
                 route.recover()
             } catch (e: CancellationException) {
