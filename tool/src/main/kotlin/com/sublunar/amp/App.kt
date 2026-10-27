@@ -312,7 +312,7 @@ object App {
                 source = { settings.activeSource.first() },
                 advertised = { s -> s.provider.advertisedAddresses(s) },
                 firstAnswering = { uris, s -> s.provider.firstAnswering(uris, s) },
-                save = { s -> settings.saveSource(s) },
+                save = settings::setSourceAddress,
                 onLan = { rules.value.let { it.connected && it.wifi } },
             ),
         )

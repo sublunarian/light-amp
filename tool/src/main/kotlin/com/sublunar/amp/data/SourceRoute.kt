@@ -38,7 +38,8 @@ class SourceRoute(
     private val advertised: suspend (MusicSource) -> List<String>?,
     /** The best-ranked of these that answers, or null — see SourceProvider.firstAnswering. */
     private val firstAnswering: suspend (List<String>, MusicSource) -> String?,
-    private val save: suspend (MusicSource) -> Unit,
+    /** Writes the address alone, and only onto a record still at `from` — see AppSettings.setSourceAddress. */
+    private val save: suspend (sourceId: String, from: String, baseUrl: String, connections: List<String>) -> Unit,
     /**
      * Whether a LAN address could answer at all. Off Wi-Fi it can't, and
      * probing one is a wait for nothing on every network change.
@@ -64,10 +65,12 @@ class SourceRoute(
         val ordered = fresh ?: current.connections
         if (ordered.isEmpty()) return false
         val found = firstAnswering(ordered, current)
-        val next = current.copy(baseUrl = found ?: current.baseUrl, connections = ordered)
+        val baseUrl = found ?: current.baseUrl
         // The list is kept even when nothing answered: plex.tv's is the newer
         // one, and the next try should start from it.
-        if (next != current) save(next)
+        if (baseUrl != current.baseUrl || ordered != current.connections) {
+            save(current.id, current.baseUrl, baseUrl, ordered)
+        }
         val moved = found != null && found != current.baseUrl
         if (moved) log("moved ${hostOf(current.baseUrl)} → ${hostOf(found)}")
         moved
@@ -86,7 +89,7 @@ class SourceRoute(
         val better = current.connections.takeWhile { it != current.baseUrl }
         if (better.isEmpty() || !onLan()) return false
         val found = firstAnswering(better, current) ?: return false
-        save(current.copy(baseUrl = found))
+        save(current.id, current.baseUrl, found, current.connections)
         log("moved back ${hostOf(current.baseUrl)} → ${hostOf(found)}")
         true
     }

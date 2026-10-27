@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -40,13 +41,16 @@ class SourceRouteTest {
 
     private var wifi = false
     private var clock = 0L
-    private val saved = mutableListOf<MusicSource>()
+    private val saved = mutableListOf<String>()
 
     private val route = SourceRoute(
         source = { source },
         advertised = { plexTvAsks++; plexTv },
         firstAnswering = { uris, _ -> probed += uris; uris.firstOrNull { it in answering } },
-        save = { saved += it; source = it },
+        save = { _, _, baseUrl, connections ->
+            saved += baseUrl
+            source = source?.copy(baseUrl = baseUrl, connections = connections)
+        },
         onLan = { wifi },
         nowMs = { clock },
         log = {},
@@ -173,5 +177,43 @@ class SourceRouteTest {
         source = null
         assertFalse(route.recover())
         assertNull(source)
+    }
+
+    /** A route over the phone's own settings, with [meanwhile] written while the addresses are probed. */
+    private fun storedRoute(settings: AppSettings, meanwhile: suspend () -> Unit) = SourceRoute(
+        source = { settings.activeSource.first() },
+        advertised = { null },
+        firstAnswering = { uris, _ -> meanwhile(); uris.firstOrNull { it == public } },
+        save = settings::setSourceAddress,
+        onLan = { false },
+        log = {},
+    )
+
+    @Test
+    fun `an edit made while the addresses were probed stands`() = runBlocking {
+        val settings = MemoryDataStore().settings()
+        settings.saveSource(source!!)
+        assertTrue(storedRoute(settings) { settings.setStreamFormat("p1", StreamFormat.MP3) }.recover())
+        val stored = settings.sources.first().single()
+        assertEquals(public, stored.baseUrl)
+        assertEquals(StreamFormat.MP3.id, stored.streamFormatId)
+    }
+
+    @Test
+    fun `a source removed while the addresses were probed stays removed`() = runBlocking {
+        val settings = MemoryDataStore().settings()
+        settings.saveSource(source!!)
+        storedRoute(settings) { settings.removeSource("p1") }.recover()
+        assertTrue(settings.sources.first().isEmpty())
+    }
+
+    @Test
+    fun `an address a re-link chose meanwhile is kept`() = runBlocking {
+        val settings = MemoryDataStore().settings()
+        settings.saveSource(source!!)
+        storedRoute(settings) { settings.saveSource(source!!.copy(baseUrl = relay, token = "t2")) }.recover()
+        val stored = settings.sources.first().single()
+        assertEquals(relay, stored.baseUrl)
+        assertEquals("t2", stored.token)
     }
 }
