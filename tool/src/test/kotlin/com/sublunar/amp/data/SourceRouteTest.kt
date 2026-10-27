@@ -5,8 +5,12 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 
 /**
  * Which of a Plex server's addresses the source moves to when the one in use
@@ -118,6 +122,27 @@ class SourceRouteTest {
         clock = SourceRoute.DIRECTORY_EVERY_MS
         route.recover()
         assertEquals(2, plexTvAsks)
+    }
+
+    @Test
+    fun `a plex tv ask cut short doesn't count as the minute's ask`() = runBlocking {
+        val never = CompletableDeferred<Unit>()
+        var asks = 0
+        val cutShort = SourceRoute(
+            source = { source },
+            // As PlexAccount.resources does, the cancellation is swallowed into "no list".
+            advertised = { asks++; if (asks == 1) runCatching { never.await() }; null },
+            firstAnswering = { _, _, _ -> null },
+            save = { _, _, _, _ -> },
+            onLan = { false },
+            nowMs = { clock },
+            log = {},
+        )
+        val first = launch { cutShort.recover() }
+        yield()
+        first.cancelAndJoin()
+        cutShort.recover()
+        assertEquals(2, asks)
     }
 
     @Test

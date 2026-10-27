@@ -1,6 +1,8 @@
 package com.sublunar.amp.data
 
 import java.net.URI
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -74,8 +76,11 @@ class SourceRoute(
         val now = nowMs()
         val last = askedDirectoryMs
         if (last != null && now - last in 0 until DIRECTORY_EVERY_MS) return null
+        val listed = advertised(current)
+        // An ask cut short by a cancelled check doesn't count: the check that replaces it asks again.
+        currentCoroutineContext().ensureActive()
         askedDirectoryMs = now
-        return advertised(current)?.takeIf { it.isNotEmpty() }
+        return listed?.takeIf { it.isNotEmpty() }
     }
 
     private fun hostOf(url: String?): String = url?.let { runCatching { URI(it).host }.getOrNull() } ?: "?"
