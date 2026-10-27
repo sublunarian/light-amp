@@ -175,7 +175,7 @@ class LibrarySync(
     private suspend fun repoint(): MusicServer? {
         val source = settings.activeSource.first() ?: return null
         val moved = source.provider.relocate(source) ?: return null
-        android.util.Log.i("AmpSync", "${source.kind.name.lowercase()} moved: ${source.baseUrl} -> ${moved.baseUrl}")
+        android.util.Log.i("AmpSync", "${source.kind.name.lowercase()} moved: ${hostOf(source.baseUrl)} -> ${hostOf(moved.baseUrl)}")
         settings.saveSource(moved)
         return clientFor(moved)
     }

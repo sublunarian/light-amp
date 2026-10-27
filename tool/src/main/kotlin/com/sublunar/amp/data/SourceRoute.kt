@@ -83,9 +83,10 @@ class SourceRoute(
         return listed?.takeIf { it.isNotEmpty() }
     }
 
-    private fun hostOf(url: String?): String = url?.let { runCatching { URI(it).host }.getOrNull() } ?: "?"
-
     companion object {
         const val DIRECTORY_EVERY_MS = 60_000L
     }
 }
+
+/** A server address as the log names it: the host alone, never the whole URL. */
+internal fun hostOf(url: String?): String = url?.let { runCatching { URI(it).host }.getOrNull() } ?: "?"
