@@ -236,10 +236,6 @@ class PlaybackController(
     /** The queue as it was when shuffle was switched on, to go back to when it's switched off. */
     private var preShuffleOrder: List<Track>? = null
 
-    /** [LinkRules.unmetered] as the rules collector last heard it — see [reresolveQueue]'s includeCurrent. */
-    @Volatile
-    private var unmetered = false
-
     /**
      * The rows of [_queue] the player holds — see [QueueWindow]. Amp keeps
      * the whole queue; the player gets a window of it, slid along as playback
@@ -540,9 +536,10 @@ class PlaybackController(
         // server), heard in the same moment the library and the queue view hear
         // it — see LinkRules.
         scope.launch(onMain) {
+            var wasUnmetered = false
             App.rules.collect { rules ->
-                val lostFreeBytes = unmetered && !rules.unmetered
-                unmetered = rules.unmetered
+                val lostFreeBytes = wasUnmetered && !rules.unmetered
+                wasUnmetered = rules.unmetered
                 // Nothing learnt while streaming wasn't allowed outlives that.
                 // Cleared here, not only when the server answers again:
                 // "reachable" never changes while a ping keeps succeeding.
@@ -2250,11 +2247,10 @@ class PlaybackController(
      * is replaced, so a finished download is one small edit.
      *
      * Except when [includeCurrent] — the bytes just stopped being free — and
-     * the playing item is a stream of a track whose file is on the phone. That
-     * is an upgrade chosen because Wi-Fi made it free, and finishing it would
-     * spend the rest of a song's worth of cellular data on audio already here.
-     * A file seeks natively, so it is picked up at the same position rather
-     * than from the start.
+     * the playing item is a stream of a track whose file is on the phone.
+     * Finishing it would spend cellular data on audio already here, so it moves
+     * to the file at the same position. Paused, it is only cued there: leaving
+     * the house is not a press of play. A parked player is left to [cueIfParked].
      */
     private fun reresolveQueue(includeCurrent: Boolean = false) {
         val p = player ?: return
@@ -2274,33 +2270,17 @@ class PlaybackController(
         settleRestartCopy()
         val playing = window.positionOf(_index.value) ?: return
         val held = queuedSources
-        val wasStreaming = held.getOrNull(playing) is LightAudioSource.UrlSource
-        queuedSources = rebuilt
-        if (includeCurrent && wasStreaming && rebuilt[playing] is LightAudioSource.FileSource) {
-            val current = _index.value
-            scope.launch(Dispatchers.Main.immediate) {
-                // As below: a handle that changed on the way here heard none
-                // of this, so the memo goes back and the ask is made again.
-                if (player !== p) {
-                    if (queuedSources === rebuilt) queuedSources = held
-                    reresolveQueue()
-                    return@launch
-                }
-                // The user may have moved on while this was queued.
-                if (_index.value != current || _queue.value !== tracks) return@launch
-                val at = _positionMs.value
-                android.util.Log.i("AmpNet", "Wi-Fi gone — current track moves to its file at $at")
-                val wanted = p.playWhenReady
-                rebuildQueueAt(p, tracks, current, at)
-                if (wanted) {
-                    markStarting(current)
-                    p.play()
-                } else {
-                    p.pause()
-                }
-            }
+        if (includeCurrent && !parked &&
+            held.getOrNull(playing) is LightAudioSource.UrlSource && rebuilt[playing] is LightAudioSource.FileSource
+        ) {
+            val at = _positionMs.value
+            Log.i("AmpNet", "link now metered — the playing song moves to its file at $at")
+            val wanted = p.playWhenReady
+            rebuildQueueAt(p, tracks, _index.value, at)
+            playOrCue(p, _index.value, wanted)
             return
         }
+        queuedSources = rebuilt
         // The tail first, so the head's positions still hold. A memo out of
         // step with the window, never expected, has its whole side replaced.
         for (side in listOf(playing + 1 until rows.size, 0 until playing)) {
