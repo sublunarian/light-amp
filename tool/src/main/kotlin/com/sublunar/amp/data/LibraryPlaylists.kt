@@ -402,8 +402,8 @@ class LibraryPlaylists(
         if (!metadataAllowed()) return
         val d = daos.value
         awaitPlaylistWrites()
-        val tracks = runCatching { serverClient.value?.getPlaylistTracks(id) }.noteOom("playlist prime $id").getOrNull() ?: return
-        storeMembership(d, id, tracks.map { track -> track.id })
+        val ids = runCatching { serverClient.value?.getPlaylistTrackIds(id) }.noteOom("playlist prime $id").getOrNull() ?: return
+        storeMembership(d, id, ids)
     }
 
     /**
@@ -632,13 +632,11 @@ class LibraryPlaylists(
 
 /**
  * Make playlist [name] holding [ids] on [client]: created with the first
- * [PLAYLIST_IDS_PER_REQUEST] and the rest appended as many at a time. Subsonic
- * and Plex put every id in the URL, and a library-sized queue in one request
- * is one a server, or a proxy in front of it, refuses. A save that stops after
- * the playlist was made says how many songs went in.
+ * [MusicServer.playlistIdsPerRequest] and the rest appended as many at a time.
+ * A save that stops after the playlist was made says how many songs went in.
  */
 internal suspend fun createInChunks(client: MusicServer, name: String, ids: List<String>): WriteResult {
-    val chunks = ids.chunked(PLAYLIST_IDS_PER_REQUEST)
+    val chunks = ids.chunked(client.playlistIdsPerRequest())
     var saved = -1
     val result = attemptWrite {
         val id = client.createPlaylist(name, chunks.firstOrNull().orEmpty())
@@ -656,5 +654,3 @@ internal suspend fun createInChunks(client: MusicServer, name: String, ids: List
         is WriteResult.Refused -> result.copy(reason = "$partly. ${result.reason}")
     }
 }
-
-private const val PLAYLIST_IDS_PER_REQUEST = 100
