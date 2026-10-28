@@ -254,10 +254,10 @@ class LibrarySync(
             logSongFetch(fetch, serverAlbums.size, refillForParser, changes)
 
             // Counted in albums, one request each: labelled as songs it would read
-            // as a library being cut short.
-            _syncState.update { it.copy(phase = "Albums 0/${fetch.albums.size}") }
+            // as a library being cut short. Only the news is counted — see albumsNeedingSongs.
+            _syncState.update { it.copy(phase = albumsPhase(0, fetch.news.size)) }
             val likedSongs = starred?.songIds ?: dao.likedTrackIds().toHashSet()
-            val unread = fetchAndStoreSongs(dao, client, fetch.albums, likedSongs, libraryOf, wrote)
+            val unread = fetchAndStoreSongs(dao, client, fetch.albums, fetch.news, likedSongs, libraryOf, wrote)
             // Settled only once every album it covers is read; otherwise the old
             // mark stays, to be asked again next time.
             if (source != null && reread != null && unread == 0 && reread.next != songCheck) {
@@ -385,6 +385,9 @@ class LibrarySync(
             .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: $it") }
             .getOrNull()
     }
+
+    /** Blank, which reads "Syncing", when there is nothing new to count. */
+    private fun albumsPhase(done: Int, total: Int): String = if (total == 0) "" else "Albums $done/$total"
 
     private fun logSongFetch(fetch: SongFetch, albumCount: Int, refill: Boolean, changes: SongChanges?) {
         android.util.Log.i(
@@ -558,13 +561,15 @@ class LibrarySync(
         dao: LibraryDao,
         client: MusicServer,
         albums: List<Album>,
+        /** The albums the progress counts. */
+        news: Set<String>,
         starredSongIds: Set<String>,
         /** Which library each album came from — see the count write-back below. */
         libraryOf: Map<String, String?>,
         wrote: SyncWrites,
     ): Int = coroutineScope {
         val gate = Semaphore(SYNC_CONCURRENCY)
-        val done = AtomicInteger(0)
+        val newsDone = AtomicInteger(0)
         var unread = 0
         // Fetch concurrently, write in batches: a transaction per album would be
         // an invalidation of the tracks table, and a whole re-read, per album.
@@ -582,9 +587,11 @@ class LibrarySync(
                         } catch (_: Exception) {
                             null
                         }?.map { it.copy(liked = it.id in starredSongIds) }
-                        val n = done.incrementAndGet()
-                        if (n % 10 == 0 || n == albums.size) {
-                            _syncState.update { it.copy(phase = "Albums $n/${albums.size}") }
+                        if (album.id in news) {
+                            val n = newsDone.incrementAndGet()
+                            if (n % 10 == 0 || n == news.size) {
+                                _syncState.update { it.copy(phase = albumsPhase(n, news.size)) }
+                            }
                         }
                         songs
                     }

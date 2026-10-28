@@ -83,5 +83,52 @@ class AlbumsNeedingSongsTest {
 
         assertEquals(listOf("a", "b"), fetch.albums.map { it.id })
         assertEquals(emptyMap(), fetch.reasons)
+        assertEquals(emptySet(), fetch.news)
+    }
+
+    @Test
+    fun `only albums new or changed on the server are news, not Amp's own checks`() {
+        val server = listOf(
+            album("new", 3),
+            album("emptied", 3),
+            album("recounted", 4),
+            album("short", 3),
+            album("walked", 3),
+            album("named", 3),
+        )
+        val cached = listOf("emptied", "short", "walked", "named").associateWith { row(it, 3) } + ("recounted" to row("recounted", 3))
+        val counts = mapOf("recounted" to 3, "short" to 2, "walked" to 3, "named" to 3)
+        val reread = Reread(listOf(album("walked", 3), album("named", 3)), "server says changed, and walk", SongCheck(), serverChanged = setOf("named"))
+
+        val fetch = albumsNeedingSongs(server, cached, counts, reread, refill = false)
+
+        assertEquals(listOf("new", "emptied", "recounted", "short", "walked", "named"), fetch.albums.map { it.id })
+        assertEquals(setOf("new", "emptied", "recounted", "named"), fetch.news)
+    }
+
+    @Test
+    fun `a sync with nothing new has no news to count, however much it checks`() {
+        val server = listOf(album("short", 3), album("a", 3), album("b", 3))
+        val cached = server.map { row(it.id, 3) }.associateBy { it.id }
+        val counts = mapOf("short" to 2, "a" to 3, "b" to 3)
+        val walk = Reread(listOf(album("a", 3), album("b", 3)), "walk", SongCheck())
+
+        val fetch = albumsNeedingSongs(server, cached, counts, walk, refill = false)
+
+        assertEquals(3, fetch.albums.size)
+        assertEquals(emptySet(), fetch.news)
+    }
+
+    @Test
+    fun `an album the server named is news even when it was also short`() {
+        val server = listOf(album("short", 3))
+        val cached = mapOf("short" to row("short", 3))
+        val counts = mapOf("short" to 2)
+        val named = Reread(listOf(album("short", 3)), "server says changed", SongCheck(), serverChanged = setOf("short"))
+
+        val fetch = albumsNeedingSongs(server, cached, counts, named, refill = false)
+
+        assertEquals(listOf("short"), fetch.albums.map { it.id })
+        assertEquals(setOf("short"), fetch.news)
     }
 }

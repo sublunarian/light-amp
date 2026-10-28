@@ -92,7 +92,7 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     /** How the source in use stands, for the line under Sync Now. */
     private fun syncStatus(source: MusicSource, sync: SyncState): String = when {
-        sync.syncing -> sync.phase.ifBlank { "Working" }
+        sync.syncing -> sync.phase.ifBlank { "Syncing" }
         sync.error != null -> sync.error
         // Worth saying every time: new files on the server won't appear until
         // the server itself is set to look for them.
