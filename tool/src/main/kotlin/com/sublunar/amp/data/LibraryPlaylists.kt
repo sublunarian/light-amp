@@ -295,6 +295,23 @@ class LibraryPlaylists(
         } else if (ids.isNotEmpty() && id !in membership.value) {
             membership.update { it + (id to ids) }
         }
+        return viewOf(d, tracks, whole)
+    }
+
+    /**
+     * The playlist as last known, from the songs held for it and the library,
+     * without asking anyone: shown while [playlistView] waits on the server, which
+     * takes half a minute over a whole library's worth of songs. Never whole, so
+     * nothing edits against it. Null when nothing is held.
+     */
+    suspend fun heldPlaylistView(id: String): PlaylistView? {
+        if (phonePlaylists() != null) return null
+        val d = daos.value
+        val ids = membership.value[id]?.takeIf { it.isNotEmpty() } ?: return null
+        return viewOf(d, library.getTracksByIds(ids), whole = false)
+    }
+
+    private suspend fun viewOf(d: LibraryDao?, tracks: List<Track>, whole: Boolean): PlaylistView {
         val inView = inLibraryView(d, tracks)
         // A song from the phone's own folder plays whatever the connection is.
         val downloaded = if (library.offline.value) library.downloadedTrackIds.value else null
@@ -493,7 +510,10 @@ class LibraryPlaylists(
         val result = if (files != null) {
             fileWrite(files.create(name.trim(), trackIds) != null)
         } else {
-            serverClient.value?.let { createInChunks(it, name.trim(), trackIds) } ?: WriteResult.Unreachable(UNREACHABLE)
+            val d = daos.value
+            // What was just saved is what the server holds: kept, the playlist opens at once.
+            serverClient.value?.let { client -> createInChunks(client, name.trim(), trackIds) { storeMembership(d, it, trackIds) } }
+                ?: WriteResult.Unreachable(UNREACHABLE)
         }
         refreshPlaylists()
         said("createPlaylist", result)
@@ -633,13 +653,21 @@ class LibraryPlaylists(
 /**
  * Make playlist [name] holding [ids] on [client]: created with the first
  * [MusicServer.playlistIdsPerRequest] and the rest appended as many at a time.
- * A save that stops after the playlist was made says how many songs went in.
+ * A save that stops after the playlist was made says how many songs went in;
+ * one that lands whole hands the new playlist's id to [onSaved].
  */
-internal suspend fun createInChunks(client: MusicServer, name: String, ids: List<String>): WriteResult {
+internal suspend fun createInChunks(
+    client: MusicServer,
+    name: String,
+    ids: List<String>,
+    onSaved: suspend (String) -> Unit = {},
+): WriteResult {
     val chunks = ids.chunked(client.playlistIdsPerRequest())
     var saved = -1
+    var made: String? = null
     val result = attemptWrite {
         val id = client.createPlaylist(name, chunks.firstOrNull().orEmpty())
+        made = id
         saved = chunks.firstOrNull()?.size ?: 0
         for (chunk in chunks.drop(1)) {
             client.addToPlaylist(id ?: throw RefusedWrite("The server didn't say which playlist it made"), chunk)
@@ -649,7 +677,7 @@ internal suspend fun createInChunks(client: MusicServer, name: String, ids: List
     if (saved < 0) return result
     val partly = "Only $saved of ${ids.size} songs saved"
     return when (result) {
-        WriteResult.Saved -> result
+        WriteResult.Saved -> result.also { made?.let { onSaved(it) } }
         is WriteResult.Unreachable -> result.copy(reason = "$partly. ${result.reason}")
         is WriteResult.Refused -> result.copy(reason = "$partly. ${result.reason}")
     }

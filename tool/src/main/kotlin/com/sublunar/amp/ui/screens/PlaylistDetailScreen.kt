@@ -84,6 +84,10 @@ class PlaylistDetailScreen(
     // Read at load, the same snapshot as the list.
     private val wholeList = mutableStateOf(true)
 
+    // Whether the server's copy has been asked for on this screen; until it has, the
+    // page shows the songs Amp holds for the playlist (see heldPlaylistView).
+    private var fetched = false
+
     // Whether the library is down to its downloads, kept live: a playlist left open
     // when Wi-Fi drops would otherwise keep offering edits that can only fail.
     private val offline = mutableStateOf(false)
@@ -104,9 +108,15 @@ class PlaylistDetailScreen(
             if (entries.value == null) {
                 // Ticks left from an earlier visit name rows of a list read afresh here.
                 Selections.of("playlist:$playlistId").clear()
+                App.playlists.heldPlaylistView(playlistId)?.let { held ->
+                    wholeList.value = false
+                    entries.value = entriesOf(held)
+                }
+            }
+            if (!fetched) {
                 val view = App.playlists.playlistView(playlistId)
-                wholeList.value = view.complete
-                entries.value = entriesOf(view)
+                fetched = true
+                showFetched(view)
             }
         }
         // Collected for the life of the screen: the half of canEdit that can change
@@ -163,6 +173,8 @@ class PlaylistDetailScreen(
                             val shown = remember(list) { list.filter { it.shown } }
                             when {
                                 shown.isNotEmpty() -> TrackList(shown, selection)
+                                // Neither the server's copy nor one held: not known to be empty.
+                                list.isEmpty() && !wholeList.value && !offline.value -> CenteredNote("Couldn't load")
                                 list.isEmpty() || offline.value -> CenteredNote("Empty playlist")
                                 else -> CenteredNote("No songs in this library")
                             }
@@ -180,6 +192,19 @@ class PlaylistDetailScreen(
      * edits to work against but isn't listed.
      */
     private data class PlaylistEntry(val key: String, val track: Track, val shown: Boolean = true)
+
+    /** The server's answer in place of the held list, keeping its rows (and any ticks) when the songs match. */
+    private fun showFetched(view: PlaylistView) {
+        val current = entries.value
+        if (current != null && current.map { it.track.id } == view.all.map { it.id }) {
+            if (view.complete) wholeList.value = true
+            return
+        }
+        // New rows, new keys: what was ticked no longer names anything.
+        if (current != null) Selections.of("playlist:$playlistId").let { if (it.active) it.begin() }
+        wholeList.value = view.complete
+        entries.value = entriesOf(view)
+    }
 
     private fun entriesOf(view: PlaylistView): List<PlaylistEntry> =
         view.all.mapIndexed { i, track -> PlaylistEntry(newEntryKey(), track, view.shown[i]) }
