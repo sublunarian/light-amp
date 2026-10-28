@@ -631,6 +631,34 @@ class LibrarySync(
         )
 
     /**
+     * The periodic job's sync: none while one runs or within the floor of the
+     * last, so a Sync Now isn't repeated minutes later. Awaited, so the job
+     * holds the process while it syncs.
+     */
+    suspend fun syncUnlessRecent() {
+        val state = _syncState.value
+        val why = when {
+            state.syncing -> "one is running"
+            syncedWithin(state.lastSyncedMs, SYNC_MIN_INTERVAL_MS) ->
+                "last one ${(System.currentTimeMillis() - state.lastSyncedMs) / 60_000} min ago"
+            else -> null
+        }
+        if (why != null) {
+            android.util.Log.i("AmpSync", "background sync skipped: $why")
+            return
+        }
+        sync()
+    }
+
+    /**
+     * "in 0 until", not "<": a time in the future (a sync recorded while the
+     * clock was wrong) is not a recent sync, and would stop automatic syncs
+     * until the clock caught up.
+     */
+    private fun syncedWithin(lastSyncedMs: Long, floorMs: Long): Boolean =
+        System.currentTimeMillis() - lastSyncedMs in 0 until floorMs
+
+    /**
      * An automatic sync, unless one is running or ran within the floor. [force]
      * skips the floors, for a library just shown again, which may have nothing
      * to show until it is fetched. Sync Now goes through [scanAndSyncInBackground].
@@ -640,11 +668,8 @@ class LibrarySync(
         // the mutex, so a second call before then would queue a whole second
         // sync behind the first. Callers ask freely (the boot screen on every re-entry).
         if (_syncState.value.syncing) return
-        // And a floor between runs, which the claim doesn't give. "in 0 until",
-        // not "<": a time in the future (a sync recorded while the clock was
-        // wrong) is not a recent sync, and would stop automatic syncs until the
-        // clock caught up.
-        if (!force && System.currentTimeMillis() - _syncState.value.lastSyncedMs in 0 until SYNC_MIN_INTERVAL_MS) return
+        // And a floor between runs, which the claim doesn't give.
+        if (!force && syncedWithin(_syncState.value.lastSyncedMs, SYNC_MIN_INTERVAL_MS)) return
         _syncState.update { it.copy(syncing = true, error = null, phase = "Connecting") }
         syncJob = scope.launch {
             try {
@@ -656,7 +681,7 @@ class LibrarySync(
                     settings.activeSource.first()?.id?.let { settings.lastSyncedMs(it) }
                 }.getOrNull() ?: 0L
                 val floor = if (bulkAllowed()) SYNC_MIN_INTERVAL_MS else SYNC_MIN_INTERVAL_METERED_MS
-                if (!force && System.currentTimeMillis() - last in 0 until floor) {
+                if (!force && syncedWithin(last, floor)) {
                     android.util.Log.i("AmpSync", "launch sync skipped: last one ${(System.currentTimeMillis() - last) / 60_000} min ago")
                     _syncState.update { it.copy(syncing = false, phase = "", lastSyncedMs = last) }
                     // No sync to read the libraries, so they are asked for alone.
@@ -752,7 +777,7 @@ class LibrarySync(
         /** Albums whose songs are written per transaction. */
         private const val SYNC_WRITE_BATCH = 40
 
-        /** How long an automatic sync waits after the last one finished; Sync Now and the background job mean "now". */
+        /** How long an automatic or background sync waits after the last one finished; Sync Now means "now". */
         private const val SYNC_MIN_INTERVAL_MS = 5L * 60 * 1000
 
         /** The same floor on a metered link, where an automatic sync costs the user data and their first minutes. */
