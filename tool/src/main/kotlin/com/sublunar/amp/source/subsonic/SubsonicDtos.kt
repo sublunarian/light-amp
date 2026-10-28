@@ -116,6 +116,23 @@ data class MusicFolderDto(
 @Serializable
 data class SubsonicError(val code: Int = 0, val message: String? = null)
 
+/** getPlaylist read for its song ids alone: nothing else of each entry is kept. */
+@Serializable
+class PlaylistIdsEnvelope(@SerialName("subsonic-response") val response: PlaylistIdsBody? = null)
+
+@Serializable
+class PlaylistIdsBody(
+    val status: String = "failed",
+    val error: SubsonicError? = null,
+    val playlist: PlaylistIds? = null,
+)
+
+@Serializable
+class PlaylistIds(val entry: List<EntryId> = emptyList())
+
+@Serializable
+class EntryId(val id: String)
+
 @Serializable
 data class AlbumListDto(val album: List<AlbumDto> = emptyList())
 

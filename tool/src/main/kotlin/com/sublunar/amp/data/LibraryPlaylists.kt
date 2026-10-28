@@ -288,17 +288,23 @@ class LibraryPlaylists(
         return present(d, id, fetchPlaylistTracks(id))
     }
 
-    /** What a playlist page shows over time: the stored copy at once, then the server's — see [playlistUpdates]. */
+    /**
+     * What a playlist page shows over time: the stored copy at once, then the server's,
+     * which takes half a minute over a whole library's worth of songs — see [playlistUpdates].
+     * Only the server's waits out a save in progress; the stored copy is never editable.
+     */
     fun playlistViews(id: String): Flow<PlaylistView> = flow {
         val d = daos.value
-        awaitPlaylistWrites()
         val phone = phonePlaylists()
         if (phone != null) {
+            awaitPlaylistWrites()
             emit(present(d, id, phonePlaylist(phone, id)))
             return@flow
         }
-        playlistUpdates(stored = { rebuildPlaylist(id) }, server = { askServer(id) })
-            .collect { emit(present(d, id, it)) }
+        playlistUpdates(
+            stored = { rebuildPlaylist(id) },
+            server = { awaitPlaylistWrites(); askServer(id) },
+        ).collect { emit(present(d, id, it)) }
     }
 
     /**
@@ -446,8 +452,8 @@ class LibraryPlaylists(
         if (!metadataAllowed()) return
         val d = daos.value
         awaitPlaylistWrites()
-        val tracks = runCatching { serverClient.value?.getPlaylistTracks(id) }.noteOom("playlist prime $id").getOrNull() ?: return
-        storeMembership(d, id, tracks.map { track -> track.id })
+        val ids = runCatching { serverClient.value?.getPlaylistTrackIds(id) }.noteOom("playlist prime $id").getOrNull() ?: return
+        storeMembership(d, id, ids)
     }
 
     /**
@@ -537,7 +543,10 @@ class LibraryPlaylists(
         val result = if (files != null) {
             fileWrite(files.create(name.trim(), trackIds) != null)
         } else {
-            serverClient.value?.let { createInChunks(it, name.trim(), trackIds) } ?: WriteResult.Unreachable(UNREACHABLE)
+            val d = daos.value
+            // What was just saved is what the server holds: kept, the playlist opens at once.
+            serverClient.value?.let { client -> createInChunks(client, name.trim(), trackIds) { storeMembership(d, it, trackIds) } }
+                ?: WriteResult.Unreachable(UNREACHABLE)
         }
         refreshPlaylists()
         said("createPlaylist", result)
@@ -690,16 +699,22 @@ internal fun playlistUpdates(
 
 /**
  * Make playlist [name] holding [ids] on [client]: created with the first
- * [PLAYLIST_IDS_PER_REQUEST] and the rest appended as many at a time. Subsonic
- * and Plex put every id in the URL, and a library-sized queue in one request
- * is one a server, or a proxy in front of it, refuses. A save that stops after
- * the playlist was made says how many songs went in.
+ * [MusicServer.playlistIdsPerRequest] and the rest appended as many at a time.
+ * A save that stops after the playlist was made says how many songs went in;
+ * one that lands whole hands the new playlist's id to [onSaved].
  */
-internal suspend fun createInChunks(client: MusicServer, name: String, ids: List<String>): WriteResult {
-    val chunks = ids.chunked(PLAYLIST_IDS_PER_REQUEST)
+internal suspend fun createInChunks(
+    client: MusicServer,
+    name: String,
+    ids: List<String>,
+    onSaved: suspend (String) -> Unit = {},
+): WriteResult {
+    val chunks = ids.chunked(client.playlistIdsPerRequest())
     var saved = -1
+    var made: String? = null
     val result = attemptWrite {
         val id = client.createPlaylist(name, chunks.firstOrNull().orEmpty())
+        made = id
         saved = chunks.firstOrNull()?.size ?: 0
         for (chunk in chunks.drop(1)) {
             client.addToPlaylist(id ?: throw RefusedWrite("The server didn't say which playlist it made"), chunk)
@@ -709,10 +724,8 @@ internal suspend fun createInChunks(client: MusicServer, name: String, ids: List
     if (saved < 0) return result
     val partly = "Only $saved of ${ids.size} songs saved"
     return when (result) {
-        WriteResult.Saved -> result
+        WriteResult.Saved -> result.also { made?.let { onSaved(it) } }
         is WriteResult.Unreachable -> result.copy(reason = "$partly. ${result.reason}")
         is WriteResult.Refused -> result.copy(reason = "$partly. ${result.reason}")
     }
 }
-
-private const val PLAYLIST_IDS_PER_REQUEST = 100

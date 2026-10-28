@@ -57,6 +57,7 @@ class SongChangesTest {
         val first = rereadFor(SongChanges.Albums(setOf("a65"), "m2", alsoWalk = true), SongCheck(mark = "m1"), albums, whole = true, bulk = true, nowMs = NOW)!!
         assertEquals(ids(1..30) + "a65", first.albums.map { it.id })
         assertEquals(SongCheck(mark = "m2", walkCursor = "a30"), first.next)
+        assertEquals(setOf("a65"), first.serverChanged)
 
         // The server's mark moves on every sync, mid-walk too, and the walk goes on from its own place.
         val second = rereadFor(SongChanges.Albums(setOf("a03"), "m3", alsoWalk = true), first.next, albums, whole = true, bulk = true, nowMs = NOW)!!
@@ -104,6 +105,8 @@ class SongChangesTest {
             val scan = if (rounds == 0) "scan2" else "scan3"
             val r = rereadFor(SongChanges.Unknown(scan), check, albums, whole = true, bulk = true, nowMs = NOW)!!
             seen += r.albums.map { it.id }
+            // Amp's own check, not news for the sync's progress.
+            assertEquals(emptySet(), r.serverChanged)
             check = r.next
             rounds++
         } while (check.walkCursor != null)

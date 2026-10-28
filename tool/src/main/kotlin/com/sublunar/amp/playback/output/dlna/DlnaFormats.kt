@@ -57,3 +57,23 @@ internal fun nextCastIndex(index: Int, size: Int, repeat: RepeatMode): Int? {
         RepeatMode.OFF -> (index + 1).takeIf { it < size }
     }
 }
+
+/**
+ * Where in the track a renderer's [positionMs] puts a stream that starts at
+ * [offsetMs]. Such a stream, a server transcode from the offset, has no length
+ * of its own, and a renderer can count what it has buffered as played for its
+ * first seconds: the reading is never ahead of [startedAtMs] plus the time it
+ * has been playing since [playingSinceMs], give or take [slackMs].
+ */
+internal fun castReading(
+    positionMs: Long,
+    offsetMs: Long,
+    startedAtMs: Long,
+    playingSinceMs: Long?,
+    nowMs: Long,
+    slackMs: Long,
+): Long {
+    val reading = positionMs + offsetMs
+    if (offsetMs <= 0L || playingSinceMs == null) return reading
+    return minOf(reading, startedAtMs + (nowMs - playingSinceMs) + slackMs)
+}

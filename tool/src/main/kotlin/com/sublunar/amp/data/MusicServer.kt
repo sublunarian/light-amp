@@ -292,6 +292,12 @@ interface MusicServer {
     suspend fun getPlaylists(musicFolderId: String? = null): List<Playlist> = emptyList()
     suspend fun getPlaylistTracks(id: String): List<Track> = emptyList()
 
+    /** Only the ids of [getPlaylistTracks], for a server that can read them more cheaply. */
+    suspend fun getPlaylistTrackIds(id: String): List<String> = getPlaylistTracks(id).map { it.id }
+
+    /** How many song ids one [createPlaylist] or [addToPlaylist] request may carry. */
+    suspend fun playlistIdsPerRequest(): Int = PLAYLIST_IDS_PER_REQUEST
+
     /**
      * Make a playlist and return its id.
      *
@@ -308,7 +314,7 @@ interface MusicServer {
     suspend fun renamePlaylist(id: String, name: String): Unit = throw RefusedWrite()
     suspend fun deletePlaylist(id: String): Unit = throw RefusedWrite()
 
-    /** Append [songIds], in order, in one request. */
+    /** Append [songIds], in order, in one request: at most [playlistIdsPerRequest]. */
     suspend fun addToPlaylist(id: String, songIds: List<String>): Unit = throw RefusedWrite()
 
     /**
@@ -392,3 +398,10 @@ enum class TimelineState {
     STOPPED,
     BUFFERING,
 }
+
+/**
+ * Song ids per playlist write where they go in the URL, as Subsonic's and Plex's
+ * do: a library-sized list in one request is one a server, or a proxy in front
+ * of it, refuses.
+ */
+internal const val PLAYLIST_IDS_PER_REQUEST = 100

@@ -7,8 +7,15 @@ import kotlinx.coroutines.runBlocking
 /** A playlist saved from a long queue goes to the server a hundred songs at a time — see [createInChunks]. */
 class CreateInChunksTest {
 
-    /** A server that names its new playlist [madeId] and refuses the append numbered [failAppend], if any. */
-    private class Server(private val madeId: String? = "p", private val failAppend: Int? = null) : MusicServer {
+    /**
+     * A server that names its new playlist [madeId], refuses the append numbered
+     * [failAppend], if any, and takes [perRequest] ids a request.
+     */
+    private class Server(
+        private val madeId: String? = "p",
+        private val failAppend: Int? = null,
+        private val perRequest: Int = PLAYLIST_IDS_PER_REQUEST,
+    ) : MusicServer {
         val created = mutableListOf<List<String>>()
         val appended = mutableListOf<List<String>>()
 
@@ -21,6 +28,8 @@ class CreateInChunksTest {
             if (appended.size + 1 == failAppend) throw java.io.IOException("reset")
             appended += songIds
         }
+
+        override suspend fun playlistIdsPerRequest() = perRequest
 
         override suspend fun ping() = Unit
         override fun close() = Unit
@@ -79,5 +88,13 @@ class CreateInChunksTest {
                 throw java.io.IOException("reset")
         }
         assertEquals(WriteResult.Unreachable(UNREACHABLE), createInChunks(server, "Mix", ids(250)))
+    }
+
+    @Test
+    fun `a server that takes form posts gets a library in a few requests`() = runBlocking {
+        val server = Server(perRequest = 5_000)
+        assertEquals(WriteResult.Saved, createInChunks(server, "Everything", ids(12_000)))
+        assertEquals(listOf(5_000, 5_000, 2_000), (server.created + server.appended).map { it.size })
+        assertEquals(ids(12_000), (server.created + server.appended).flatten())
     }
 }

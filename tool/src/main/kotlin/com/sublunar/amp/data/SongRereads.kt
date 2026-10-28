@@ -2,8 +2,16 @@ package com.sublunar.amp.data
 
 import com.sublunar.amp.data.db.AlbumEntity
 
-/** The albums a sync reads the songs of; why, counted; and how many had nothing to compare and were left alone. */
-internal class SongFetch(val albums: List<Album>, val reasons: Map<String, Int>, val untouched: Int)
+/**
+ * The albums a sync reads the songs of; why, counted; how many had nothing to
+ * compare and were left alone; and which of them the progress counts ([news]).
+ */
+internal class SongFetch(
+    val albums: List<Album>,
+    val reasons: Map<String, Int>,
+    val untouched: Int,
+    val news: Set<String>,
+)
 
 /**
  * Which of [serverAlbums] a sync reads the songs of: on a [refill] all of them,
@@ -15,6 +23,11 @@ internal class SongFetch(val albums: List<Album>, val reasons: Map<String, Int>,
  *
  * Why each album was chosen is counted for the log: a sync walking the whole
  * library must be told apart from one that has everything to fetch.
+ *
+ * Only albums that are new, changed on the server, or have no songs here are
+ * [SongFetch.news]. The rest are Amp's own checks (a refill, a walk, a first
+ * read to compare from, a cache short of its count), and counted, they would
+ * show a sync with nothing new as one with dozens of albums to fetch.
  */
 internal fun albumsNeedingSongs(
     serverAlbums: List<Album>,
@@ -24,6 +37,7 @@ internal fun albumsNeedingSongs(
     refill: Boolean,
 ): SongFetch {
     val reasons = LinkedHashMap<String, Int>()
+    val news = HashSet<String>()
     var untouched = 0
     val changed = if (refill) serverAlbums else serverAlbums.filter { album ->
         val prev = cached[album.id]
@@ -45,17 +59,22 @@ internal fun albumsNeedingSongs(
                     null
                 }
             prev.songCount != album.songCount -> "server's count changed"
-            cachedCount != album.songCount -> "cache short of the count"
+            cachedCount != album.songCount -> CACHE_SHORT
             else -> null
         }
         if (why != null) reasons[why] = (reasons[why] ?: 0) + 1
+        // An album whose songs never add up to the server's count is short on every sync.
+        if (why != null && why != CACHE_SHORT) news.add(album.id)
         why != null
     }
     val already = changed.mapTo(HashSet()) { it.id }
     val more = reread?.albums.orEmpty().filter { already.add(it.id) }
     if (reread != null && more.isNotEmpty()) reasons[reread.why] = more.size
-    return SongFetch(changed + more, reasons, untouched)
+    reread?.albums?.forEach { if (it.id in reread.serverChanged) news.add(it.id) }
+    return SongFetch(changed + more, reasons, untouched, news)
 }
+
+private const val CACHE_SHORT = "cache short of the count"
 
 /**
  * The next [size] of [ordered] after [after], and where the walk got to — null
@@ -67,8 +86,17 @@ internal fun nextWalk(ordered: List<String>, after: String?, size: Int): Pair<Li
     return batch to if (rest.size > size) batch.last() else null
 }
 
-/** What a sync re-reads beyond new and re-counted albums, why, and the [SongCheck] to keep after. */
-internal class Reread(val albums: List<Album>, val why: String, val next: SongCheck)
+/**
+ * What a sync re-reads beyond new and re-counted albums, why, and the
+ * [SongCheck] to keep after; [serverChanged] are the ones the server named,
+ * the rest a walk or a first read.
+ */
+internal class Reread(
+    val albums: List<Album>,
+    val why: String,
+    val next: SongCheck,
+    val serverChanged: Set<String> = emptySet(),
+)
 
 /**
  * Turns a server's [SongChanges] into albums to re-read.
@@ -101,11 +129,11 @@ internal fun rereadFor(
         is SongChanges.Nothing -> Reread(emptyList(), "", settled(changes.mark))
         is SongChanges.Albums -> {
             val named = albums.filter { it.id in changes.ids }
-            if (!changes.alsoWalk) return Reread(named, "server says changed", settled(changes.mark))
+            if (!changes.alsoWalk) return Reread(named, "server says changed", settled(changes.mark), changes.ids)
             val marked = if (whole) check.copy(mark = changes.mark) else check
-            if (!whole || !bulk) return Reread(named, "server says changed", marked)
+            if (!whole || !bulk) return Reread(named, "server says changed", marked, changes.ids)
             val (picked, cursor) = walkOn(check, albums, nowMs)
-                ?: return Reread(named, "server says changed", marked)
+                ?: return Reread(named, "server says changed", marked, changes.ids)
             val next = if (cursor == null) {
                 marked.copy(walkCursor = null, walkedMs = nowMs)
             } else {
@@ -115,6 +143,7 @@ internal fun rereadFor(
                 albums.filter { it.id in changes.ids || it.id in picked },
                 if (named.isEmpty()) "walk" else "server says changed, and walk",
                 next,
+                changes.ids,
             )
         }
         is SongChanges.Everything -> when {

@@ -16,7 +16,7 @@ val librarySyncJob: LightJobHandler = { _, _ ->
     // system, not the last callback: a callback that missed Wi-Fi arriving is
     // caught here, and the fresh rules restart a download queue held for Wi-Fi.
     if (App.isReady && App.rulesNow().mayMoveHeavyBytes) {
-        runCatching { App.librarySync.sync() }.noteOom("background sync")
+        runCatching { App.librarySync.syncUnlessRecent() }.noteOom("background sync")
         // The one background moment a download server that stopped answering
         // is asked again. Awaited, so the job holds the process while it asks.
         runCatching { App.downloader.wakeParked() }

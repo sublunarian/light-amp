@@ -692,8 +692,8 @@ class Downloader(
                 missing.map { id ->
                     async {
                         gate.withPermit {
-                            id to runCatching { client.getPlaylistTracks(id) }
-                                .noteOom("playlist $id of ${source.name}").getOrNull()?.map { it.id }
+                            id to runCatching { client.getPlaylistTrackIds(id) }
+                                .noteOom("playlist $id of ${source.name}").getOrNull()
                         }
                     }
                 }.awaitAll()

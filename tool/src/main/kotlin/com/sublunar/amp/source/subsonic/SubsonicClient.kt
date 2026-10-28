@@ -6,6 +6,7 @@ import com.sublunar.amp.data.CANT_DO_THAT
 import com.sublunar.amp.data.LikeTarget
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.Lyrics
+import com.sublunar.amp.data.PLAYLIST_IDS_PER_REQUEST
 import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.Playlist
@@ -27,16 +28,24 @@ import com.sublunar.amp.source.ServerHttp
 import com.sublunar.amp.source.queryOf
 import com.sublunar.amp.source.serverJson
 import io.ktor.client.HttpClient
+import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import io.ktor.http.parameters
+import io.ktor.utils.io.jvm.javaio.toInputStream
 import kotlin.random.Random
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -60,6 +69,12 @@ private const val PROBE_ID = "amp-capability-probe"
 
 /** What a Subsonic error says when the server gave no message of its own. */
 internal const val SUBSONIC_REQUEST_FAILED = "Request failed."
+
+/**
+ * Song ids per playlist write sent as a form body: about 150 KB, well under
+ * the 1 MB body a stock nginx in front of the server accepts.
+ */
+private const val FORM_IDS_PER_REQUEST = 5_000
 
 /** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */
 class SubsonicException(
@@ -258,8 +273,17 @@ class SubsonicClient(
         endpoint: String,
         params: List<Pair<String, String>> = emptyList(),
         via: HttpClient = http.bulk,
+        post: Boolean = false,
     ): SubsonicBody {
-        val response = via.get(restUrl(endpoint, params))
+        val response = if (post) {
+            // OpenSubsonic's formPost: the parameters in the body, the login in the URL.
+            via.submitForm(
+                url = "${config.baseUrl}/rest/$endpoint.view?$authQuery",
+                formParameters = parameters { params.forEach { (name, value) -> append(name, value) } },
+            )
+        } else {
+            via.get(restUrl(endpoint, params))
+        }
         if (!response.status.isSuccess()) {
             // A page behind an error status is something in front of the
             // server (a gateway, an auth portal) — not the server's own 500,
@@ -299,15 +323,50 @@ class SubsonicClient(
         }
         val body = parsed.response
             ?: throw SubsonicException("Unexpected response from server.", notSubsonic = true)
-        if (body.status != "ok") {
-            throw SubsonicException(
-                body.error?.message?.takeIf { it.isNotBlank() } ?: SUBSONIC_REQUEST_FAILED,
-                code = body.error?.code ?: 0,
-                envelope = true,
-            )
-        }
+        failedIfNotOk(body.status, body.error)
         return body
     }
+
+    private fun failedIfNotOk(status: String, error: SubsonicError?) {
+        if (status == "ok") return
+        throw SubsonicException(
+            error?.message?.takeIf { it.isNotBlank() } ?: SUBSONIC_REQUEST_FAILED,
+            code = error?.code ?: 0,
+            envelope = true,
+        )
+    }
+
+    /**
+     * getPlaylist, read as it arrives: the one reply with no limit on its size,
+     * and a library-sized playlist held whole as text before decoding ran the
+     * app out of memory.
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    private suspend inline fun <reified T> playlistReply(id: String): T =
+        http.bulk.prepareGet(restUrl("getPlaylist", listOf("id" to id))).execute { response ->
+            if (!response.status.isSuccess()) {
+                throw SubsonicException("Server returned HTTP ${response.status.value}.", response.status.value)
+            }
+            val channel = response.bodyAsChannel()
+            withContext(Dispatchers.IO) {
+                try {
+                    channel.toInputStream().use { serverJson.decodeFromStream<T>(it) }
+                } catch (e: SerializationException) {
+                    throw SubsonicException("Unexpected response from server.", envelope = true, cause = e)
+                }
+            }
+        }
+
+    /**
+     * Whether the server takes a request's parameters as a form body
+     * (OpenSubsonic's formPost), so a big playlist write needn't be cut into
+     * URL-sized pieces. Asked once; no answer is asked again next time.
+     */
+    @Volatile
+    private var postsForms: Boolean? = null
+
+    private suspend fun postsForms(): Boolean =
+        postsForms ?: listsExtension("formPost")?.also { postsForms = it } ?: false
 
     /** Verify credentials by pinging the server. Throws on failure. */
     override suspend fun ping() {
@@ -732,14 +791,22 @@ class SubsonicClient(
 
     /** Songs of a playlist, in order, as full tracks. */
     override suspend fun getPlaylistTracks(id: String): List<Track> {
-        val body = request("getPlaylist", listOf("id" to id))
+        val body = playlistReply<SubsonicEnvelope>(id).response
+            ?: throw SubsonicException("Unexpected response from server.", notSubsonic = true)
+        failedIfNotOk(body.status, body.error)
         return body.playlist?.entry.orEmpty().map { it.toTrack() }
     }
+
+    override suspend fun getPlaylistTrackIds(id: String): List<String> = playlistSongIds(id)
+
+    override suspend fun playlistIdsPerRequest(): Int =
+        if (postsForms()) FORM_IDS_PER_REQUEST else PLAYLIST_IDS_PER_REQUEST
 
     override suspend fun createPlaylist(name: String, songIds: List<String>): String? {
         val body = request(
             "createPlaylist",
             listOf("name" to name.trim()) + songIds.map { "songId" to it },
+            post = songIds.size > PLAYLIST_IDS_PER_REQUEST && postsForms(),
         )
         return body.playlist?.id
     }
@@ -753,7 +820,11 @@ class SubsonicClient(
     }
 
     override suspend fun addToPlaylist(id: String, songIds: List<String>) {
-        request("updatePlaylist", listOf("playlistId" to id) + songIds.map { "songIdToAdd" to it })
+        request(
+            "updatePlaylist",
+            listOf("playlistId" to id) + songIds.map { "songIdToAdd" to it },
+            post = songIds.size > PLAYLIST_IDS_PER_REQUEST && postsForms(),
+        )
     }
 
     /**
@@ -791,8 +862,10 @@ class SubsonicClient(
 
     /** The song ids of a playlist as the server holds it, in order, for an edit to check against. */
     private suspend fun playlistSongIds(id: String): List<String> {
-        val playlist = request("getPlaylist", listOf("id" to id)).playlist
-            ?: throw SubsonicException("Playlist not found.")
+        val body = playlistReply<PlaylistIdsEnvelope>(id).response
+            ?: throw SubsonicException("Unexpected response from server.", notSubsonic = true)
+        failedIfNotOk(body.status, body.error)
+        val playlist = body.playlist ?: throw SubsonicException("Playlist not found.")
         return playlist.entry.map { it.id }
     }
 

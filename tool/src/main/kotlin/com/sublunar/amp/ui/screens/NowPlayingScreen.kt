@@ -258,8 +258,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     // stay legible — see ON_COVER_ALPHA.
                     val dim = if (coverOnly) ON_COVER_ALPHA else DIM_ALPHA
                     if (coverOnly) ControlScrim()
-                    // A new song drops a scrub still held, rather than seeking
-                    // the new song to where the finger lifts.
+                    // A new song starts the line afresh, its drag dropped.
                     key(current.id) { SeekBand(alpha = if (coverOnly) ON_COVER_ALPHA else 1f) }
                     TransportRow()
                     SecondaryRow(current, alpha = dim)
@@ -396,6 +395,10 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val position by App.playback.positionMs.collectAsState()
         val duration by App.playback.durationMs.collectAsState()
         var dragRatio by remember { mutableStateOf<Float?>(null) }
+        // The song a scrub began on. Tearing the line down for the next song
+        // ends a scrub still held as if the finger lifted: that end must not
+        // seek the new song.
+        var dragSong by remember { mutableStateOf<String?>(null) }
 
         val effectiveDuration = if (duration > 0) duration else 1L
         val ratio = dragRatio ?: (position.toFloat() / effectiveDuration).coerceIn(0f, 1f)
@@ -407,10 +410,15 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     .padding(horizontal = px(INSET_PX))
                     .alpha(alpha)
                     .horizontalScrub(
-                        onMove = { dragRatio = it },
+                        onMove = {
+                            if (dragRatio == null) dragSong = App.playback.currentTrack.value?.id
+                            dragRatio = it
+                        },
                         onEnd = { r ->
-                            if (duration > 0) App.playback.seekTo((r * duration).toLong())
+                            val sameSong = dragSong == App.playback.currentTrack.value?.id
+                            if (duration > 0 && sameSong) App.playback.seekTo((r * duration).toLong())
                             dragRatio = null
+                            dragSong = null
                         },
                     ),
                 contentAlignment = Alignment.CenterStart,

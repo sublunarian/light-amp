@@ -179,6 +179,8 @@ class PlaylistDetailScreen(
                             val shown = remember(list) { list.filter { it.shown } }
                             when {
                                 shown.isNotEmpty() -> TrackList(shown, selection)
+                                // Neither the server's copy nor one held: not known to be empty.
+                                list.isEmpty() && !wholeList.value && !offline.value -> CenteredNote("Couldn't load")
                                 list.isEmpty() || offline.value -> CenteredNote("Empty playlist")
                                 else -> CenteredNote("No songs in this library")
                             }
