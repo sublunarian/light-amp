@@ -24,7 +24,7 @@
 - The QR scan for a username and password is offered for Bandcamp only.
 - Leaving Wi-Fi mid-song moves that song to its downloaded copy at the same
   spot, as the songs after it already do (#27, thanks @wsturgiss).
-- Built on Light's SDK 0.2.1.
+- Built on Light's SDK 0.2.2.
 
 ### Fixed
 

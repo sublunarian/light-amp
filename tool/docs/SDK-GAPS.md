@@ -2,9 +2,10 @@
 
 Amp ships today, but parts of it are built around the SDK because there is no
 supported route. Each item below is a workaround we would delete the day an API
-exists. Checked against SDK 0.2.1 (`3a6b204`, 20 Oct 2026), which is where the
+exists. Checked against SDK 0.2.2 (`92b8b86`, 23 Oct 2026), which is where the
 `light-sdk` submodule is pinned. 0.2.0 closed one gap, plain `http://` (see
-Data modes below), and 0.2.1 brought single-item queue edits; the rest stand.
+Data modes below), and 0.2.1 brought single-item queue edits; 0.2.2 only moved
+the Tool Manager library on. The rest stand.
 
 Built the way Light's store builder builds it (a pristine SDK, via
 `scripts/store-build-check.sh`), Amp stops at 45 compile errors on 0.2.1
@@ -339,7 +340,7 @@ what the workaround costs. **These are requests, not blockers.**
 ## Smaller additions
 
 Already written as patches; see [SDK-PATCHES.md](SDK-PATCHES.md), which is the
-authority. None of these is upstream as of 0.2.1 (`3a6b204`). The last column
+authority. None of these is upstream as of 0.2.2 (`92b8b86`). The last column
 says what we mean to do about each: some are worth asking Light for, and some
 Amp could stop needing on its own.
 
