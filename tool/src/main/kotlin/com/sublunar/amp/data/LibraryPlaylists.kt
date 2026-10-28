@@ -5,10 +5,13 @@ import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.sublunar.amp.data.db.PlaylistTrackEntity
 import com.sublunar.amp.source.PhonePlaylists
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -17,6 +20,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -281,7 +285,36 @@ class LibraryPlaylists(
     /** [playlistTracks] plus whether it's the whole playlist — see [PlaylistView]. */
     suspend fun playlistView(id: String): PlaylistView {
         val d = daos.value
-        val (tracks, whole) = fetchPlaylistTracks(id)
+        return present(d, id, fetchPlaylistTracks(id))
+    }
+
+    /**
+     * What a playlist page shows over time: the stored copy at once, then the server's,
+     * which takes half a minute over a whole library's worth of songs — see [playlistUpdates].
+     * Only the server's waits out a save in progress; the stored copy is never editable.
+     */
+    fun playlistViews(id: String): Flow<PlaylistView> = flow {
+        val d = daos.value
+        val phone = phonePlaylists()
+        if (phone != null) {
+            awaitPlaylistWrites()
+            emit(present(d, id, phonePlaylist(phone, id)))
+            return@flow
+        }
+        playlistUpdates(
+            stored = { rebuildPlaylist(id) },
+            server = { awaitPlaylistWrites(); askServer(id) },
+        ).collect { emit(present(d, id, it)) }
+    }
+
+    /**
+     * Keep what [view] says about the playlist, then narrow it to what the
+     * page can show: the chosen library's songs, and only what is on the phone
+     * while the lists are narrowed to downloads. [d] is the database the
+     * caller started with — see [storeMembership].
+     */
+    private suspend fun present(d: LibraryDao?, id: String, view: PlaylistView): PlaylistView {
+        val (tracks, whole) = view
         // Held at full membership, narrowed on the way out: the badge needs what
         // the playlist *is*, the page what it can play.
         val ids = tracks.map { track -> track.id }
@@ -295,23 +328,6 @@ class LibraryPlaylists(
         } else if (ids.isNotEmpty() && id !in membership.value) {
             membership.update { it + (id to ids) }
         }
-        return viewOf(d, tracks, whole)
-    }
-
-    /**
-     * The playlist as last known, from the songs held for it and the library,
-     * without asking anyone: shown while [playlistView] waits on the server, which
-     * takes half a minute over a whole library's worth of songs. Never whole, so
-     * nothing edits against it. Null when nothing is held.
-     */
-    suspend fun heldPlaylistView(id: String): PlaylistView? {
-        if (phonePlaylists() != null) return null
-        val d = daos.value
-        val ids = membership.value[id]?.takeIf { it.isNotEmpty() } ?: return null
-        return viewOf(d, library.getTracksByIds(ids), whole = false)
-    }
-
-    private suspend fun viewOf(d: LibraryDao?, tracks: List<Track>, whole: Boolean): PlaylistView {
         val inView = inLibraryView(d, tracks)
         // A song from the phone's own folder plays whatever the connection is.
         val downloaded = if (library.offline.value) library.downloadedTrackIds.value else null
@@ -348,31 +364,48 @@ class LibraryPlaylists(
         }
     }
 
-    /** A playlist's songs, and whether they are the playlist entire rather than what could be recovered. */
-    private data class FetchedPlaylist(val tracks: List<Track>, val whole: Boolean)
-
-    private suspend fun fetchPlaylistTracks(id: String): FetchedPlaylist {
+    /** The songs, and whether they're the playlist entire rather than what could be recovered. */
+    private suspend fun fetchPlaylistTracks(id: String): PlaylistView {
         awaitPlaylistWrites()
-        val phone = phonePlaylists()
-        if (phone != null) {
-            val ids = phone.trackIds(id)
-            val tracks = library.getTracksByIds(ids)
-            return FetchedPlaylist(tracks, tracks.size == ids.size)
+        phonePlaylists()?.let { return phonePlaylist(it, id) }
+        return askServer(id) ?: rebuildPlaylist(id)
+    }
+
+    private suspend fun phonePlaylist(phone: PhonePlaylists, id: String): PlaylistView {
+        val ids = phone.trackIds(id)
+        val tracks = library.getTracksByIds(ids)
+        return PlaylistView(tracks, tracks.size == ids.size)
+    }
+
+    /** The server's copy, or null when the mode forbids asking, the server is silent, or the request fails. */
+    private suspend fun askServer(id: String): PlaylistView? {
+        // Asked only when the mode allows, as the playlist list is.
+        if (!metadataAllowed()) return null
+        // Nor while the lists are down to downloads: the server was found silent, and
+        // asking again would wait out the connect timeout.
+        if (library.offline.value) return null
+        val client = serverClient.value ?: return null
+        val tracks = try {
+            client.getPlaylistTracks(id)
+        } catch (e: CancellationException) {
+            // The page closing goes on. Otherwise it is the client closed under the
+            // request, its source having moved: a failure like any other.
+            currentCoroutineContext().ensureActive()
+            return null
+        } catch (e: Exception) {
+            return null
         }
-        // Asked only when the mode allows, as the playlist list is; otherwise
-        // straight to the rebuild below, which needs no network.
-        if (metadataAllowed()) {
-            serverClient.value?.let { client ->
-                runCatching { client.getPlaylistTracks(id) }.getOrNull()
-                    ?.let { return FetchedPlaylist(it, whole = true) }
-            }
-        }
+        return PlaylistView(tracks, complete = true)
+    }
+
+    /** A playlist rebuilt from the membership already held, against the local library. */
+    private suspend fun rebuildPlaylist(id: String): PlaylistView {
         // A rebuild is a guess at what the server holds — membership can be stale
         // and the library missing rows — so nothing built here is safe to edit
         // against. Held membership first: [Playlist.trackIds] is usually empty.
         val ids = membership.value[id]
-            ?: (_playlists.value.firstOrNull { it.id == id } ?: return FetchedPlaylist(emptyList(), false)).trackIds
-        return FetchedPlaylist(library.getTracksByIds(ids), whole = false)
+            ?: (_playlists.value.firstOrNull { it.id == id } ?: return PlaylistView(emptyList(), false)).trackIds
+        return PlaylistView(library.getTracksByIds(ids), complete = false)
     }
 
     /**
@@ -608,7 +641,7 @@ class LibraryPlaylists(
         val files = phonePlaylists()
         if (files != null) return phone(files)
         return runCatching { serverClient.value?.let { server(it) } ?: false }
-            .onFailure { android.util.Log.w("AmpSync", "$what failed: ${it.message}", it) }
+            .onFailure { android.util.Log.w("AmpSync", "$what failed: ${it::class.simpleName}") }
             .getOrDefault(false)
     }
 
@@ -648,6 +681,20 @@ class LibraryPlaylists(
         daos.value?.clearAllPlaylistTracks()
         forget()
     }
+}
+
+/**
+ * A playlist page's answers: [stored] at once when it has songs, as it needs no network,
+ * then [server]'s. With neither, the empty stored copy comes once, so the page stops loading.
+ */
+internal fun playlistUpdates(
+    stored: suspend () -> PlaylistView,
+    server: suspend () -> PlaylistView?,
+): Flow<PlaylistView> = flow {
+    val held = stored()
+    if (held.tracks.isNotEmpty()) emit(held)
+    val fresh = server()
+    if (fresh != null) emit(fresh) else if (held.tracks.isEmpty()) emit(held)
 }
 
 /**

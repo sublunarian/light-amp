@@ -159,7 +159,7 @@ object LocalPlaylists : PhonePlaylists {
                 PhoneFiles.ID_PREFIX + path
             }
     }.getOrElse {
-        Log.w(TAG, "couldn't read ${file.name}: ${it.message}")
+        Log.w(TAG, "couldn't read ${file.name}: ${it::class.simpleName}")
         emptyList()
     }
 
@@ -169,7 +169,7 @@ object LocalPlaylists : PhonePlaylists {
         file.writeText((listOf("#EXTM3U") + body).joinToString("\n", postfix = "\n"))
         true
     }.getOrElse {
-        Log.w(TAG, "couldn't write ${file.name}: ${it.message}")
+        Log.w(TAG, "couldn't write ${file.name}: ${it::class.simpleName}")
         false
     }
 }

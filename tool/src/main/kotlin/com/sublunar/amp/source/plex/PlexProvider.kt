@@ -80,10 +80,18 @@ object PlexProvider : SourceProvider {
      */
     override suspend fun relocate(source: MusicSource): MusicSource? {
         if (source.connections.isEmpty()) return null
-        val found = PlexAccount.firstReachable(relocationOrder(source), source.token, source.plexClientIdentifier)
-            ?: return null
+        val found = PlexAccount.firstReachable(
+            relocationOrder(source), source.plexClientIdentifier, source.machineIdentifier,
+        ) ?: return null
         return if (found == source.baseUrl) null else source.copy(baseUrl = found)
     }
+
+    /** What plex.tv lists for this server now — see PlexAccount.advertised. */
+    override suspend fun advertisedAddresses(source: MusicSource): List<String>? =
+        PlexAccount.advertised(source.machineIdentifier, source.token, source.plexClientIdentifier)
+
+    override suspend fun firstAnswering(uris: List<String>, source: MusicSource, quickOnly: Boolean): String? =
+        PlexAccount.firstReachable(uris, source.plexClientIdentifier, source.machineIdentifier, quickOnly = quickOnly)
 }
 
 /**

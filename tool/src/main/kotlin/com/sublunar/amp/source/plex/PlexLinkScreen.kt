@@ -227,7 +227,7 @@ class PlexLinkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
      * work from here.
      */
     private suspend fun prepare(server: PlexResource, accountToken: String): SignInOutcome {
-        val uri = PlexAccount.reachable(server, accountToken, clientId)
+        val uri = PlexAccount.reachable(server, clientId)
             ?: return SignInOutcome.Missed("Couldn't reach ${server.name}.", answered = false)
         val outcome = inspectPlexServer(
             name = server.name,

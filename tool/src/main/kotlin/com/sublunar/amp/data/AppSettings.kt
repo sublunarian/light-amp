@@ -216,6 +216,14 @@ class AppSettings(
     }
 
     /**
+     * Move a source to another of its server's addresses, if it is still at [from]. Only these
+     * fields: anything else written while the addresses were probed stands, a re-link's address too.
+     */
+    suspend fun setSourceAddress(sourceId: String, from: String, baseUrl: String, connections: List<String>) {
+        editSource(sourceId) { if (it.baseUrl == from) it.copy(baseUrl = baseUrl, connections = connections) else it }
+    }
+
+    /**
      * Which of a source's libraries is browsed — null for All Libraries —
      * written exactly as given.
      *

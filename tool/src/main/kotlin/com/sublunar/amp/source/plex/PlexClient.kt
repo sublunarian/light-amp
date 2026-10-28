@@ -147,7 +147,7 @@ class PlexClient(
         detail: String? = null,
     ): Boolean = runCatching { body(path, params, method, via = via) }
         .onFailure { error ->
-            val why = (error as? PlexException)?.status?.let { "server answered $it" } ?: error.message ?: "no answer"
+            val why = (error as? PlexException)?.status?.let { "server answered $it" } ?: "${error::class.simpleName}"
             Log.w(TAG, "${method.value} $path${detail?.let { " ($it)" }.orEmpty()} failed: $why")
         }
         .isSuccess
@@ -370,11 +370,11 @@ class PlexClient(
      */
     override suspend fun getSimilarSongs(songId: String): List<Track> {
         val own = runCatching { stationTracks(songId) }
-            .onFailure { Log.w(RADIO_TAG, "plex track station failed: ${it.message}") }
+            .onFailure { Log.w(RADIO_TAG, "plex track station failed: ${it::class.simpleName}") }
             .getOrDefault(StationAnswer())
         if (own.tracks.isNotEmpty()) return own.tracks.take(RADIO_LENGTH)
         val nearest = runCatching { nearestTracks(songId, RADIO_LENGTH) }
-            .onFailure { Log.w(RADIO_TAG, "plex nearest failed: ${it.message}") }
+            .onFailure { Log.w(RADIO_TAG, "plex nearest failed: ${it::class.simpleName}") }
             .getOrDefault(emptyList())
         if (nearest.isNotEmpty()) return nearest
         val artist = own.grandparentRatingKey ?: return emptyList()
@@ -385,7 +385,7 @@ class PlexClient(
         val merged = LinkedHashMap<String, Track>()
         for (ask in 1..STATION_ASKS) {
             val answer = runCatching { stationTracks(artist) }
-                .onFailure { Log.w(RADIO_TAG, "plex artist station failed: ${it.message}") }
+                .onFailure { Log.w(RADIO_TAG, "plex artist station failed: ${it::class.simpleName}") }
                 .getOrDefault(StationAnswer())
             val before = merged.size
             answer.tracks.forEach { merged.putIfAbsent(it.id, it) }

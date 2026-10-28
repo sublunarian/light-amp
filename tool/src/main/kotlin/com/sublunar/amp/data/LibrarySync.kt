@@ -13,6 +13,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -173,9 +175,22 @@ class LibrarySync(
     private suspend fun repoint(): MusicServer? {
         val source = settings.activeSource.first() ?: return null
         val moved = source.provider.relocate(source) ?: return null
-        android.util.Log.i("AmpSync", "${source.kind.name.lowercase()} moved: ${source.baseUrl} -> ${moved.baseUrl}")
+        android.util.Log.i("AmpSync", "${source.kind.name.lowercase()} moved: ${hostOf(source.baseUrl)} -> ${hostOf(moved.baseUrl)}")
         settings.saveSource(moved)
         return clientFor(moved)
+    }
+
+    /**
+     * The active source's client, if [started]'s record changed under this run, which closes the
+     * run's client: a reachability check moved it to another address (see SourceRoute), where
+     * relocating could pick a worse one, or, with [clientClosed], any change at all.
+     */
+    private suspend fun movedDuringRun(started: MusicSource?, clientClosed: Boolean = false): MusicServer? {
+        val now = settings.activeSource.first() ?: return null
+        if (started == null || now.id != started.id) return null
+        if (!clientClosed && now.baseUrl == started.baseUrl) return null
+        android.util.Log.i("AmpSync", "the source changed during the sync; trying again on its new client")
+        return clientFor(now)
     }
 
     /**
@@ -274,15 +289,22 @@ class LibrarySync(
             onSyncSucceeded()
             rememberLibraries(source, folders)
         } catch (e: CancellationException) {
-            // A switch cancelled this sync; not an error.
+            // A switch cancelled this sync; not an error. With the run still active it is the
+            // run's client closed under it, by a new record for the source: tried again on the new one.
+            if (repointed == null && currentCoroutineContext().isActive) {
+                movedDuringRun(source, clientClosed = true)?.let { replaced ->
+                    runSync(musicFolderId, repointed = replaced)
+                    return
+                }
+            }
             _syncState.update { it.copy(syncing = false) }
             throw e
         } catch (e: Exception) {
-            android.util.Log.w("AmpSync", "sync failed: ${e::class.simpleName}: ${e.message}", e)
-            // The address may simply have moved — see repoint. Only once, so a
-            // dead server can't loop.
+            android.util.Log.w("AmpSync", "sync failed: ${e::class.simpleName}")
+            // The address may simply have moved, under this run or away from
+            // it. Only once, so a dead server can't loop.
             if (repointed == null) {
-                repoint()?.let { moved ->
+                (movedDuringRun(source) ?: repoint())?.let { moved ->
                     runSync(musicFolderId, repointed = moved)
                     return
                 }
@@ -303,7 +325,7 @@ class LibrarySync(
     private suspend fun readStarred(client: MusicServer, folderIds: List<String?>): Starred? =
         runCatching { folderIds.map { client.getStarred(it) }.mergeStarred() }
             .noteOom("sync: favourites")
-            .onFailure { android.util.Log.w("AmpSync", "favourites unread, likes kept: $it") }
+            .onFailure { android.util.Log.w("AmpSync", "favourites unread, likes kept: ${it::class.simpleName}") }
             .getOrNull()
 
     /** The server's albums across [folderIds], and which folder each came from. */
@@ -383,7 +405,7 @@ class LibrarySync(
         if (check == null) return null
         return runCatching { client.songChangesSince(check.mark, folderIds) }
             .noteOom("sync: song changes")
-            .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: $it") }
+            .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: ${it::class.simpleName}") }
             .getOrNull()
     }
 

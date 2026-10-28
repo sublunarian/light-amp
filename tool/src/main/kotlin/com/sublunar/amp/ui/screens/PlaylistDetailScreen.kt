@@ -81,12 +81,12 @@ class PlaylistDetailScreen(
     // PlaylistView). Removing and reordering address the server's copy by position,
     // so neither is offered on a rebuild. Rows another library holds are in [entries]
     // too, just not shown, so a playlist narrowed to one library is still whole.
-    // Read at load, the same snapshot as the list.
+    // Set with each answer, the same snapshot as the list: false for the stored copy.
     private val wholeList = mutableStateOf(true)
 
-    // Whether the server's copy has been asked for on this screen; until it has, the
-    // page shows the songs Amp holds for the playlist (see heldPlaylistView).
-    private var fetched = false
+    // Whether the last answer has come. Until it has, coming back to the page asks again:
+    // leaving it cancelled the wait for the server.
+    private var settled = false
 
     // Whether the library is down to its downloads, kept live: a playlist left open
     // when Wi-Fi drops would otherwise keep offering edits that can only fail.
@@ -102,21 +102,27 @@ class PlaylistDetailScreen(
     private var nextEntryKey = 0
     private fun newEntryKey(): String = "e${nextEntryKey++}"
 
+    // The same songs in the same order keep their rows, so a server that agrees only makes the list editable.
+    private fun show(view: PlaylistView) {
+        wholeList.value = view.complete
+        val current = entries.value
+        if (current != null &&
+            current.map { it.track.id } == view.all.map { it.id } &&
+            current.map { it.shown } == view.shown
+        ) return
+        // New rows, new keys: what was ticked no longer names anything.
+        if (current != null) Selections.of("playlist:$playlistId").let { if (it.active) it.begin() }
+        entries.value = entriesOf(view)
+    }
+
     @Composable
     override fun Content() {
         LaunchedEffect(playlistId) {
-            if (entries.value == null) {
+            if (!settled) {
                 // Ticks left from an earlier visit name rows of a list read afresh here.
-                Selections.of("playlist:$playlistId").clear()
-                App.playlists.heldPlaylistView(playlistId)?.let { held ->
-                    wholeList.value = false
-                    entries.value = entriesOf(held)
-                }
-            }
-            if (!fetched) {
-                val view = App.playlists.playlistView(playlistId)
-                fetched = true
-                showFetched(view)
+                if (entries.value == null) Selections.of("playlist:$playlistId").clear()
+                App.playlists.playlistViews(playlistId).collect { show(it) }
+                settled = true
             }
         }
         // Collected for the life of the screen: the half of canEdit that can change
@@ -192,19 +198,6 @@ class PlaylistDetailScreen(
      * edits to work against but isn't listed.
      */
     private data class PlaylistEntry(val key: String, val track: Track, val shown: Boolean = true)
-
-    /** The server's answer in place of the held list, keeping its rows (and any ticks) when the songs match. */
-    private fun showFetched(view: PlaylistView) {
-        val current = entries.value
-        if (current != null && current.map { it.track.id } == view.all.map { it.id }) {
-            if (view.complete) wholeList.value = true
-            return
-        }
-        // New rows, new keys: what was ticked no longer names anything.
-        if (current != null) Selections.of("playlist:$playlistId").let { if (it.active) it.begin() }
-        wholeList.value = view.complete
-        entries.value = entriesOf(view)
-    }
 
     private fun entriesOf(view: PlaylistView): List<PlaylistEntry> =
         view.all.mapIndexed { i, track -> PlaylistEntry(newEntryKey(), track, view.shown[i]) }

@@ -26,6 +26,7 @@ import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.PlaylistSort
 import com.sublunar.amp.data.Reachability
 import com.sublunar.amp.data.SongSort
+import com.sublunar.amp.data.SourceRoute
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.TagFilter
 import com.sublunar.amp.data.Track
@@ -303,7 +304,18 @@ object App {
 
     /** Whether the browsed server is answering — see [Reachability]. */
     val reachability: Reachability by lazy {
-        Reachability(scope, client = { serverClient.value }, mayAsk = { rules.value.mayTalkToServer })
+        Reachability(
+            scope,
+            client = { serverClient.value },
+            mayAsk = { rules.value.mayTalkToServer },
+            route = SourceRoute(
+                source = { settings.activeSource.first() },
+                advertised = { s -> s.provider.advertisedAddresses(s) },
+                firstAnswering = { uris, s, quickOnly -> s.provider.firstAnswering(uris, s, quickOnly) },
+                save = settings::setSourceAddress,
+                onLan = { rules.value.let { it.connected && it.wifi } },
+            ),
+        )
     }
 
     /**

@@ -79,8 +79,18 @@ object PlexAccount {
             .distinct()
 
     /** The best-ranked of [resource]'s addresses that answers. */
-    suspend fun reachable(resource: PlexResource, token: String, clientIdentifier: String): String? =
-        firstReachable(candidates(resource), resource.accessToken ?: token, clientIdentifier)
+    suspend fun reachable(resource: PlexResource, clientIdentifier: String): String? =
+        firstReachable(candidates(resource), clientIdentifier, resource.clientIdentifier)
+
+    /**
+     * One server's addresses as plex.tv lists them now, best first — null when
+     * plex.tv couldn't be asked or doesn't list it. Asked by SourceRoute.
+     */
+    suspend fun advertised(machineIdentifier: String, token: String, clientIdentifier: String): List<String>? =
+        resources(token, clientIdentifier)
+            .firstOrNull { it.clientIdentifier == machineIdentifier }
+            ?.let(::candidates)
+            ?.takeIf { it.isNotEmpty() }
 
     /**
      * The best-ranked of [uris] that answers.
@@ -89,27 +99,49 @@ object PlexAccount {
      * in turn each of those has to time out before the next is asked. So all
      * are probed at once with a short limit, the ranking still deciding which
      * wins, and only when none answers that fast (a slow link) do they get a
-     * patient pass in turn.
+     * patient pass in turn — unless [quickOnly].
      */
-    suspend fun firstReachable(uris: List<String>, token: String, clientIdentifier: String): String? {
+    suspend fun firstReachable(
+        uris: List<String>,
+        clientIdentifier: String,
+        machineIdentifier: String,
+        quickOnly: Boolean = false,
+    ): String? {
+        val probe: suspend (String) -> Boolean = { answers(it, clientIdentifier, machineIdentifier) }
         val quick = coroutineScope {
             val probes = uris.map { uri ->
-                async { withTimeoutOrNull(QUICK_PROBE_MS) { answers(uri, token, clientIdentifier) } == true }
+                async { withTimeoutOrNull(QUICK_PROBE_MS) { probe(uri) } == true }
             }
             val winner = uris.indices.firstOrNull { probes[it].await() }
             probes.forEach { it.cancel() }
             winner
         }
         if (quick != null) return uris[quick].trimEnd('/')
-        return uris.firstOrNull { answers(it, token, clientIdentifier) }?.trimEnd('/')
+        if (quickOnly) return null
+        return uris.firstOrNull { probe(it) }?.trimEnd('/')
     }
 
-    private suspend fun answers(uri: String, token: String, clientIdentifier: String): Boolean = runCatching {
-        http.get(uri.trimEnd('/') + "/identity") {
-            plexHeaders(clientIdentifier)
-            header("X-Plex-Token", token)
-        }.status.isSuccess()
+    /**
+     * No token: /identity answers without one, and a plain-http address on someone else's network is
+     * whatever device holds it there. The identifier match is what tells the server apart.
+     */
+    private suspend fun answers(
+        uri: String,
+        clientIdentifier: String,
+        machineIdentifier: String,
+    ): Boolean = runCatching {
+        val response = http.get(uri.trimEnd('/') + "/identity") { plexHeaders(clientIdentifier) }
+        response.status.isSuccess() && isIdentityOf(response.bodyAsText(), machineIdentifier)
     }.getOrDefault(false)
+
+    /**
+     * Whether an /identity reply is Plex's, and [machineIdentifier]'s server's when that is
+     * known: a captive portal answers every address with a page of its own.
+     */
+    internal fun isIdentityOf(body: String, machineIdentifier: String): Boolean {
+        val id = runCatching { serverJson.decodeFromString<PlexResponse>(body).container.machineIdentifier }.getOrNull()
+        return !id.isNullOrBlank() && (machineIdentifier.isBlank() || id == machineIdentifier)
+    }
 
     private fun io.ktor.client.request.HttpRequestBuilder.plexHeaders(clientIdentifier: String) {
         header("Accept", "application/json")

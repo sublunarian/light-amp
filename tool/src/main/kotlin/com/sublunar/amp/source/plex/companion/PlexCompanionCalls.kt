@@ -32,7 +32,7 @@ suspend fun PlexClient.companionPlayers(): List<PlexPlayer> = coroutineScope {
     val fromServer = async { runCatching { serverPlayers() }.getOrDefault(emptyList()) }
     val fromAccount = async {
         runCatching { accountPlayers() }.getOrElse {
-            Log.i(TAG, "plex.tv device list failed: ${it.message}")
+            Log.i(TAG, "plex.tv device list failed: ${it::class.simpleName}")
             emptyList()
         }
     }
@@ -128,7 +128,7 @@ suspend fun PlexClient.createPlayQueue(trackIds: List<String>, startId: String, 
         if (it == null) Log.i(TAG, "the server made a queue with no id in it")
     }
 }.getOrElse {
-    Log.i(TAG, "play queue refused: ${it.message}")
+    Log.i(TAG, "play queue refused: ${it::class.simpleName}")
     null
 }
 
@@ -140,7 +140,7 @@ suspend fun PlexClient.createPlayQueue(trackIds: List<String>, startId: String, 
 suspend fun PlexClient.readPlayQueue(queue: PlexQueue, window: Int): PlexQueue? = runCatching {
     queueFrom(companionXml("/playQueues/${queue.id}", listOf("window" to window.toString(), "own" to "1")))
 }.getOrElse {
-    Log.i(TAG, "re-reading the queue failed: ${it.message}")
+    Log.i(TAG, "re-reading the queue failed: ${it::class.simpleName}")
     null
 }
 
@@ -210,7 +210,7 @@ suspend fun PlexClient.playerIsWhoWeThink(target: PlexPlayer): Boolean = runCatc
         if (!it) Log.i(TAG, "${target.directUrl} is $reported, not ${target.id}")
     }
 }.getOrElse {
-    Log.i(TAG, "couldn't check who ${target.name} is: ${it.message}")
+    Log.i(TAG, "couldn't check who ${target.name} is: ${it::class.simpleName}")
     false
 }
 
@@ -251,7 +251,7 @@ suspend fun PlexClient.companionPlay(
     window: Int,
 ): Boolean {
     val server = runCatching { URI(baseUrl) }.getOrElse {
-        Log.i(TAG, "playMedia refused: ${it.message}")
+        Log.i(TAG, "playMedia refused: ${it::class.simpleName}")
         return false
     }
     return playerCommand(
@@ -321,7 +321,7 @@ private suspend fun PlexClient.playerCommand(
     companionXml(path, typed + ("commandID" to commandId.toString()), target = target)
     true
 }.getOrElse {
-    Log.i(TAG, "${path.substringAfterLast('/')} refused: ${it.message}")
+    Log.i(TAG, "${path.substringAfterLast('/')} refused: ${it::class.simpleName}")
     false
 }
 

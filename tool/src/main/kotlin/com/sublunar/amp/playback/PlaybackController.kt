@@ -52,6 +52,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -521,6 +522,14 @@ class PlaybackController(
                 if (state is StreamProxy.State.On) cueIfParked()
             }
         }
+        // So does a new client for the same source (another address, a renewed
+        // token). A source switch empties the queue before it swaps the client.
+        scope.launch(onMain) {
+            serverClient.drop(1).collect {
+                reresolveQueue()
+                cueIfParked()
+            }
+        }
         // Nothing waits on "buffering" for ever. Counted from the start, not from
         // when this collector saw it: a reopen replaces it mid-start.
         scope.launch(onMain) {
@@ -536,12 +545,15 @@ class PlaybackController(
         // server), heard in the same moment the library and the queue view hear
         // it — see LinkRules.
         scope.launch(onMain) {
+            var wasUnmetered = false
             App.rules.collect { rules ->
+                val lostFreeBytes = wasUnmetered && !rules.unmetered
+                wasUnmetered = rules.unmetered
                 // Nothing learnt while streaming wasn't allowed outlives that.
                 // Cleared here, not only when the server answers again:
                 // "reachable" never changes while a ping keeps succeeding.
                 if (rules.mayStream) sources.forgetFailures()
-                reresolveQueue()
+                reresolveQueue(includeCurrent = lostFreeBytes)
                 val active = _active.value
                 if (!rules.mayUseLan) {
                     // A search for a lost speaker waits for the network to come
@@ -559,7 +571,9 @@ class PlaybackController(
                 } else if (lost != null) {
                     rejoinLost()
                 }
-                if (rules.mayStream) {
+                // Leaving free bytes, a parked song with its file on the phone is cued on it,
+                // whatever streaming is allowed: resumeAfterWait says why when it can't.
+                if (rules.mayStream || lostFreeBytes) {
                     cueIfParked()
                 } else if (parked && !parkedOnTheTrackItself) {
                     // Still parked, maybe for another reason now, so the words
@@ -2242,8 +2256,12 @@ class PlaybackController(
      * The playing item is left alone: replacing it would restart the track
      * under the listener. On either side of it only the stretch that changed
      * is replaced, so a finished download is one small edit.
+     *
+     * Except with [includeCurrent], when the bytes just stopped being free: a playing
+     * stream whose file is on the phone moves to the file at the same spot, only cued if
+     * paused, since leaving the house is not a press of play. A parked one is left to [cueIfParked].
      */
-    private fun reresolveQueue() {
+    private fun reresolveQueue(includeCurrent: Boolean = false) {
         val p = player ?: return
         if (!playerSpeaks) return
         // Not until the handle has connected: before then there is no knowing
@@ -2261,6 +2279,16 @@ class PlaybackController(
         settleRestartCopy()
         val playing = window.positionOf(_index.value) ?: return
         val held = queuedSources
+        if (includeCurrent && !parked &&
+            held.getOrNull(playing) is LightAudioSource.UrlSource && rebuilt[playing] is LightAudioSource.FileSource
+        ) {
+            val at = _positionMs.value
+            Log.i("AmpNet", "link now metered — the playing song moves to its file at $at")
+            val wanted = p.playWhenReady
+            rebuildQueueAt(p, tracks, _index.value, at)
+            playOrCue(p, _index.value, wanted)
+            return
+        }
         queuedSources = rebuilt
         // The tail first, so the head's positions still hold. A memo out of
         // step with the window, never expected, has its whole side replaced.

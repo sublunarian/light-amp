@@ -180,7 +180,7 @@ class ArtworkLoader(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            CoverFetch.Failed("${e::class.simpleName}: ${e.message?.take(80)}")
+            CoverFetch.Failed("${e::class.simpleName}")
         }
     }
 

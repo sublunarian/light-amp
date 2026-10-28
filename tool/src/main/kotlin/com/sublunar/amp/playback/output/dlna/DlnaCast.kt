@@ -466,10 +466,10 @@ object DlnaCast {
             }
             if (ok) body.orEmpty() else null
         } catch (e: IOException) {
-            noteFailure(action, controlUrl, e.toString())
+            noteFailure(action, controlUrl, "${e::class.simpleName}")
             null
         } catch (e: IllegalStateException) {
-            noteFailure(action, controlUrl, e.toString())
+            noteFailure(action, controlUrl, "${e::class.simpleName}")
             null
         }
     }

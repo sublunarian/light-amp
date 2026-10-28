@@ -18,17 +18,20 @@ import kotlinx.coroutines.withTimeoutOrNull
  * at the moments the answer can have changed.
  *
  * A failure is a *suspicion*, settled at once by one ping (a single small
- * authenticated request), and every network change asks again; nothing waits
- * for a sync to prove the server back. While the server stays silent the ping
- * is retried a few times with a growing gap and then left alone until
- * something else happens — a network change, a press, a sync — so a server that
- * is simply away costs nothing to keep waiting for.
+ * authenticated request), then for a server with other addresses by a few
+ * seconds' look at those — see [SourceRoute]. Every network change asks again;
+ * nothing waits for a sync to prove the server back. While the server stays
+ * silent the ping alone is retried a few times with a growing gap and then left
+ * alone until something else happens — a network change, a press, a sync — so a
+ * server that is simply away costs next to nothing to keep waiting for.
  */
 class Reachability(
     private val scope: CoroutineScope,
     private val client: () -> MusicServer?,
     /** Whether the rules allow speaking to the server at all — see LinkRules. */
     private val mayAsk: () -> Boolean,
+    /** The server's other addresses, where it has any — see [SourceRoute]. */
+    private val route: SourceRoute? = null,
 ) {
     private val _reachable = MutableStateFlow(true)
     val reachable: StateFlow<Boolean> = _reachable
@@ -61,11 +64,23 @@ class Reachability(
             delay(delayMs)
             var attempt = 0
             while (true) {
-                val verdict = verify()
+                val verdict = verify(reroute = attempt == 0)
                 // Null: the rules forbid asking (Wi-Fi Only on cellular, or no
                 // link). Not an answer about the server — leave what is known
                 // alone; the next network change asks again.
-                if (verdict == null || verdict) return@launch
+                if (verdict == null) return@launch
+                if (verdict) {
+                    // Answering, but perhaps not at its best address: a check
+                    // follows every network change, when the LAN one can come back.
+                    try {
+                        route?.upgrade()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        log("moving back failed: ${e::class.simpleName}")
+                    }
+                    return@launch
+                }
                 val wait = RETRY_MS.getOrNull(attempt++) ?: return@launch
                 delay(wait)
             }
@@ -75,8 +90,11 @@ class Reachability(
     /**
      * Ask once, now. True/false is the server's answer; null means the rules
      * did not allow the question. The state is updated either way.
+     *
+     * [reroute]: a miss also tries the server's other addresses. Once per [check],
+     * not on its retries, so waiting out a server that is off stays a plain ping.
      */
-    suspend fun verify(): Boolean? = pinging.withLock {
+    suspend fun verify(reroute: Boolean = false): Boolean? = pinging.withLock {
         if (!mayAsk()) {
             // The rules forbid asking — Wi-Fi Only on cellular, or no link. A
             // verdict reached on an earlier link says nothing about the next
@@ -89,8 +107,21 @@ class Reachability(
         val server = client() ?: return null
         val ping = askServer(server)
         log("ping → ${ping.answered ?: "no verdict"} in ${ping.tookMs}ms (${ping.why})")
+        // Published before any rerouting, a miss too: playback acts on the first one.
         ping.answered?.let { _reachable.value = it }
-        ping.answered
+        if (ping.answered != false || !reroute || route == null) return ping.answered
+        // A LAN address never answers on cellular: another that does is the
+        // server answering, and the source moves onto it.
+        val answered = try {
+            route.recover()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log("rerouting failed: ${e::class.simpleName}")
+            false
+        }
+        if (answered) _reachable.value = true
+        answered
     }
 
     private fun log(text: String) = Log.i("AmpNet", "reachability: $text")
@@ -128,12 +159,12 @@ internal suspend fun askServer(server: MusicServer): Ping {
         // No route, no name, no TLS, no reply: nobody there — unless the
         // wall shut every socket while this was out, which is our doing
         // and not the server's.
-        why = "${e::class.simpleName}: ${e.message}"
+        why = "${e::class.simpleName}"
         if (NetworkGate.slammedSince(askedAtMs)) null.also { why = "our own slam" } else false
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        why = "${e::class.simpleName}: ${e.message}"
+        why = "${e::class.simpleName}"
         answeredBy(e)
     }
     return Ping(answered, why, monotonicMs() - askedAtMs)

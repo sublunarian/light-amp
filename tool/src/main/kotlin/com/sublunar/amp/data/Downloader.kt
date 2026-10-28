@@ -192,7 +192,7 @@ class Downloader(
 
     private fun park(source: MusicSource, error: String?) {
         _holds.update { it + (source.id to Hold.Parked(error, source)) }
-        Log.i("AmpDl", "parked ${source.name} after ${SourceBackOff.PARK_AFTER_FAILURES} failures (${error ?: "no reason"})")
+        Log.i("AmpDl", "parked ${source.name} after ${SourceBackOff.PARK_AFTER_FAILURES} failures")
     }
 
     /** Clears the back-off either way; true when the source was parked. */
@@ -216,6 +216,13 @@ class Downloader(
     private fun liftAll() {
         _holds.getAndUpdate { emptyMap() }.forEach { (id, hold) -> if (hold is Hold.Parked) clearBackOff(id) }
     }
+
+    /**
+     * [sourceId]'s client, for its record as stored this moment. One read earlier can have been
+     * replaced since (a Plex source moving address), and clientFor would close the newer client for it.
+     */
+    private suspend fun clientNow(sourceId: String): MusicServer? =
+        settings.sources.first().firstOrNull { it.id == sourceId }?.let(clientFor)
 
     private fun parkedIds(): List<String> = _holds.value.filterValues { it is Hold.Parked }.keys.toList()
 
@@ -526,7 +533,7 @@ class Downloader(
      */
     suspend fun refillMissingLyrics() {
         val source = activeSource()
-        val client = clientFor(source) ?: return
+        val client = clientNow(source.id) ?: return
         val dao = daoFor(source)
         val ids = dao.downloadsMissingLyrics(LYRICS_REFILL_PER_RUN)
         if (ids.isEmpty()) return
@@ -595,7 +602,7 @@ class Downloader(
             if (!source.mayDownload || source.offlineMode == OfflineMode.MANUAL) continue
             runCatching { topUp(source) }
                 .noteOom("top-up ${source.name}")
-                .onFailure { Log.w("AmpDl", "top-up failed for ${source.name}", it) }
+                .onFailure { Log.w("AmpDl", "top-up failed for ${source.name}: ${it::class.simpleName}") }
         }
     }
 
@@ -663,7 +670,7 @@ class Downloader(
     /** Every track id in any of [source]'s playlists, as far as they can be known. */
     private suspend fun playlistTrackIdsFor(source: MusicSource): Set<String> {
         if (source.id == activeSource().id) return browsedPlaylistTrackIds()
-        val client = clientFor(source) ?: return emptySet()
+        val client = clientNow(source.id) ?: return emptySet()
         // The list, once, behind the metadata gate a sync waits on.
         val known = backgroundPlaylistTracks[source.id] ?: run {
             if (!metadataAllowed()) return emptySet()
@@ -780,7 +787,7 @@ class Downloader(
                     unpark(id)
                     continue
                 }
-                val client = clientFor(source) ?: continue
+                val client = clientNow(id) ?: continue
                 // Asked again per server: the rule can close part-way.
                 if (!heavyDataAllowed()) continue
                 val ping = askServer(client)
@@ -1014,7 +1021,7 @@ class Downloader(
             currentSource = source.name,
         )
 
-        val client = clientFor(source)
+        val client = clientNow(source.id)
         if (client == null) {
             // Nothing to ask — a record with no server behind it. Back to
             // the front of its own lane, and its source waits its turn like
@@ -1089,7 +1096,7 @@ class Downloader(
         if (format == StreamFormat.MP3) {
             runCatching { withContext(Dispatchers.IO) { Mp3VbrIndex.index(file) } }
                 .onSuccess { if (it is Mp3VbrIndex.Outcome.Written) Log.i("AmpMp3", "indexed ${file.name}: ${it.frames} frames") }
-                .onFailure { Log.w("AmpMp3", "couldn't index ${file.name}", it) }
+                .onFailure { Log.w("AmpMp3", "couldn't index ${file.name}: ${it::class.simpleName}") }
         }
         // The sleeve is part of having the record offline — this
         // source's sleeve, from this source's server.
