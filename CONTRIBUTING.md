@@ -10,7 +10,7 @@ itself upstream rather than here:
 
 | | |
 |---|---|
-| `tool/` | Amp. Issues and pull requests belong here. |
+| `tool/` | Amp. Issues belong here. |
 | `light-sdk/` | Light's SDK, pristine. See [their contributing guide](https://github.com/lightphone/light-sdk/blob/main/CONTRIBUTING.md) and file upstream. |
 | `light-sdk-patch/` | Amp's changes to the SDK, one patch file per area — the build applies them to the submodule automatically. [Its README](light-sdk-patch/README.md) says what each one is. |
 
@@ -24,10 +24,25 @@ grep -rn "SDK PATCH\|SPIKE\|TEMPORARY" light-sdk/sdk tool/src
 
 If a change isn't marked, it isn't ours.
 
-## Before opening a pull request
+## Issues, not pull requests
 
-- **Say what problem it solves.** A bug report with reproduction steps is worth
-  more than a patch without one.
+Amp takes bug reports and ideas as **issues**, not pull requests. Reviewing and
+reworking a pull request to fit the rest of the app takes longer than making
+the change here, so unasked-for pull requests will be closed. That isn't a
+judgement of the work.
+
+A good issue is worth a lot:
+
+- **Bugs:** what you did, what you expected, what happened instead, your server
+  (Navidrome, Jellyfin, Plex, other Subsonic, or the phone's own music) and
+  Amp's version from About.
+- **Ideas:** the problem you want solved, rather than the code to solve it.
+
+## If you've been asked for a pull request
+
+Sometimes a change is easier to show than describe, and you'll be asked for one.
+By sending it you agree it is licensed under Amp's [LICENSE](LICENSE). Then:
+
 - **Make it build.** `./gradlew :tool:compileDebugKotlin` at minimum; `./gradlew
   check` if you have touched anything shared.
 - **Run the tests.** `./gradlew :tool:test`. They include the boundary test,
@@ -41,7 +56,7 @@ If a change isn't marked, it isn't ours.
 - **Match the code around you.** Sizes are in the LP3's own pixels via `px()`
   and `pxSp()`, never raw `dp`. Comments explain *why*, not what.
 
-## What is unlikely to be merged
+## What Amp won't do
 
 - Features that only work on one kind of server. A capability a backend cannot
   support should be *absent* on that backend, not present and broken.

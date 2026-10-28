@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Amp's license is now PolyForm Noncommercial 1.0.0: free for anything but
+  commercial use. Light's SDK stays MIT.
 - Playing your whole library plays all of it, not only the 500 songs around
   the one you picked.
 - Recently Added for songs lists the newest albums first, each in track order.

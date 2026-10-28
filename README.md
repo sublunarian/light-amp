@@ -110,10 +110,11 @@ patches to it. A build of your own won't install over a release without
 uninstalling first.
 
 Where things live: [ARCHITECTURE](tool/docs/ARCHITECTURE.md). What Amp still
-needs from Light's SDK: [SDK gaps](tool/docs/SDK-GAPS.md). Pull requests:
-[CONTRIBUTING](CONTRIBUTING.md).
+needs from Light's SDK: [SDK gaps](tool/docs/SDK-GAPS.md). Bug reports and
+ideas: [CONTRIBUTING](CONTRIBUTING.md).
 
 ## License
 
-MIT. The app is © Amp contributors and Light's SDK is © The Light Phone. See
-[LICENSE](LICENSE).
+[PolyForm Noncommercial 1.0.0](LICENSE): free to use, change and share for
+anything but commercial use. Light's SDK stays MIT, © The Light Phone. Amp
+0.8.2 and earlier were released under MIT.
