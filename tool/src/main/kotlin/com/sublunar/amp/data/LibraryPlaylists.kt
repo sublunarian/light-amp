@@ -489,6 +489,7 @@ class LibraryPlaylists(
      * answer how it went, for a caller with more to do after.
      */
     suspend fun createPlaylist(name: String, trackIds: List<String>): WriteResult = playlistMutex.withLock {
+        if (trackIds.size > MAX_PLAYLIST_SONGS) return@withLock said("createPlaylist", WriteResult.Refused(TOO_MANY_SONGS))
         val files = phonePlaylists()
         val result = if (files != null) {
             fileWrite(files.create(name.trim(), trackIds) != null)
@@ -526,6 +527,9 @@ class LibraryPlaylists(
      */
     suspend fun addToPlaylist(id: String, trackId: String): WriteResult = playlistMutex.withLock {
         val d = daos.value
+        if ((membership.value[id]?.size ?: 0) >= MAX_PLAYLIST_SONGS) {
+            return@withLock said("addToPlaylist($id)", WriteResult.Refused(TOO_MANY_SONGS))
+        }
         val result = playlistWrite(
             phone = { it.add(id, trackId) },
             server = { it.addToPlaylist(id, listOf(trackId)) },
@@ -629,6 +633,10 @@ class LibraryPlaylists(
         forget()
     }
 }
+
+/** The most songs Amp puts in a playlist. A whole library's worth (18,500 songs, on Navidrome) never opened. */
+internal const val MAX_PLAYLIST_SONGS = 5_000
+private const val TOO_MANY_SONGS = "Playlists hold up to 5,000 songs"
 
 /**
  * Make playlist [name] holding [ids] on [client]: created with the first

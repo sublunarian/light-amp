@@ -235,7 +235,8 @@ class LibrarySync(
             val starred = readStarred(client, folderIds)
             val cached = dao.allAlbumsSnapshot().associateBy { it.id }
 
-            _syncState.update { it.copy(phase = "Fetching albums") }
+            // Blank, read "Syncing": every sync reads the album index, new albums or not.
+            _syncState.update { it.copy(phase = "") }
             val (serverAlbums, libraryOf) = fetchAlbums(client, folderIds, starred, cached)
             dao.upsertAlbums(serverAlbums.map { it.toEntity(libraryOf[it.id]) })
             if (serverAlbums.isNotEmpty()) wrote.albums = true
