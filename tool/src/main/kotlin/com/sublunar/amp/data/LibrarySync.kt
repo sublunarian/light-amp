@@ -259,11 +259,11 @@ class LibrarySync(
 
             val cachedTrackCounts = dao.trackCountsByAlbum().associate { it.albumId to it.tracks }
             val songCheck = source?.let { settings.songCheck(it.id) }
-            val changes = songChanges(client, songCheck, folderIds)
+            val changes = songChanges(client, songCheck, musicFolderId, folderIds)
             val reread = songCheck?.let {
                 rereadFor(
                     changes, it, serverAlbums,
-                    whole = musicFolderId == null, bulk = bulkAllowed(), nowMs = System.currentTimeMillis(),
+                    library = musicFolderId, bulk = bulkAllowed(), nowMs = System.currentTimeMillis(),
                 )
             }
             val fetch = albumsNeedingSongs(serverAlbums, cached, cachedTrackCounts, reread, refill = refillForParser)
@@ -401,9 +401,14 @@ class LibrarySync(
      * a server finished reading late), as far as the server can say — see
      * songChangesSince. Asked on a refill too: it hands over the first mark.
      */
-    private suspend fun songChanges(client: MusicServer, check: SongCheck?, folderIds: List<String?>): SongChanges? {
+    private suspend fun songChanges(
+        client: MusicServer,
+        check: SongCheck?,
+        library: String?,
+        folderIds: List<String?>,
+    ): SongChanges? {
         if (check == null) return null
-        return runCatching { client.songChangesSince(check.mark, folderIds) }
+        return runCatching { client.songChangesSince(check.markFor(library), folderIds) }
             .noteOom("sync: song changes")
             .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: ${it::class.simpleName}") }
             .getOrNull()

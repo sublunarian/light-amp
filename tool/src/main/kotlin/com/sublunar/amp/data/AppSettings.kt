@@ -628,6 +628,10 @@ internal fun mergeSource(list: List<MusicSource>, source: MusicSource): Pair<Lis
  * [SongChanges.Albums.alsoWalk]) moves [mark] itself on every sync and never
  * sets [walkMark]: its walk catches what the list misses, and has no mark of
  * its own to settle.
+ *
+ * [libraryMarks] are how far a sync of one library alone has read it, past
+ * [mark]: without them, a phone kept on one library would re-read the same
+ * changed albums on every sync until one of every library settled [mark].
  */
 @Serializable
 data class SongCheck(
@@ -635,4 +639,10 @@ data class SongCheck(
     val walkMark: String? = null,
     val walkCursor: String? = null,
     val walkedMs: Long = 0L,
-)
+    val libraryMarks: Map<String, String> = emptyMap(),
+) {
+    /** The mark a sync of [library] asks from; null is every library, which only [mark] covers. */
+    fun markFor(library: String?): String? = library?.let { libraryMarks[it] } ?: mark
+
+    fun withLibraryMark(library: String, mark: String): SongCheck = copy(libraryMarks = libraryMarks + (library to mark))
+}

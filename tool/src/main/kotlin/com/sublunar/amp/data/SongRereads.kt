@@ -101,8 +101,9 @@ internal class Reread(
 /**
  * Turns a server's [SongChanges] into albums to re-read.
  *
- * Only a sync of every library ([whole]) may settle a mark: one scoped to a
- * single library would mark as read the changes in the others. Re-reading
+ * A sync of every library ([library] null) settles [SongCheck.mark]; one of a
+ * single library settles that library's mark alone, as marking the others read
+ * would lose their changes. Re-reading
  * every album, or walking, is bulk — left for a link that allows it ([bulk]),
  * with the check kept where it was so a later sync does it instead.
  *
@@ -119,18 +120,23 @@ internal fun rereadFor(
     changes: SongChanges?,
     check: SongCheck,
     albums: List<Album>,
-    whole: Boolean,
+    library: String?,
     bulk: Boolean,
     nowMs: Long,
 ): Reread? {
-    val settled = { mark: String -> if (whole) SongCheck(mark = mark) else check }
+    val whole = library == null
+    val settled = { mark: String -> if (library == null) SongCheck(mark = mark) else check.withLibraryMark(library, mark) }
     return when (changes) {
         null -> null
         is SongChanges.Nothing -> Reread(emptyList(), "", settled(changes.mark))
         is SongChanges.Albums -> {
             val named = albums.filter { it.id in changes.ids }
             if (!changes.alsoWalk) return Reread(named, "server says changed", settled(changes.mark), changes.ids)
-            val marked = if (whole) check.copy(mark = changes.mark) else check
+            val marked = if (library == null) {
+                check.copy(mark = changes.mark, libraryMarks = emptyMap())
+            } else {
+                check.withLibraryMark(library, changes.mark)
+            }
             if (!whole || !bulk) return Reread(named, "server says changed", marked, changes.ids)
             val (picked, cursor) = walkOn(check, albums, nowMs)
                 ?: return Reread(named, "server says changed", marked, changes.ids)
@@ -150,7 +156,7 @@ internal fun rereadFor(
             !bulk -> null
             // Every album read is a walk gone round, so one that follows rests from here.
             whole -> Reread(albums, "read once, to compare from", SongCheck(mark = changes.mark, walkedMs = nowMs))
-            else -> Reread(albums, "read once, to compare from", check)
+            else -> Reread(albums, "read once, to compare from", settled(changes.mark))
         }
         is SongChanges.Unknown -> {
             if (!whole || !bulk) return null
