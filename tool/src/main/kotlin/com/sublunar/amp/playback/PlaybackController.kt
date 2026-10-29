@@ -2276,12 +2276,16 @@ class PlaybackController(
         // download, and most change nothing.
         val rebuilt = rows.map(sources::source)
         if (rebuilt == queuedSources) return
-        settleRestartCopy()
         val playing = window.positionOf(_index.value) ?: return
         val held = queuedSources
-        if (includeCurrent && !parked &&
+        val moves = includeCurrent && !parked &&
             held.getOrNull(playing) is LightAudioSource.UrlSource && rebuilt[playing] is LightAudioSource.FileSource
-        ) {
+        // The playing row is left as the player holds it, and the memo says so: memoed as its new
+        // answer, a re-resolve that runs first on leaving Wi-Fi leaves the move nothing to move off.
+        val memo = if (moves || held.size != rebuilt.size) rebuilt else rebuilt.toMutableList().also { it[playing] = held[playing] }
+        if (memo == held) return
+        settleRestartCopy()
+        if (moves) {
             val at = _positionMs.value
             Log.i("AmpNet", "link now metered — the playing song moves to its file at $at")
             val wanted = p.playWhenReady
@@ -2289,7 +2293,7 @@ class PlaybackController(
             playOrCue(p, _index.value, wanted)
             return
         }
-        queuedSources = rebuilt
+        queuedSources = memo
         // The tail first, so the head's positions still hold. A memo out of
         // step with the window, never expected, has its whole side replaced.
         for (side in listOf(playing + 1 until rows.size, 0 until playing)) {
