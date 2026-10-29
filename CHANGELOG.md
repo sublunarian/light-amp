@@ -2,51 +2,98 @@
 
 ## Unreleased
 
-### Changed
-
-- Amp's license is now PolyForm Noncommercial 1.0.0: free for anything but
-  commercial use. Light's SDK stays MIT.
-- Playing your whole library plays all of it, not only the 500 songs around
-  the one you picked.
-- Recently Added for songs lists the newest albums first, each in track order.
-- Synced lyrics follow the timing offset their server or file gives them.
-- Every play counts toward your scrobbles, repeats included.
-- Playlists follow the library you pick. On Navidrome a playlist shows that
-  library's songs; on Plex and Jellyfin you see the playlists with songs from
-  it, as in their own apps. Editing never touches another library's songs.
-- While casting to a speaker, your launcher and Bluetooth buttons control it,
-  even with Amp in the background. A speaker left paused for ten minutes
-  hands playback back to the phone.
-- Amp reopens on the tab you last used, or on Now Playing.
-- Playlist and queue songs line up with every other list, and playlists show
-  download marks.
-- Reordering a big Plex or Jellyfin playlist is much faster.
-- Navidrome now sees each play, pause and seek, so its Now Playing stays
-  right.
-- The QR scan for a username and password is offered for Bandcamp only.
-- Leaving Wi-Fi mid-song moves that song to its downloaded copy at the same
-  spot, as the songs after it already do (#27, thanks @wsturgiss).
-- Built on Light's SDK 0.2.2.
-
 ### Fixed
 
+- A failed request no longer leaves your Subsonic or Bandcamp login in Amp's
+  log.
+- A Wi-Fi login page, like a hotel's or café's, no longer counts as your
+  server answering.
 - Playlists open at once with their saved songs, offline too, and no longer
   sit on Loading… when the server can't be reached (#19, #27, thanks
   @wsturgiss).
-- A Plex server linked at home is reached away from home too, without a
-  Sync Now (#27, thanks @wsturgiss).
-- Many casting fixes: seeking, pausing from the speaker's own remote, Wi-Fi
-  dropping out, and switching speaker or source.
+- Switching source offline shows that source's playlists instead of an empty
+  Playlists tab.
 - Seeking with repeat-one on no longer jumps to the first song, and Play Next
   keeps an album in order.
+- Previous on the first song starts it over, and after a seek in a streamed
+  song the next song you pick starts at its beginning.
+- A downloaded song in a queue restored at launch plays from its file, offline
+  too, and a long queue reopens on the song you were playing.
+- Synced lyrics follow the timing offset their server or file gives them.
 - A refused login on a Subsonic server or Bandcamp now says to sign in again.
-- A Navidrome playlist with missing files is no longer edited from Amp, which
-  could remove the wrong song.
-- A song's menu in a playlist could say "Track not found", plus several
-  playlist, sign-in and offline fixes.
-- While casting, the volume buttons control the speaker on every page.
-- Several fixes to settings pages, A–Z jumps, sync notices, sign-in and
-  downloads.
+- Editing a source you aren't using no longer stops playback and clears the
+  library you're using, and switching source mid-load no longer mixes two
+  servers' songs.
+- An interrupted Sync Now no longer blocks later syncs until a restart, and
+  syncing one library re-reads only what changed.
+- Covers of hidden libraries are no longer synced, and opening Artists no
+  longer refetches the whole artist list.
+- Invert Colors and Hide Artwork no longer flash off as a screen opens, and
+  Settings and Offline open without a stall.
+- Very large playlists open without running out of memory on Navidrome and
+  other Subsonic servers, and reorder much faster on Plex and Jellyfin.
+- Amp no longer reorders or removes songs in a Navidrome playlist with
+  missing files, which could remove the wrong song.
+- A Plex server linked at home is reached away from home too, without a
+  Sync Now (#27, thanks @wsturgiss).
+- Looking for your Plex server at its other addresses no longer sends your
+  Plex token to each one.
+- Picking a second speaker stops the first one, and queues that mix formats
+  play on a speaker at Original quality.
+- More casting fixes: seeking, starting mid-song, the next song, Plex songs,
+  the speaker's own remote, Wi-Fi dropping out and the ends of the queue.
+- While casting, the volume buttons control the speaker on every page, and
+  the Output page is quicker and says when speakers need Wi-Fi.
+- A long queue cast to a Plex player keeps playing to the end, the cast no
+  longer ends while the player loads, and each play counts once on Plex.
+- Several fixes to downloads, covers, syncs, A–Z jumps, search, lyrics, the
+  seek line, album and playlist menus, phone playlists and linking Plex.
+
+### Changed
+
+- Amp's license is now PolyForm Noncommercial 1.0.0: free for anything but
+  commercial use. Light's SDK stays MIT, as do Amp 0.8.2 and earlier.
+- Playing your whole library plays all of it, not only the 500 songs around
+  the one you picked, and Save Queue as Playlist can save it whole.
+- Amp reopens on the library tab you last used instead of always on Albums.
+- Playlist and queue songs line up with every other list, and songs in a
+  playlist show their download marks.
+- Every play counts toward your scrobbles, repeats included.
+- Recently Added for songs lists the newest albums first, each in track order.
+- Now Playing shows Buffering… while a seek loads or a speaker starts a song.
+- Leaving Wi-Fi mid-song moves that song to its downloaded copy at the same
+  spot, as the songs after it already do (#27, thanks @wsturgiss).
+- Sync progress counts only new or changed albums, and music on the phone
+  offers Rescan Library instead of Sync Now.
+- Add Source lists music on this phone and Bandcamp first, and the QR scan
+  for a username and password is offered for Bandcamp only.
+- Playlists follow the library you pick: on Navidrome you see and edit only
+  its songs, and Plex and Jellyfin list only the playlists that hold them.
+- Choosing a speaker while paused no longer starts playback, and switching
+  source while casting keeps the speaker.
+- Contributions now come as issues, with pull requests by invitation.
+- Built on Light's SDK 0.2.2.
+
+### Added
+
+- Navidrome and other servers that support it now see each play, pause and
+  seek, so their Now Playing stays right, casting included.
+- While casting to a speaker, your launcher and Bluetooth buttons control it,
+  even with Amp in the background.
+- A speaker left paused for ten minutes hands playback back to the phone.
+
+### Under the hood
+
+- A readability refactor removed about 4,500 lines (11%), mostly outdated
+  comments, so with everything above Amp is only 3% larger than 0.8.2.
+- Files over 1,000 lines went from 8 to 4, the largest from 4,655 lines to
+  3,215, and unit tests from 276 to 593.
+- Each kind of source (Subsonic, Plex, Jellyfin, the phone) and of casting
+  lives in its own part of the code, behind a shared interface for each.
+- Patches to Light's SDK went from 11 to 6, adding about 410 lines instead of
+  1,540: speaker casting and the Wi-Fi Only guard now live in Amp's own code.
+- The compile errors that stop Light's store builder from building Amp went
+  from 164 in September to 46.
 
 ## 0.8.2
 

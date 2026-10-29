@@ -8,8 +8,8 @@ Data modes below), and 0.2.1 brought single-item queue edits; 0.2.2 only moved
 the Tool Manager library on. The rest stand.
 
 Built the way Light's store builder builds it (a pristine SDK, via
-`scripts/store-build-check.sh`), Amp stops at 45 compile errors on 0.2.1
-(checked 23 Oct; three of them follow from one missing `deviceVolume`), every
+`scripts/store-build-check.sh`), Amp stops at 46 compile errors on 0.2.2
+(checked 28 Oct; three of them follow from one missing `deviceVolume`), every
 one a call into our patches. It was 164 on 21 Sep. Most used first:
 `playWhenReady`, `repeatMode`, `replaceRange`, `playbackGain`,
 `deviceVolume`/`setSystemVolume`, `setMediaQueueAt`, `hasRuntimePermission`,
