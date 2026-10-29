@@ -55,16 +55,18 @@ fun rememberArtwork(
     coverArtId: String?,
     sizePx: Int,
     need: ArtworkNeed = ArtworkNeed.BROWSING,
+    /** The source the cover belongs to, where it isn't the browsed one — see ArtworkLoader.load. */
+    fromSource: String? = null,
 ): ImageBitmap? {
     // Gated here, the only way into the artwork cache, so hiding covers also stops
     // fetching and decoding them.
     val hidden by App.hideArtwork.collectAsState()
     // Seeded from the memory cache so a decoded cover is there on the first frame.
-    val cached = if (hidden) null else App.artwork.peek(coverArtId, sizePx)
+    val cached = if (hidden) null else App.artwork.peek(coverArtId, sizePx, fromSource)
     // State keyed on the cover, not held across the change: produceState kept its
     // value across a key change until the producer assigned one, so a cover served
     // from the memory cache left the previous track's sleeve on screen.
-    var image by remember(coverArtId, sizePx, hidden) { mutableStateOf(cached) }
+    var image by remember(coverArtId, sizePx, hidden, fromSource) { mutableStateOf(cached) }
     // Whether the cover may be fetched now is part of the effect's key, so a cover
     // refused once is asked for again when the rules allow it. Read unconditionally
     // (ARCHITECTURE.md on conditional reads).
@@ -73,10 +75,10 @@ fun rememberArtwork(
         ArtworkNeed.FOCUSED -> rules.mayFetchFocusedArt
         ArtworkNeed.BROWSING -> rules.mayMoveHeavyBytes
     }
-    LaunchedEffect(coverArtId, sizePx, hidden, allowed) {
+    LaunchedEffect(coverArtId, sizePx, hidden, allowed, fromSource) {
         if (image != null) return@LaunchedEffect
         if (hidden || coverArtId.isNullOrBlank()) return@LaunchedEffect
-        image = App.artwork.load(coverArtId, sizePx, need)
+        image = App.artwork.load(coverArtId, sizePx, need, fromSource)
         // The cover in front of the user is worth asking for again: on poor
         // reception the first request loses to its song. A list row isn't, the
         // next scroll asks.
@@ -84,7 +86,7 @@ fun rememberArtwork(
             for (wait in FOCUSED_RETRY_MS) {
                 if (image != null) break
                 delay(wait)
-                image = App.artwork.load(coverArtId, sizePx, need)
+                image = App.artwork.load(coverArtId, sizePx, need, fromSource)
             }
         }
     }

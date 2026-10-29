@@ -47,11 +47,12 @@ fun AppArtwork(
     corner: Dp = px(10),
     fallback: ImageVector = AppIcons.MusicNote,
     need: ArtworkNeed = ArtworkNeed.BROWSING,
+    fromSource: String? = null,
 ) {
     // Hidden artwork draws nothing, not even the placeholder tile.
     if (App.hideArtwork.collectAsState().value) return
     val sizePx = with(LocalDensity.current) { size.roundToPx() }
-    val image = rememberArtwork(coverArtId, sizePx, need)
+    val image = rememberArtwork(coverArtId, sizePx, need, fromSource)
     Box(
         modifier = modifier
             .size(size)
@@ -112,6 +113,8 @@ fun TrackRow(
     selected: Boolean? = null,
     /** At the row's end, such as a drag handle. */
     trailing: (@Composable () -> Unit)? = null,
+    /** The source the cover belongs to, where it isn't the browsed one — see ArtworkLoader.load. */
+    coverSource: String? = null,
 ) {
     val artworkHidden = App.hideArtwork.collectAsState().value
     Row(
@@ -126,7 +129,7 @@ fun TrackRow(
             SelectionArtwork(coverArtId, selected)
             Spacer(Modifier.width(px(ROW_GAP_PX)))
         } else if (!artworkHidden) {
-            AppArtwork(coverArtId = coverArtId, size = px(ROW_ART_PX), fallback = fallback)
+            AppArtwork(coverArtId = coverArtId, size = px(ROW_ART_PX), fallback = fallback, fromSource = coverSource)
             // Only beside artwork: with none, the title belongs against the mark.
             Spacer(Modifier.width(px(ROW_GAP_PX)))
         }

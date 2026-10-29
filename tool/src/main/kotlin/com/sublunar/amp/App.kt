@@ -185,7 +185,7 @@ object App {
      * is missing (the cache cleared, no sync since) is left out; its bytes
      * still count in the storage figure, which is read off the disk.
      */
-    suspend fun downloadsBySource(): List<Pair<String, List<Track>>> =
+    suspend fun downloadsBySource(): List<Pair<MusicSource, List<Track>>> =
         settings.sources.first().mapNotNull { source ->
             val dao = databaseFor(source).libraryDao()
             val ids = runCatching { dao.downloadedIds() }
@@ -194,7 +194,7 @@ object App {
             val tracks = runCatching { downloadedTracks(dao, ids) }
                 .noteOom("downloaded tracks of ${source.name}")
                 .getOrDefault(emptyList())
-            if (tracks.isEmpty()) null else source.name to tracks
+            if (tracks.isEmpty()) null else source to tracks
         }
 
     /**

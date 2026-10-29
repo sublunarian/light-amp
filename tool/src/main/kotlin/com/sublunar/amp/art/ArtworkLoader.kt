@@ -67,18 +67,29 @@ class ArtworkLoader(
      * A cover already decoded at this size, without suspending, so a list draws
      * its covers on the *first* frame rather than a frame of placeholders later.
      */
-    fun peek(coverArtId: String?, targetSizePx: Int): ImageBitmap? {
+    fun peek(coverArtId: String?, targetSizePx: Int, fromSource: String? = null): ImageBitmap? {
         if (coverArtId.isNullOrBlank()) return null
-        return memory.get(memoryKey(coverArtId, sizeBucket(targetSizePx)))
+        return memory.get(memoryKey(coverArtId, sizeBucket(targetSizePx), fromSource ?: sourceId()))
     }
 
-    private fun memoryKey(coverArtId: String, bucket: Int) =
-        "${sourceId()}|$coverArtId@$bucket"
+    private fun memoryKey(coverArtId: String, bucket: Int, source: String) = "$source|$coverArtId@$bucket"
 
-    suspend fun load(coverArtId: String?, targetSizePx: Int, need: ArtworkNeed = ArtworkNeed.BROWSING): ImageBitmap? {
+    /**
+     * [coverArtId]'s cover at about [targetSizePx]. [fromSource] is the source it belongs to where
+     * that isn't the one browsed, as on the Downloads page: its id means nothing to the browsed
+     * server, so only the copy filed with its downloads is drawn.
+     */
+    suspend fun load(
+        coverArtId: String?,
+        targetSizePx: Int,
+        need: ArtworkNeed = ArtworkNeed.BROWSING,
+        fromSource: String? = null,
+    ): ImageBitmap? {
         if (coverArtId.isNullOrBlank()) return null
         val bucket = sizeBucket(targetSizePx)
-        val memKey = memoryKey(coverArtId, bucket)
+        val browsed = sourceId()
+        val source = fromSource ?: browsed
+        val memKey = memoryKey(coverArtId, bucket, source)
         memory.get(memKey)?.let { return it }
 
         return withContext(Dispatchers.IO) {
@@ -86,11 +97,11 @@ class ArtworkLoader(
             // again; kept, one bad answer is a cover broken for good. Only
             // those: with no file read, a delete could take one a writer has
             // just put there.
-            val source = sourceId()
             val onDisk = readDisk(source, coverArtId)
             val cached = onDisk?.takeIf { looksLikeImage(it) }
             if (onDisk != null && cached == null) diskFile(source, coverArtId).delete()
-            val bytes = cached ?: fetch(serverClient.value, coverArtId, need)?.also { writeDisk(source, coverArtId, it) }
+            val client = serverClient.value.takeIf { source == browsed }
+            val bytes = cached ?: fetch(client, coverArtId, need)?.also { writeDisk(source, coverArtId, it) }
                 ?: return@withContext null
             val bitmap = decodeDownsampled(bytes, bucket) ?: return@withContext null
             val image = bitmap.asImageBitmap()

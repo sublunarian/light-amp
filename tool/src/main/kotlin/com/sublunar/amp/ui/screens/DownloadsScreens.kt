@@ -76,11 +76,11 @@ class DownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         // source's set is watched too, for a download removed from a library page.
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val progress by App.downloader.progress.collectAsState()
-        var bySource by remember { mutableStateOf<List<Pair<String, List<Track>>>>(emptyList()) }
+        var bySource by remember { mutableStateOf<List<Pair<MusicSource, List<Track>>>>(emptyList()) }
         val sort by App.settings.songSort.state.collectAsState()
         val reversed by App.settings.songSortReversed.state.collectAsState()
         val sorted = remember(bySource, sort, reversed) {
-            bySource.map { (name, list) -> name to sortSongs(list, sort, reversed) }
+            bySource.map { (source, list) -> source to sortSongs(list, sort, reversed) }
         }
         val total = remember(sorted) { sorted.sumOf { it.second.size } }
         val named = sorted.size > 1
@@ -167,14 +167,15 @@ class DownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     // A list to read, not to play from: a track from a source that
                     // isn't the current one would resolve through the wrong server.
                     sorted.forEach { (source, list) ->
-                        if (named) item(key = "src-$source") { SectionLabel(source) }
-                        items(list, key = { "$source-${it.id}" }) { track ->
+                        if (named) item(key = "src-${source.id}") { SectionLabel(source.name) }
+                        items(list, key = { "${source.id}-${it.id}" }) { track ->
                             TrackRow(
                                 title = track.title,
                                 subtitle = track.artist,
                                 coverArtId = track.coverArtId,
                                 downloaded = true,
                                 onClick = {},
+                                coverSource = source.id,
                             )
                         }
                     }
