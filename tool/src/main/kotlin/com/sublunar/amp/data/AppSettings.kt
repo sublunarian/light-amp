@@ -171,9 +171,20 @@ class AppSettings(
     private fun activeOf(list: List<MusicSource>, id: String?): MusicSource? =
         list.firstOrNull { it.id == id } ?: list.firstOrNull()
 
-    /** Selected library (music folder) id; null means all libraries. */
+    /**
+     * The one library being browsed, or null for several or all — for the
+     * server calls that narrow to a single library (a sync, the playlist list).
+     * Several chosen read as null there, and are narrowed on the phone.
+     */
     val libraryId: Stored<String?> =
-        held(activeSource.map { it?.libraryId }.distinctUntilChanged(), activeSource.value?.libraryId)
+        held(
+            activeSource.map { it?.selectedLibraries?.singleOrNull() }.distinctUntilChanged(),
+            activeSource.value?.selectedLibraries?.singleOrNull(),
+        )
+
+    /** The libraries being browsed, or null for all of them — see MusicSource.selectedLibraries. */
+    val librarySelection: Stored<Set<String>?> =
+        held(activeSource.map { it?.selectedLibraries }.distinctUntilChanged(), activeSource.value?.selectedLibraries)
 
     /** Add a source, or update the one it already is — see [mergeSource]. */
     suspend fun saveSource(source: MusicSource): String {
@@ -232,8 +243,14 @@ class AppSettings(
      * handed none, so that re-linking a server doesn't forget the choice: All
      * Libraries *is* none, and would never be saved.
      */
-    suspend fun setSourceLibraryId(sourceId: String, libraryId: String?) {
-        editSource(sourceId) { it.copy(libraryId = libraryId) }
+    /**
+     * Browse [libraries] of a source, or all of them with null. One is stored
+     * as [MusicSource.libraryId] alone, as it always was; several as the list.
+     */
+    suspend fun setSourceLibraries(sourceId: String, libraries: Set<String>?) {
+        editSource(sourceId) {
+            it.copy(libraryIds = libraries?.takeIf { set -> set.size > 1 }?.toList(), libraryId = libraries?.singleOrNull())
+        }
     }
 
     /** Record the folders a server reported, for the Sources page. */
@@ -617,6 +634,7 @@ internal fun mergeSource(list: List<MusicSource>, source: MusicSource): Pair<Lis
             offlineModeName = source.offlineModeName ?: old.offlineModeName,
             downloadLimitBytes = source.downloadLimitBytes ?: old.downloadLimitBytes,
             libraryId = source.libraryId ?: old.libraryId,
+            libraryIds = source.libraryIds ?: old.libraryIds,
         )
         return list.toMutableList().also { it[sameId] = edited } to old.id
     }
@@ -633,6 +651,7 @@ internal fun mergeSource(list: List<MusicSource>, source: MusicSource): Pair<Lis
         playerName = old.playerName,
         parserGeneration = old.parserGeneration,
         libraryId = old.libraryId,
+        libraryIds = old.libraryIds,
         hiddenLibraryIds = old.hiddenLibraryIds,
         features = old.features,
     )

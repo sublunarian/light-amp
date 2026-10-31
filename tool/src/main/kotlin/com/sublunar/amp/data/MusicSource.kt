@@ -113,8 +113,14 @@ data class MusicSource(
      * existed", so every library synced by an older build refetches once.
      */
     val parserGeneration: Int = 0,
-    /** The library being browsed, or null for All Libraries. */
+    /**
+     * The one library being browsed, or null for more than one or all of them.
+     * Kept beside [libraryIds] for the server calls that narrow to one
+     * library, and for records written before several could be chosen.
+     */
     val libraryId: String? = null,
+    /** The libraries being browsed, by id; null for all of them. Read through [selectedLibraries]. */
+    val libraryIds: List<String>? = null,
     /**
      * The server's libraries, cached from the last successful sync, so the
      * Sources page can offer them instantly and offline.
@@ -219,6 +225,14 @@ data class MusicSource(
 
     /** [hiddenLibraryIds] as every reader means it: without the null older builds stored. */
     val hiddenLibraries: Set<String> get() = hiddenLibraryIds.filterNotNull().toSet()
+
+    /**
+     * The libraries being browsed, or null for all of them: several can be
+     * chosen at once on the Sources page. A record from before then has only
+     * [libraryId], which reads as that one library.
+     */
+    val selectedLibraries: Set<String>? get() =
+        libraryIds?.toSet()?.takeIf { it.isNotEmpty() } ?: libraryId?.let { setOf(it) }
 
     /** The libraries this source offers on the Sources page, in order. */
     val visibleLibraries: List<SourceLibrary>

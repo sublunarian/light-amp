@@ -11,7 +11,7 @@ import kotlin.test.assertTrue
 class LibraryViewTest {
 
     private val all = LibraryView(null, emptySet())
-    private val music = LibraryView("music", emptySet())
+    private val music = LibraryView(setOf("music"), emptySet())
     private val hidingOther = LibraryView(null, setOf("other"))
 
     @Test
@@ -30,10 +30,18 @@ class LibraryViewTest {
     }
 
     @Test
+    fun `several chosen libraries show each of theirs and nothing else`() {
+        val two = LibraryView(setOf("music", "demos"), emptySet())
+        assertTrue(two.showsAlbum("music"))
+        assertTrue(two.showsAlbum("demos"))
+        assertFalse(two.showsAlbum("audiobooks"))
+    }
+
+    @Test
     fun `a hidden library never shows`() {
         assertFalse(hidingOther.showsAlbum("other"))
         assertTrue(hidingOther.showsAlbum("music"))
-        assertFalse(LibraryView("other", setOf("other")).showsAlbum("other"))
+        assertFalse(LibraryView(setOf("other"), setOf("other")).showsAlbum("other"))
     }
 
     @Test

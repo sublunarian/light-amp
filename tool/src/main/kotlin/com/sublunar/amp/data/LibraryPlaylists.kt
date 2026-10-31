@@ -350,7 +350,7 @@ class LibraryPlaylists(
         val source = settings.activeSource.first()
         val songsFollowLibrary = source?.provider?.libraryNarrowsPlaylistSongs ?: true
         val view = LibraryView(
-            if (songsFollowLibrary) libraryId.first() else null,
+            if (songsFollowLibrary) source?.selectedLibraries else null,
             source?.hiddenLibraries.orEmpty(),
         )
         if (!view.narrows || d == null) return { true }

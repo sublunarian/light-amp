@@ -76,8 +76,10 @@ class LibraryRepository(
      */
     private val daos: StateFlow<LibraryDao?>,
     private val serverClient: StateFlow<MusicServer?>,
-    /** The persisted library choice, read as stored — see LibrarySync's. */
+    /** The one library chosen, for the server calls that narrow to one — see LibrarySync's. */
     private val libraryId: Flow<String?>,
+    /** The libraries chosen, or null for all — what the lists show. */
+    libraries: Flow<Set<String>?>,
     /** True when only downloaded media should be visible (offline / Wi-Fi only). */
     offlineOnly: Flow<Boolean>,
     /** Whether the server may be spoken to at all — see App.metadataAllowed. */
@@ -250,9 +252,9 @@ class LibraryRepository(
         return next.tracks
     }
 
-    /** Which of the server's libraries is chosen, or null for all of them. */
-    internal val selectedLibrary: StateFlow<String?> =
-        libraryId.stateIn(scope, SharingStarted.Eagerly, null)
+    /** Which of the server's libraries are chosen, or null for all of them. */
+    internal val selectedLibrary: StateFlow<Set<String>?> =
+        libraries.stateIn(scope, SharingStarted.Eagerly, null)
 
     /**
      * The libraries the user hid, which are hidden everywhere — All Libraries,
@@ -287,7 +289,21 @@ class LibraryRepository(
                 .filter { view.showsAlbum(it.libraryId) }
                 .map { it.toAlbum() }
                 .toList()
+                .also { shown -> logView(view, shown.size, rows.size) }
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /** The last view logged — see [logView]. */
+    @Volatile private var loggedView: LibraryView? = null
+
+    /** Once per change of chosen libraries, how much of the library they show: the evidence for a library test. */
+    private fun logView(view: LibraryView, shown: Int, of: Int) {
+        if (view == loggedView || of == 0) return
+        loggedView = view
+        android.util.Log.i(
+            "AmpSync",
+            "library view: ${view.selected?.joinToString(prefix = "libraries ") ?: "all libraries"} show $shown of $of albums",
+        )
+    }
 
     /**
      * And its songs: a track belongs to whichever library its album does, so one

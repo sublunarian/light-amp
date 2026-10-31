@@ -42,7 +42,7 @@ class StoredSourcesTest {
     @Test
     fun `an edit that changes nothing writes the same bytes`() = runBlocking {
         val phone = Phone(SOURCES to list(*CANONICAL))
-        phone.settings.setSourceLibraryId("src-p1", null)
+        phone.settings.setSourceLibraries("src-p1", null)
         assertEquals(list(*CANONICAL), phone.stored)
     }
 
@@ -53,7 +53,7 @@ class StoredSourcesTest {
             listOf(MusicSource("src-s1", SourceKind.SUBSONIC, "Reordered", baseUrl = "https://r.example")),
             phone.settings.sources.first(),
         )
-        phone.settings.setSourceLibraryId("src-s1", null)
+        phone.settings.setSourceLibraries("src-s1", null)
         assertEquals(
             list("""{"id":"src-s1","kind":"SUBSONIC","name":"Reordered","baseUrl":"https://r.example"}"""),
             phone.stored,
@@ -67,9 +67,9 @@ class StoredSourcesTest {
             listOf(MusicSource("src-s2", SourceKind.SUBSONIC, "Extra", baseUrl = "https://x.example")),
             phone.settings.sources.first(),
         )
-        phone.settings.setSourceLibraryId("src-s2", null)
+        phone.settings.setSourceLibraries("src-s2", null)
         assertEquals(list(EXTRA_KEY), phone.stored)
-        phone.settings.setSourceLibraryId("src-s2", "4")
+        phone.settings.setSourceLibraries("src-s2", setOf("4"))
         assertEquals(
             list(
                 """{"id":"src-s2","kind":"SUBSONIC","name":"Extra","baseUrl":"https://x.example","libraryId":"4","futureField":{"a":1}}""",
@@ -134,7 +134,7 @@ class StoredSourcesTest {
     @Test
     fun `it keeps its place through an edit to the others`() = runBlocking {
         val phone = Phone(SOURCES to list(UNKNOWN_KIND, SUBSONIC_FULL, PLEX))
-        phone.settings.setSourceLibraryId("src-p1", "7")
+        phone.settings.setSourceLibraries("src-p1", setOf("7"))
         assertEquals(
             list(UNKNOWN_KIND, SUBSONIC_FULL, PLEX.replace(""""libraries"""", """"libraryId":"7","libraries"""")),
             phone.stored,

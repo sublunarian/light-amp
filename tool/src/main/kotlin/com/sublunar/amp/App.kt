@@ -242,13 +242,16 @@ object App {
      * previous library again over the one just chosen. Then a new library of
      * the source already browsed is switched to.
      */
-    fun useSource(source: MusicSource, libraryId: String?, afterSaving: suspend () -> Unit) {
-        val changingLibrary = source.libraryId != libraryId
+    fun useSource(source: MusicSource, libraries: Set<String>?, afterSaving: suspend () -> Unit) {
+        val changingLibrary = source.selectedLibraries != libraries
         scope.launch {
-            if (changingLibrary) settings.setSourceLibraryId(source.id, libraryId)
+            if (changingLibrary) settings.setSourceLibraries(source.id, libraries)
             settings.setActiveSource(source.id)
             afterSaving()
-            if (source.id == this@App.source.value.id && changingLibrary) librarySync.switchLibrary(libraryId)
+            // A sync narrows to one library; several are fetched whole and narrowed here.
+            if (source.id == this@App.source.value.id && changingLibrary) {
+                librarySync.switchLibrary(libraries?.singleOrNull())
+            }
         }
     }
 
@@ -564,6 +567,7 @@ object App {
                 daos = _dao,
                 serverClient = serverClient,
                 libraryId = settings.libraryId,
+                libraries = settings.librarySelection,
                 offlineOnly = offlineOnly,
                 metadataAllowed = ::metadataAllowed,
                 pending = pending,

@@ -44,50 +44,107 @@ import kotlinx.coroutines.launch
  */
 class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
+    /** A source and which of its libraries are ticked; null libraries is all of them. */
+    private data class Choice(val sourceId: String, val libraries: Set<String>?)
+
+    /**
+     * What is ticked, applied only when the page closes: each tap would
+     * otherwise reload the library, and a source switch is the costly part.
+     * Held on the screen, not in a remember: the SDK composes only the top of
+     * the back stack, so Manage Sources over this page would forget it.
+     */
+    private var choice by mutableStateOf<Choice?>(null)
+
     @Composable
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
         val active by App.settings.activeSource.state.collectAsState()
-        val activeLibrary by App.settings.libraryId.state.collectAsState()
         val sync by App.librarySync.syncState.collectAsState()
+        val current = choice ?: active?.let { Choice(it.id, it.selectedLibraries) }
 
         ListScreen(onBack = { goBack() }, title = "Sources") {
             ScrollableList {
-                // First, so it doesn't move when the source changes. It refreshes
-                // the source in use, the only one a sync can work on (switching
-                // syncs the new one as it opens), and the line under names it.
-                active?.let { current ->
-                    item(key = "sync") {
-                        val phone = current.phoneLibrary != null
-                        TextRow(
-                            title = when {
-                                sync.syncing -> if (phone) "Scanning…" else "Syncing…"
-                                phone -> "Rescan Library"
-                                else -> "Sync Now"
-                            },
-                            subtitle = "${current.name} · ${syncStatus(current, sync)}",
-                            onClick = { if (!sync.syncing) App.librarySync.scanAndSyncInBackground() },
-                        )
-                    }
-                }
                 sources.forEach { source ->
-                    val chosen = source.id == active?.id
                     // The source is the heading its libraries sit under: there is
                     // nothing here to do to a source, only libraries to choose.
                     item(key = source.id) { SectionLabel(source.name) }
                     items(
-                        rowsUnder(source, activeLibrary.takeIf { chosen }),
+                        rowsUnder(source, current?.takeIf { it.sourceId == source.id }?.libraries),
                         key = { "${source.id}/${it.libraryId ?: "all"}" },
                     ) { entry ->
                         SubRow(
                             name = entry.name,
-                            selected = chosen && activeLibrary == entry.libraryId,
-                            onClick = { switchTo(source, entry.libraryId) },
+                            selected = current != null && ticked(source, current, entry.libraryId),
+                            onClick = { choice = tap(source, current, entry.libraryId) },
                         )
                     }
                 }
+                // Upkeep after the choosing, rarely needed: Amp syncs on every open
+                // and switch. It refreshes the source in use, the only one a sync
+                // can work on (switching syncs the new one as it opens), and names
+                // it: ticking another source's library doesn't change it until the
+                // page closes.
+                active?.let { inUse ->
+                    item(key = "sync") {
+                        val phone = inUse.phoneLibrary != null
+                        TextRow(
+                            title = when {
+                                sync.syncing -> if (phone) "Scanning ${inUse.name}…" else "Syncing ${inUse.name}…"
+                                phone -> "Rescan ${inUse.name}"
+                                else -> "Sync ${inUse.name}"
+                            },
+                            subtitle = syncStatus(inUse, sync).replaceFirstChar { it.uppercase() },
+                            onClick = { if (!sync.syncing) App.librarySync.scanAndSyncInBackground() },
+                        )
+                    }
+                }
+                // Where the sources themselves are added, removed and set up.
+                item(key = "manage") { TextRow(title = "Manage Sources") { go { SourceListScreen(it) } } }
             }
         }
+    }
+
+    /** Whether [libraryId]'s row is ticked under [choice]: the source's own row, or a library in it. */
+    private fun ticked(source: MusicSource, choice: Choice, libraryId: String?): Boolean =
+        choice.sourceId == source.id && (libraryId == null || choice.libraries == null || libraryId in choice.libraries)
+
+    /**
+     * A tap on a row. Another source's library starts afresh with that one
+     * alone; one of this source's is ticked or unticked, keeping at least one;
+     * and every library ticked is all of them, the All Libraries row that was.
+     */
+    private fun tap(source: MusicSource, choice: Choice?, libraryId: String?): Choice {
+        if (libraryId == null) return Choice(source.id, null)
+        if (choice?.sourceId != source.id) return Choice(source.id, setOf(libraryId))
+        val every = source.visibleLibraries.map { it.id }.toSet()
+        val ticked = choice.libraries ?: every
+        val next = if (libraryId in ticked) ticked - libraryId else ticked + libraryId
+        return when {
+            next.isEmpty() -> choice
+            next == every -> Choice(source.id, null)
+            else -> Choice(source.id, next)
+        }
+    }
+
+    /**
+     * Back, by the arrow or the phone's own gesture, is where the choice takes
+     * effect: both close the page, and only closing it calls this (Manage
+     * Sources opened over it doesn't). Nothing changed, nothing happens.
+     */
+    override fun onScreenDestroy() {
+        val picked = choice ?: return
+        val sources = App.settings.sources.value
+        val source = sources.firstOrNull { it.id == picked.sourceId } ?: return
+        val active = App.settings.activeSource.value
+        if (active?.id == source.id && source.selectedLibraries == picked.libraries) return
+        android.util.Log.i(
+            "AmpSync",
+            "library choice: ${source.name}, " +
+                (picked.libraries?.let { ids -> source.libraries.filter { it.id in ids }.joinToString { it.name } } ?: "all libraries"),
+        )
+        // The results on screen were the old source's, and the switch drops them.
+        LibraryNav.closeSearch()
+        App.useSource(source, picked.libraries) {}
     }
 
     /** How the source in use stands, for the line under Sync Now. */
@@ -120,38 +177,22 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     /**
      * What sits under a source: one row per thing that can be listened to.
      *
-     * [activeLibraryId], the library in use, is shown even when hidden: these
-     * rows carry the only mark of where you are. Switch away and it goes.
+     * A ticked library ([ticked]) is shown even when hidden: these rows carry
+     * the only mark of where you are. Switch away and it goes.
      */
-    private fun rowsUnder(source: MusicSource, activeLibraryId: String?): List<LibraryEntry> {
+    private fun rowsUnder(source: MusicSource, ticked: Set<String>?): List<LibraryEntry> {
         // The phone's own music is one folder, by definition.
         source.phoneLibrary?.let { return listOf(LibraryEntry(it.folderLabel, null)) }
-        return when {
-            // Several libraries shown: the whole server is a row of its own. Which
-            // libraries appear is the source's setting (LibraryVisibilityScreen),
-            // and All Libraries comes with two or more — see
-            // MusicSource.showsAllLibraries.
-            source.showsAllLibraries ->
-                listOf(LibraryEntry(ALL_LIBRARIES, null)) +
-                    source.libraries
-                        .filter { it.id !in source.hiddenLibraryIds || it.id == activeLibraryId }
-                        .map { LibraryEntry(it.name, it.id) }
-            // All but one hidden: that one is everything shown, so its row means
-            // the whole of what is shown, as a single library's always has.
-            source.libraries.size >= 2 ->
-                listOf(LibraryEntry(source.visibleLibraries.firstOrNull()?.name ?: ALL_LIBRARIES, null))
-            // One library, or a server not yet synced: no choice to offer, just the
-            // one row that turns it on.
-            else -> listOf(LibraryEntry(source.libraries.firstOrNull()?.name ?: ALL_LIBRARIES, null))
+        val shown = source.libraries.filter { it.id !in source.hiddenLibraryIds || it.id in ticked.orEmpty() }
+        return if (shown.size >= 2) {
+            shown.map { LibraryEntry(it.name, it.id) }
+        } else {
+            // One library, or a server not yet synced: no choice to offer, just
+            // the one row that turns it on.
+            listOf(LibraryEntry(shown.firstOrNull()?.name ?: source.libraries.firstOrNull()?.name ?: source.name, null))
         }
     }
 
-    /** Switch the library over — see App.useSource. */
-    private fun switchTo(source: MusicSource, libraryId: String?) {
-        // The results on screen were the old source's, and the switch drops them.
-        LibraryNav.closeSearch()
-        App.useSource(source, libraryId) { withContext(Dispatchers.Main) { backToRoot() } }
-    }
 }
 
 /**
@@ -269,7 +310,6 @@ private fun relativeTime(ms: Long): String {
 }
 
 /** The row that means the whole server rather than one of its libraries. */
-private const val ALL_LIBRARIES = "All Libraries"
 
 /** One row under a source: a library to switch to, or the whole server. */
 private data class LibraryEntry(val name: String, val libraryId: String?)
