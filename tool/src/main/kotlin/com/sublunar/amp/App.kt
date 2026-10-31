@@ -343,21 +343,26 @@ object App {
      */
     @OptIn(FlowPreview::class)
     val offlineOnly: Flow<Boolean> by lazy {
-        // Two speeds. The link or the mode forbidding streams is a fact, and
-        // the lists follow it at once. The server not answering is a suspicion
-        // until it lasts: on poor reception a ping is often missed, and the
-        // lists would flicker to downloads and back. Playback still reacts to
-        // the first miss; only the lists wait.
+        // Two speeds. The mode forbidding streams is the user's choice, and the
+        // lists follow it at once. A lost link or a silent server is a blip
+        // until it lasts: Wi-Fi drops for seconds at a time and a ping is often
+        // missed on poor reception, and the lists would empty to downloads and
+        // back. Playback still reacts at once; only the lists wait.
+        fun Flow<Boolean>.settled() = distinctUntilChanged().debounce { gone -> if (gone) OFFLINE_SETTLE_MS else 0L }
+        val linkForbids = combine(
+            rules.map { !it.connected }.settled(),
+            rules.map { !it.unmetered }.settled(),
+            rules.map { it.mode == DataMode.WIFI_ONLY }.distinctUntilChanged(),
+        ) { down, offWifi, wifiOnly -> down || (wifiOnly && offWifi) }
         combine(
             source.map { !it.hasServer }.distinctUntilChanged(),
-            rules.map { !it.mayTalkToServer }.distinctUntilChanged(),
-            rules.map { !it.serverReachable }.distinctUntilChanged()
-                .debounce { gone -> if (gone) SERVER_GONE_SETTLE_MS else 0L },
+            linkForbids,
+            rules.map { !it.serverReachable }.settled(),
         ) { local, link, server -> !local && (link || server) }.distinctUntilChanged()
     }
 
-    /** How long the server must stay silent before the lists narrow to downloads. */
-    private const val SERVER_GONE_SETTLE_MS = 20_000L
+    /** How long the link must stay lost, or the server silent, before the lists narrow to downloads. */
+    private const val OFFLINE_SETTLE_MS = 20_000L
 
     /**
      * Whether the server may be spoken to at all (sync, playlists, lyrics).
