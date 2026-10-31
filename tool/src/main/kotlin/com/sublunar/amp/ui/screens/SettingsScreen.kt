@@ -31,15 +31,20 @@ import kotlinx.coroutines.withContext
  */
 private fun downloadQualityLabel(source: MusicSource): String = when {
     source.downloadsRefused -> "Not allowed by the server"
-    source.downloadFormatAvailable -> formatLabel(source.downloadFormat)
-    else -> "${formatLabel(source.downloadFormat)} — unavailable"
+    source.downloadFormatAvailable -> formatLabel(source.downloadFormat, source)
+    else -> "${formatLabel(source.downloadFormat, source)} — unavailable"
 }
 
-private fun formatLabel(format: StreamFormat): String = when (format) {
-    StreamFormat.MP3 -> "MP3 (320 kbps)"
-    StreamFormat.OPUS -> "Opus (192 kbps)"
-    StreamFormat.FLAC -> "FLAC (lossless)"
-    StreamFormat.RAW -> "Original file"
+/** A format as [source] is asked for it: at its own bitrate, which a server may cap lower. */
+private fun formatLabel(format: StreamFormat, source: MusicSource?): String {
+    source?.let { it.provider.qualityLabel(it, format) }?.let { return it }
+    val kbps = source?.provider?.kbps(format) ?: format.maxBitRate
+    return when (format) {
+        StreamFormat.MP3 -> "MP3 ($kbps kbps)"
+        StreamFormat.OPUS -> "Opus ($kbps kbps)"
+        StreamFormat.FLAC -> "FLAC (lossless)"
+        StreamFormat.RAW -> "Original file"
+    }
 }
 
 /** The hub: one plain row per page. */
@@ -312,16 +317,21 @@ enum class ServerSetting(val title: String) {
     AUTO_DOWNLOAD("Auto-Download"),
     ;
 
-    /** The servers it applies to: any that streams, or only those that download. */
+    /**
+     * The servers it applies to: any that streams, or only those that download
+     * — and, for a quality, only those with more than one to choose between
+     * (Bandcamp has one), so a choice that isn't one is never shown.
+     */
     fun servers(sources: List<MusicSource>): List<MusicSource> = when (this) {
-        WIFI, CELLULAR -> sources.filter { it.hasServer }
-        DOWNLOAD, AUTO_DOWNLOAD -> sources.filter { it.supportsDownloads }
+        WIFI, CELLULAR -> sources.filter { it.hasServer && it.streamFormats.size > 1 }
+        DOWNLOAD -> sources.filter { it.supportsDownloads && it.downloadFormats.size > 1 }
+        AUTO_DOWNLOAD -> sources.filter { it.supportsDownloads }
     }
 
     /** What it is set to on [server], for the list of servers. */
     fun value(server: MusicSource): String = when (this) {
-        WIFI -> formatLabel(server.wifiFormat)
-        CELLULAR -> formatLabel(server.cellularFormat)
+        WIFI -> formatLabel(server.wifiFormat, server)
+        CELLULAR -> formatLabel(server.cellularFormat, server)
         DOWNLOAD -> downloadQualityLabel(server)
         AUTO_DOWNLOAD -> offlineModeLabel(server.offlineMode)
     }
@@ -403,7 +413,7 @@ class FormatPickerScreen(
             ScrollableList {
                 items(source?.let(slot::choices) ?: StreamFormat.entries.toList()) { format ->
                     TextRow(
-                        title = formatLabel(format),
+                        title = formatLabel(format, source),
                         onClick = {
                             App.scope.launch { slot.set(sourceId, format) }
                             goBack()

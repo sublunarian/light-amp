@@ -918,6 +918,8 @@ class PlexClient(
         rating = starsFrom(userRating),
         genre = genres.firstOrNull()?.tag.orEmpty(),
         streamPath = media.firstOrNull()?.parts?.firstOrNull()?.key.orEmpty(),
+        codec = media.firstOrNull()?.audioCodec?.lowercase().orEmpty(),
+        bitRateKbps = media.firstOrNull()?.bitrate?.takeIf { it > 0 },
     )
 
     /** Plex's 0–10 back to the app's 0–5. */

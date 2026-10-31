@@ -46,7 +46,7 @@ data class ServerFeatures(
          * is asked again rather than trusted for a question that wasn't put —
          * the same trick as the track parser's generation.
          */
-        const val GENERATION = 4
+        const val GENERATION = 5
 
         /** Ratings: `setRating`. */
         const val SET_RATING = "setRating"
@@ -86,8 +86,28 @@ data class ServerFeatures(
         /** The OpenSubsonic extension a server names when it takes [REPORT_PLAYBACK]. */
         const val PLAYBACK_REPORT_EXTENSION = "playbackReport"
 
+        /**
+         * Converting a stream to MP3 or Opus. Not endpoints: asked of a Subsonic
+         * server through OpenSubsonic's `getTranscodeDecision`, which answers
+         * what it would send without streaming anything, and read from the
+         * account on Jellyfin. A server asked for a format it can't make
+         * doesn't refuse, it sends something else, so only proof offers one.
+         */
+        const val TRANSCODE_MP3 = "transcode:mp3"
+        const val TRANSCODE_OPUS = "transcode:opus"
+
+        /** The OpenSubsonic extension a server names when it takes `getTranscodeDecision`. */
+        const val TRANSCODING_EXTENSION = "transcoding"
+
+        /** What converting a stream to [format] is recorded as, or null for the original. */
+        fun transcodeKey(format: StreamFormat): String? = when (format) {
+            StreamFormat.MP3 -> TRANSCODE_MP3
+            StreamFormat.OPUS -> TRANSCODE_OPUS
+            else -> null
+        }
+
         /** Everything a first asking covers. */
-        val ALL = listOf(SCAN_STATUS, SET_RATING, SIMILAR_SONGS, DOWNLOAD, REPORT_PLAYBACK)
+        val ALL = listOf(SCAN_STATUS, SET_RATING, SIMILAR_SONGS, DOWNLOAD, REPORT_PLAYBACK, TRANSCODE_MP3, TRANSCODE_OPUS)
     }
 }
 

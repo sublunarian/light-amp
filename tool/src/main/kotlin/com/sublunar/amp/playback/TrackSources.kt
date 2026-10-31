@@ -112,14 +112,27 @@ internal class TrackSources(
         hasLocalCopy(track) || (rules.mayStream && App.streamProxy.isOn)
 
     /**
-     * The format to ask for: the source's Wi-Fi format on an unmetered link,
-     * its cellular format otherwise. Two stated choices, never a mode quietly
-     * capping one: asked for lossless on cellular, lossless is what comes.
+     * The format to ask for [track]: the source's Wi-Fi format on an unmetered
+     * link, its cellular format otherwise — two stated choices, never a mode
+     * quietly capping one — and the file as it is where it's lossy and
+     * already within that quality (see MusicSource.formatFor).
      */
-    fun effectiveFormat(): StreamFormat {
+    fun effectiveFormat(track: Track): StreamFormat {
         val source = App.source.value
-        return if (App.rules.value.unmetered) source.wifiFormat else source.cellularFormat
+        val chosen = if (App.rules.value.unmetered) source.wifiFormat else source.cellularFormat
+        return source.formatFor(track, chosen).also { format ->
+            // Once a song, so a check of the log shows the rule at work.
+            if (format != chosen && keptAsIs.add(track.id)) {
+                android.util.Log.i(
+                    "AmpQual",
+                    "stream: ${track.codec} ${track.bitRateKbps} kbps file played as it is, within ${chosen.id}",
+                )
+            }
+        }
     }
+
+    /** Songs the log has already said are played as they are — see [effectiveFormat]. */
+    private val keptAsIs = mutableSetOf<String>()
 
     /** Whether the door will ask the server's decision for this stream right before fetching it — see [playerUrl]. */
     fun decidesAtDoor(client: MusicServer, track: Track, format: StreamFormat): Boolean =
@@ -132,7 +145,7 @@ internal class TrackSources(
      * address.
      */
     fun moveOriginal(track: Track): Boolean {
-        if (effectiveFormat() != StreamFormat.RAW || track.originalKey() in originalElsewhere) return false
+        if (effectiveFormat(track) != StreamFormat.RAW || track.originalKey() in originalElsewhere) return false
         if (serverClient.value?.alternateOriginalUrl(track) == null) return false
         originalElsewhere += track.originalKey()
         return true
@@ -181,7 +194,7 @@ internal class TrackSources(
         if (local != null) {
             val (file, downloadedFormat) = local
             val preferStream = !forceOffline && track.id !in streamFailed && App.rules.value.unmetered &&
-                effectiveFormat().qualityRank > downloadedFormat.qualityRank
+                effectiveFormat(track).qualityRank > downloadedFormat.qualityRank
             if (!preferStream) return LightAudioSource.FileSource(file)
         }
         return LightAudioSource.UrlSource(playerUrl(track))
@@ -205,7 +218,7 @@ internal class TrackSources(
      */
     fun playerUrl(track: Track, timeOffsetSeconds: Int = 0): String {
         val client = serverClient.value ?: return ""
-        val format = effectiveFormat()
+        val format = effectiveFormat(track)
         val decideFirst = decidesAtDoor(client, track, format)
         val sid = streamSessionIdFor(track.id, decideFirst)
         val url = client.playableUrl(

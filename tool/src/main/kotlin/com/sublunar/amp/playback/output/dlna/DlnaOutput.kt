@@ -980,7 +980,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         renderer: DlnaRenderer,
         track: Track,
     ): Pair<StreamFormat, String> {
-        val desired = host.streamFormat()
+        val desired = host.streamFormat(track)
         val key = formatChoiceKey(renderer.id, desired, track.id)
         formats[key]?.let { return it }
 

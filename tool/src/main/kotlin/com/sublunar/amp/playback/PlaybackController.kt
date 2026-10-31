@@ -1546,7 +1546,7 @@ class PlaybackController(
         awaitedDecision = generation
         // Under the id the queued stream carries. Where the door decides each
         // stream itself (see TrackSources.playerUrl) this is asked twice, harmlessly.
-        val format = sources.effectiveFormat()
+        val format = sources.effectiveFormat(track)
         val sid = reports.streamSessionIdFor(track.id, sources.decidesAtDoor(client, track, format))
         scope.launch {
             withTimeoutOrNull(STREAM_DECISION_TIMEOUT_MS) {
@@ -1983,7 +1983,7 @@ class PlaybackController(
         if (track.id in seekNeedsReload) return true
         // A queue being rebuilt is about to fetch afresh: what the door saw was
         // the stream it held before.
-        if (!askDoor) return sources.effectiveFormat() != StreamFormat.RAW
+        if (!askDoor) return sources.effectiveFormat(track) != StreamFormat.RAW
         // Ask the door what arrived. Asked for mp3 and given it with a length,
         // the server sent the file untouched, with byte ranges, and ignores
         // timeOffset as it isn't transcoding. "Not RAW, so a transcode" would
@@ -1993,7 +1993,7 @@ class PlaybackController(
         val answered = App.streamProxy.lastOutcome(track.id) as? StreamProxy.Outcome.Answered
         if (answered != null && answered.status in 200..299 && answered.lengthKnown) return false
         // Nothing fetched yet to ask about: go by the request.
-        return sources.effectiveFormat() != StreamFormat.RAW
+        return sources.effectiveFormat(track) != StreamFormat.RAW
     }
 
     /**
@@ -3052,7 +3052,7 @@ class PlaybackController(
 
         override fun mayTalkToServer(): Boolean = metadataAllowed()
 
-        override fun streamFormat(): StreamFormat = sources.effectiveFormat()
+        override fun streamFormat(track: Track): StreamFormat = sources.effectiveFormat(track)
 
         // The server's own address, never the player's: the door is on this
         // phone's loopback, where a speaker can't reach it.

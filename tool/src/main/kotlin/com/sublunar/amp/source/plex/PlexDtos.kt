@@ -102,6 +102,9 @@ data class PlexTag(val tag: String = "")
 @Serializable
 data class PlexMedia(
     @SerialName("Part") val parts: List<PlexPart> = emptyList(),
+    /** The file's codec ("flac", "mp3", "aac", "alac") and bitrate in kbps — see Track.isLossless. */
+    val audioCodec: String? = null,
+    val bitrate: Int? = null,
 )
 
 @Serializable

@@ -6,9 +6,9 @@ import com.sublunar.amp.data.CANT_DO_THAT
 import com.sublunar.amp.data.LikeTarget
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.Lyrics
-import com.sublunar.amp.data.PLAYLIST_IDS_PER_REQUEST
 import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicServer
+import com.sublunar.amp.data.PLAYLIST_IDS_PER_REQUEST
 import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.RADIO_LENGTH
 import com.sublunar.amp.data.SavedQueue
@@ -31,7 +31,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.post
 import io.ktor.client.request.prepareGet
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -45,9 +47,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerializationException
-import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromStream
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 
 /** Where a Subsonic server is, and the login for it. */
 data class SubsonicConfig(
@@ -280,8 +286,15 @@ class SubsonicClient(
         params: List<Pair<String, String>> = emptyList(),
         via: HttpClient = http.bulk,
         post: Boolean = false,
+        /** A JSON body, for the OpenSubsonic calls that take one; the parameters stay in the URL. */
+        json: String? = null,
     ): SubsonicBody {
-        val response = if (post) {
+        val response = if (json != null) {
+            via.post(restUrl(endpoint, params)) {
+                contentType(ContentType.Application.Json)
+                setBody(json)
+            }
+        } else if (post) {
             // OpenSubsonic's formPost: the parameters in the body, the login in the URL.
             via.submitForm(
                 url = "${config.baseUrl}/rest/$endpoint.view?$authQuery",
@@ -449,7 +462,67 @@ class SubsonicClient(
         ServerFeatures.SIMILAR_SONGS -> sampleTrackId?.let { answers(endpoint, listOf("id" to it, "count" to "1")) }
         ServerFeatures.DOWNLOAD -> sampleTrackId?.let { implementsDownload(it) }
         ServerFeatures.REPORT_PLAYBACK -> listsExtension(ServerFeatures.PLAYBACK_REPORT_EXTENSION)
+        ServerFeatures.TRANSCODE_MP3 -> transcodes(StreamFormat.MP3, sampleTrackId)
+        ServerFeatures.TRANSCODE_OPUS -> transcodes(StreamFormat.OPUS, sampleTrackId)
         else -> true
+    }
+
+    /**
+     * Whether the server would really send [format] when asked for it.
+     *
+     * Asking it to stream is no test: a server sends *something* for any format
+     * named, falling back in its own way (Navidrome to Opus, Airsonic to MP3,
+     * gonic and LMS to the original), and the asking isn't free — a whole
+     * transcode on Navidrome, a play and a scrobble on Ampache. A server with
+     * OpenSubsonic's `transcoding` extension says what it would send instead,
+     * streaming nothing. One without it can't be asked at all, so it is offered
+     * MP3, the conversion nearly every Subsonic server makes, and nothing more.
+     */
+    private suspend fun transcodes(format: StreamFormat, sampleTrackId: String?): Boolean? {
+        val canBeAsked = listsExtension(ServerFeatures.TRANSCODING_EXTENSION) ?: return null
+        if (!canBeAsked) return format == StreamFormat.MP3
+        val id = sampleTrackId ?: return null
+        return transcodeDecision(id, format)
+    }
+
+    /**
+     * `getTranscodeDecision` for one song, as a client that plays nothing
+     * directly and takes only [format]: yes when the server would send that
+     * codec, no when it would send anything else or can't transcode at all.
+     * A refusal or a reply this client can't read is no evidence.
+     */
+    private suspend fun transcodeDecision(trackId: String, format: StreamFormat): Boolean? {
+        val bitsPerSecond = (format.maxBitRate ?: return null) * 1000
+        val container = if (format == StreamFormat.OPUS) "ogg" else format.id
+        val clientInfo = buildJsonObject {
+            put("name", CLIENT_NAME)
+            put("platform", "Android")
+            put("maxAudioBitrate", bitsPerSecond)
+            put("maxTranscodingAudioBitrate", bitsPerSecond)
+            putJsonArray("directPlayProfiles") {}
+            putJsonArray("transcodingProfiles") {
+                add(
+                    buildJsonObject {
+                        put("container", container)
+                        put("audioCodec", format.id)
+                        put("protocol", "http")
+                        put("maxAudioChannels", 2)
+                    },
+                )
+            }
+            putJsonArray("codecProfiles") {}
+        }
+        return try {
+            val decision = request(
+                "getTranscodeDecision",
+                listOf("mediaId" to trackId, "mediaType" to "song"),
+                via = http.quick,
+                json = clientInfo.toString(),
+            ).transcodeDecision ?: return null
+            decision.sends(format)
+        } catch (e: SubsonicException) {
+            null
+        }
     }
 
     /**

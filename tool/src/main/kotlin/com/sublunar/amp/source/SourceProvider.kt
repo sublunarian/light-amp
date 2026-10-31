@@ -28,6 +28,21 @@ interface SourceProvider {
      */
     val streamFormats: List<StreamFormat>
 
+    /**
+     * The bitrate this kind is asked for [format] at, in kbps, and so the one
+     * its label states: the format's own unless the server caps it lower.
+     */
+    fun kbps(format: StreamFormat): Int? = format.maxBitRate
+
+    /**
+     * What one source of this kind can be asked for: [streamFormats], unless
+     * this server is known to send something narrower.
+     */
+    fun streamFormatsFor(source: MusicSource): List<StreamFormat> = streamFormats
+
+    /** How [format] is named for [source], where its server sends something its usual name doesn't say. */
+    fun qualityLabel(source: MusicSource, format: StreamFormat): String? = null
+
     /** What this kind can do, less whatever [features] says its server answered for as missing. */
     fun capabilities(features: ServerFeatures?): SourceCapabilities
 

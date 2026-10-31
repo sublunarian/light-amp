@@ -5,6 +5,7 @@ import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.Track
 import java.time.Instant
+import com.sublunar.amp.data.StreamFormat
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -51,6 +52,8 @@ data class SubsonicBody(
      * nobody expected must not cost the rest of the reply.
      */
     val openSubsonicExtensions: JsonElement? = null,
+    /** getTranscodeDecision — see SubsonicClient.transcodeDecision. */
+    val transcodeDecision: TranscodeDecisionDto? = null,
 ) {
     /** The names [openSubsonicExtensions] lists, whatever else each entry carries. */
     val extensionNames: List<String>
@@ -255,6 +258,9 @@ data class SongDto(
      * relative to reference loudness — negative for loud masters.
      */
     val replayGain: ReplayGainDto? = null,
+    /** The file's extension, and its bitrate in kbps: what tells lossless from lossy (see Track.isLossless). */
+    val suffix: String? = null,
+    val bitRate: Int? = null,
 )
 
 @Serializable
@@ -376,6 +382,8 @@ internal fun SongDto.toTrack(
         composer = displayComposer?.takeIf { it.isNotBlank() } ?: composer.orEmpty(),
         // Track gain first; a file tagged only album-wise still normalises.
         gainDb = replayGain?.trackGain ?: replayGain?.albumGain,
+        codec = suffix?.lowercase().orEmpty(),
+        bitRateKbps = bitRate?.takeIf { it > 0 },
     )
 }
 
@@ -396,3 +404,20 @@ private fun parseInstantMs(value: String?): Long {
         0L
     }
 }
+
+/** What a server would send for a song, asked without streaming it (OpenSubsonic's `transcoding`). */
+@Serializable
+data class TranscodeDecisionDto(
+    val canTranscode: Boolean = false,
+    val transcodeStream: TranscodeStreamDto? = null,
+) {
+    /** Whether this is the server saying it would send [format]: transcoding, to that codec. */
+    fun sends(format: StreamFormat): Boolean =
+        canTranscode && transcodeStream?.codec.equals(format.id, ignoreCase = true)
+}
+
+@Serializable
+data class TranscodeStreamDto(
+    val codec: String? = null,
+    val container: String? = null,
+)

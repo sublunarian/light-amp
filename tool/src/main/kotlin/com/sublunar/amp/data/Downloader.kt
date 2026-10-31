@@ -1039,7 +1039,14 @@ class Downloader(
         // This source's own choice, not the browsed one's: the downloads
         // belong to that library, and a server that can only serve one
         // format shouldn't dictate what the others are fetched as.
-        val format = source.downloadFormat
+        // A lossy file within the chosen quality is kept as it is (see MusicSource.formatFor).
+        val format = source.formatFor(track, source.downloadFormat, download = true)
+        if (format != source.downloadFormat) {
+            android.util.Log.i(
+                "AmpQual",
+                "download: ${track.codec} ${track.bitRateKbps} kbps file kept as it is, within ${source.downloadFormat.id}",
+            )
+        }
         // Changed to a quality the server can't meet since this pass began:
         // back in the queue untouched, and the next pass leaves it there.
         if (!source.downloadFormatAvailable) {

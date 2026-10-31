@@ -24,11 +24,22 @@ object JellyfinProvider : SourceProvider {
     override val kind = SourceKind.JELLYFIN
 
     /**
-     * The original file, or anything the transcoder will produce. Unlike
-     * Plex's, Jellyfin's universal endpoint honours the container and codec
-     * it is given, so the whole list is offered rather than Plex's two.
+     * The original file, or MP3 or Opus from the transcoder. Unlike Plex's,
+     * Jellyfin's universal endpoint honours the container and codec it is
+     * given. An account whose owner turned audio transcoding off is held to
+     * the original — see JellyfinClient.probeFeatures.
      */
-    override val streamFormats: List<StreamFormat> = StreamFormat.entries.toList()
+    override val streamFormats: List<StreamFormat> =
+        listOf(StreamFormat.MP3, StreamFormat.OPUS, StreamFormat.RAW)
+
+    /**
+     * Jellyfin encodes MP3 at no more than 128 kbps a channel, so stereo MP3
+     * asked for at 320 comes out at 256: asked for, and labelled, as what it is.
+     */
+    override fun kbps(format: StreamFormat): Int? =
+        if (format == StreamFormat.MP3) MP3_KBPS else format.maxBitRate
+
+    private const val MP3_KBPS = 256
 
     // Jellyfin's own app lists a library's playlists by their songs and shows each one whole.
     override val libraryNarrowsPlaylistSongs: Boolean get() = false

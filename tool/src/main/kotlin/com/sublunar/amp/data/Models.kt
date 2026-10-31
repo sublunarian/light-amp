@@ -32,7 +32,36 @@ data class Track(
      * track gain, or Jellyfin's own LUFS measurement). Null plays untouched.
      */
     val gainDb: Float? = null,
+    /**
+     * The file's format as the server names it — a suffix or codec such as
+     * flac, mp3, m4a, alac — lowercased; blank where the server didn't say.
+     * With [bitRateKbps], decides whether converting it is worth anything:
+     * see MusicSource.formatFor.
+     */
+    val codec: String = "",
+    /** The file's own bitrate in kbps, where the server gives one. */
+    val bitRateKbps: Int? = null,
 )
+
+/**
+ * Whether the file is lossless: true for FLAC, ALAC, WAV and their kin, false
+ * for MP3, AAC, Opus, Vorbis and the like, null when nothing says. An MP4
+ * file can hold either, so it goes by its bitrate: no lossy codec is encoded
+ * at 500 kbps or more, nor any lossless one below it.
+ */
+fun Track.isLossless(): Boolean? = when (codec) {
+    in LOSSLESS_CODECS -> true
+    in LOSSY_CODECS -> false
+    in MP4_CONTAINERS -> bitRateKbps?.takeIf { it > 0 }?.let { it >= MP4_LOSSLESS_KBPS }
+    else -> null
+}
+
+private val LOSSLESS_CODECS =
+    setOf("flac", "alac", "wav", "wave", "aiff", "aif", "aifc", "ape", "wv", "tta", "dsf", "dff", "pcm")
+private val LOSSY_CODECS =
+    setOf("mp3", "aac", "opus", "ogg", "oga", "vorbis", "wma", "mpc", "mp2", "ac3", "eac3", "webm")
+private val MP4_CONTAINERS = setOf("m4a", "mp4", "m4b")
+private const val MP4_LOSSLESS_KBPS = 500
 
 /**
  * Every album artist a track is credited to.
@@ -166,14 +195,22 @@ data class MusicFolder(val id: String, val name: String)
 enum class StreamFormat(val id: String, val maxBitRate: Int?) {
     MP3("mp3", 320),
     OPUS("opus", 192),
+    /**
+     * No longer offered anywhere: asked of most servers it quietly becomes
+     * something else (Navidrome sends Opus when it has no FLAC encoder, or for
+     * any lossy file), and the original already is the lossless choice. Kept so
+     * copies downloaded in it still read, and a stored choice of it falls to
+     * the original (see MusicSource.supported).
+     */
     FLAC("flac", null),
     RAW("raw", null);
 
     companion object {
         /**
          * Opus at 192 kbps: transparent for practically all material, ~40% the
-         * size of MP3 320, and cheaper for the server to transcode. Streaming
-         * and downloads both resolve their default through here.
+         * size of MP3 320, and cheaper for the server to transcode. The default
+         * where data or room costs something — cellular and downloads; Wi-Fi
+         * defaults to the original (see MusicSource.wifiFormat).
          */
         val DEFAULT = OPUS
 

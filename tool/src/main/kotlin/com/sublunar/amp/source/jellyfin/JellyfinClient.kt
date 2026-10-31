@@ -213,7 +213,13 @@ class JellyfinClient(
     override suspend fun probeFeatures(known: ServerFeatures?, sampleTrackId: String?): ServerFeatures? {
         val me = runCatching { fetch<JellyfinMe>("/Users/Me") }.getOrNull() ?: return known
         return ServerFeatures(
-            missing = if (me.policy.enableContentDownloading) emptyList() else listOf(ServerFeatures.KEEP_COPIES),
+            missing = buildList {
+                if (!me.policy.enableContentDownloading) add(ServerFeatures.KEEP_COPIES)
+                if (!me.policy.enableAudioPlaybackTranscoding) {
+                    add(ServerFeatures.TRANSCODE_MP3)
+                    add(ServerFeatures.TRANSCODE_OPUS)
+                }
+            },
             generation = ServerFeatures.GENERATION,
         )
     }
@@ -443,7 +449,7 @@ class JellyfinClient(
             add("AudioCodec" to codec)
             add("TranscodingContainer" to container)
             add("TranscodingProtocol" to "http")
-            format.maxBitRate?.let { add("MaxStreamingBitrate" to (it * 1000).toString()) }
+            JellyfinProvider.kbps(format)?.let { add("MaxStreamingBitrate" to (it * 1000).toString()) }
             if (timeOffsetSeconds > 0) {
                 add("StartTimeTicks" to (timeOffsetSeconds.toLong() * 1000L * TICKS_PER_MS).toString())
             }
@@ -752,7 +758,7 @@ class JellyfinClient(
          */
         private const val FIELDS =
             "Genres,DateCreated,PremiereDate,ChildCount,AlbumArtists,ArtistItems,People," +
-                "NormalizationGain,DateLastMediaAdded"
+                "NormalizationGain,DateLastMediaAdded,MediaStreams"
 
         private const val COVER_QUALITY = 90
 

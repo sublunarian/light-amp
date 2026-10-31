@@ -30,7 +30,21 @@ object SubsonicProvider : SourceProvider {
      * transcoder for one of these answers with its default instead — that is
      * a server-side gap, and the honest place to close it is the server.
      */
-    override val streamFormats: List<StreamFormat> = StreamFormat.entries.toList()
+    override val streamFormats: List<StreamFormat> =
+        listOf(StreamFormat.MP3, StreamFormat.OPUS, StreamFormat.RAW)
+
+    /**
+     * Bandcamp sends one file whatever it is asked for — the same MP3 V0 for
+     * mp3 at 320, for opus and for raw, byte for byte (measured 2026-10-30) —
+     * so it has one quality to offer, not three that are secretly one. The
+     * only server named here: it can't be asked, and asking by streaming would
+     * cost the server (see SubsonicClient.transcodes).
+     */
+    override fun streamFormatsFor(source: MusicSource): List<StreamFormat> =
+        if (isBandcampAddress(source.baseUrl)) listOf(StreamFormat.MP3) else streamFormats
+
+    override fun qualityLabel(source: MusicSource, format: StreamFormat): String? =
+        if (isBandcampAddress(source.baseUrl) && format == StreamFormat.MP3) "MP3 V0 (about 245 kbps)" else null
 
     /**
      * Asked of this server rather than assumed of the protocol: not every

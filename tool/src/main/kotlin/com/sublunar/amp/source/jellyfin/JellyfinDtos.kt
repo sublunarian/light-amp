@@ -33,6 +33,14 @@ data class JellyfinItems(
 @Serializable
 data class JellyfinItem(
     @SerialName("Id") val id: String = "",
+    /**
+     * A song's file format, which tells lossless from lossy — see
+     * Track.isLossless. A list for MP4 files ("mov,mp4,m4a,3gp,3g2,mj2"),
+     * which hold either ALAC or AAC, so the audio stream's own codec below
+     * decides those.
+     */
+    @SerialName("Container") val container: String? = null,
+    @SerialName("MediaStreams") val mediaStreams: List<JellyfinMediaStream> = emptyList(),
     @SerialName("Name") val name: String = "",
     @SerialName("Type") val type: String = "",
     /** "Audio" for a song or a playlist of songs; "Video" and others are left out — see JellyfinClient.getPlaylists. */
@@ -121,6 +129,11 @@ data class JellyfinMe(
 data class JellyfinPolicy(
     /** "Allow media downloading" in the server's user settings; on unless its owner turned it off. */
     @SerialName("EnableContentDownloading") val enableContentDownloading: Boolean = true,
+    /**
+     * "Allow audio playback that requires transcoding". The server leaves the
+     * universal endpoint converting regardless, so the app has to honour it.
+     */
+    @SerialName("EnableAudioPlaybackTranscoding") val enableAudioPlaybackTranscoding: Boolean = true,
 )
 
 /** What `/Users/AuthenticateByName` hands back. */
@@ -304,6 +317,29 @@ internal fun JellyfinItem.toTrack(): Track = Track(
         .trim(),
     // The track's own gain first; a file tagged only album-wise still evens out.
     gainDb = normalizationGain ?: albumNormalizationGain,
+    codec = audioStream?.codec?.lowercase() ?: containerName(),
+    bitRateKbps = audioStream?.bitRate?.let { it / 1000 }?.takeIf { it > 0 },
+)
+
+private val JellyfinItem.audioStream: JellyfinMediaStream?
+    get() = mediaStreams.firstOrNull { it.type.equals("Audio", ignoreCase = true) }
+
+/** The container named plainly: an MP4 file's list as "m4a", anything else as itself. */
+private fun JellyfinItem.containerName(): String {
+    val names = container?.lowercase()?.split(',')?.map { it.trim() }.orEmpty()
+    return when {
+        names.isEmpty() -> ""
+        "m4a" in names || "mp4" in names -> "m4a"
+        else -> names.first()
+    }
+}
+
+/** One stream inside a file; the audio one's codec and bitrate (bits per second) say what the file is. */
+@Serializable
+data class JellyfinMediaStream(
+    @SerialName("Type") val type: String = "",
+    @SerialName("Codec") val codec: String? = null,
+    @SerialName("BitRate") val bitRate: Int? = null,
 )
 
 internal fun JellyfinItem.toPlaylist(): Playlist = Playlist(

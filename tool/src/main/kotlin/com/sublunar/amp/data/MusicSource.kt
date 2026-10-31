@@ -54,12 +54,13 @@ data class MusicSource(
     val username: String = "",
     val password: String = "",
     /**
-     * What to stream on Wi-Fi. Persisted by id so an unknown value degrades to
-     * the default, not a crash. Named for the single format it once was, so the
+     * What to stream on Wi-Fi; null until chosen, read as the original (see
+     * [wifiFormat]). Persisted by id so an unknown value degrades to the
+     * default, not a crash. Named for the single format it once was, so the
      * stored name stays.
      */
-    val streamFormatId: String = StreamFormat.DEFAULT.id,
-    /** What to stream on cellular. Null follows the Wi-Fi choice. */
+    val streamFormatId: String? = null,
+    /** What to stream on cellular; null until chosen, read as the smaller default (see [cellularFormat]). */
     val cellularFormatId: String? = null,
     /** What downloads from this source are fetched as; null until chosen, read as the default. */
     val downloadFormatId: String? = null,
@@ -168,21 +169,28 @@ data class MusicSource(
     val hasServer: Boolean get() = phoneLibrary == null
 
     /**
-     * The formats this source can actually serve — see SourceProvider.streamFormats.
-     * Known without a client, so the settings screens offer the right choices
-     * for a source that isn't the one connected.
+     * The formats this source can actually serve: its kind's (see
+     * SourceProvider.streamFormats), less the conversions this server was
+     * found not to make (see ServerFeatures.TRANSCODE_MP3). Known without a
+     * client, so the settings screens offer the right choices for a source
+     * that isn't the one connected.
      */
-    val streamFormats: List<StreamFormat> get() = provider.streamFormats
+    val streamFormats: List<StreamFormat> get() =
+        provider.streamFormatsFor(this).filter { format ->
+            ServerFeatures.transcodeKey(format)?.let { features.allows(it) } ?: true
+        }
 
     /**
      * Streaming quality, per connection.
      *
      * Two settings rather than one plus a data-saving mode that overrides it:
      * an override is a silent substitution, and the whole point of asking for a
-     * format is getting it. Cellular follows Wi-Fi until it is told otherwise.
+     * format is getting it. Until chosen, Wi-Fi plays the original — free
+     * bytes, the best copy, nothing converted on the fly — and cellular the
+     * smaller default (see [smallDefault]).
      */
-    val wifiFormat: StreamFormat get() = supported(streamFormatId)
-    val cellularFormat: StreamFormat get() = supported(cellularFormatId ?: streamFormatId)
+    val wifiFormat: StreamFormat get() = supported(streamFormatId, originalDefault)
+    val cellularFormat: StreamFormat get() = supported(cellularFormatId, smallDefault)
 
     /**
      * Downloading quality — exactly what was chosen, even where this server
@@ -192,7 +200,7 @@ data class MusicSource(
      * choice stands, [downloadFormatAvailable] says whether it can be met, and
      * the downloader stops and says why rather than fetching something else.
      */
-    val downloadFormat: StreamFormat get() = supported(downloadFormatId)
+    val downloadFormat: StreamFormat get() = supported(downloadFormatId, smallDefault)
 
     /**
      * Whether this server can serve [downloadFormat] — false for an Original
@@ -200,7 +208,9 @@ data class MusicSource(
      * keep copies ([downloadsRefused]).
      */
     val downloadFormatAvailable: Boolean get() =
-        !downloadsRefused && (downloadFormats.isEmpty() || downloadFormat in downloadFormats)
+        // Empty only means "kept as stored" for a kind with nothing to choose
+        // (the phone's own music), not for a server found to offer nothing.
+        !downloadsRefused && (provider.streamFormats.isEmpty() || downloadFormat in downloadFormats)
 
     val offlineMode: OfflineMode
         get() = offlineModeName?.let { name ->
@@ -251,9 +261,48 @@ data class MusicSource(
      * different kind of server) would otherwise be silently downgraded to
      * whatever the server felt like sending.
      */
-    private fun supported(id: String?): StreamFormat {
+    private fun supported(id: String?, default: StreamFormat): StreamFormat {
+        if (id == null) return default
         val wanted = StreamFormat.fromId(id)
-        return if (streamFormats.isEmpty() || wanted in streamFormats) wanted else StreamFormat.RAW
+        if (streamFormats.isEmpty() || wanted in streamFormats) return wanted
+        // One quality is every choice: nothing else can be had, smaller or not.
+        streamFormats.singleOrNull()?.let { return it }
+        return StreamFormat.RAW
+    }
+
+    /**
+     * What to ask for [track] when [chosen] is the quality set. The quality is
+     * a ceiling, so a lossy file already within it is sent as it is —
+     * converting it could only make it worse, and sometimes bigger — while a
+     * lossless file, or a lossy one above the ceiling, is converted down to it.
+     * The usual rule (Plex, Jellyfin, Navidrome's own), kept by the app because
+     * the servers each keep a different version of it. A file whose format or
+     * bitrate isn't known goes by the choice. Where the original can't be had
+     * ([download]s from a server with no call for it), the choice stands.
+     */
+    fun formatFor(track: Track, chosen: StreamFormat, download: Boolean = false): StreamFormat {
+        if (chosen == StreamFormat.RAW || track.isLossless() != false) return chosen
+        val ceiling = provider.kbps(chosen) ?: return chosen
+        val fits = track.bitRateKbps?.let { it <= ceiling } ?: return chosen
+        if (!fits) return chosen
+        val original = if (download) StreamFormat.RAW in downloadFormats else StreamFormat.RAW in streamFormats
+        return if (original) StreamFormat.RAW else chosen
+    }
+
+    /** The original, where this source can send it; otherwise its one quality. */
+    private val originalDefault: StreamFormat get() =
+        if (StreamFormat.RAW in streamFormats || streamFormats.isEmpty()) StreamFormat.RAW else streamFormats.first()
+
+    /**
+     * Where data or room costs something, cellular and downloads: Opus, as good
+     * as the original to nearly every ear at a fraction of it, or MP3 where the
+     * server can't make Opus, else whatever it has.
+     */
+    private val smallDefault: StreamFormat get() = when {
+        streamFormats.isEmpty() -> StreamFormat.RAW
+        StreamFormat.DEFAULT in streamFormats -> StreamFormat.DEFAULT
+        StreamFormat.MP3 in streamFormats -> StreamFormat.MP3
+        else -> streamFormats.first()
     }
 
     /**

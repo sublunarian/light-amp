@@ -62,6 +62,19 @@ class JellyfinParseTest {
     }
 
     @Test
+    fun `an MP4 song's format comes from its audio stream, not the container list`() {
+        val alac = item(
+            """{"Id":"t","Name":"X","Container":"mov,mp4,m4a,3gp,3g2,mj2",
+               "MediaStreams":[{"Type":"Audio","Codec":"alac","BitRate":900000}]}""",
+        ).toTrack()
+        assertEquals("alac", alac.codec)
+        assertEquals(900, alac.bitRateKbps)
+        // No stream sent: the list read as m4a, decided by bitrate where there is one.
+        assertEquals("m4a", item("""{"Id":"t","Name":"X","Container":"mov,mp4,m4a,3gp,3g2,mj2"}""").toTrack().codec)
+        assertEquals("flac", item("""{"Id":"t","Name":"X","Container":"flac"}""").toTrack().codec)
+    }
+
+    @Test
     fun `a cover id splits back into its item and picture tag`() {
         assertEquals("al" to "abc", splitCoverId("al:abc"))
         // Cached from before tags were kept: the item alone, no tag.

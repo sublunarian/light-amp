@@ -493,6 +493,21 @@ class LibrarySync(
         if (client == null || source == null) return
         runCatching {
             val learned = client.probeFeatures(source.features, dao.anyTrackId())
+            // What can be chosen for this server, every sync, so a check of the
+            // phone's log can see what each server was found to convert to.
+            val now = source.copy(features = learned ?: source.features)
+            android.util.Log.i(
+                "AmpSync",
+                "formats of ${source.name}: ${now.streamFormats.joinToString { it.id }}; " +
+                    "Wi-Fi ${now.wifiFormat.id}, cellular ${now.cellularFormat.id}, downloads ${now.downloadFormat.id}",
+            )
+            // What the library is made of, so the lossless-only rule's reach can be read (see MusicSource.formatFor).
+            runCatching { dao.codecCounts() }.onSuccess { counts ->
+                android.util.Log.i(
+                    "AmpQual",
+                    "files of ${source.name}: ${counts.joinToString { "${it.codec.ifBlank { "unknown" }} ${it.songs}" }}",
+                )
+            }
             if (learned == null || learned == source.features) return@runCatching
             // Re-read the source, which may have been edited during a long sync:
             // only the features are ours to write.
@@ -805,9 +820,11 @@ class LibrarySync(
          * catches. Each source then refetches every album's songs once (see
          * MusicSource.parserGeneration). 1: album artist and composer from
          * OpenSubsonic's display* fields; 2: multi-artist credits from its
-         * structured `artists`.
+         * structured `artists`; 3: each file's format and bitrate (see
+         * Track.codec); 4: Jellyfin's from the audio stream, not its MP4
+         * container list.
          */
-        const val TRACK_PARSER_GENERATION = 2
+        const val TRACK_PARSER_GENERATION = 4
 
         /** Albums whose songs are written per transaction. */
         private const val SYNC_WRITE_BATCH = 40

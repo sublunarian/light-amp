@@ -49,6 +49,10 @@ data class TrackEntity(
     val streamPath: String = "",
     /** Loudness-normalisation gain in dB from the server; see [Track.gainDb]. */
     val gainDb: Float? = null,
+    /** The file's format, and its bitrate in kbps; see [Track.codec]. */
+    @ColumnInfo(defaultValue = "")
+    val codec: String = "",
+    val bitRateKbps: Int? = null,
 )
 
 @Entity(tableName = "albums")
@@ -133,6 +137,9 @@ data class LyricsEntity(
     val text: String?,
     val fetchedAtMs: Long,
 )
+
+/** One row of [LibraryDao.codecCounts]. */
+data class CodecCount(val codec: String, val songs: Int)
 
 /**
  * One downloaded track: the index over its file on disk — format, size, and any
@@ -456,6 +463,10 @@ interface LibraryDao {
 
     // --- covers --------------------------------------------------------------
 
+    /** How many songs there are of each file format — for the log after a sync (see Track.codec). */
+    @Query("SELECT codec, COUNT(*) AS songs FROM tracks GROUP BY codec ORDER BY songs DESC")
+    suspend fun codecCounts(): List<CodecCount>
+
     /** How many albums there are — what the cache is sized from (see CacheReserve). */
     @Query("SELECT COUNT(*) FROM albums")
     suspend fun albumCount(): Int
@@ -634,7 +645,7 @@ interface LibraryDao {
         ArtistImageEntity::class,
         LyricsEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = true,
     // Generated from the committed schemas in tool/src/main/assets/schemas (assets,
     // because that is what Light's store builder copies). Every schema change adds
@@ -653,6 +664,9 @@ interface LibraryDao {
         AutoMigration(from = 14, to = 15),
         // Adds lyrics, empty: each song's filled the first time it's looked up.
         AutoMigration(from = 15, to = 16),
+        // Adds tracks.codec and tracks.bitRateKbps, blank until the next sync
+        // reads every song again (LibrarySync.TRACK_PARSER_GENERATION 3).
+        AutoMigration(from = 16, to = 17),
     ],
 )
 abstract class LibraryDatabase : RoomDatabase() {

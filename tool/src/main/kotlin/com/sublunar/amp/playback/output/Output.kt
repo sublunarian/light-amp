@@ -240,8 +240,8 @@ interface OutputHost {
     /** Whether the server may be spoken to at all — the data mode's courtesy rule. */
     fun mayTalkToServer(): Boolean
 
-    /** The format this link asks the server for. */
-    fun streamFormat(): StreamFormat
+    /** The format this link asks the server for [track] in. */
+    fun streamFormat(track: Track): StreamFormat
 
     /**
      * The server's own address for [track] in [format], or null with no
