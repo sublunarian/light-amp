@@ -175,7 +175,7 @@ class LibraryVisibilityScreen(
         val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
 
-        ListScreen(onBack = { leave() }, title = if (adding) "Choose Libraries" else "Shown in Amp") {
+        ListScreen(onBack = { leave() }, title = if (adding) "Choose Libraries" else "Shown in Amp", settings = true) {
             ScrollableList {
                 if (source == null) return@ScrollableList
                 item {
@@ -287,7 +287,7 @@ class SourceListScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = "Sources") {
+        ListScreen(onBack = { goBack() }, title = "Sources", settings = true) {
             ScrollableList {
                 items(sources, key = { it.id }) { source ->
                     TextRow(
@@ -312,7 +312,7 @@ class AddSourceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = "Add Source") {
+        ListScreen(onBack = { goBack() }, title = "Add Source", settings = true) {
             ScrollableList {
                 Providers.addNotes.forEach { note -> item { SectionLabel(note) } }
                 Providers.addEntries(sources).forEach { entry ->
@@ -379,7 +379,7 @@ class SourceDetailScreen(
         val canRead = access == PhoneAccess.GRANTED
         val askAccess = rememberAccessRequest(source?.phoneLibrary)
 
-        ListScreen(onBack = { goBack() }, title = source?.name ?: "Source") {
+        ListScreen(onBack = { goBack() }, title = source?.name ?: "Source", settings = true) {
             ScrollableList {
                 if (source == null) return@ScrollableList
                 if (source.phoneLibrary != null && !canRead) {

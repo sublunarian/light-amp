@@ -1,12 +1,17 @@
 package com.sublunar.amp.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -15,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -32,6 +38,33 @@ private const val DROP_LINE_HEIGHT_PX = 9
 
 /** The drag handle at a reorderable row's end, a width the floating copy keeps too. */
 const val DRAG_HANDLE_PX = 51
+
+/** How far the grab bar's glyph sits inside its box, on either side. */
+const val DRAG_HANDLE_INSET_PX = 4
+
+/** Text to the grab bar's glyph: the same visible gap as a cover to its text. */
+private const val DRAG_HANDLE_GAP_PX = ROW_GAP_PX - DRAG_HANDLE_INSET_PX
+
+/** The grab bar's whole slot at a row's end: the gap before it and its box. */
+const val DRAG_HANDLE_SLOT_PX = DRAG_HANDLE_GAP_PX + DRAG_HANDLE_PX
+
+/**
+ * A row's grab bar. What a finger can take hold of is the whole slot, the row's
+ * full height and the gap before the glyph as well as its box, so a near miss
+ * still grabs; [onPositioned] reports that slot for the drag's hit test.
+ */
+@Composable
+fun DragHandle(onPositioned: (LayoutCoordinates) -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(px(DRAG_HANDLE_SLOT_PX))
+            .onGloballyPositioned(onPositioned),
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        AppIcon(AppIcons.Dehaze, size = px(DRAG_HANDLE_PX))
+    }
+}
 
 /**
  * Marks where a dragged row (or group) will land if dropped now. Rows lay it over
@@ -111,13 +144,15 @@ fun dropInsertIndex(size: Int, from: Int, movingIndices: Set<Int>, target: Int):
 data class DropTarget<K>(val beforeKey: K?)
 
 /**
- * Where the rows being dragged would land if dropped now, or null with no drag.
+ * Where the rows being dragged would land if dropped now, for the drop line; null
+ * with no drag, and for a single row, which opens a gap instead (see [gapShift]).
  * [orderedKeys] and [minIndex] are what the container was given. Worked out again
  * only when the drag crosses into another row, not on every frame of it.
  */
 @Composable
 fun <K> DragReorderState<K>.dropTarget(orderedKeys: List<K>, rowPx: Float, minIndex: Int = 0): DropTarget<K>? {
     val from = draggingIndex ?: return null
+    if (draggingKeys.size <= 1) return null
     // The list can shrink under a held drag (the queue's playing track ends) until
     // no row from minIndex on is left: dragRowTarget would then clamp into an empty
     // range and throw, before the restart that ends the drag has had a composition
@@ -130,6 +165,36 @@ fun <K> DragReorderState<K>.dropTarget(orderedKeys: List<K>, rowPx: Float, minIn
         DropTarget(orderedKeys.filterIndexed { i, _ -> i !in moving }.getOrNull(insertAt))
     }
 }
+
+/**
+ * How far row [index] stands aside while a single row is dragged: the rows between
+ * where it was and where it would land close up over its old place and open a gap
+ * where it's going. Eased while the drag lasts; once it ends the list has taken its
+ * new order, so the rows snap home rather than sliding back from where they stood.
+ */
+@Composable
+fun <K> DragReorderState<K>.gapShift(index: Int, size: Int, rowPx: Float, minIndex: Int = 0): Float {
+    val from = draggingIndex
+    val target = if (from == null || draggingKeys.size != 1 || size <= minIndex || index == from) {
+        0f
+    } else {
+        val to = dragRowTarget(size, from, dragOffsetY, rowPx, minIndex)
+        when {
+            from < to && index in (from + 1)..to -> -rowPx
+            to < from && index in to until from -> rowPx
+            else -> 0f
+        }
+    }
+    val shift by animateFloatAsState(
+        targetValue = target,
+        animationSpec = if (from != null) tween(GAP_SLIDE_MS) else snap(),
+        label = "gapShift",
+    )
+    return shift
+}
+
+/** How long a row takes to step aside. */
+private const val GAP_SLIDE_MS = 150
 
 /**
  * [full] after a drop on a list showing only some of its rows: the shown rows at

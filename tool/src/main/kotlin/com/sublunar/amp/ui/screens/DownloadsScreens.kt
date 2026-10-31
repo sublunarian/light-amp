@@ -60,9 +60,9 @@ fun dataModeLabel(mode: DataMode): String = when (mode) {
 private const val MODE_DETAIL_LINES = Int.MAX_VALUE
 
 private fun dataModeDetail(mode: DataMode): String = when (mode) {
-    DataMode.MAKE_IT_HURT -> "No limits — streaming, downloads and artwork all use cellular data when there's no Wi-Fi"
-    DataMode.LOW_DATA -> "Streams music on cellular data. Downloads and library artwork wait for Wi-Fi; the cover of what's playing doesn't"
-    DataMode.WIFI_ONLY -> "Never uses cellular data. Without Wi-Fi, only your downloads play"
+    DataMode.MAKE_IT_HURT -> "No limits. Amp uses cellular data for everything when there's no Wi-Fi"
+    DataMode.LOW_DATA -> "Uses cellular data for music, lyrics and the artwork you look at. Downloads wait for Wi-Fi"
+    DataMode.WIFI_ONLY -> "Never uses cellular data"
 }
 
 /** Everything the phone holds, from every source, in the song lists' order. */
@@ -96,6 +96,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             bytes = read.second
         }
         val limit by App.settings.downloadLimit.state.collectAsState()
+        val reserve by App.cacheReserve.bytes.collectAsState()
         val paused by App.settings.downloadsPaused.state.collectAsState()
         val sources by App.settings.sources.state.collectAsState()
         // The running download names its server only when there are several.
@@ -162,7 +163,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         }
                     }
                     item {
-                        SectionLabel("$total tracks · ${formatGb(bytes)} / ${formatGb(limit)}")
+                        SectionLabel("$total tracks · ${formatGb(bytes)} / ${formatGb(limit - reserve)}")
                     }
                     // A list to read, not to play from: a track from a source that
                     // isn't the current one would resolve through the wrong server.
@@ -254,7 +255,7 @@ class OfflineModeScreen(
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
         val current = sources.firstOrNull { it.id == sourceId }?.offlineMode ?: OfflineMode.MANUAL
-        ListScreen(onBack = { goBack() }, title = "Auto-Download") {
+        ListScreen(onBack = { goBack() }, title = "Auto-Download", settings = true) {
             ScrollableList {
                 items(OfflineMode.entries.toList()) { mode ->
                     TextRow(
@@ -277,7 +278,7 @@ class DataModeScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val current by App.settings.dataMode.state.collectAsState()
-        ListScreen(onBack = { goBack() }, title = "Data Mode") {
+        ListScreen(onBack = { goBack() }, title = "Data Mode", settings = true) {
             ScrollableList {
                 items(DataMode.entries.toList()) { mode ->
                     TextRow(
@@ -312,7 +313,7 @@ class SizeLimitScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             listOf(1L, 2L, 5L, 10L, 20L, 32L, 48L).map { it * gb }.filter { it < max } + listOf(max)
         }
 
-        ListScreen(onBack = { goBack() }, title = "Size Limit") {
+        ListScreen(onBack = { goBack() }, title = "Storage Limit", settings = true) {
             ScrollableList {
                 // Both numbers, because a limit is chosen against both.
                 item {

@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
@@ -21,7 +22,17 @@ import com.thelightphone.sdk.ui.LightThemeTokens
  * [Scale] every size on the screen is drawn at — see [LocalScale].
  */
 @Composable
-fun PlayerTheme(content: @Composable () -> Unit) {
+fun PlayerTheme(
+    /** The library's pages and the player, as against menus and settings: see [LocalDimTextAlpha]. */
+    library: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    val brighter by App.settings.brighterText.state.collectAsState()
+    val dimAlpha = when {
+        !brighter -> DIM_TEXT_ALPHA
+        library -> BRIGHTER_LIBRARY_DIM_ALPHA
+        else -> 1f
+    }
     val invert by App.settings.invertColors.state.collectAsState()
     val colors = if (invert) LightThemeColors.Light else LightThemeColors.Dark
     LightTheme(colors = colors) {
@@ -29,7 +40,7 @@ fun PlayerTheme(content: @Composable () -> Unit) {
         // The one place every screen passes through tells the artwork loader
         // how wide the panel really is — see ArtworkLoader.panelWidthPx.
         SideEffect { App.artwork.panelWidthPx = scale.windowWidthPx }
-        CompositionLocalProvider(LocalScale provides scale) {
+        CompositionLocalProvider(LocalScale provides scale, LocalDimTextAlpha provides dimAlpha) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -43,3 +54,11 @@ fun PlayerTheme(content: @Composable () -> Unit) {
         }
     }
 }
+
+/** How strongly dimmed (grey) text is drawn on this screen, white being 1. */
+val LocalDimTextAlpha = compositionLocalOf { DIM_TEXT_ALPHA }
+
+private const val DIM_TEXT_ALPHA = 0.5f
+
+/** TRIAL (Brighter Text): the library and player's grey; menus and settings have none. */
+private const val BRIGHTER_LIBRARY_DIM_ALPHA = 0.5675f

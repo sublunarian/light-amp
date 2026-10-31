@@ -83,7 +83,8 @@ enum class PlaylistSort { RECENTLY_UPDATED, NAME, DATE_CREATED }
  * Only these three, not the page under them: reopening part-way into a record
  * you have since left is worse than reopening at the library itself.
  */
-enum class LastSection { LIBRARY, SEARCH, NOW_PLAYING }
+/** Where Amp reopens. Never search: it starts empty, so it reopens as the library. */
+enum class LastSection { LIBRARY, NOW_PLAYING }
 
 /**
  * How the bottom bar is arranged, and what that implies for the pages above it.
@@ -394,6 +395,29 @@ class AppSettings(
      * because it is also what keeps every list's titles on one axis.
      */
     val hideDownloadIcons: Pref<Boolean> = bool("pref.hideDownloadIcons", false)
+
+
+    /** TRIAL: every text drawn in the SDK style nearest its size, whole, instead of Amp's own. */
+    val sdkFontStyles: Pref<Boolean> = bool("pref.sdkFontStyles", false)
+
+    /**
+     * TRIAL: the album card's text stacked up from the cover's bottom edge, no
+     * buttons beside it, and Shuffle heading the track list instead.
+     */
+    val albumShuffleRow: Pref<Boolean> = bool("pref.albumShuffleRow", false)
+
+    /** TRIAL: the tab bar's glyphs as white outlines, the chosen tab filled in. */
+    val outlineTabIcons: Pref<Boolean> = bool("pref.outlineTabIcons", false)
+
+    /**
+     * TRIAL: menus and settings without grey, and the library and player's
+     * grey lifted, the player's add, cast and queue row with it.
+     */
+    val brighterText: Pref<Boolean> = bool("pref.brighterText", false)
+
+    /** TRIAL: the tab bar laid out as the SDK's LightBottomBar lays out its icons. */
+    val sdkTabBar: Pref<Boolean> = bool("pref.sdkTabBar", false)
+
 
     /** How much of the player the cover gets, if any. */
     val artwork: Pref<ArtworkMode> = enum("pref.artworkMode", ArtworkMode.SMALL)

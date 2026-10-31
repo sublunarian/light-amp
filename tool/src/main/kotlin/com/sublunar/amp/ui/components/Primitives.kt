@@ -4,10 +4,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -15,9 +17,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
+import com.sublunar.amp.App
+import com.sublunar.amp.ui.LocalDimTextAlpha
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.ui.LightProgressBar
 import com.thelightphone.sdk.ui.LightThemeTokens
+import com.thelightphone.sdk.ui.designVerticalPxToSp
+import kotlin.math.abs
 
 /** The icons Amp draws, named for what they stand for. Glyphs live in MaterialGlyphs.kt. */
 object AppIcons {
@@ -29,6 +35,7 @@ object AppIcons {
      */
     val AlbumStack = Icons.Filled.FilterNone
     val MusicNote = Icons.Filled.MusicNote
+    val MusicNoteOutline = Icons.Outlined.MusicNote
 
     /**
      * Artists: a filled mic, at the same weight as the note and the disc beside it.
@@ -46,6 +53,8 @@ object AppIcons {
     val Sort = Icons.AutoMirrored.Filled.Sort
     val Favorite = Icons.Filled.Favorite
     val FavoriteBorder = Icons.Filled.FavoriteBorder
+    val Star = Icons.Filled.Star
+    val StarBorder = Icons.Filled.StarBorder
     val Shuffle = Icons.Filled.Shuffle
     val PlayArrow = Icons.Filled.PlayArrow
     val Pause = Icons.Filled.Pause
@@ -101,16 +110,18 @@ fun AppIcon(
  * Which of the LP3's type styles a string belongs to. Amp sets its own sizes (tuned
  * to this screen's grid), the role supplies Light's weight and tracking.
  */
-enum class TextRole { Subheading, Copy, Button, Detail }
+enum class TextRole { Heading, Subheading, Copy, Button, Detail, Fine }
 
 @Composable
 private fun TextRole.style(): TextStyle {
     val t = LightThemeTokens.typography
     return when (this) {
+        TextRole.Heading -> t.heading
         TextRole.Subheading -> t.subheading
         TextRole.Copy -> t.copy
         TextRole.Button -> t.button
         TextRole.Detail -> t.detail
+        TextRole.Fine -> t.fine
     }
 }
 
@@ -155,7 +166,11 @@ fun appTextStyle(
     role: TextRole = TextRole.Copy,
     weight: FontWeight? = null,
     align: TextAlign? = null,
+    /** Drawn as asked even with Use SDK Font Styles on. */
+    exact: Boolean = false,
 ): TextStyle {
+    val sdkStyles = App.settings.sdkFontStyles.state.collectAsState().value
+    if (sdkStyles && !exact) return nearestSdkStyle(size, role, weight, align)
     val base = role.style()
     return base.copy(
         fontSize = size,
@@ -166,7 +181,36 @@ fun appTextStyle(
     )
 }
 
-/** Text in the LP3 font at an exact size. [dim] draws it at half opacity, for secondary lines. */
+/**
+ * TRIAL (Use SDK Font Styles): the SDK style nearest [size], whole, as the SDK
+ * draws it: its size, line height, tracking and weight (unless [weight] is
+ * given), scaled to the screen's height. Between styles of the same size the
+ * text's own [role] wins, else the first listed.
+ */
+@Composable
+private fun nearestSdkStyle(size: TextUnit, role: TextRole, weight: FontWeight?, align: TextAlign?): TextStyle {
+    val t = LightThemeTokens.typography
+    val own = role.style()
+    val styles = listOf(
+        t.title, t.subtitle, t.heading, t.copy, t.subheading, t.button,
+        t.paragraph, t.fine, t.paragraphWide, t.detail, t.superfine, t.micro,
+    )
+    val sized = styles.map { it to it.fontSize.value.designVerticalPxToSp() }
+    val nearest = sized.minOf { abs(it.second.value - size.value) }
+    val ties = sized.filter { abs(it.second.value - size.value) - nearest < 0.01f }
+    val (style, fontSize) = ties.firstOrNull { it.first == own } ?: ties.first()
+    val spacing = style.letterSpacing
+    return style.copy(
+        fontSize = fontSize,
+        lineHeight = style.lineHeight.value.designVerticalPxToSp(),
+        letterSpacing = if (spacing.isSp) spacing.value.designVerticalPxToSp() else TextUnit.Unspecified,
+        // A weight the caller asked for outright stands (Light's button, kept Regular).
+        fontWeight = onDeviceWeight(weight ?: style.fontWeight ?: FontWeight.Normal),
+        textAlign = align ?: TextAlign.Unspecified,
+    )
+}
+
+/** Text in the LP3 font at an exact size. [dim] draws it grey, for secondary lines: see [LocalDimTextAlpha]. */
 @Composable
 fun AppText(
     text: String,
@@ -181,15 +225,20 @@ fun AppText(
     maxLines: Int = Int.MAX_VALUE,
     align: TextAlign? = null,
     overflow: TextOverflow = TextOverflow.Ellipsis,
+    /** Drawn as asked even with Use SDK Font Styles on. */
+    exact: Boolean = false,
+    /** How the text came out (its line count), for a neighbour that makes room. */
+    onTextLayout: (TextLayoutResult) -> Unit = {},
 ) {
-    val style = appTextStyle(size, lineHeight, role, weight, align)
+    val style = appTextStyle(size, lineHeight, role, weight, align, exact)
     Text(
         text = text,
-        modifier = if (dim) modifier.alpha(0.5f) else modifier,
+        modifier = if (dim) modifier.alpha(LocalDimTextAlpha.current) else modifier,
         color = color,
         style = style,
         maxLines = maxLines,
         overflow = overflow,
+        onTextLayout = onTextLayout,
     )
 }
 

@@ -145,7 +145,6 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
                     LibraryTab.entries.firstOrNull { it.name == App.settings.lastTab.first() }
                         ?.let { LibraryNav.currentTab.value = it }
                     when (App.settings.lastSection.first()) {
-                        LastSection.SEARCH -> LibraryNav.openSearch()
                         LastSection.NOW_PLAYING -> {
                             // The queue is restored asynchronously, so wait a
                             // moment for it rather than opening an empty player.

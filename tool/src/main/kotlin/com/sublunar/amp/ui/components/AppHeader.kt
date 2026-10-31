@@ -1,5 +1,7 @@
 package com.sublunar.amp.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -9,9 +11,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -19,6 +24,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
+import com.sublunar.amp.App
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
@@ -54,6 +60,10 @@ const val CORNER_ICON_PX = 66
  */
 @Composable
 private fun HeaderTitle(title: String, fit: Boolean, roomPx: Int) {
+    if (App.settings.sdkFontStyles.state.collectAsState().value) {
+        SdkHeaderTitle(title, fit, roomPx)
+        return
+    }
     val full = pxSp(LightType.FINE_PX)
     val style = appTextStyle(full, role = TextRole.Subheading, align = TextAlign.Center)
     val measurer = rememberTextMeasurer()
@@ -74,6 +84,60 @@ private fun HeaderTitle(title: String, fit: Boolean, roomPx: Int) {
         align = TextAlign.Center,
     )
 }
+
+/**
+ * TRIAL (Use SDK Font Styles): the title at the largest size it fits at, a pixel
+ * at a time down from fine's 52px to [SDK_TITLE_MIN_PX], so a long one fills the
+ * header rather than dropping a whole SDK step. Below the full size the sizes are
+ * drawn as asked, not snapped back to an SDK style. Each is measured in the style
+ * it would be drawn in. One that fits at none is cut off at the smallest: it
+ * neither shrinks to fine print nor wraps.
+ */
+@Composable
+private fun SdkHeaderTitle(title: String, fit: Boolean, roomPx: Int) {
+    val full = LightType.FINE_PX
+    val sizes = if (fit) (full downTo SDK_TITLE_MIN_PX).toList() else listOf(full)
+    val styles = sizes.map {
+        appTextStyle(pxSp(it), role = shrunkRole(it, full), align = TextAlign.Center, exact = it != full)
+    }
+    val measurer = rememberTextMeasurer()
+    val step = if (roomPx <= 0) {
+        0
+    } else {
+        remember(title, roomPx, styles) {
+            styles.indexOfFirst { style ->
+                !measurer.measure(
+                    AnnotatedString(title),
+                    style = style,
+                    maxLines = 1,
+                    constraints = Constraints(maxWidth = roomPx),
+                ).hasVisualOverflow
+            }
+        }
+    }
+    val size = if (step < 0) sizes.last() else sizes[step]
+    AppText(
+        title,
+        pxSp(size),
+        role = shrunkRole(size, full),
+        maxLines = 1,
+        align = TextAlign.Center,
+        exact = size != full,
+    )
+}
+
+/**
+ * A shrunk title's role: detail's, with no extra spacing, so it reads as the
+ * page's title rather than the player's spaced-out card.
+ */
+private fun shrunkRole(size: Int, full: Int): TextRole =
+    if (size == full) TextRole.Subheading else TextRole.Detail
+
+/** The smallest a header title shrinks to: the player card's title. Below it, it's cut off. */
+private const val SDK_TITLE_MIN_PX = 48
+
+/** How long a title takes to fade in or out of the header. */
+private const val TITLE_FADE_MS = 200
 
 /** The size a title that will not fit drops to: the player's title card. */
 private const val SUBPAGE_TITLE_PX = 45
@@ -105,7 +169,14 @@ fun AppHeader(
      * Library pages only: elsewhere titles are the app's own short words.
      */
     fitTitle: Boolean = false,
+    /** Hides the title while the page shows it elsewhere (the album page's card), fading between. */
+    titleShown: Boolean = true,
 ) {
+    val titleAlpha by animateFloatAsState(
+        targetValue = if (titleShown) 1f else 0f,
+        animationSpec = tween(TITLE_FADE_MS),
+        label = "headerTitle",
+    )
     // The corner slots are 160px squares, so their hit boxes match the transport's
     // and the icons land on the shared 80px axis.
     val headerHeight = px(HEADER_BAR_PX)
@@ -134,7 +205,7 @@ fun AppHeader(
             val room = constraints.maxWidth
             when {
                 titleContent != null -> titleContent()
-                title != null -> HeaderTitle(title, fitTitle, room)
+                title != null -> Box(Modifier.alpha(titleAlpha)) { HeaderTitle(title, fitTitle, room) }
                 else -> {}
             }
         }

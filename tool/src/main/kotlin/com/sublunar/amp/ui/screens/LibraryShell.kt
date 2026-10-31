@@ -38,6 +38,7 @@ import com.sublunar.amp.ui.components.INDEX_STRIP_PX
 import com.sublunar.amp.ui.components.LatestList
 import com.sublunar.amp.ui.components.ListScrollBar
 import com.sublunar.amp.ui.components.PlayAllRow
+import com.sublunar.amp.ui.components.ShuffleRow
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
@@ -80,23 +81,22 @@ fun SimpleLightScreen<*>.LibraryShell() {
     val currentTab by LibraryNav.currentTab.collectAsState()
     val libraryIndex by LibraryNav.libraryIndex.collectAsState()
     val searchActive by LibraryNav.searchActive.collectAsState()
-    PlayerTheme {
+    PlayerTheme(library = true) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
                 if (searchActive) {
-                    SearchView(currentTab)
+                    SearchView()
                 } else if (libraryIndex) {
                     LibraryIndex()
                 } else {
                     TabContent(currentTab)
                 }
             }
-            // The keyboard takes the bottom of the screen while typing, and the bar
-            // would be a second row of controls under it. Return brings it back.
-            if (!LibraryNav.typing.collectAsState().value) {
+            // None while searching: the keyboard takes the bottom while typing,
+            // and the results are left by a result or the header's ✕, not by
+            // the bar.
+            if (!searchActive) {
                 Navbar(
-                    // Search keeps the tab it was started from lit: it borrows the
-                    // list in front of you and hands it back on the way out.
                     current = if (libraryIndex) null else currentTab,
                     onSelect = { LibraryNav.tapTab(it) },
                     onSearch = { startSearch() },
@@ -329,8 +329,8 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
  */
 @Composable
 private fun SimpleLightScreen<*>.RandomAlbumRow(albums: LatestList<Album>) {
-    PlayAllRow(AppIcons.Shuffle, "Play Random Album") {
-        val album = albums.items.randomOrNull() ?: return@PlayAllRow
+    ShuffleRow("Play Random Album") {
+        val album = albums.items.randomOrNull() ?: return@ShuffleRow
         App.scope.launch {
             // The database read off Main, the player call on it: the player's
             // looper is Main — see PlaybackController.
@@ -416,7 +416,7 @@ private fun SimpleLightScreen<*>.SongsTab(header: Boolean = true) {
         ) {
             if (!selection.active) {
                 item {
-                    PlayAllRow(AppIcons.Shuffle, "Shuffle") {
+                    ShuffleRow {
                         App.playback.playQueue(shuffled(rows.items), 0)
                         go { NowPlayingScreen(it) }
                     }
@@ -522,7 +522,7 @@ private fun SimpleLightScreen<*>.PlaylistsTab(header: Boolean = true) {
             // A server that can't hold an empty playlist has no use for a bare
             // "New Playlist" — see MusicSource.supportsEmptyPlaylists.
             if (canCreateEmpty) {
-                item { PlayAllRow(AppIcons.Add, "New Playlist") { newPlaylist() } }
+                item { PlayAllRow(AppIcons.Add, "New Playlist", headsList = true, oneLineList = true) { newPlaylist() } }
             }
             items(playlists, key = { it.id }) { playlist ->
                 TrackRow(

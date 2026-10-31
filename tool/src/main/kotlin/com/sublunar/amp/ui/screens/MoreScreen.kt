@@ -308,7 +308,7 @@ class AboutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
-        ListScreen(onBack = { goBack() }, title = "About") {
+        ListScreen(onBack = { goBack() }, title = "About", settings = true) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(px(40)),
                 verticalArrangement = Arrangement.spacedBy(px(26)),

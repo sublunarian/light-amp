@@ -24,12 +24,12 @@ object LibraryNav {
     val searchQuery = MutableStateFlow("")
 
     /**
-     * Show the search page: straight to typing [withKeyboard] (the header's
-     * magnifier), or with its last results.
+     * Show the search page, empty: a search starts afresh rather than on the
+     * last one. Straight to typing [withKeyboard] (the header's magnifier).
      */
     fun openSearch(withKeyboard: Boolean = false) {
+        searchQuery.value = ""
         searchActive.value = true
-        record(LastSection.SEARCH)
         typing.value = withKeyboard
     }
 
@@ -80,8 +80,9 @@ object LibraryNav {
         searchActive.value = true
     }
 
-    /** Leave the search page, keeping the query, so coming back finds the last results. */
+    /** Leave the search page; the query goes with it (see [openSearch]). */
     fun closeSearch() {
+        searchQuery.value = ""
         searchActive.value = false
         typing.value = false
         record(LastSection.LIBRARY)

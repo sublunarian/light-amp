@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -11,27 +10,23 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
-import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.AlbumGrid
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
-import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.LibraryList
 import com.sublunar.amp.ui.components.ListScreen
-import com.sublunar.amp.ui.components.PlayAllRow
+import com.sublunar.amp.ui.components.ShuffleRow
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.SplitActionRow
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.rememberGridAnchor
 import com.sublunar.amp.ui.components.rememberSelection
-import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
 
@@ -178,33 +173,16 @@ class ArtistSongsScreen(
                 SelectionHeader(selection) {
                     openSelectionActions(selection.pick(songs.orEmpty()) { it.id }, selection)
                 }
-            } else if (popular) {
-                AppHeader(
-                    onBack = { goBack() },
-                    titleContent = {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            AppText(
-                                "Popular Songs",
-                                pxSp(LightType.FINE_PX),
-                                lineHeight = pxSp(LightType.FINE_LINE_PX),
-                                maxLines = 1,
-                            )
-                            AppText(
-                                name,
-                                pxSp(LightType.DETAIL_PX),
-                                lineHeight = pxSp(LightType.DETAIL_LINE_PX),
-                                dim = true,
-                                maxLines = 1,
-                            )
-                        }
-                    },
-                    rightAction = libraryCornerAction(LibraryPage.ARTIST_POPULAR),
-                )
             } else {
+                // The artist alone, as on its other pages: the Popular row that
+                // led here already said which songs these are.
                 AppHeader(
                     onBack = { goBack() },
                     title = name,
-                    rightAction = libraryCornerAction(LibraryPage.ARTIST_SONGS, name),
+                    rightAction = libraryCornerAction(
+                        if (popular) LibraryPage.ARTIST_POPULAR else LibraryPage.ARTIST_SONGS,
+                        name,
+                    ),
                     fitTitle = true,
                 )
             }
@@ -218,7 +196,7 @@ class ArtistSongsScreen(
                 ) {
                     if (!selection.active) {
                         item {
-                            PlayAllRow(AppIcons.Shuffle, "Shuffle") {
+                            ShuffleRow {
                                 App.playback.playQueue(shuffled(songs), 0)
                                 go { NowPlayingScreen(it) }
                             }

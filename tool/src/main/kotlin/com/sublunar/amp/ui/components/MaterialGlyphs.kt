@@ -793,6 +793,51 @@ object Icons {
             }
         }
 
+        val Star: ImageVector by glyph("Filled.Star") {
+            shape {
+                moveTo(12.0f, 17.27f)
+                lineTo(18.18f, 21.0f)
+                lineToRelative(-1.64f, -7.03f)
+                lineTo(22.0f, 9.24f)
+                lineToRelative(-7.19f, -0.61f)
+                lineTo(12.0f, 2.0f)
+                lineTo(9.19f, 8.63f)
+                lineTo(2.0f, 9.24f)
+                lineToRelative(5.46f, 4.73f)
+                lineTo(5.82f, 21.0f)
+                close()
+            }
+        }
+
+        val StarBorder: ImageVector by glyph("Filled.StarBorder") {
+            shape {
+                moveTo(22.0f, 9.24f)
+                lineToRelative(-7.19f, -0.62f)
+                lineTo(12.0f, 2.0f)
+                lineTo(9.19f, 8.63f)
+                lineTo(2.0f, 9.24f)
+                lineToRelative(5.46f, 4.73f)
+                lineTo(5.82f, 21.0f)
+                lineTo(12.0f, 17.27f)
+                lineTo(18.18f, 21.0f)
+                lineToRelative(-1.63f, -7.03f)
+                lineTo(22.0f, 9.24f)
+                close()
+                moveTo(12.0f, 15.4f)
+                lineToRelative(-3.76f, 2.27f)
+                lineToRelative(1.0f, -4.28f)
+                lineToRelative(-3.32f, -2.88f)
+                lineToRelative(4.38f, -0.38f)
+                lineTo(12.0f, 6.1f)
+                lineToRelative(1.71f, 4.04f)
+                lineToRelative(4.38f, 0.38f)
+                lineToRelative(-3.32f, 2.88f)
+                lineToRelative(1.0f, 4.28f)
+                lineTo(12.0f, 15.4f)
+                close()
+            }
+        }
+
         val Whatshot: ImageVector by glyph("Filled.Whatshot") {
             shape {
                 moveTo(13.5f, 0.67f)
@@ -811,6 +856,30 @@ object Icons {
                 curveToRelative(1.77f, -0.36f, 3.6f, -1.21f, 4.62f, -2.58f)
                 curveToRelative(0.39f, 1.29f, 0.59f, 2.65f, 0.59f, 4.04f)
                 curveToRelative(0.0f, 2.65f, -2.15f, 4.8f, -4.8f, 4.8f)
+                close()
+            }
+        }
+    }
+
+    object Outlined {
+        val MusicNote: ImageVector by glyph("Outlined.MusicNote") {
+            shape {
+                moveTo(12.0f, 3.0f)
+                lineToRelative(0.01f, 10.55f)
+                curveToRelative(-0.59f, -0.34f, -1.27f, -0.55f, -2.0f, -0.55f)
+                curveTo(7.79f, 13.0f, 6.0f, 14.79f, 6.0f, 17.0f)
+                reflectiveCurveToRelative(1.79f, 4.0f, 4.01f, 4.0f)
+                reflectiveCurveTo(14.0f, 19.21f, 14.0f, 17.0f)
+                lineTo(14.0f, 7.0f)
+                horizontalLineToRelative(4.0f)
+                lineTo(18.0f, 3.0f)
+                horizontalLineToRelative(-6.0f)
+                close()
+                moveTo(10.01f, 19.0f)
+                curveToRelative(-1.1f, 0.0f, -2.0f, -0.9f, -2.0f, -2.0f)
+                reflectiveCurveToRelative(0.9f, -2.0f, 2.0f, -2.0f)
+                reflectiveCurveToRelative(2.0f, 0.9f, 2.0f, 2.0f)
+                reflectiveCurveToRelative(-0.9f, 2.0f, -2.0f, 2.0f)
                 close()
             }
         }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.px
@@ -21,22 +22,26 @@ fun ListScreen(
     onBack: () -> Unit,
     title: String,
     subtitle: String? = null,
+    /** TRIAL: a settings page, its rows a step up at the stock menus' Heading — see [LocalMenuHeading]. */
+    settings: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     PlayerTheme {
-        Column(modifier = Modifier.fillMaxSize()) {
-            AppHeader(
-                onBack = onBack,
-                title = if (subtitle == null) title else null,
-                // With a subtitle, the player's own two-line card, so a sheet
-                // opened from it doesn't restate the track at a different size.
-                titleContent = if (subtitle != null) {
-                    { TitleCard(title, subtitle) }
-                } else {
-                    null
-                },
-            )
-            content()
+        CompositionLocalProvider(LocalMenuHeading provides settings) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                AppHeader(
+                    onBack = onBack,
+                    title = if (subtitle == null) title else null,
+                    // With a subtitle, the player's own two-line card, so a sheet
+                    // opened from it doesn't restate the track at a different size.
+                    titleContent = if (subtitle != null) {
+                        { TitleCard(title, subtitle) }
+                    } else {
+                        null
+                    },
+                )
+                content()
+            }
         }
     }
 }

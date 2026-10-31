@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
@@ -46,9 +48,9 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightThemeTokens
-import com.thelightphone.sdk.ui.LocalHapticsEnabled
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
+import com.thelightphone.sdk.ui.LocalHapticsEnabled
 import com.thelightphone.sdk.ui.designVerticalPxToDp
 import com.thelightphone.sdk.ui.designVerticalPxToSp
 import com.thelightphone.sdk.ui.gridUnitsAsDp
@@ -216,28 +218,41 @@ private fun TextEditor(
             }
         }
 
-        LightEmbeddedLp3Keyboard(
-            viewModel = keyboard,
-            additionalBottomHeight = 5f.gridUnitsAsDp(),
-            bottomBar = {
-                LightBottomBar(
-                    items = listOf(LightBarButton.Text(text = submitLabel, onClick = onSubmit)),
-                )
-            },
-            // Only while the menu is up: the keyboard sends its chevron here
-            // whenever this is set, and the number page's chevron (back to
-            // letters) would otherwise close a menu that isn't open.
-            onOverlayDismissed = if (menu) {
-                { menu = false }
-            } else {
-                null
-            },
-            overlay = if (menu) {
-                { EditMenu(state, onDone = { menu = false }) }
-            } else {
-                null
-            },
-        )
+        // Amp's own menu over the keys is sized from the real window, not the
+        // keyboard's LP3-scaled one (see AtLp3Scale).
+        val windowDensity = LocalDensity.current
+        val windowConfiguration = LocalConfiguration.current
+        AtLp3Scale {
+            LightEmbeddedLp3Keyboard(
+                viewModel = keyboard,
+                additionalBottomHeight = 5f.gridUnitsAsDp(),
+                bottomBar = {
+                    LightBottomBar(
+                        items = listOf(LightBarButton.Text(text = submitLabel, onClick = onSubmit)),
+                    )
+                },
+                // Only while the menu is up: the keyboard sends its chevron here
+                // whenever this is set, and the number page's chevron (back to
+                // letters) would otherwise close a menu that isn't open.
+                onOverlayDismissed = if (menu) {
+                    { menu = false }
+                } else {
+                    null
+                },
+                overlay = if (menu) {
+                    {
+                        CompositionLocalProvider(
+                            LocalDensity provides windowDensity,
+                            LocalConfiguration provides windowConfiguration,
+                        ) {
+                            EditMenu(state, onDone = { menu = false })
+                        }
+                    }
+                } else {
+                    null
+                },
+            )
+        }
     }
 }
 

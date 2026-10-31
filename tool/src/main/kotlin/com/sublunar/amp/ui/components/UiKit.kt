@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,7 +58,23 @@ fun rememberArtwork(
     need: ArtworkNeed = ArtworkNeed.BROWSING,
     /** The source the cover belongs to, where it isn't the browsed one — see ArtworkLoader.load. */
     fromSource: String? = null,
-): ImageBitmap? {
+): ImageBitmap? = rememberArtworkLoad(coverArtId, sizePx, need, fromSource).image
+
+/**
+ * A cover as it loads. [settled] once the first try is over: from then on a null
+ * [image] means the track has no cover to show, though a later try may still
+ * bring one.
+ */
+class ArtworkLoad(val image: ImageBitmap?, val settled: Boolean)
+
+/** [rememberArtwork], saying also whether there is still a cover to wait for. */
+@Composable
+fun rememberArtworkLoad(
+    coverArtId: String?,
+    sizePx: Int,
+    need: ArtworkNeed = ArtworkNeed.BROWSING,
+    fromSource: String? = null,
+): ArtworkLoad {
     // Gated here, the only way into the artwork cache, so hiding covers also stops
     // fetching and decoding them.
     val hidden by App.hideArtwork.collectAsState()
@@ -67,6 +84,9 @@ fun rememberArtwork(
     // value across a key change until the producer assigned one, so a cover served
     // from the memory cache left the previous track's sleeve on screen.
     var image by remember(coverArtId, sizePx, hidden, fromSource) { mutableStateOf(cached) }
+    var settled by remember(coverArtId, sizePx, hidden, fromSource) {
+        mutableStateOf(cached != null || hidden || coverArtId.isNullOrBlank())
+    }
     // Whether the cover may be fetched now is part of the effect's key, so a cover
     // refused once is asked for again when the rules allow it. Read unconditionally
     // (ARCHITECTURE.md on conditional reads).
@@ -79,6 +99,7 @@ fun rememberArtwork(
         if (image != null) return@LaunchedEffect
         if (hidden || coverArtId.isNullOrBlank()) return@LaunchedEffect
         image = App.artwork.load(coverArtId, sizePx, need, fromSource)
+        settled = true
         // The cover in front of the user is worth asking for again: on poor
         // reception the first request loses to its song. A list row isn't, the
         // next scroll asks.
@@ -90,7 +111,7 @@ fun rememberArtwork(
             }
         }
     }
-    return image
+    return ArtworkLoad(image, settled)
 }
 
 /**
@@ -234,6 +255,8 @@ fun TextRow(
     trailing: (@Composable () -> Unit)? = null,
     /** The choice in effect on a picker, ticked at the row's end where there is no [trailing]. */
     checked: Boolean = false,
+    /** TRIAL: the line one SDK step up, at the stock menus' Heading. */
+    heading: Boolean = LocalMenuHeading.current,
     /**
      * Null for a row that states something rather than opening it (a setting with
      * only one possible value): it takes no press and its main line is dimmed.
@@ -254,9 +277,9 @@ fun TextRow(
         Column(modifier = Modifier.weight(1f)) {
             if (value != null) {
                 MenuLabel(title)
-                MenuLine(value, dim = onClick == null)
+                MenuLine(value, dim = onClick == null, heading)
             } else {
-                MenuLine(title, dim = onClick == null)
+                MenuLine(title, dim = onClick == null, heading)
                 if (!subtitle.isNullOrBlank()) MenuLabel(subtitle, maxLines = subtitleLines)
             }
         }
@@ -267,17 +290,20 @@ fun TextRow(
     }
 }
 
+/** TRIAL: whether this page's menu rows are drawn at Heading, set by [ListScreen]. */
+val LocalMenuHeading = compositionLocalOf { false }
+
 /** The tick's size, as a multiple of the SDK icon's own. */
 private const val CHECK_SCALE = 1.4f
 
 /** A menu row's main line, in Light's Copy (see [TextRow]). */
 @Composable
-private fun MenuLine(text: String, dim: Boolean) {
+private fun MenuLine(text: String, dim: Boolean, heading: Boolean = false) {
     AppText(
         text,
-        pxSp(LightType.COPY_PX),
-        lineHeight = pxSp(LightType.COPY_LINE_PX),
-        role = TextRole.Copy,
+        pxSp(if (heading) LightType.HEADING_PX else LightType.COPY_PX),
+        lineHeight = pxSp(if (heading) LightType.HEADING_LINE_PX else MENU_LINE_PX),
+        role = if (heading) TextRole.Heading else TextRole.Copy,
         dim = dim,
         maxLines = 1,
     )
@@ -289,12 +315,16 @@ private fun MenuLabel(text: String, maxLines: Int = 1) {
     AppText(
         text,
         pxSp(LightType.DETAIL_PX),
-        lineHeight = pxSp(LightType.DETAIL_LINE_PX),
+        lineHeight = pxSp(MENU_LABEL_LINE_PX),
         role = TextRole.Detail,
         dim = true,
         maxLines = maxLines,
     )
 }
+
+/** A menu row's lines as the SDK sets copy (1.5× its size) and detail (1.45×) on the LP3. */
+private const val MENU_LINE_PX = 93
+private const val MENU_LABEL_LINE_PX = 60
 
 /** Where a menu row's text starts: two grid units, as on the phone's own text-only lists. */
 const val MENU_INSET_PX = 80

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -36,16 +37,19 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import com.sublunar.amp.App
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.LastSection
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.LightType
+import com.sublunar.amp.ui.LocalDimTextAlpha
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
@@ -58,7 +62,7 @@ import com.sublunar.amp.ui.components.TitleCard
 import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.formatTime
 import com.sublunar.amp.ui.components.horizontalScrub
-import com.sublunar.amp.ui.components.rememberArtwork
+import com.sublunar.amp.ui.components.rememberArtworkLoad
 import com.sublunar.amp.ui.components.slowLongPress
 import com.sublunar.amp.ui.currentScale
 import com.sublunar.amp.ui.px
@@ -115,9 +119,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     }
 
     override fun onScreenDestroy() {
-        LibraryNav.record(
-            if (LibraryNav.searchActive.value) LastSection.SEARCH else LastSection.LIBRARY,
-        )
+        LibraryNav.record(LastSection.LIBRARY)
     }
 
     init {
@@ -136,7 +138,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val index by App.playback.index.collectAsState()
         val showQueue = NowPlayingNav.showQueue.value
 
-        PlayerTheme {
+        PlayerTheme(library = true) {
             val current = track
             if (current == null) {
                 NothingPlaying()
@@ -215,14 +217,18 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val waiting by App.playback.waitingFor.collectAsState()
         val buffering by App.playback.buffering.collectAsState()
         val credit = waiting ?: if (buffering) "Buffering…" else current.artist
+        // Decoded at the panel's own width, which a full-bleed cover fills, and
+        // fetched wherever the music itself is — see ArtworkNeed.
+        val cover = rememberArtworkLoad(current.coverArtId, currentScale().windowWidthPx, ArtworkNeed.FOCUSED)
+        // Covers hidden, or a track without one: the same page either way.
+        val noCover = artwork == ArtworkMode.NONE || (cover.settled && cover.image == null)
+        val lyrics = NowPlayingNav.lyricsOverlay.value
         // With no cover the track takes the panel. Lyrics want the whole panel,
         // so then the title stays in the header.
-        val heroTitle = artwork == ArtworkMode.NONE && !NowPlayingNav.lyricsOverlay.value
+        val heroTitle = noCover && !lyrics
         // Either of these leaves nothing to put behind the controls: no cover at
         // all, or the lyrics in its place.
-        val coverOnly = NowPlayingNav.coverOnly.value &&
-            artwork != ArtworkMode.NONE &&
-            !NowPlayingNav.lyricsOverlay.value
+        val coverOnly = NowPlayingNav.coverOnly.value && !noCover && !lyrics
         val chrome = NowPlayingNav.coverChrome.value
 
         Column(modifier = Modifier.fillMaxSize()) {
@@ -238,12 +244,13 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     rightAction = HeaderAction(
                         AppIcons.MoreVert,
                         onLongClick = { go { SettingsScreen(it) } },
-                    ) { openOptions(current.id, artwork, coverOnly) },
+                    ) { openOptions(current.id, hasCover = !noCover, coverOnly) },
                 )
             }
             Box(modifier = Modifier.fillMaxSize()) {
                 Stage(
                     current,
+                    cover.image,
                     fullBleed = coverOnly,
                     // A tap puts the controls away and brings them back. The long
                     // press that opened the cover closes it. A plain tap toggling
@@ -261,7 +268,9 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     // A new song starts the line afresh, its drag dropped.
                     key(current.id) { SeekBand(alpha = if (coverOnly) ON_COVER_ALPHA else 1f) }
                     TransportRow()
-                    SecondaryRow(current, alpha = dim)
+                    // TRIAL (Brighter Text): the page's grey, as its text.
+                    val brighter by App.settings.brighterText.state.collectAsState()
+                    SecondaryRow(current, alpha = if (brighter && !coverOnly) LocalDimTextAlpha.current else dim)
                 }
             }
         }
@@ -300,14 +309,11 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     private fun BoxScope.Stage(
         current: Track,
+        image: ImageBitmap?,
         fullBleed: Boolean,
         onTap: () -> Unit,
         onLongPress: () -> Unit,
     ) {
-        // Decoded at the panel's own width, which a full-bleed cover fills, and
-        // fetched wherever the music itself is — see ArtworkNeed.
-        val image = rememberArtwork(current.coverArtId, currentScale().windowWidthPx, ArtworkNeed.FOCUSED)
-
         // Lyrics take the cover's place rather than sitting over it: a wash dark
         // enough to read against hides most of the sleeve anyway.
         val panel = if (fullBleed) {
@@ -427,6 +433,11 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             }
         }
 
+        // TRIAL (Use SDK Font Styles): the title card's artist size, centred on
+        // the band at its own height.
+        val sdkClocks = App.settings.sdkFontStyles.state.collectAsState().value
+        val clockPx = if (sdkClocks) SDK_TIME_PX else TIME_PX
+        val clockFit = if (sdkClocks) Modifier.wrapContentHeight(unbounded = true) else Modifier
         Band(TIME_UP_PX, TIME_ROW_PX) {
             Row(
                 modifier = Modifier
@@ -437,11 +448,21 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             ) {
                 AppText(
                     formatTime(if (dragRatio != null) (ratio * effectiveDuration).toLong() else position),
-                    pxSp(TIME_PX),
-                    lineHeight = pxSp(TIME_PX),
+                    pxSp(clockPx),
+                    lineHeight = pxSp(clockPx),
+                    modifier = clockFit,
+                    exact = true,
+                    overflow = TextOverflow.Visible,
                 )
                 Spacer(Modifier.weight(1f))
-                AppText(formatTime(duration), pxSp(TIME_PX), lineHeight = pxSp(TIME_PX))
+                AppText(
+                    formatTime(duration),
+                    pxSp(clockPx),
+                    lineHeight = pxSp(clockPx),
+                    modifier = clockFit,
+                    exact = true,
+                    overflow = TextOverflow.Visible,
+                )
             }
         }
     }
@@ -596,7 +617,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     private fun openOptions(
         trackId: String,
-        artworkMode: ArtworkMode,
+        hasCover: Boolean,
         /** Passed in rather than read again: the player has already decided it. */
         coverOnly: Boolean,
     ) {
@@ -607,9 +628,12 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 fromPlayer = true,
                 // Only with a cover to enlarge. In Cover Only it is the way back
                 // out too: the hold on the cover is invisible, the menu isn't.
-                onShowArtwork = if (artworkMode == ArtworkMode.SMALL) {
+                // The full cover and the lyrics take the same place, so asking for
+                // one puts the other away.
+                onShowArtwork = if (hasCover) {
                     {
                         goBack()
+                        if (!coverOnly) NowPlayingNav.lyricsOverlay.value = false
                         NowPlayingNav.setCoverOnly(!coverOnly)
                     }
                 } else {
@@ -620,7 +644,10 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 onToggleLyrics = {
                     val show = !NowPlayingNav.lyricsOverlay.value
                     NowPlayingNav.lyricsOverlay.value = show
-                    if (show) NowPlayingNav.showQueue.value = false
+                    if (show) {
+                        NowPlayingNav.showQueue.value = false
+                        NowPlayingNav.setCoverOnly(false)
+                    }
                 },
             )
         }
@@ -635,6 +662,10 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
 /** The clocks under the seek line. */
 private const val TIME_PX = 36
+
+/** TRIAL (Use SDK Font Styles): the title card's artist size (see TitleCard). */
+private const val SDK_TIME_PX = 38
+
 
 /** The block that stands in for the cover when artwork is off. */
 private const val HERO_TITLE_PX = LightType.HEADING_PX

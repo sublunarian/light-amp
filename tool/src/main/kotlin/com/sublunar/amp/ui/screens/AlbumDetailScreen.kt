@@ -1,8 +1,10 @@
 package com.sublunar.amp.ui.screens
 
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -11,41 +13,54 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
 import com.sublunar.amp.App
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.LightType
-import com.sublunar.amp.ui.components.AppArtwork
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppText
+import com.sublunar.amp.ui.components.appTextStyle
+import com.sublunar.amp.ui.components.ArtworkTile
 import com.sublunar.amp.ui.components.CenteredNote
 import com.sublunar.amp.ui.components.HeaderAction
-import com.sublunar.amp.ui.components.LibraryList
+import com.sublunar.amp.ui.components.NumberedActionRow
 import com.sublunar.amp.ui.components.NumberedRow
 import com.sublunar.amp.ui.components.ROW_GAP_PX
 import com.sublunar.amp.ui.components.ROW_LEAD_PX
-import com.sublunar.amp.ui.components.ROW_SUB_LINE_PX
-import com.sublunar.amp.ui.components.ROW_SUB_PX
+import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
+import com.sublunar.amp.ui.components.ROW_TITLE_PX
+import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SelectionHeader
+import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.formatRunTime
 import com.sublunar.amp.ui.components.formatTime
+import com.sublunar.amp.ui.components.rememberArtworkLoad
+import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.components.rowClickable
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 class AlbumDetailScreen(
     sealed: SealedLightActivity,
@@ -72,6 +87,24 @@ class AlbumDetailScreen(
         }
 
         val selection = rememberSelection("album:$albumId")
+        // A row above the tracks only where there is a card: an album opened
+        // from a playlist or a radio track can be missing from the album list.
+        val card = album?.takeIf { !selection.active }
+        // TRIAL (Album Shuffle Row): Shuffle heads the tracks, under the card.
+        val shuffleRow = App.settings.albumShuffleRow.state.collectAsState().value && !selection.active
+        val headerRows = (if (card != null) 1 else 0) + (if (shuffleRow) 1 else 0)
+        val listState = rememberListAnchor("album:$albumId", headerCount = headerRows)
+        // TRIAL (Use SDK Font Styles): the card names the album, and the header
+        // takes the name only once the card's title has scrolled up under it.
+        val sdkSizes = App.settings.sdkFontStyles.state.collectAsState().value
+        // Unmeasured counts as never reached, so the header doesn't flash the name first.
+        var cardTitleBottomPx by remember(albumId) { mutableStateOf(Int.MAX_VALUE) }
+        val headerTitleShown by remember(card, sdkSizes) {
+            derivedStateOf {
+                !sdkSizes || card == null || listState.firstVisibleItemIndex > 0 ||
+                    listState.firstVisibleItemScrollOffset >= cardTitleBottomPx
+            }
+        }
 
         LibrarySubPage {
             if (selection.active) {
@@ -95,6 +128,7 @@ class AlbumDetailScreen(
                         go { AlbumActionsScreen(it, albumId) }
                     },
                     fitTitle = true,
+                    titleShown = headerTitleShown,
                 )
             }
 
@@ -109,11 +143,9 @@ class AlbumDetailScreen(
                 val varied = remember(list) {
                     list.map { it.artist.trim().lowercase() }.distinct().size > 1
                 }
-                // A row above the tracks only where there is a card: an album opened
-                // from a playlist or a radio track can be missing from the album list.
-                val card = album?.takeIf { !selection.active }
-                LibraryList(anchor = "album:$albumId", headerCount = if (card != null) 1 else 0) {
-                    if (card != null) item { AlbumCard(card, list) }
+                ScrollableList(state = listState) {
+                    if (card != null) item { AlbumCard(card, list) { cardTitleBottomPx = it } }
+                    if (shuffleRow) item { NumberedActionRow(AppIcons.Shuffle, "Shuffle") { shuffleAlbum(list) } }
                     itemsIndexed(list, key = { _, t -> t.id }) { index, track ->
                         NumberedRow(
                             number = track.trackNumber ?: (index + 1),
@@ -142,76 +174,177 @@ class AlbumDetailScreen(
     }
 
     /**
-     * The record at the head of its track list: cover, what it is, and like and
-     * shuffle as bare icons (tapping any track already plays the album).
+     * The album's name, whole over [maxLines]: a name too long for them steps
+     * down a pixel at a time, its line with it, as far as [minPx], and is cut off
+     * only past that. Its bottom edge is where the header takes over; [onLines]
+     * reports how many lines it took.
      */
     @Composable
-    private fun AlbumCard(album: Album, tracks: List<Track>) {
-        val source by App.source.collectAsState()
+    private fun CardTitle(
+        title: String,
+        fullPx: Int,
+        fullLinePx: Int,
+        minPx: Int,
+        role: TextRole,
+        maxLines: Int,
+        onTitleBottom: (Int) -> Unit,
+        onLines: (Int) -> Unit,
+    ) {
+        BoxWithConstraints {
+            val room = constraints.maxWidth
+            val sizes = (fullPx downTo minPx).toList()
+            val lineFor = { size: Int -> (size * fullLinePx.toFloat() / fullPx).roundToInt() }
+            val styles = sizes.map { appTextStyle(pxSp(it), pxSp(lineFor(it)), role, exact = true) }
+            val measurer = rememberTextMeasurer()
+            val step = remember(title, room, maxLines, styles) {
+                styles.indexOfFirst { style ->
+                    !measurer.measure(
+                        AnnotatedString(title),
+                        style = style,
+                        maxLines = maxLines,
+                        constraints = Constraints(maxWidth = room),
+                    ).hasVisualOverflow
+                }
+            }
+            val size = if (step < 0) sizes.last() else sizes[step]
+            AppText(
+                title,
+                pxSp(size),
+                lineHeight = pxSp(lineFor(size)),
+                role = role,
+                maxLines = maxLines,
+                exact = true,
+                modifier = Modifier.onGloballyPositioned { onTitleBottom(it.boundsInParent().bottom.toInt()) },
+                onTextLayout = { onLines(it.lineCount) },
+            )
+        }
+    }
+
+    /**
+     * The record at the head of its track list: cover, what it is, and like and
+     * shuffle as bare icons (tapping any track already plays the album). Always
+     * the cover's height; with no cover to show (covers hidden, or the record
+     * has none) the text takes the cover's place, set out the same.
+     */
+    @Composable
+    private fun AlbumCard(album: Album, tracks: List<Track>, onTitleBottom: (Int) -> Unit) {
+        val sdkSizes = App.settings.sdkFontStyles.state.collectAsState().value
+        // TRIAL (Album Shuffle Row): the buttons leave the card (Shuffle heads
+        // the track list; liking and rating are in the ⋮ menu), so the title
+        // gets a third line, and the facts take the cover's bottom line.
+        val noButtons = App.settings.albumShuffleRow.state.collectAsState().value
+        // Loaded here rather than in the tile, so a record with no cover can go
+        // without the empty square.
+        val cardArtPx = with(LocalDensity.current) { px(CARD_ART_PX).roundToPx() }
+        val cover = rememberArtworkLoad(album.coverArtId, cardArtPx, ArtworkNeed.FOCUSED)
+        val coverless = cover.settled && cover.image == null
+        // The title has first claim on the room: a title over more than one
+        // line leaves the artist one.
+        var titleLines by remember(album.id) { mutableStateOf(1) }
+        val subPx = if (sdkSizes) LightType.DETAIL_PX else CARD_SUB_PX
+        val subLinePx = if (sdkSizes) SDK_CARD_SUB_LINE_PX else CARD_SUB_LINE_PX
         Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = px(CARD_GAP_PX)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(px(CARD_ART_PX))
+                .padding(bottom = px(CARD_GAP_PX)),
         ) {
             // The sleeve starts where every list's covers start, after the
-            // leading slot.
+            // leading slot; with none, the text does.
             Spacer(Modifier.width(px(ROW_LEAD_PX)))
-            AppArtwork(
-                coverArtId = album.coverArtId,
-                size = px(CARD_ART_PX),
-                fallback = AppIcons.Album,
-                // The album that is open, not one in a list (see ArtworkNeed).
-                need = ArtworkNeed.FOCUSED,
-                // Held, not tapped, like every artwork in the app: a tap at the
-                // top of a list scrolled past constantly would open it by accident.
-                modifier = Modifier.rowClickable(
-                    onClick = {},
-                    onLongClick = { go { AlbumArtworkScreen(it, album.id) } },
-                ),
-            )
-            Spacer(Modifier.width(px(ROW_GAP_PX)))
-            Column(modifier = Modifier.weight(1f)) {
-                AppText(
-                    album.title,
-                    pxSp(CARD_TITLE_PX),
-                    lineHeight = pxSp(CARD_TITLE_LINE_PX),
-                    maxLines = 2,
+            if (!coverless) {
+                ArtworkTile(
+                    cover.image,
+                    size = px(CARD_ART_PX),
+                    fallback = AppIcons.Album,
+                    // Held, not tapped, like every artwork in the app: a tap at the
+                    // top of a list scrolled past constantly would open it by accident.
+                    modifier = Modifier.rowClickable(
+                        onClick = {},
+                        onLongClick = { go { AlbumArtworkScreen(it, album.id) } },
+                    ),
                 )
+                Spacer(Modifier.width(px(ROW_GAP_PX)))
+            }
+            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                CardTitle(
+                    album.title,
+                    fullPx = if (sdkSizes) ROW_TITLE_PX else CARD_TITLE_PX,
+                    fullLinePx = if (sdkSizes) ROW_TITLE_LINE_PX else CARD_TITLE_LINE_PX,
+                    // No smaller than the credit under it.
+                    minPx = subPx,
+                    role = if (sdkSizes) TextRole.Fine else TextRole.Copy,
+                    maxLines = if (noButtons) SHUFFLE_ROW_TITLE_LINES else CARD_TITLE_LINES,
+                    onTitleBottom = onTitleBottom,
+                ) { titleLines = it }
+                // The credit, then the facts. The credit's lines sit closer than
+                // the facts sit below it, so a wrapped name reads as one name. On
+                // their natural lines, as asked (the toggle's snap would put them
+                // on detail's looser 60px line).
                 AppText(
                     album.artist,
-                    pxSp(ROW_SUB_PX),
-                    lineHeight = pxSp(ROW_SUB_LINE_PX),
+                    pxSp(subPx),
+                    lineHeight = pxSp(subLinePx),
                     dim = true,
-                    maxLines = 1,
+                    maxLines = if (titleLines > 1) 1 else CARD_ARTIST_LINES,
+                    exact = true,
                 )
+                Spacer(Modifier.height(px(CARD_FACTS_GAP_PX)))
+                // Title and credit belong together at the top; the facts are of
+                // another kind and sit on the cover's bottom edge.
+                if (noButtons) Spacer(Modifier.weight(1f))
                 AppText(
                     albumFacts(album, tracks),
-                    pxSp(ROW_SUB_PX),
-                    lineHeight = pxSp(ROW_SUB_LINE_PX),
+                    pxSp(subPx),
+                    lineHeight = pxSp(subLinePx),
                     dim = true,
                     maxLines = 1,
+                    exact = true,
                 )
-                Spacer(Modifier.height(px(CARD_GAP_PX)))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (source.supportsLikes) {
-                        AppIcon(
-                            if (album.liked) AppIcons.Favorite else AppIcons.FavoriteBorder,
-                            size = px(CARD_ICON_PX),
-                            modifier = Modifier.appClickable {
-                                App.scope.launch { App.library.setAlbumLiked(album, !album.liked) }
-                            },
-                        )
-                        Spacer(Modifier.width(px(CARD_ICON_GAP_PX)))
-                    }
-                    AppIcon(
-                        AppIcons.Shuffle,
-                        size = px(CARD_ICON_PX),
-                        modifier = Modifier.appClickable {
-                            App.playback.playQueue(shuffled(tracks), 0)
-                            go { NowPlayingScreen(it) }
-                        },
-                    )
+                if (!noButtons) {
+                    Spacer(Modifier.weight(1f))
+                    CardButtons(album, tracks)
                 }
             }
         }
+    }
+
+    /** Shuffle first, then the album's like and rating where the source keeps them. */
+    @Composable
+    private fun CardButtons(album: Album, tracks: List<Track>) {
+        val source by App.source.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AppIcon(
+                AppIcons.Shuffle,
+                size = px(CARD_ICON_PX),
+                modifier = Modifier.appClickable { shuffleAlbum(tracks) },
+            )
+            if (source.supportsLikes) {
+                Spacer(Modifier.width(px(CARD_ICON_GAP_PX)))
+                AppIcon(
+                    if (album.liked) AppIcons.Favorite else AppIcons.FavoriteBorder,
+                    size = px(CARD_ICON_PX),
+                    modifier = Modifier.appClickable {
+                        App.scope.launch { App.library.setAlbumLiked(album, !album.liked) }
+                    },
+                )
+            }
+            if (source.supportsRatings) {
+                Spacer(Modifier.width(px(CARD_ICON_GAP_PX)))
+                AppIcon(
+                    if (album.rating > 0) AppIcons.Star else AppIcons.StarBorder,
+                    size = px(CARD_ICON_PX),
+                    modifier = Modifier.appClickable {
+                        go { RatingScreen(it, album.id, album.title, album.rating, isAlbum = true) }
+                    },
+                )
+            }
+        }
+    }
+
+    private fun shuffleAlbum(tracks: List<Track>) {
+        App.playback.playQueue(shuffled(tracks), 0)
+        go { NowPlayingScreen(it) }
     }
 
     /** Year · N songs · total running time, skipping whatever isn't known. */
@@ -233,3 +366,26 @@ private const val CARD_TITLE_LINE_PX = LightType.COPY_LINE_PX
 private const val CARD_GAP_PX = 24
 private const val CARD_ICON_PX = 60
 private const val CARD_ICON_GAP_PX = 66
+
+/** The credit wraps this far beside a one-line title before it's cut off; one line beside a longer one. */
+private const val CARD_ARTIST_LINES = 2
+
+/** The title takes up to two lines, shrinking to fit them before it is cut off. */
+private const val CARD_TITLE_LINES = 2
+
+/** TRIAL (Album Shuffle Row): three, with no buttons beside the cover to make room for. */
+private const val SHUFFLE_ROW_TITLE_LINES = 3
+
+/**
+ * The card's credit and facts, the sizes list subtitles had before they took the
+ * SDK's detail, each on its natural line (about 1.21 times the size).
+ */
+private const val CARD_SUB_PX = 39
+private const val CARD_SUB_LINE_PX = 47
+
+/** TRIAL (Use SDK Font Styles): the SDK's detail size on its natural line. */
+private const val SDK_CARD_SUB_LINE_PX = 50
+
+/** Extra air above the facts, so a wrapped credit's lines sit closer than the facts do. */
+private const val CARD_FACTS_GAP_PX = 10
+

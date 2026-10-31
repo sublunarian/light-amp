@@ -39,10 +39,6 @@ fun AlbumGrid(
     state: LazyGridState,
     header: LazyGridScope.() -> Unit,
 ) {
-    // A bar only once the grid is long enough to be worth dragging. Counted in
-    // albums, not in what the layout reports visible, so the first frame agrees
-    // with the second and the grid doesn't reflow.
-    val showBar = albums.size >= GRID_BAR_MIN_ITEMS
     // Read unconditionally: behind an `if` it stops following the state and the
     // bar freezes.
     val target = rememberScrollTarget(state)
@@ -52,14 +48,8 @@ fun AlbumGrid(
             columns = GridCells.Fixed(GRID_COLUMNS),
             state = state,
             modifier = Modifier.fillMaxSize(),
-            // Only the right edge gives way to the bar's lane, so the covers stay
-            // hard against the left.
-            contentPadding = PaddingValues(
-                start = px(LIST_EDGE_PX),
-                end = if (showBar) px(GRID_SCROLLBAR_LANE_PX) else px(LIST_EDGE_PX),
-                top = px(LIST_TOP_PX),
-                bottom = px(LIST_TOP_PX),
-            ),
+            // The bar draws over the covers, so no lane is kept for it.
+            contentPadding = PaddingValues(horizontal = px(LIST_EDGE_PX)),
             horizontalArrangement = Arrangement.spacedBy(px(GRID_GAP_PX)),
             verticalArrangement = Arrangement.spacedBy(px(GRID_GAP_PX)),
         ) {
@@ -80,7 +70,7 @@ fun AlbumGrid(
                 }
             }
         }
-        if (showBar) ListScrollBar(target, lane = px(GRID_SCROLLBAR_LANE_PX))
+        OverlayScrollBar(target, scrolling = state.isScrollInProgress)
     }
 }
 
@@ -119,12 +109,6 @@ private fun GridCover(album: Album) {
         }
     }
 }
-
-/** The grid's scroll-bar lane: narrower than a list's, just wide enough to grab. */
-private const val GRID_SCROLLBAR_LANE_PX = 30
-
-/** Albums below which the grid goes without a bar: about three screens of covers. */
-private const val GRID_BAR_MIN_ITEMS = 30
 
 /** Three across, gaps tight enough that the covers read as a wall. Deliberately not a setting. */
 private const val GRID_COLUMNS = 3

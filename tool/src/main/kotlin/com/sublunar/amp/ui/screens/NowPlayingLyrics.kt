@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -18,19 +19,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.LyricsRepository
 import com.sublunar.amp.data.Track
-import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.CenteredNote
+import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
-
-/** Where the active synced-lyric line sits in the pane, as a fraction of its height. */
-private const val LYRIC_ANCHOR = 0.38f
 
 @Composable
 internal fun LyricsOverlay(current: Track, modifier: Modifier) {
@@ -55,6 +54,7 @@ internal fun LyricsOverlay(current: Track, modifier: Modifier) {
             App.source.value.id,
             App.serverClient.value,
             allowNetwork = App.metadataAllowed(),
+            dao = App.browsedDao(),
         )
         loading = false
     }
@@ -75,38 +75,48 @@ internal fun LyricsOverlay(current: Track, modifier: Modifier) {
             lines.isEmpty() -> CenteredNote("No lyrics")
             else -> {
                 val listState = rememberLazyListState()
-                // Hold the active line at LYRIC_ANCHOR rather than the top.
+                val oneLinePx = with(LocalDensity.current) { px(LYRIC_LINE_PX + 2 * LYRIC_GAP_PX).roundToPx() }
+                // The active line centred in the pane, on its measured height: a
+                // lyric that wraps is taller than one line. One not yet laid out
+                // is aimed at as a single line, then set right without animating.
                 LaunchedEffect(activeIndex, synced) {
                     if (!synced || activeIndex < 0) return@LaunchedEffect
-                    val viewport = listState.layoutInfo.viewportSize.height
+                    val info = listState.layoutInfo
+                    val viewport = info.viewportSize.height
                     if (viewport <= 0) return@LaunchedEffect
-                    listState.animateScrollToItem(
-                        activeIndex,
-                        -(viewport * LYRIC_ANCHOR).toInt(),
-                    )
+                    val aimed = info.visibleItemsInfo.firstOrNull { it.index == activeIndex }?.size ?: oneLinePx
+                    // scrollToItem's offset counts from below the top padding.
+                    listState.animateScrollToItem(activeIndex, info.beforeContentPadding - (viewport - aimed) / 2)
+                    val after = listState.layoutInfo
+                    val item = after.visibleItemsInfo.firstOrNull { it.index == activeIndex } ?: return@LaunchedEffect
+                    val paneMiddle = (after.viewportStartOffset + after.viewportEndOffset) / 2
+                    val off = item.offset + item.size / 2 - paneMiddle
+                    if (off != 0) listState.scrollBy(off.toFloat())
                 }
-                // Room under the last line for it to reach the anchor: the
-                // pane's own height less the anchor's share of it.
+                // Synced, half the pane above the first line and below the last,
+                // so every line can reach the middle; read through, none.
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val tailPadding = maxHeight * (1f - LYRIC_ANCHOR)
+                    val halfPane = maxHeight / 2
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(
                             start = px(51),
                             end = px(51),
-                            top = px(46),
-                            bottom = if (synced) tailPadding else px(46),
+                            top = if (synced) halfPane else px(0),
+                            bottom = if (synced) halfPane else px(46),
                         ),
                     ) {
                         itemsIndexed(lines) { i, line ->
                             AppText(
                                 text = line.text,
-                                size = pxSp(LightType.DETAIL_PX),
-                                lineHeight = pxSp(54),
+                                size = pxSp(LYRIC_PX),
+                                lineHeight = pxSp(LYRIC_LINE_PX),
+                                role = TextRole.Fine,
+                                exact = true,
                                 align = TextAlign.Center,
                                 dim = synced && i != activeIndex,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = px(5)),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = px(LYRIC_GAP_PX)),
                             )
                         }
                     }
@@ -125,3 +135,10 @@ private fun indexForTime(lines: List<LyricLine>, positionMs: Long): Int {
     }
     return result
 }
+
+/** A little under the Notes tool's body size (Light's fine, 52), on its natural line. */
+private const val LYRIC_PX = 48
+private const val LYRIC_LINE_PX = 58
+
+/** Above and below each lyric, so the next one starts further off than a wrapped line. */
+private const val LYRIC_GAP_PX = 5

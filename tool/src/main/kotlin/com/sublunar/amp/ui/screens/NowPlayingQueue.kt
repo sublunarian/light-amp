@@ -34,39 +34,46 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.LightType
+import com.sublunar.amp.ui.LocalDimTextAlpha
 import com.sublunar.amp.ui.components.AppArtwork
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.AutoScroll
-import com.sublunar.amp.ui.components.DRAG_HANDLE_PX
+import com.sublunar.amp.ui.components.DRAG_HANDLE_INSET_PX
+import com.sublunar.amp.ui.components.DRAG_HANDLE_SLOT_PX
+import com.sublunar.amp.ui.components.DragHandle
 import com.sublunar.amp.ui.components.DropIndicatorLine
 import com.sublunar.amp.ui.components.HEADER_BAR_PX
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
-import com.sublunar.amp.ui.components.ListScrollBar
+import com.sublunar.amp.ui.components.OverlayScrollBar
 import com.sublunar.amp.ui.components.ROW_ART_PX
 import com.sublunar.amp.ui.components.ROW_GAP_PX
+import com.sublunar.amp.ui.components.ROW_H_PX
 import com.sublunar.amp.ui.components.ROW_LEAD_PX
 import com.sublunar.amp.ui.components.ROW_SUB_LINE_PX
 import com.sublunar.amp.ui.components.ROW_SUB_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
-import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.SelectionArtwork
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.SelectionState
 import com.sublunar.amp.ui.components.TextRole
+import com.sublunar.amp.ui.components.TitleCard
 import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.dragReorderContainer
 import com.sublunar.amp.ui.components.dropTarget
+import com.sublunar.amp.ui.components.gapShift
 import com.sublunar.amp.ui.components.rememberDragReorderState
+import com.sublunar.amp.ui.components.rememberScrollTarget
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.components.rowClickable
 import com.sublunar.amp.ui.px
@@ -77,7 +84,11 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 /** Where every other list's covers start: its edge and the download mark's slot. */
 private const val QUEUE_START_PX = LIST_EDGE_PX + ROW_LEAD_PX
 
-private const val QUEUE_ROW_PX = 160
+/**
+ * The rows' right margin, mirroring the covers': the grab bar's glyph ends
+ * [QUEUE_START_PX] from the right edge.
+ */
+private const val QUEUE_HANDLE_END_PX = QUEUE_START_PX - DRAG_HANDLE_INSET_PX
 
 /** A queue row's key. The same track can be queued twice, so its place is part of it. */
 internal fun queueKey(index: Int, track: Track) = "$index-${track.id}"
@@ -151,9 +162,9 @@ internal fun SimpleLightScreen<*>.QueuePlayer(queue: List<Track>, index: Int, on
                 Modifier.fillMaxSize(),
                 listState = listState,
             )
-            // Outside the list's margins, against the screen edge, so it stays
-            // clear of the drag handles.
-            ListScrollBar(listState)
+            // Over the rows, and only while the list moves: the handles keep the
+            // right edge to themselves the rest of the time.
+            OverlayScrollBar(rememberScrollTarget(listState), scrolling = listState.isScrollInProgress)
         }
         // Shuffle and repeat as a bar of their own: the queue is where you set
         // how it will be played.
@@ -188,6 +199,11 @@ internal fun SimpleLightScreen<*>.QueuePlayer(queue: List<Track>, index: Int, on
  */
 @Composable
 private fun QueueTitle(title: String, subtitle: String?) {
+    // TRIAL (Use SDK Font Styles): the player's own two-line card.
+    if (App.settings.sdkFontStyles.state.collectAsState().value) {
+        TitleCard(title, subtitle.orEmpty())
+        return
+    }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         AppText(
             title,
@@ -201,6 +217,7 @@ private fun QueueTitle(title: String, subtitle: String?) {
                 subtitle,
                 pxSp(QUEUE_SUBTITLE_PX),
                 lineHeight = pxSp(QUEUE_SUBTITLE_LINE_PX),
+                weight = FontWeight.Normal,
                 dim = true,
                 maxLines = 1,
                 align = TextAlign.Center,
@@ -244,7 +261,7 @@ private fun SimpleLightScreen<*>.QueueView(
 ) {
     val drag = rememberDragReorderState<String>()
     val artworkHidden by App.hideArtwork.collectAsState()
-    val rowPx = with(LocalDensity.current) { px(QUEUE_ROW_PX).toPx() }
+    val rowPx = with(LocalDensity.current) { px(ROW_H_PX).toPx() }
     // Read unconditionally, branch on the result — see ARCHITECTURE.md on
     // conditional composable calls.
     val rules by App.rules.collectAsState()
@@ -289,7 +306,7 @@ private fun SimpleLightScreen<*>.QueueView(
     ) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().padding(start = px(QUEUE_START_PX), end = px(SCROLLBAR_LANE_PX)),
+            modifier = Modifier.fillMaxSize().padding(start = px(QUEUE_START_PX), end = px(QUEUE_HANDLE_END_PX)),
         ) {
             itemsIndexed(queue, key = ::queueKey) { i, track ->
                 val isCurrent = i == index
@@ -305,14 +322,15 @@ private fun SimpleLightScreen<*>.QueueView(
                 DisposableEffect(rowKey) {
                     onDispose { drag.clear(rowKey) }
                 }
-                Box(Modifier.fillMaxWidth()) {
+                val gap = drag.gapShift(i, queue.size, rowPx, minIndex)
+                Box(Modifier.fillMaxWidth().graphicsLayer { translationY = gap }) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(px(QUEUE_ROW_PX))
+                            .height(px(ROW_H_PX))
                             .onGloballyPositioned { drag.rowCoords[rowKey] = it }
                             // Real row goes invisible; DragOverlay draws the floating stand-in.
-                            .alpha(if (isDragging) 0f else if (isPast || mustWait) 0.5f else 1f)
+                            .alpha(if (isDragging) 0f else if (isPast || mustWait) LocalDimTextAlpha.current else 1f)
                             .rowClickable(
                                 onClick = {
                                     when {
@@ -328,11 +346,9 @@ private fun SimpleLightScreen<*>.QueueView(
                         QueueRowContent(track, isCurrent, selection, artworkHidden)
                         // Drag handle for reordering within the upcoming part of the queue.
                         if (!isPast && !isCurrent) {
-                            AppIcon(
-                                AppIcons.Dehaze,
-                                size = px(DRAG_HANDLE_PX),
-                                modifier = Modifier.onGloballyPositioned { drag.iconCoords[rowKey] = it },
-                            )
+                            DragHandle { drag.iconCoords[rowKey] = it }
+                        } else {
+                            Spacer(Modifier.width(px(ROW_GAP_PX)))
                         }
                     }
                     if (dropTarget?.beforeKey == rowKey) DropIndicatorLine(Modifier.align(Alignment.TopStart))
@@ -375,6 +391,7 @@ private fun RowScope.QueueRowContent(
                 track.title,
                 pxSp(ROW_TITLE_PX),
                 lineHeight = pxSp(ROW_TITLE_LINE_PX),
+                role = TextRole.Fine,
                 maxLines = 1,
             )
         }
@@ -382,6 +399,7 @@ private fun RowScope.QueueRowContent(
             track.artist,
             pxSp(ROW_SUB_PX),
             lineHeight = pxSp(ROW_SUB_LINE_PX),
+            role = TextRole.Detail,
             dim = true,
             maxLines = 1,
         )
@@ -409,14 +427,14 @@ private fun BoxScope.DragOverlay(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(px(QUEUE_ROW_PX))
+                .height(px(ROW_H_PX))
                 .align(Alignment.TopStart)
                 .graphicsLayer { translationY = top + fingerOffsetY }
-                .padding(start = px(QUEUE_START_PX), end = px(SCROLLBAR_LANE_PX)),
+                .padding(start = px(QUEUE_START_PX), end = px(QUEUE_HANDLE_END_PX)),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             QueueRowContent(track, isCurrent = false, selection, artworkHidden)
-            Spacer(Modifier.width(px(DRAG_HANDLE_PX)))
+            Spacer(Modifier.width(px(DRAG_HANDLE_SLOT_PX)))
         }
     }
 }

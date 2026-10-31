@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +22,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,10 +71,7 @@ internal fun SimpleLightScreen<*>.startSearch() {
 }
 
 @Composable
-internal fun SimpleLightScreen<*>.SearchView(
-    /** The list search was started from — what it shows until something is typed. */
-    tab: LibraryTab,
-) {
+internal fun SimpleLightScreen<*>.SearchView() {
     val query by LibraryNav.searchQuery.collectAsState()
     val typing by LibraryNav.typing.collectAsState()
     // While the keyboard is up the field is the query: the keyboard writes into
@@ -91,7 +90,17 @@ internal fun SimpleLightScreen<*>.SearchView(
     LaunchedEffect(live, tracks, albums, artists) {
         results = withContext(Dispatchers.Default) { App.library.search(live) }
     }
+    // The keyboard keeps the Return handler it was built with, so it reads the
+    // results through this rather than capturing the first ones.
+    val latestResults = rememberUpdatedState(results)
     val listState = rememberListAnchor("search")
+    // Scrolling the results puts the keyboard away, so the whole list shows.
+    LaunchedEffect(listState, typing) {
+        if (!typing) return@LaunchedEffect
+        listState.interactionSource.interactions.collect {
+            if (it is DragInteraction.Start) LibraryNav.typing.value = false
+        }
+    }
 
     // The rows take the scrollbar's lane back individually, so the list itself
     // keeps equal margins.
@@ -119,11 +128,9 @@ internal fun SimpleLightScreen<*>.SearchView(
             onMenu = { go { MoreScreen(it, LibraryPage.SEARCH) } },
         )
         Box(modifier = Modifier.weight(1f)) {
-            // Nothing typed yet, so the list that was already there: the keyboard
-            // opening is not itself a search.
-            if (live.isBlank()) {
-                TabContent(tab, header = false)
-            } else {
+            // Nothing typed yet, so nothing listed: results come with the first
+            // keystroke.
+            if (live.isNotBlank()) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -177,10 +184,9 @@ internal fun SimpleLightScreen<*>.SearchView(
                                 coverArtId = track.coverArtId,
                                 modifier = Modifier.padding(end = lane),
                                 onClick = {
-                                    // Search stays up underneath, unlike the two
-                                    // branches above, which lay a tab down as the
-                                    // parent: back out of the player lands on the
-                                    // results, still typed and scrolled.
+                                    // A song found is a search finished: back out of
+                                    // the player lands on the library, not the results.
+                                    LibraryNav.closeSearch()
                                     App.playback.playQueue(listOf(track), 0)
                                     go { NowPlayingScreen(it) }
                                 },
@@ -192,7 +198,18 @@ internal fun SimpleLightScreen<*>.SearchView(
                 ListScrollBar(listState)
             }
         }
-        if (typing) SearchKeyboard(state) { LibraryNav.typing.value = false }
+        if (typing) {
+            // Return reads the results: with some it puts the keyboard away to
+            // show them; with none (or nothing typed) there is nothing to look
+            // at, so it goes back to the library.
+            SearchKeyboard(state) {
+                if (latestResults.value.isEmpty || state.text.isBlank()) {
+                    LibraryNav.closeSearch()
+                } else {
+                    LibraryNav.typing.value = false
+                }
+            }
+        }
     }
 }
 

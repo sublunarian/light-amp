@@ -27,18 +27,18 @@ import com.sublunar.amp.data.PlaylistView
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.components.AppHeader
-import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AutoScroll
 import com.sublunar.amp.ui.components.CenteredNote
-import com.sublunar.amp.ui.components.DRAG_HANDLE_PX
+import com.sublunar.amp.ui.components.DRAG_HANDLE_SLOT_PX
+import com.sublunar.amp.ui.components.DragHandle
 import com.sublunar.amp.ui.components.DropIndicatorLine
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import com.sublunar.amp.ui.components.NOTICE_MS
 import com.sublunar.amp.ui.components.NoticePill
-import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.ROW_H_PX
+import com.sublunar.amp.ui.components.ShuffleRow
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SelectionHeader
@@ -47,6 +47,7 @@ import com.sublunar.amp.ui.components.Selections
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.dragReorderContainer
 import com.sublunar.amp.ui.components.dropTarget
+import com.sublunar.amp.ui.components.gapShift
 import com.sublunar.amp.ui.components.moveShownBlock
 import com.sublunar.amp.ui.components.rememberDragReorderState
 import com.sublunar.amp.ui.components.rememberListAnchor
@@ -168,7 +169,15 @@ class PlaylistDetailScreen(
                                 AppIcons.MoreVert,
                                 onLongClick = { go { SettingsScreen(it) } },
                             ) {
-                                go { PlaylistActionsScreen(it, playlistId, liveName, fromDetail = true) }
+                                go {
+                                    PlaylistActionsScreen(
+                                        it,
+                                        playlistId,
+                                        liveName,
+                                        fromDetail = true,
+                                        onEdit = { selection.begin() },
+                                    )
+                                }
                             },
                             fitTitle = true,
                         )
@@ -211,7 +220,7 @@ class PlaylistDetailScreen(
         val drag = rememberDragReorderState<String>()
         val rowPx = with(LocalDensity.current) { px(ROW_H_PX).toPx() }
         val downloaded by App.library.downloadedTrackIds.collectAsState()
-        val headerCount = if (editing) 0 else 2
+        val headerCount = if (editing) 0 else 1
         val listState = rememberListAnchor("playlist:$playlistId", headerCount)
         val orderedKeys = remember(list) { list.map { it.key } }
         val dropTarget = drag.dropTarget(orderedKeys, rowPx)
@@ -236,12 +245,11 @@ class PlaylistDetailScreen(
             ScrollableList(state = listState) {
                 if (!editing) {
                     item {
-                        PlayAllRow(AppIcons.Shuffle, "Shuffle") {
+                        ShuffleRow {
                             App.playback.playQueue(shuffled(list.map { it.track }), 0)
                             go { NowPlayingScreen(it) }
                         }
                     }
-                    item { PlayAllRow(AppIcons.Dehaze, "Edit") { selection.begin() } }
                 }
                 itemsIndexed(list, key = { _, e -> e.key }) { index, entry ->
                     val track = entry.track
@@ -251,7 +259,8 @@ class PlaylistDetailScreen(
                     DisposableEffect(entry.key) {
                         onDispose { drag.clear(entry.key) }
                     }
-                    Box(Modifier.fillMaxWidth()) {
+                    val gap = drag.gapShift(index, list.size, rowPx)
+                    Box(Modifier.fillMaxWidth().graphicsLayer { translationY = gap }) {
                         TrackRow(
                             title = track.title,
                             subtitle = track.artist,
@@ -285,13 +294,7 @@ class PlaylistDetailScreen(
                             downloaded = track.id in downloaded,
                             selected = if (editing) entry.key in selection.selected else null,
                             trailing = if (editing && canEdit()) {
-                                {
-                                    AppIcon(
-                                        AppIcons.Dehaze,
-                                        size = px(DRAG_HANDLE_PX),
-                                        modifier = Modifier.onGloballyPositioned { drag.iconCoords[entry.key] = it },
-                                    )
-                                }
+                                { DragHandle { drag.iconCoords[entry.key] = it } }
                             } else {
                                 null
                             },
@@ -337,7 +340,7 @@ class PlaylistDetailScreen(
                 onClick = {},
                 downloaded = entry.track.id in downloaded,
                 selected = entry.key in selection.selected,
-                trailing = { Spacer(Modifier.width(px(DRAG_HANDLE_PX))) },
+                trailing = { Spacer(Modifier.width(px(DRAG_HANDLE_SLOT_PX))) },
             )
         }
     }

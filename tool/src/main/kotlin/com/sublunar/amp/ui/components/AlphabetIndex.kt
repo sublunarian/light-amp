@@ -13,8 +13,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.ui.LightThemeTokens
@@ -76,7 +77,6 @@ fun AlphabetIndex(
             modifier = Modifier
                 .fillMaxHeight()
                 .fillMaxWidth()
-                .padding(vertical = px(10))
                 .pointerInput(firstIndex) {
                     awaitEachGesture {
                         // Maps the touch's height onto the strip, for a tap and a drag alike.
@@ -100,17 +100,30 @@ fun AlphabetIndex(
                         }
                     }
                 },
-            verticalArrangement = Arrangement.SpaceBetween,
+            // Each letter in its own slot, the run centred: it fills the list's
+            // height edge to edge rather than spacing out.
+            verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             strip.forEach { letter ->
-                AppText(
-                    text = letter.toString(),
-                    size = pxSp(26),
-                    lineHeight = pxSp(26),
-                    align = TextAlign.Center,
-                    dim = letter !in firstIndex,
-                )
+                // A box of the slot's height rather than a line height: a single
+                // line of text keeps its font's own height, about 1.2 times its size.
+                Box(
+                    modifier = Modifier.height(px(SLOT_PX)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AppText(
+                        text = letter.toString(),
+                        size = pxSp(LETTER_PX),
+                        lineHeight = pxSp(SLOT_PX),
+                        align = TextAlign.Center,
+                        dim = letter !in firstIndex,
+                        exact = true,
+                        overflow = TextOverflow.Visible,
+                        // Measured at its own height and centred on the slot.
+                        modifier = Modifier.wrapContentHeight(unbounded = true),
+                    )
+                }
             }
         }
     }
@@ -166,7 +179,18 @@ private fun BoxScope.ScrollMarker(
     }
 }
 
-/** Width of the strip, so lists keep their text clear of it. The scroll bar shares the lane. */
-const val INDEX_STRIP_PX = 66
+/**
+ * Width of the strip, so lists keep their text clear of it. The scroll bar shares
+ * the lane, which reaches the queue's grab bars (they end 68px from the edge), so a
+ * touch beside a handle always lands on one or the other.
+ */
+const val INDEX_STRIP_PX = 68
 private const val MARKER_H_PX = 3
+
+/**
+ * A 28px letter, whose own line is about 34px, in a 34px slot: 27 of them are
+ * 918px, the 920px between the header and the bottom bar less a pixel at either end.
+ */
+private const val LETTER_PX = 28
+private const val SLOT_PX = 34
 

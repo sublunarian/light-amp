@@ -20,6 +20,7 @@ import com.sublunar.amp.App
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
+import com.sublunar.amp.ui.components.TabGlyphs
 import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.ui.LightThemeTokens
@@ -107,63 +108,100 @@ private fun StandardNavbar(
     onSelect: (LibraryTab) -> Unit,
     onNowPlaying: () -> Unit,
 ) {
+    // TRIAL (Outline Tab Icons): every tab an outline, white, the one you are
+    // on filled in; the artists' glyph is LightOS's own microphone.
+    val outlines = App.settings.outlineTabIcons.state.collectAsState().value
+    // TRIAL (SDK Tab Bar): LightBottomBar's layout. Every glyph in the same
+    // 2-unit square, which is also its whole tap target, none trimmed to match
+    // the others, spread edge to edge inside 2 units of padding.
+    val sdkBar = App.settings.sdkTabBar.state.collectAsState().value
+    val box = if (sdkBar) SDK_BAR_ICON_PX else NAV_BOX_PX
+    fun trim(scale: Float) = if (sdkBar) SDK_BAR_ICON_PX.toFloat() / NAV_ICON_PX else scale
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(px(BOTTOM_BAR_PX)),
-        horizontalArrangement = Arrangement.SpaceEvenly,
+            .height(px(BOTTOM_BAR_PX))
+            .padding(horizontal = px(if (sdkBar) SDK_BAR_PADDING_PX else 0)),
+        horizontalArrangement = if (sdkBar) Arrangement.SpaceBetween else Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         NavIcon(
+            if (outlines) TabGlyphs.Playlist else AppIcons.QueueMusic,
             AppIcons.QueueMusic,
             current == LibraryTab.PLAYLISTS,
-            scale = PLAYLISTS_SCALE,
-            lift = PLAYLISTS_LIFT_PX,
+            outlines,
+            scale = trim(PLAYLISTS_SCALE),
+            lift = if (sdkBar) 0 else PLAYLISTS_LIFT_PX,
+            box = box,
         ) { onSelect(LibraryTab.PLAYLISTS) }
         NavIcon(
-            AppIcons.RecordVoiceOver,
+            if (outlines) TabGlyphs.Microphone else AppIcons.RecordVoiceOver,
+            if (outlines) TabGlyphs.MicrophoneFilled else AppIcons.RecordVoiceOver,
             current == LibraryTab.ARTISTS,
-            scale = navScale(ARTISTS_DRAWN_PX, ARTISTS_TARGET_PX),
+            outlines,
+            scale = trim(navScale(if (outlines) LIGHT_MIC_DRAWN_PX else ARTISTS_DRAWN_PX, ARTISTS_TARGET_PX)),
+            box = box,
         ) { onSelect(LibraryTab.ARTISTS) }
         NavIcon(
             AppIcons.AlbumStack,
+            if (outlines) TabGlyphs.AlbumStackFilled else AppIcons.AlbumStack,
             current == LibraryTab.ALBUMS,
-            scale = navScale(ALBUMS_DRAWN_PX, TALL_TARGET_PX),
+            outlines,
+            scale = trim(navScale(ALBUMS_DRAWN_PX, TALL_TARGET_PX)),
+            box = box,
         ) { onSelect(LibraryTab.ALBUMS) }
         NavIcon(
+            if (outlines) AppIcons.MusicNoteOutline else AppIcons.MusicNote,
             AppIcons.MusicNote,
             current == LibraryTab.SONGS,
-            scale = navScale(SONGS_DRAWN_PX, TALL_TARGET_PX),
+            outlines,
+            scale = trim(navScale(SONGS_DRAWN_PX, TALL_TARGET_PX)),
+            box = box,
         ) { onSelect(LibraryTab.SONGS) }
         // The player after the four ways of looking at the library: the one
         // thing here you arrive at rather than browse to. Never lit, since it
         // hides this bar.
-        NavIcon(AppIcons.Waveform, active = false, scale = NOW_PLAYING_SCALE) { onNowPlaying() }
+        NavIcon(
+            AppIcons.Waveform,
+            AppIcons.Waveform,
+            active = false,
+            outlines,
+            scale = NOW_PLAYING_SCALE,
+            box = box,
+        ) { onNowPlaying() }
     }
 }
 
 @Composable
 private fun NavIcon(
-    icon: ImageVector,
-    /** The tab you are on is the bright one; the rest step back. */
+    /** The tab's glyph; [filled] while it is the one you are on. */
+    outline: ImageVector,
+    filled: ImageVector,
     active: Boolean,
+    /**
+     * Outline Tab Icons: every glyph full white, the chosen one filled. Off,
+     * the tab you are on is the bright one and the rest step back.
+     */
+    outlines: Boolean,
     /** Trims a glyph that draws larger than the rest at the same box size. */
     scale: Float = 1f,
     /** Nudges the glyph up inside its box. */
     lift: Int = 0,
+    /** The square it is drawn in and tapped on. */
+    box: Int = NAV_BOX_PX,
     onClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier
-            .size(px(NAV_BOX_PX))
+            .size(px(box))
             .appClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         AppIcon(
-            icon = icon,
+            icon = if (active) filled else outline,
             size = px(NAV_ICON_PX) * scale,
             tint = LightThemeTokens.colors.content,
-            modifier = (if (active) Modifier else Modifier.alpha(NAV_DIM_ALPHA))
+            modifier = (if (active || outlines) Modifier else Modifier.alpha(NAV_DIM_ALPHA))
                 .offset(y = -px(lift)),
         )
     }
@@ -207,6 +245,13 @@ private const val NAV_BOX_PX = 144
 /** The glyph box every bar icon is scaled from. */
 private const val NAV_ICON_PX = 114
 
+/**
+ * TRIAL (SDK Tab Bar): LightBottomBar's icon square and side padding, 2 grid
+ * units each (LightBarButtonDefaults.ICON_SIZE_UNITS, HORIZONTAL_PADDING_MULTI_UNITS).
+ */
+private const val SDK_BAR_ICON_PX = 80
+private const val SDK_BAR_PADDING_PX = 80
+
 /** Matches the player's secondary row: the app's one "present but not chosen". */
 private const val NAV_DIM_ALPHA = 0.45f
 
@@ -222,6 +267,10 @@ private const val NAV_DIM_ALPHA = 0.45f
 private const val ARTISTS_DRAWN_PX = 90
 private const val ALBUMS_DRAWN_PX = 105 // 89 measured under a 0.85 trim, so 89 / 0.85
 private const val SONGS_DRAWN_PX = 86
+
+/** TRIAL (Outline Tab Icons), from the glyphs' own boxes, not yet measured on the panel. */
+private const val LIGHT_MIC_DRAWN_PX = 108 // 38 of its 40 units
+
 
 /**
  * The simplified bar's library glyph, which stands in for the Albums tab. Its own
