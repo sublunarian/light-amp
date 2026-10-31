@@ -1,5 +1,9 @@
 package com.sublunar.amp.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,6 +31,13 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.LayoutMode
@@ -53,6 +65,7 @@ import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.ui.LightThemeTokens
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -108,6 +121,18 @@ internal fun SimpleLightScreen<*>.SearchView() {
     Column(Modifier.fillMaxSize()) {
         SearchHeader(
             query = live,
+            // While typing, where the next key lands; a tap or drag in the
+            // field moves it, raising the keyboard if it was down. Simplified
+            // edits in the SDK's own screen, which has its own cursor.
+            cursor = if (typing) state.selection.min else null,
+            onPlaceCursor = if (App.settings.layoutMode.value == LayoutMode.SIMPLIFIED) {
+                null
+            } else {
+                { offset ->
+                    state.edit { selection = TextRange(offset) }
+                    LibraryNav.typing.value = true
+                }
+            },
             onEdit = {
                 // Simplified never raises the inline keyboard: its search is the
                 // SDK's own screen.
@@ -224,6 +249,10 @@ internal fun SimpleLightScreen<*>.SearchView() {
 @Composable
 private fun SearchHeader(
     query: String,
+    /** Where the cursor is drawn in [query]; null draws none. */
+    cursor: Int?,
+    /** Moves the cursor to a tapped spot in the query; null leaves taps to [onEdit]. */
+    onPlaceCursor: ((Int) -> Unit)?,
     onEdit: () -> Unit,
     onCancel: () -> Unit,
     onMenu: () -> Unit,
@@ -244,14 +273,7 @@ private fun SearchHeader(
             Spacer(Modifier.width(px(SEARCH_AXIS_PX)))
             AppIcon(AppIcons.Search, size = px(SEARCH_GLYPH_PX))
             Spacer(Modifier.width(px(ROW_GAP_PX)))
-            Box(modifier = Modifier.weight(1f)) {
-                AppText(
-                    text = query.ifEmpty { "Search" },
-                    size = pxSp(SEARCH_TEXT_PX),
-                    lineHeight = pxSp(ROW_TITLE_LINE_PX),
-                    maxLines = 1,
-                )
-            }
+            QueryField(query, cursor, onPlaceCursor, Modifier.weight(1f))
         }
         // The cross takes the slot the magnifier had on the tab this came from,
         // so the button that leaves search is where the one that entered it was.
@@ -275,6 +297,79 @@ private fun SearchHeader(
         }
     }
 }
+
+/**
+ * The query, with the cursor drawn as the SDK's own editor draws it: a steady
+ * line at the position, not a blinking one. A tap or a drag anywhere in the
+ * field's height puts the cursor under the finger.
+ */
+@Composable
+private fun QueryField(
+    query: String,
+    cursor: Int?,
+    onPlaceCursor: ((Int) -> Unit)?,
+    modifier: Modifier,
+) {
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    // Only the finger's x matters on one line; the y is the line's middle, so
+    // the whole header's height is the field.
+    fun offsetAt(x: Float): Int {
+        if (query.isEmpty()) return 0
+        val line = layout ?: return query.length
+        return line.getOffsetForPosition(Offset(x, line.size.height / 2f)).coerceIn(0, query.length)
+    }
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .then(
+                if (onPlaceCursor == null) {
+                    Modifier
+                } else {
+                    Modifier.pointerInput(query) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            onPlaceCursor(offsetAt(down.position.x))
+                            drag(down.id) { change ->
+                                onPlaceCursor(offsetAt(change.position.x))
+                                change.consume()
+                            }
+                        }
+                    }
+                },
+            ),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box {
+            AppText(
+                text = query.ifEmpty { "Search" },
+                size = pxSp(SEARCH_TEXT_PX),
+                lineHeight = pxSp(ROW_TITLE_LINE_PX),
+                maxLines = 1,
+                // Cut from the front while typing, so the end you type at stays in view.
+                overflow = if (cursor != null) TextOverflow.StartEllipsis else TextOverflow.Ellipsis,
+                onTextLayout = { layout = it },
+            )
+            val line = layout
+            if (cursor != null && line != null) {
+                // Held to the text this layout measured, which trails a keystroke
+                // by a frame: the query can already be a letter longer. An empty
+                // query draws the placeholder, and the cursor sits before it.
+                val measured = if (query.isEmpty()) 0 else line.layoutInput.text.length
+                val rect = line.getCursorRect(cursor.coerceIn(0, measured))
+                Box(
+                    modifier = Modifier
+                        .offset { IntOffset(rect.left.toInt(), rect.top.toInt()) }
+                        .width(px(CURSOR_WIDTH_PX))
+                        .height(with(LocalDensity.current) { rect.height.toDp() })
+                        .background(LightThemeTokens.colors.content),
+                )
+            }
+        }
+    }
+}
+
+/** The SDK editor's cursor: 2dp, 6px on the LP3. */
+private const val CURSOR_WIDTH_PX = 6
 
 /** Where the search glyph sits: the list's edge plus a row's lead. */
 private const val SEARCH_AXIS_PX = LIST_EDGE_PX + ROW_LEAD_PX
