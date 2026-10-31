@@ -1,6 +1,7 @@
 package com.sublunar.amp.data
 
 import com.sublunar.amp.data.db.AlbumEntity
+import com.sublunar.amp.data.db.ArtistImageEntity
 import com.sublunar.amp.data.db.DownloadFile
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.LikedArtistEntity
@@ -465,21 +466,39 @@ class LibraryRepository(
     }
 
     /**
-     * Fetch the server's artist index for its pictures, once per source: one
+     * The artists' pictures: the stored index first, so they draw with no
+     * network at all, then the server's, once per source per launch — one
      * request, asked by the pages that show artists rather than by every sync.
-     * Failure leaves the map as it was, and rows show their placeholder.
+     * Its answer is stored for next time, and for the cover sync to fetch on
+     * Wi-Fi. Failure leaves the map as it was.
      */
     suspend fun primeArtistImages() {
-        if (_artistImages.value != null) return
+        if (artistImagesAsked) return
+        val pinned = daos.value ?: return
+        if (_artistImages.value == null) {
+            val stored = runCatching { pinned.artistImages() }.getOrDefault(emptyList())
+            if (stored.isNotEmpty() && daos.value === pinned) {
+                _artistImages.value = stored.associate { it.name to it.imageId }
+            }
+        }
         if (!metadataAllowed()) return
         val client = serverClient.value ?: return
         val refs = runCatching { client.getArtistIndex(libraryId.first()) }.noteOom("artist index").getOrNull() ?: return
+        // A switch meanwhile: the answer is the other server's.
+        if (daos.value !== pinned) return
+        artistImagesAsked = true
         // The same call is the id index that liking needs.
         if (artistIds == null) artistIds = refs.associate { it.name to it.id }
-        _artistImages.value = refs
+        val images = refs
             .mapNotNull { ref -> ref.imageId?.takeIf { it.isNotBlank() }?.let { ref.name to it } }
             .toMap()
+        _artistImages.value = images
+        runCatching { pinned.replaceArtistImages(images.map { (name, id) -> ArtistImageEntity(name, id) }) }
     }
+
+    /** Whether this launch has had the server's index — see [primeArtistImages]. */
+    @Volatile
+    private var artistImagesAsked = false
 
     // Whether there is anything liked, which is all the library index asks:
     // eager, so a page's first frame already knows.
@@ -855,6 +874,8 @@ class LibraryRepository(
         dao.clearTracks()
         dao.clearAlbums()
         dao.clearAllTopSongs()
+        dao.clearArtistImages()
+        dao.clearLyrics()
         forgetDerived()
     }
 
@@ -871,6 +892,7 @@ class LibraryRepository(
         topSongs.clear()
         artistIds = null
         _artistImages.value = null
+        artistImagesAsked = false
         haystack = null
         // Not lastTracksRead: the database hasn't changed over yet, and a write
         // the cancelled sync lands first is read against it; cachedTracks drops it

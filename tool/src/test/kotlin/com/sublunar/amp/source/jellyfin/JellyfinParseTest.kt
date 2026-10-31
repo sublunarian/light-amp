@@ -55,10 +55,17 @@ class JellyfinParseTest {
         // Jellyfin serves /Items/{anything}/Images/Primary and only 404s when
         // the bytes are asked for, so this cannot be assumed from the id alone.
         val withCover = item("""{"Id":"al","Name":"X","ImageTags":{"Primary":"abc"}}""")
-        assertEquals("al", withCover.imageId())
+        assertEquals("al:abc", withCover.imageId())
 
         val withNone = item("""{"Id":"al","Name":"X"}""")
         assertNull(withNone.imageId())
+    }
+
+    @Test
+    fun `a cover id splits back into its item and picture tag`() {
+        assertEquals("al" to "abc", splitCoverId("al:abc"))
+        // Cached from before tags were kept: the item alone, no tag.
+        assertEquals("al" to null, splitCoverId("al"))
     }
 
     @Test
@@ -66,7 +73,7 @@ class JellyfinParseTest {
         val track = item(
             """{"Id":"t1","Name":"X","AlbumId":"al1","AlbumPrimaryImageTag":"tag"}""",
         )
-        assertEquals("al1", track.imageId())
+        assertEquals("al1:tag", track.imageId())
     }
 
     @Test

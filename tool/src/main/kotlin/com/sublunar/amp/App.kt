@@ -3,6 +3,7 @@ package com.sublunar.amp
 import android.util.Log
 import com.sublunar.amp.art.ArtworkLoader
 import com.sublunar.amp.art.ArtworkNeed
+import com.sublunar.amp.art.CacheReserve
 import com.sublunar.amp.art.CoverUpkeep
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.AlbumSort
@@ -99,6 +100,10 @@ object App {
     lateinit var artwork: ArtworkLoader
         private set
     private lateinit var covers: CoverUpkeep
+
+    /** The cache's share of the Storage Limit — see [CacheReserve]. */
+    lateinit var cacheReserve: CacheReserve
+        private set
     lateinit var downloads: DownloadStore
         private set
     lateinit var downloader: Downloader
@@ -141,6 +146,9 @@ object App {
 
     /** The active source's DAO. Never read before [boot] has built the first. */
     private fun dao(): LibraryDao = _dao.value ?: error("Library database not ready")
+
+    /** The browsed source's tables, for what is kept between launches (lyrics); null before [boot]. */
+    fun browsedDao(): LibraryDao? = _dao.value
 
     /**
      * Locked while looking up and building: callers on several threads missing
@@ -483,14 +491,24 @@ object App {
             artwork = ArtworkLoader(
                 context.filesDir,
                 serverClient,
-                fetchAllowed = { need ->
-                    when (need) {
-                        ArtworkNeed.FOCUSED -> rules.value.mayFetchFocusedArt
-                        ArtworkNeed.BROWSING -> rules.value.mayMoveHeavyBytes
+                fetchAllowed = { need, small ->
+                    when {
+                        need == ArtworkNeed.FOCUSED -> rules.value.mayFetchFocusedArt
+                        small -> rules.value.mayBrowseArt
+                        else -> rules.value.mayMoveHeavyBytes
                     }
                 },
                 artworkOff = { hideArtwork.value },
             ) { _source.value.id }
+            cacheReserve = CacheReserve(
+                settings,
+                albumCount = {
+                    settings.sources.first().sumOf { source ->
+                        runCatching { databaseFor(source).libraryDao().albumCount() }.getOrDefault(0)
+                    }
+                },
+                scope,
+            )
             covers = CoverUpkeep(
                 artwork,
                 settings,
@@ -499,6 +517,7 @@ object App {
                 browsedSourceId = { _source.value.id },
                 rulesNow = ::rulesNow,
                 yieldToPlayback = ::yieldToPlayback,
+                reserve = cacheReserve,
                 scope = scope,
             )
             // The source last in use, resolved first: the DAO has to exist before the repository.
@@ -578,6 +597,7 @@ object App {
                 yieldToPlayback = ::yieldToPlayback,
                 metadataAllowed = ::metadataAllowed,
                 browsedPlaylistTrackIds = ::browsedPlaylistTrackIds,
+                cacheReserve = { cacheReserve.now() },
             )
             playback = PlaybackController(
                 settings, serverClient, downloads, scope,

@@ -461,8 +461,12 @@ class JellyfinClient(
      */
     override fun coverArtUrl(coverArtId: String?): String? {
         if (coverArtId.isNullOrBlank()) return null
-        return url("/Items/$coverArtId/Images/Primary", listOf(TOKEN_PARAM to token))
+        val (item, tag) = splitCoverId(coverArtId)
+        return url("/Items/$item/Images/Primary", listOfNotNull(tag?.let { "tag" to it }, TOKEN_PARAM to token))
     }
+
+    /** The picture's tag is part of the id — see [COVER_TAG_SEPARATOR]. */
+    override fun coverIdVersioned(coverArtId: String): Boolean = splitCoverId(coverArtId).second != null
 
     /**
      * The cover through Jellyfin's own resizer: stored art is routinely far
@@ -472,9 +476,11 @@ class JellyfinClient(
     override fun coverArtUrl(coverArtId: String?, maxSizePx: Int): String? {
         if (coverArtId.isNullOrBlank()) return null
         if (maxSizePx <= 0) return coverArtUrl(coverArtId)
+        val (item, tag) = splitCoverId(coverArtId)
         return url(
-            "/Items/$coverArtId/Images/Primary",
-            listOf(
+            "/Items/$item/Images/Primary",
+            listOfNotNull(
+                tag?.let { "tag" to it },
                 "maxWidth" to maxSizePx.toString(),
                 "maxHeight" to maxSizePx.toString(),
                 "quality" to COVER_QUALITY.toString(),

@@ -229,6 +229,14 @@ interface MusicServer {
      */
     fun coverArtUrl(coverArtId: String?, maxSizePx: Int): String? = coverArtUrl(coverArtId)
 
+    /**
+     * Whether [coverArtId] changes when its picture does, so a cached copy holds
+     * until the library stops naming it. One that doesn't is fetched again now
+     * and then on Wi-Fi, or a replaced picture would stay old for good — see
+     * CoverUpkeep.
+     */
+    fun coverIdVersioned(coverArtId: String): Boolean = false
+
     /** Words for a song, timed where the server has them. */
     suspend fun getLyrics(songId: String): Lyrics? = null
 

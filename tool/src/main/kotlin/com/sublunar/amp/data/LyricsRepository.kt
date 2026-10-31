@@ -1,6 +1,8 @@
 package com.sublunar.amp.data
 
 import com.sublunar.amp.App
+import com.sublunar.amp.data.db.LibraryDao
+import com.sublunar.amp.data.db.LyricsEntity
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -58,10 +60,12 @@ object LyricsRepository {
         sourceId: String,
         client: MusicServer?,
         allowNetwork: Boolean = true,
+        /** The source's tables, where lookups are kept between launches; null keeps them in memory only. */
+        dao: LibraryDao? = null,
     ): Outcome {
         val key = sourceId to track.id
         synchronized(cache) { cache[key] }?.let { return it }
-        val resolved = resolve(track, client, allowNetwork)
+        val resolved = resolve(track, client, allowNetwork, dao)
         // An outage and a question never asked are not answers to remember.
         if (resolved != Outcome.Unavailable && resolved != Outcome.NotFetched) {
             synchronized(cache) { cache[key] = resolved }
@@ -73,15 +77,35 @@ object LyricsRepository {
         track: Track,
         client: MusicServer?,
         allowNetwork: Boolean,
+        dao: LibraryDao?,
     ): Outcome {
         // Downloaded lyrics first: they cost nothing and work with no network.
         val cached = runCatching { App.downloader.cachedLyrics(track.id) }.getOrNull()
         val stored = parseStored(cached)
         stored?.let { if (it.synced) return Outcome.Found(it) }
 
+        // Then the last lookup's answer, kept. "None" only while it's recent:
+        // lrclib grows, and a song without words today may have them next month.
+        val kept = dao?.let { runCatching { it.lyrics(track.id) }.getOrNull() }
+        if (kept != null) {
+            parseStored(kept.text)?.let { return Outcome.Found(it) }
+            if (System.currentTimeMillis() - kept.fetchedAtMs < NONE_KEPT_MS) return stored?.let { Outcome.Found(it) } ?: Outcome.None
+        }
+
         // A mode that forbids bytes must not also hide the copy already on the phone.
         if (!allowNetwork) return stored?.let { Outcome.Found(it) } ?: Outcome.NotFetched
 
+        return lookUp(track, client, stored).also { outcome ->
+            when (outcome) {
+                is Outcome.Found -> keep(dao, track.id, outcome.lyrics)
+                Outcome.None -> keep(dao, track.id, null)
+                else -> {}
+            }
+        }
+    }
+
+    /** Ask the server, then lrclib, for what isn't on the phone. */
+    private suspend fun lookUp(track: Track, client: MusicServer?, stored: Lyrics?): Outcome {
         val server = runCatching { client?.getLyrics(track.id) }
         val fromServer = server.getOrNull()
         if (fromServer?.synced == true) return Outcome.Found(fromServer)
@@ -98,6 +122,15 @@ object LyricsRepository {
         val asked = server.isSuccess && lrclib.isSuccess
         return if (asked) Outcome.None else Outcome.Unavailable
     }
+
+    /** Keep what a lookup settled on, so the song isn't asked about again. */
+    private suspend fun keep(dao: LibraryDao?, trackId: String, found: Lyrics?) {
+        dao ?: return
+        runCatching { dao.upsertLyrics(LyricsEntity(trackId, found?.let(::encodeStored), System.currentTimeMillis())) }
+    }
+
+    /** How long a song found to have no lyrics is believed before asking again. */
+    private const val NONE_KEPT_MS = 30L * 24 * 60 * 60 * 1000
 
     /**
      * [lyrics] in the form stored with a download: a line each, a timed one

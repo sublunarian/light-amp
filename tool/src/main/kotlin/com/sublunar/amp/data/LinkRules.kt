@@ -57,6 +57,14 @@ data class LinkRules(
         get() = mayTalkToServer
 
     /**
+     * A small cover in a list being scrolled: a few dozen KB, about what a
+     * lyric costs, so allowed wherever lyrics are. The full-size covers of a
+     * whole library stay [maySyncCovers].
+     */
+    val mayBrowseArt: Boolean
+        get() = mayTalkToServer
+
+    /**
      * Why a track that needs the server can't play, in the words the screens
      * use; null when it can. Ordered by what the user can do about it: the
      * mode's own rule first, then the link, then the server.

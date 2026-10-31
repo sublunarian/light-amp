@@ -260,6 +260,12 @@ class SubsonicClient(
         return restUrl("getCoverArt", listOf("id" to coverArtId))
     }
 
+    /**
+     * Navidrome's album covers end in the picture's own timestamp (`al-…_<hex>`).
+     * Its artists' pictures, and every id other Subsonic servers hand out, don't.
+     */
+    override fun coverIdVersioned(coverArtId: String): Boolean = NAVIDROME_VERSIONED_COVER.matches(coverArtId)
+
     /** `getCoverArt` resizes server-side when given a size: the square's edge. */
     override fun coverArtUrl(coverArtId: String?, maxSizePx: Int): String? {
         if (coverArtId.isNullOrBlank()) return null
@@ -897,3 +903,6 @@ class SubsonicClient(
         }
     }
 }
+
+/** A Navidrome cover id that carries its picture's timestamp — see SubsonicClient.coverIdVersioned. */
+private val NAVIDROME_VERSIONED_COVER = Regex("""^[a-z]{2}-.+_[0-9a-f]+$""")

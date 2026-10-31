@@ -35,15 +35,24 @@ enum class ArtworkNeed {
 }
 
 /**
- * Loads album art. Bytes are fetched once and cached on disk, one file per cover;
- * decoded bitmaps are downsampled to the requested size and kept in a small
- * memory LRU. RGB_565 halves bitmap memory.
+ * Loads album art. Bytes are fetched once and cached on disk; decoded bitmaps are
+ * downsampled to the requested size and kept in a small memory LRU. RGB_565
+ * halves bitmap memory.
+ *
+ * Each cover comes in two sizes, a file each: a small one ([SMALL_PX]) for the
+ * rows, grid tiles and album card, a tenth of the bytes, and the panel-wide one
+ * for the player and the full-screen sleeve. A small cover is drawn from the
+ * full one when only that is here, and the full one stands in softly from the
+ * small one when it can't be fetched.
  */
 class ArtworkLoader(
     filesDir: File,
     private val serverClient: StateFlow<MusicServer?>,
-    /** Whether a cover may be fetched over the network now, for that need — see LinkRules. */
-    private val fetchAllowed: (ArtworkNeed) -> Boolean,
+    /**
+     * Whether a cover may be fetched over the network now, for that need, and
+     * whether it's the small one (a few dozen KB) or the full one — see LinkRules.
+     */
+    private val fetchAllowed: (need: ArtworkNeed, small: Boolean) -> Boolean,
     /**
      * Whether covers are switched off entirely — see App.hideArtwork. The drawing
      * path stops a level up, in rememberArtwork; this gates the other ways in,
@@ -60,6 +69,9 @@ class ArtworkLoader(
 ) {
     private val http = NetworkGate.httpClient { expectSuccess = false }
     private val diskDir = File(filesDir, "artwork").apply { mkdirs() }
+
+    /** A file per source whose time is its pictures' last refresh — see [refreshDue]. */
+    private val refreshDir = File(filesDir, "artwork-refreshed").apply { mkdirs() }
     private val memory = object : LruCache<String, ImageBitmap>(MEMORY_ENTRIES) {}
     private val gate = Semaphore(FETCH_CONCURRENCY)
 
@@ -92,20 +104,20 @@ class ArtworkLoader(
         val memKey = memoryKey(coverArtId, bucket, source)
         memory.get(memKey)?.let { return it }
 
+        val small = bucket <= SMALL_PX
         return withContext(Dispatchers.IO) {
-            // Bytes on disk that aren't a picture are thrown away and asked for
-            // again; kept, one bad answer is a cover broken for good. Only
-            // those: with no file read, a delete could take one a writer has
-            // just put there.
-            val onDisk = readDisk(source, coverArtId)
-            val cached = onDisk?.takeIf { looksLikeImage(it) }
-            if (onDisk != null && cached == null) diskFile(source, coverArtId).delete()
             val client = serverClient.value.takeIf { source == browsed }
-            val bytes = cached ?: fetch(client, coverArtId, need)?.also { writeDisk(source, coverArtId, it) }
-                ?: return@withContext null
-            val bitmap = decodeDownsampled(bytes, bucket) ?: return@withContext null
+            val bytes = readUsable(source, coverArtId, small)
+                // A full copy downsamples to any small size.
+                ?: (if (small) readUsable(source, coverArtId, small = false) else null)
+                ?: fetch(client, coverArtId, need, small)?.also { writeDisk(source, coverArtId, small, it) }
+            // Soft beats none: the small copy, when the full one can't be had.
+            // Not kept in memory, so the full one is drawn once it can be fetched.
+            val standIn = if (bytes == null && !small) readUsable(source, coverArtId, small = true) else null
+            val picture = bytes ?: standIn ?: return@withContext null
+            val bitmap = decodeDownsampled(picture, bucket) ?: return@withContext null
             val image = bitmap.asImageBitmap()
-            memory.put(memKey, image)
+            if (standIn == null) memory.put(memKey, image)
             image
         }
     }
@@ -122,32 +134,47 @@ class ArtworkLoader(
         if (coverArtId.isNullOrBlank()) return
         if (artworkOff()) return
         withContext(Dispatchers.IO) {
-            if (isOnDisk(sourceId, coverArtId)) return@withContext
-            fetch(client, coverArtId, ArtworkNeed.BROWSING)?.let { writeDisk(sourceId, coverArtId, it) }
+            // The full one: offline, the player shows it full width.
+            if (isOnDisk(sourceId, coverArtId, small = false)) return@withContext
+            fetch(client, coverArtId, ArtworkNeed.BROWSING, small = false)
+                ?.let { writeDisk(sourceId, coverArtId, small = false, it) }
         }
     }
 
-    private suspend fun fetch(client: MusicServer?, coverArtId: String, need: ArtworkNeed): ByteArray? {
+    /**
+     * The disk's copy of a cover at that size, if it is a picture. Bytes that
+     * aren't are thrown away and asked for again; kept, one bad answer is a
+     * cover broken for good. Only those: with no file read, a delete could take
+     * one a writer has just put there.
+     */
+    private fun readUsable(sourceId: String, coverArtId: String, small: Boolean): ByteArray? {
+        val onDisk = readDisk(sourceId, coverArtId, small) ?: return null
+        if (looksLikeImage(onDisk)) return onDisk
+        diskFile(sourceId, coverArtId, small).delete()
+        return null
+    }
+
+    private suspend fun fetch(client: MusicServer?, coverArtId: String, need: ArtworkNeed, small: Boolean): ByteArray? {
         // A local track's cover id is its own path: the sleeve is inside the
         // file, and there is no server to ask for it.
         PhoneFiles.fileOf(coverArtId)?.let { return embedded(it) }
         // A cover is a quarter-megabyte at panel size: nothing next to the song
-        // playing, but a listful is not, so those wait for cheap bytes and show
-        // the placeholder meanwhile.
-        if (!fetchAllowed(need)) {
+        // playing, but a listful is not. The rules say which may cost cellular.
+        if (!fetchAllowed(need, small)) {
             // Only the focused cover is news; a list refused on cellular is the design.
             if (need == ArtworkNeed.FOCUSED) android.util.Log.i("AmpArt", "focused cover not fetched: rules forbid it")
             return null
         }
         if (client == null) return null
-        val sized = client.coverArtUrl(coverArtId, panelWidthPx)
-        val original = client.coverArtUrl(coverArtId)
+        val sized = client.coverArtUrl(coverArtId, if (small) SMALL_PX else panelWidthPx)
+        // The full-size URL is the fallback for the full cover only: an
+        // original can be twenty megabytes, never worth it for a small one.
+        val original = if (small) sized else client.coverArtUrl(coverArtId)
         val startedMs = System.currentTimeMillis()
         // A grid asks for a screenful at once; all in flight together, they all
         // slow down and some time out.
         val answer = gate.withPermit {
-            // The full-size URL is the fallback: a resizer that isn't answering
-            // should cost a slower cover, not a missing one.
+            // A resizer that isn't answering should cost a slower cover, not a missing one.
             val first = download(sized)
             if (first is CoverFetch.Got || original == sized) first else download(original)
         }
@@ -208,14 +235,14 @@ class ArtworkLoader(
         }
     }
 
-    private fun diskFile(sourceId: String, coverArtId: String) =
-        File(diskDir, fileNameFor(sourceId, coverArtId))
+    private fun diskFile(sourceId: String, coverArtId: String, small: Boolean) =
+        File(diskDir, fileNameFor(sourceId, coverArtId) + if (small) SMALL_SUFFIX else "")
 
-    private fun isOnDisk(sourceId: String, coverArtId: String): Boolean =
-        diskFile(sourceId, coverArtId).let { it.exists() && it.length() > 0 }
+    private fun isOnDisk(sourceId: String, coverArtId: String, small: Boolean): Boolean =
+        diskFile(sourceId, coverArtId, small).let { it.exists() && it.length() > 0 }
 
-    private fun readDisk(sourceId: String, coverArtId: String): ByteArray? {
-        val file = diskFile(sourceId, coverArtId).takeIf { it.exists() && it.length() > 0 } ?: return null
+    private fun readDisk(sourceId: String, coverArtId: String, small: Boolean): ByteArray? {
+        val file = diskFile(sourceId, coverArtId, small).takeIf { it.exists() && it.length() > 0 } ?: return null
         // A read leaves no mark of its own, and the budget evicts least
         // recently used — so touch it, and the covers looked at stay.
         file.setLastModified(System.currentTimeMillis())
@@ -239,11 +266,13 @@ class ArtworkLoader(
         var freed = 0L
         withContext(Dispatchers.IO) {
             coverArtIds.forEach { id ->
-                val file = diskFile(sourceId, id)
-                val size = file.length()
-                if (file.delete()) {
-                    removed++
-                    freed += size
+                for (small in listOf(false, true)) {
+                    val file = diskFile(sourceId, id, small)
+                    val size = file.length()
+                    if (file.delete()) {
+                        removed++
+                        freed += size
+                    }
                 }
             }
         }
@@ -258,44 +287,89 @@ class ArtworkLoader(
     }
 
     /**
-     * Fetch the covers [coverArtIds] names and the disk doesn't hold, after a
-     * library sync while the link is free. On a metered link lists draw only
-     * what is already here (see [ArtworkNeed]), so this is what a library looks
-     * like on cellular.
+     * Fetch what a library's covers and artist pictures lack on disk, after a
+     * library sync while the link is free. Small copies of everything first —
+     * what lists draw, a tenth of the bytes, so a library looks whole on any
+     * link soonest — then the full covers, for as long as the cache has room.
      *
-     * Panel-sized pictures only, with no fallback to the original: right for the
-     * one cover someone is looking at, wrong for a whole library (an original can
+     * Sized pictures only, with no fallback to the original: right for the one
+     * cover someone is looking at, wrong for a whole library (an original can
      * be twenty megabytes).
      *
      * [protectedFiles] are the covers the budget may never take — see
      * [trimToBudget] — read only if the budget is reached. The library being
      * synced is added to them while this runs, so room for its covers is never
-     * made at its own expense.
+     * made at its own expense; its full covers stop where the room runs out.
      */
     suspend fun syncCovers(
         sourceId: String,
         client: MusicServer,
-        coverArtIds: List<String>,
+        albumCoverIds: List<String>,
+        artistImageIds: List<String>,
+        budgetBytes: Long,
         protectedFiles: suspend () -> Set<String>,
         mayContinue: suspend () -> Boolean,
-    ): CoverSyncResult = withContext(Dispatchers.IO) {
+        /** Each pass's progress — see [CoverSync]'s; "small" or "full" first. */
+        onProgress: (size: String, fetched: Int, missing: Int) -> Unit = { _, _, _ -> },
+    ): Pair<CoverSyncResult, CoverSyncResult> = withContext(Dispatchers.IO) {
+        val everything = albumCoverIds + artistImageIds
         var kept: Set<String>? = null
         suspend fun keep(): Set<String> =
-            kept ?: (protectedFiles() + coverArtIds.map { fileNameFor(sourceId, it) }).also { kept = it }
-        CoverSync(
-            isOnDisk = { id -> isOnDisk(sourceId, id) },
+            kept ?: (protectedFiles() + everything.flatMap { fileNamesFor(sourceId, it) }).also { kept = it }
+        fun pass(small: Boolean) = CoverSync(
+            // Either copy will do for a small one: a full copy downsamples.
+            isOnDisk = { id -> isOnDisk(sourceId, id, small) || (small && isOnDisk(sourceId, id, small = false)) },
             // One fetch slot, so a list scrolled meanwhile still has the rest.
-            fetch = { id -> gate.withPermit { download(client.coverArtUrl(id, panelWidthPx)) } },
-            store = { id, bytes -> writeDisk(sourceId, id, bytes) },
+            fetch = { id ->
+                gate.withPermit { download(client.coverArtUrl(id, if (small) SMALL_PX else panelWidthPx)) }
+            },
+            store = { id, bytes -> writeDisk(sourceId, id, small, bytes) },
             cacheBytes = { coverFiles().sumOf { it.length() } },
             // Below the line, not to it, or a cache at its ceiling walks the
             // directory again for every cover that follows.
-            makeRoom = { trimToBudget(keep(), DISK_BUDGET_BYTES - DISK_BUDGET_BYTES / 10) },
-            budgetBytes = DISK_BUDGET_BYTES,
+            makeRoom = { trimToBudget(keep(), budgetBytes, budgetBytes - budgetBytes / 10) },
+            budgetBytes = budgetBytes,
             // Switched off part-way is switched off: see [artworkOff].
             mayContinue = { !artworkOff() && mayContinue() },
             knownMissing = knownMissing.getOrPut(sourceId) { ConcurrentHashMap.newKeySet() },
-        ).run(coverArtIds)
+            onProgress = { fetched, missing -> onProgress(if (small) "small" else "full", fetched, missing) },
+        )
+        val smallResult = pass(small = true).run(everything)
+        // Artists are only ever drawn small.
+        val fullResult = if (smallResult.stopped == null) {
+            pass(small = false).run(albumCoverIds)
+        } else {
+            CoverSyncResult(albumCoverIds.size, 0, 0, 0L, "small covers unfinished")
+        }
+        smallResult to fullResult
+    }
+
+    /**
+     * Whether [sourceId]'s pictures whose ids never change are due to be fetched
+     * afresh: a month since the last time, or never yet. Kept beside the cache,
+     * not in it, so reading a cover (which touches its file) can't move it.
+     */
+    fun refreshDue(sourceId: String): Boolean =
+        lastRefreshedMs(sourceId)?.let { System.currentTimeMillis() - it >= REFRESH_EVERY_MS } ?: true
+
+    fun markRefreshed(sourceId: String) {
+        runCatching { refreshFile(sourceId).apply { writeText("") }.setLastModified(System.currentTimeMillis()) }
+    }
+
+    /** When [sourceId]'s pictures were last refreshed, or null if never. */
+    fun lastRefreshedMs(sourceId: String): Long? = refreshFile(sourceId).takeIf { it.exists() }?.lastModified()
+
+    private fun refreshFile(sourceId: String) = File(refreshDir, md5Hex(sourceId))
+
+    /** What the covers on disk come to, for the Storage page. */
+    suspend fun cacheBytes(): Long = withContext(Dispatchers.IO) { coverFiles().sumOf { it.length() } }
+
+    /** The cache in one line, for the launch log: its size, and how many of each copy. */
+    suspend fun describe(): String = withContext(Dispatchers.IO) {
+        val (small, full) = coverFiles().partition { it.name.endsWith(SMALL_SUFFIX) }
+        "${(small.sumOf { it.length() } + full.sumOf { it.length() }) shr 20} MB: " +
+            "${small.size} small (${small.sumOf { it.length() } shr 20} MB), " +
+            "${full.size} full (${full.sumOf { it.length() } shr 20} MB)"
     }
 
     /** What each server has said it has no picture for — see [CoverSync]. Not kept across launches. */
@@ -338,21 +412,24 @@ class ArtworkLoader(
     }
 
     /**
-     * Hold the cache to [DISK_BUDGET_BYTES], least recently used first; over the
-     * budget, evict down to [target]. Run at launch, off the main thread.
+     * Hold the cache to [budget], full covers before small ones and least
+     * recently used first within each: a small copy is what keeps a list whole.
+     * Over the budget, evict down to [target]. Run at launch, off the main thread.
      *
      * [keep] names the files that survive whatever the budget says: the covers of
      * downloaded albums, the offline sleeves, which go when their songs do — see
      * CoverUpkeep.protectedFiles. Answers what the cache comes to afterwards, more
      * than the budget when what must be kept is.
      */
-    suspend fun trimToBudget(keep: Set<String>, target: Long = DISK_BUDGET_BYTES): Long = withContext(Dispatchers.IO) {
+    suspend fun trimToBudget(keep: Set<String>, budget: Long, target: Long = budget): Long = withContext(Dispatchers.IO) {
         val files = coverFiles()
         val before = files.sumOf { it.length() }
         var total = before
-        if (total <= DISK_BUDGET_BYTES) return@withContext total
+        if (total <= budget) return@withContext total
         var removed = 0
-        for (file in files.filter { it.name !in keep }.sortedBy { it.lastModified() }) {
+        val evictable = files.filter { it.name !in keep }
+            .sortedWith(compareBy({ it.name.endsWith(SMALL_SUFFIX) }, { it.lastModified() }))
+        for (file in evictable) {
             if (total <= target) break
             val size = file.length()
             if (file.delete()) {
@@ -371,8 +448,12 @@ class ArtworkLoader(
     private fun coverFiles(): List<File> =
         diskDir.listFiles().orEmpty().filter { it.isFile && !it.name.endsWith(PARTIAL) }
 
-    /** The file a cover is kept in, for anything naming files to keep or drop. */
-    fun fileNameFor(sourceId: String, coverArtId: String): String = md5Hex("$sourceId|$coverArtId")
+    /** The file a cover's full copy is kept in; its small copy adds [SMALL_SUFFIX]. */
+    private fun fileNameFor(sourceId: String, coverArtId: String): String = md5Hex("$sourceId|$coverArtId")
+
+    /** Both files a cover may be kept in, for anything naming files to keep or drop. */
+    fun fileNamesFor(sourceId: String, coverArtId: String): List<String> =
+        fileNameFor(sourceId, coverArtId).let { listOf(it, it + SMALL_SUFFIX) }
 
     /**
      * Whether these bytes are a picture at all, by their magic number. A server
@@ -399,9 +480,9 @@ class ArtworkLoader(
      * down, and a list reads the directory while the cover sync writes it. Each
      * write has a name of its own, since both can be fetching the same cover.
      */
-    private fun writeDisk(sourceId: String, coverArtId: String, bytes: ByteArray): Boolean {
+    private fun writeDisk(sourceId: String, coverArtId: String, small: Boolean, bytes: ByteArray): Boolean {
         if (!looksLikeImage(bytes)) return false
-        val file = diskFile(sourceId, coverArtId)
+        val file = diskFile(sourceId, coverArtId, small)
         val partial = File(diskDir, "${file.name}.${writes.incrementAndGet()}$PARTIAL")
         return try {
             partial.writeBytes(bytes)
@@ -467,12 +548,17 @@ class ArtworkLoader(
         private const val FETCH_CONCURRENCY = 4
 
         /**
-         * What the covers on disk may add up to, beyond the protected ones. At
-         * [FETCH_PX] a cover runs 70–280 KB, so some three thousand: a sync fills
-         * the cache with whole libraries (see [syncCovers]), and one smaller than
-         * the libraries it serves re-fetches one each time another is opened.
+         * The small copy's size: the largest place one is drawn (a 300px grid
+         * tile or album card) on the 1080px LP3 panel. Some 15–30 KB a cover
+         * against 70–280 KB at [FETCH_PX].
          */
-        private const val DISK_BUDGET_BYTES = 400L * 1024 * 1024
+        const val SMALL_PX = 320
+
+        /** Added to a cover's file name for its small copy. */
+        private const val SMALL_SUFFIX = "-s"
+
+        /** How often a picture whose id never changes is fetched afresh, in case it has. */
+        private const val REFRESH_EVERY_MS = 30L * 24 * 60 * 60 * 1000
 
         /** How long a cover no library names is kept after it was last looked at. */
         private const val UNCLAIMED_KEPT_MS = 30L * 24 * 60 * 60 * 1000

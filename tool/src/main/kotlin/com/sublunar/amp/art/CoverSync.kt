@@ -55,6 +55,11 @@ class CoverSync(
      * the process so that every sync doesn't ask for the same forty again.
      */
     private val knownMissing: MutableSet<String>,
+    /**
+     * Told how many are missing before the first fetch, then every [PROGRESS_EVERY]
+     * covers fetched, so a run of many minutes shows it is moving.
+     */
+    private val onProgress: (fetched: Int, missing: Int) -> Unit = { _, _ -> },
 ) {
     suspend fun run(wanted: Collection<String>): CoverSyncResult {
         val ids = wanted.filter { it.isNotBlank() }.distinct()
@@ -64,6 +69,7 @@ class CoverSync(
         var stopped: String? = null
         if (missing.isEmpty()) return CoverSyncResult(ids.size, 0, 0, 0L, null)
 
+        onProgress(0, missing.size)
         var total = cacheBytes()
         var failuresInARow = 0
         for (id in missing) {
@@ -79,6 +85,7 @@ class CoverSync(
                         continue
                     }
                     fetched++
+                    if (fetched % PROGRESS_EVERY == 0) onProgress(fetched, missing.size)
                     fetchedBytes += answer.bytes.size
                     total += answer.bytes.size
                     if (total > budgetBytes) {
@@ -109,5 +116,6 @@ class CoverSync(
 
     private companion object {
         const val MAX_FAILURES_IN_A_ROW = 5
+        const val PROGRESS_EVERY = 100
     }
 }

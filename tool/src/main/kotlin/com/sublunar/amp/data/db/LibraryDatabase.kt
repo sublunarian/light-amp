@@ -112,6 +112,29 @@ data class TopSongEntity(
 )
 
 /**
+ * An artist's picture, as the server's artist index names it. Kept so the
+ * pictures draw without asking again: offline, on cellular in Wi-Fi Only, and
+ * before the index has come back. Keyed by name, like [LikedArtistEntity].
+ */
+@Entity(tableName = "artist_images")
+data class ArtistImageEntity(
+    @PrimaryKey val name: String,
+    val imageId: String,
+)
+
+/**
+ * A song's lyrics as last looked up — the server's or lrclib's, in
+ * LyricsRepository's stored form — so each song is asked about once. A null
+ * [text] is an answer too: there were none, asked again once it's old.
+ */
+@Entity(tableName = "lyrics")
+data class LyricsEntity(
+    @PrimaryKey val trackId: String,
+    val text: String?,
+    val fetchedAtMs: Long,
+)
+
+/**
  * One downloaded track: the index over its file on disk — format, size, and any
  * lyrics captured alongside for offline playback.
  */
@@ -388,12 +411,63 @@ interface LibraryDao {
     @Query("DELETE FROM top_songs")
     suspend fun clearAllTopSongs()
 
+    // --- artist pictures -----------------------------------------------------
+
+    @Query("SELECT * FROM artist_images")
+    suspend fun artistImages(): List<ArtistImageEntity>
+
+    @Query("DELETE FROM artist_images")
+    suspend fun clearArtistImages()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertArtistImages(rows: List<ArtistImageEntity>)
+
+    /** The server's latest index, replacing whatever was held. */
+    @Transaction
+    suspend fun replaceArtistImages(rows: List<ArtistImageEntity>) {
+        clearArtistImages()
+        if (rows.isNotEmpty()) insertArtistImages(rows)
+    }
+
+    // --- lyrics --------------------------------------------------------------
+
+    @Query("SELECT * FROM lyrics WHERE trackId = :trackId")
+    suspend fun lyrics(trackId: String): LyricsEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLyrics(row: LyricsEntity)
+
+    /** Forget the lyrics of songs the library no longer holds. */
+    @Query("DELETE FROM lyrics WHERE trackId NOT IN (SELECT id FROM tracks)")
+    suspend fun pruneLyrics()
+
+    @Query("DELETE FROM lyrics")
+    suspend fun clearLyrics()
+
+    /** How many songs have kept lyrics, and how many of those found any — for the launch log. */
+    @Query("SELECT COUNT(*) FROM lyrics")
+    suspend fun lyricsCount(): Int
+
+    @Query("SELECT COUNT(*) FROM lyrics WHERE text IS NOT NULL")
+    suspend fun lyricsFoundCount(): Int
+
+    @Query("SELECT COUNT(*) FROM artist_images")
+    suspend fun artistImageCount(): Int
+
     // --- covers --------------------------------------------------------------
 
-    /** Every cover this source's cache names, so Log Out can drop them from disk. */
+    /** How many albums there are — what the cache is sized from (see CacheReserve). */
+    @Query("SELECT COUNT(*) FROM albums")
+    suspend fun albumCount(): Int
+
+    /**
+     * Every picture this source's cache names, artists' included, so Log Out
+     * can drop them from disk and the monthly expiry leaves them alone.
+     */
     @Query(
         "SELECT DISTINCT coverArtId FROM albums WHERE coverArtId IS NOT NULL " +
-            "UNION SELECT DISTINCT coverArtId FROM tracks WHERE coverArtId IS NOT NULL",
+            "UNION SELECT DISTINCT coverArtId FROM tracks WHERE coverArtId IS NOT NULL " +
+            "UNION SELECT DISTINCT imageId FROM artist_images",
     )
     suspend fun allCoverArtIds(): List<String>
 
@@ -557,8 +631,10 @@ interface LibraryDao {
         DownloadEntity::class,
         TopSongEntity::class,
         PlaylistTrackEntity::class,
+        ArtistImageEntity::class,
+        LyricsEntity::class,
     ],
-    version = 14,
+    version = 16,
     exportSchema = true,
     // Generated from the committed schemas in tool/src/main/assets/schemas (assets,
     // because that is what Light's store builder copies). Every schema change adds
@@ -573,6 +649,10 @@ interface LibraryDao {
         AutoMigration(from = 12, to = 13),
         // Adds playlist_tracks, empty: "nothing primed yet", refilled as on a fresh install.
         AutoMigration(from = 13, to = 14),
+        // Adds artist_images, empty: filled the next time a page shows artists.
+        AutoMigration(from = 14, to = 15),
+        // Adds lyrics, empty: each song's filled the first time it's looked up.
+        AutoMigration(from = 15, to = 16),
     ],
 )
 abstract class LibraryDatabase : RoomDatabase() {

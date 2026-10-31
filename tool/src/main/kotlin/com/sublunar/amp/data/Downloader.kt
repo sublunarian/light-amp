@@ -104,7 +104,12 @@ class Downloader(
      * cache, which the Playlists tab shares — see [playlistTrackIdsFor].
      */
     private val browsedPlaylistTrackIds: suspend () -> Set<String>,
+    /** What of the Storage Limit is kept for the cache — see CacheReserve. */
+    private val cacheReserve: suspend () -> Long,
 ) {
+    /** The downloads' share of the Storage Limit: all of it but the cache's. */
+    private suspend fun room(): Long = settings.downloadLimit.first() - cacheReserve()
+
     private val _progress = MutableStateFlow(DownloadProgress())
     val progress: StateFlow<DownloadProgress> = _progress
 
@@ -737,7 +742,7 @@ class Downloader(
             // room for any of it: with the budget spent, the worker would empty
             // the queue at its first pick.
             OfflineMode.ALL ->
-                if (store.usedBytesEverywhere() < settings.downloadLimit.first()) wanted.addAll(everyTrackId())
+                if (store.usedBytesEverywhere() < room()) wanted.addAll(everyTrackId())
         }
         queueUp(source, wanted.map { QueuedDownload(source.id, it) }, manual = false)
     }
@@ -1009,7 +1014,7 @@ class Downloader(
 
         // Re-checked every track, because the budget moves as files land, and
         // read again, so a limit lowered mid-queue holds from the next track.
-        if (used.now() >= settings.downloadLimit.first()) {
+        if (used.now() >= room()) {
             settle(picked)
             return Fetch.OVER_BUDGET
         }

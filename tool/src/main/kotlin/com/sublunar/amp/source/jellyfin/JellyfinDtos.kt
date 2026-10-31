@@ -210,11 +210,27 @@ private fun yearMonthDay(value: String?): Triple<Int, Int, Int>? {
  * art is the same sleeve, and keyed by the track the cover cache held one copy
  * per song.
  */
-fun JellyfinItem.imageId(): String? = when {
-    !albumPrimaryImageTag.isNullOrBlank() && !albumId.isNullOrBlank() -> albumId
-    imageTags.containsKey("Primary") -> id
-    else -> null
+fun JellyfinItem.imageId(): String? {
+    val ownTag = imageTags["Primary"]
+    return when {
+        !albumPrimaryImageTag.isNullOrBlank() && !albumId.isNullOrBlank() -> "$albumId$COVER_TAG_SEPARATOR$albumPrimaryImageTag"
+        ownTag != null -> "$id$COVER_TAG_SEPARATOR$ownTag"
+        else -> null
+    }
 }
+
+/**
+ * Between a cover id's item and its picture's tag. The tag is Jellyfin's own
+ * version of the picture, new whenever it's replaced, so the id changes with
+ * the picture and the cached copy of the old one is dropped (Navidrome's and
+ * Plex's ids do the same). Jellyfin's ids are hex, so it never occurs in one.
+ */
+internal const val COVER_TAG_SEPARATOR = ':'
+
+/** A cover id's item and tag, the tag null for an id from before tags were kept. */
+internal fun splitCoverId(coverArtId: String): Pair<String, String?> =
+    coverArtId.substringBefore(COVER_TAG_SEPARATOR) to
+        coverArtId.substringAfter(COVER_TAG_SEPARATOR, missingDelimiterValue = "").ifEmpty { null }
 
 /** The music collections among a user's views; a library of films has no place here. */
 internal fun JellyfinItems.musicLibraries(): List<MusicFolder> =

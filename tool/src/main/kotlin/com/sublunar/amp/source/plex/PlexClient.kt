@@ -632,6 +632,9 @@ class PlexClient(
         return if (lines.isEmpty()) null else Lyrics(lines.map { LyricLine(null, it) }, synced = false)
     }
 
+    /** A Plex picture path ends in when the picture last changed (`…/thumb/<time>`). */
+    override fun coverIdVersioned(coverArtId: String): Boolean = PLEX_VERSIONED_COVER.containsMatchIn(coverArtId)
+
     /** Plex hands out cover paths, not ids; the token rides along in the URL. */
     override fun coverArtUrl(coverArtId: String?): String? {
         if (coverArtId.isNullOrBlank()) return null
@@ -1012,3 +1015,6 @@ class PlexClient(
 
 /** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */
 class PlexException(message: String, status: Int? = null) : ServerException(message, status)
+
+/** The timestamp at the end of a Plex picture path — see PlexClient.coverIdVersioned. */
+private val PLEX_VERSIONED_COVER = Regex("""/(thumb|art)/\d+$""")

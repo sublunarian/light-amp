@@ -32,6 +32,8 @@ class CoverUpkeep(
     private val rulesNow: () -> LinkRules,
     /** Suspends while the player starts a stream — App.yieldToPlayback. */
     private val yieldToPlayback: suspend () -> Unit,
+    /** The cache's share of the Storage Limit — the budget everything here keeps to. */
+    private val reserve: CacheReserve,
     private val scope: CoroutineScope,
 ) {
     /** The cover sync in flight, if one is — see [sync]. */
@@ -60,19 +62,52 @@ class CoverUpkeep(
                 // newest first: those are the covers a run cut short is most
                 // likely to be asked for.
                 val view = LibraryView(source.libraryId, source.hiddenLibraries)
-                val wanted = runCatching { daoFor(source).allAlbumsSnapshot() }
+                val albums = runCatching { daoFor(source).allAlbumsSnapshot() }
                     .noteOom("cover sync of ${source.name}")
                     .getOrDefault(emptyList())
                     .filter { view.showsAlbum(it.libraryId) }
                     .sortedByDescending { it.createdMs }
                     .mapNotNull { it.coverArtId }
-                if (wanted.isEmpty()) return@launch
+                // The artists' pictures too, unless they're switched off.
+                val artists = if (settings.hideArtistImages.first()) {
+                    emptyList()
+                } else {
+                    runCatching { daoFor(source).artistImages() }
+                        .noteOom("artist pictures of ${source.name}")
+                        .getOrDefault(emptyList())
+                        .map { it.imageId }
+                }
+                if (albums.isEmpty() && artists.isEmpty()) return@launch
+                // A picture whose id never changes when the picture does (an
+                // artist's, any cover on most Subsonic servers) can't be told
+                // stale from here, so once a month on a free link those are
+                // dropped and fetched again below as missing. Only on a free
+                // link: dropped where they can't come back, lists go blank.
+                if (artwork.refreshDue(source.id) && rulesNow().maySyncCovers) {
+                    val unversioned = (albums + artists).filterNot(client::coverIdVersioned)
+                    artwork.drop(source.id, unversioned)
+                    artwork.markRefreshed(source.id)
+                    Log.i("AmpArt", "cover refresh: ${source.name}: ${unversioned.size} pictures whose ids never change, fetched afresh")
+                }
+                // A sync may have changed how many albums there are.
+                reserve.recount()
                 val startedMs = System.currentTimeMillis()
-                val result = artwork.syncCovers(
+                val (small, full) = artwork.syncCovers(
                     sourceId = source.id,
                     client = client,
-                    coverArtIds = wanted,
+                    albumCoverIds = albums,
+                    artistImageIds = artists,
+                    budgetBytes = reserve.now(),
                     protectedFiles = ::protectedFiles,
+                    onProgress = { size, fetched, missing ->
+                        if (missing > 0) {
+                            Log.i(
+                                "AmpArt",
+                                if (fetched == 0) "cover sync: ${source.name}: $size: $missing missing, fetching"
+                                else "cover sync: ${source.name}: $size: $fetched of $missing so far",
+                            )
+                        }
+                    },
                     mayContinue = {
                         yieldToPlayback()
                         // Asked of the system, not of the flow: this is the
@@ -80,10 +115,11 @@ class CoverUpkeep(
                         rulesNow().maySyncCovers && browsedSourceId() == source.id
                     },
                 )
-                if (result.missing > 0) {
+                for ((size, result) in listOf("small" to small, "full" to full)) {
+                    if (result.missing == 0) continue
                     Log.i(
                         "AmpArt",
-                        "cover sync: ${source.name}: ${result.fetched} of ${result.missing} missing fetched " +
+                        "cover sync: ${source.name}: $size: ${result.fetched} of ${result.missing} missing fetched " +
                             "(${result.wanted} in the library), ${result.fetchedBytes shr 10} KB in " +
                             "${(System.currentTimeMillis() - startedMs) / 1000} s" +
                             (result.stopped?.let { " — stopped: $it" } ?: ""),
@@ -105,10 +141,33 @@ class CoverUpkeep(
             runCatching { daoFor(source).collapseTrackCovers() }
                 .noteOom("cover collapse of ${source.name}")
                 .onSuccess { if (it > 0) Log.i("AmpArt", "${source.name}: $it tracks now share their album's cover") }
+            // Lyrics of songs the library no longer has, like their covers.
+            runCatching { daoFor(source).pruneLyrics() }.noteOom("lyrics of ${source.name}")
         }
         claimedFiles()?.let { artwork.expireUnclaimed(it) }
-        artwork.trimToBudget(protectedFiles())
+        reserve.recount()
+        artwork.trimToBudget(protectedFiles(), reserve.now())
+        logCache()
         sync()
+    }
+
+    /**
+     * What the cache holds, once a launch: the covers against the reserve, then
+     * each source's artist pictures and kept lyrics. The only place the cache's
+     * contents show, since a cover or lyric that loads fine logs nothing.
+     */
+    private suspend fun logCache() {
+        Log.i("AmpArt", "cache: ${artwork.describe()} of a ${reserve.now() shr 20} MB reserve")
+        settings.sources.first().forEach { source ->
+            runCatching {
+                val dao = daoFor(source)
+                val refreshed = artwork.lastRefreshedMs(source.id)
+                    ?.let { "${(System.currentTimeMillis() - it) / DAY_MS} days ago" } ?: "never"
+                "${source.name}: ${dao.albumCount()} albums, ${dao.artistImageCount()} artist pictures, " +
+                    "lyrics kept for ${dao.lyricsCount()} songs (${dao.lyricsFoundCount()} with words), " +
+                    "pictures refreshed $refreshed"
+            }.noteOom("cache summary of ${source.name}").onSuccess { Log.i("AmpArt", "cache: $it") }
+        }
     }
 
     /**
@@ -120,7 +179,7 @@ class CoverUpkeep(
             runCatching { daoFor(source).downloadedCoverArtIds() }
                 .noteOom("protected covers of ${source.name}")
                 .getOrDefault(emptyList())
-                .map { artwork.fileNameFor(source.id, it) }
+                .flatMap { artwork.fileNamesFor(source.id, it) }
         }.toSet()
 
     /**
@@ -134,8 +193,10 @@ class CoverUpkeep(
         for (source in settings.sources.first()) {
             val ids = runCatching { daoFor(source).allCoverArtIds() }
                 .noteOom("claimed covers of ${source.name}").getOrNull() ?: return null
-            ids.mapTo(claimed) { artwork.fileNameFor(source.id, it) }
+            ids.flatMapTo(claimed) { artwork.fileNamesFor(source.id, it) }
         }
         return claimed
     }
 }
+
+private const val DAY_MS = 24L * 60 * 60 * 1000
