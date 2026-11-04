@@ -1,6 +1,7 @@
 package com.sublunar.amp.source.subsonic
 
 import com.sublunar.amp.data.Album
+import com.sublunar.amp.data.ReleaseType
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.Track
@@ -177,6 +178,10 @@ data class AlbumDto(
     /** Subsonic userRating, 1–5; absent or 0 means unrated. */
     val userRating: Int? = null,
     val genre: String? = null,
+    /** OpenSubsonic: the MusicBrainz release types ("album", "live"…), from the files' tags. */
+    val releaseTypes: List<String> = emptyList(),
+    /** OpenSubsonic: the compilation flag. */
+    val isCompilation: Boolean? = null,
     /**
      * OpenSubsonic's structured album-artist credit, and the reliable one: the
      * legacy [artist] flattens several names into one string with whichever
@@ -306,6 +311,7 @@ internal fun AlbumDto.toAlbum(): Album = Album(
     lastPlayedMs = parseInstantMs(played),
     rating = userRating ?: 0,
     genre = genre.orEmpty(),
+    releaseType = ReleaseType.of(releaseTypes, compilation = isCompilation == true),
 )
 
 /**
@@ -420,4 +426,6 @@ data class TranscodeDecisionDto(
 data class TranscodeStreamDto(
     val codec: String? = null,
     val container: String? = null,
+    /** In bits per second. */
+    val audioBitrate: Int? = null,
 )

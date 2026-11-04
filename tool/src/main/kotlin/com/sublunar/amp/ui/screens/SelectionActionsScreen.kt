@@ -8,6 +8,7 @@ import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.largeMenuText
 import com.thelightphone.sdk.SealedLightActivity
 
 /**
@@ -31,7 +32,7 @@ class SelectionActionsScreen(
         val count = tracks.size
         val noun = if (count == 1) "song" else "songs"
 
-        ListScreen(onBack = { goBack(false) }, title = "$count $noun") {
+        ListScreen(onBack = { goBack(false) }, title = "$count $noun", headingRows = largeMenuText()) {
             ActionList {
                 AddToPlaylistRow(tracks.map { it.id }) { goBack(true) }
                 TextRow(title = "Play Next") {

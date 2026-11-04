@@ -45,9 +45,7 @@ class SettingsKeysTest {
         settings.likedSongsOnly.set(true)
         settings.likedArtistsOnly.set(true)
         settings.albumsGenre.set("Jazz")
-        settings.albumsComposer.set("Bach")
         settings.songsGenre.set("Folk")
-        settings.songsComposer.set("Satie")
         settings.bumpShuffleNonce()
         assertEquals(
             mapOf(
@@ -63,9 +61,7 @@ class SettingsKeysTest {
                 "pref.likedSongsOnly" to true,
                 "pref.likedArtistsOnly" to true,
                 "pref.albumsGenre" to "Jazz",
-                "pref.albumsComposer" to "Bach",
                 "pref.songsGenre" to "Folk",
-                "pref.songsComposer" to "Satie",
                 "pref.shuffleNonce" to 1,
             ),
             store.all(),
@@ -75,7 +71,7 @@ class SettingsKeysTest {
     @Test
     fun `display and playback`() = runBlocking {
         settings.invertColors.set(true)
-        settings.karaokeLyrics.set(false)
+        settings.syncedLyrics.set(false)
         settings.replayGain.set(false)
         settings.layoutMode.set(LayoutMode.SIMPLIFIED)
         settings.lastSection.set(LastSection.NOW_PLAYING)

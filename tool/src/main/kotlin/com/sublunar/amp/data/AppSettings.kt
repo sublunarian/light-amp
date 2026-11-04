@@ -75,6 +75,13 @@ enum class DataMode {
 enum class AlbumSort { TITLE, ARTIST, YEAR, DATE_ADDED, RECENTLY_PLAYED, MOST_PLAYED, RATING, RANDOM }
 enum class SongSort { TITLE, ARTIST, DATE_ADDED, RECENTLY_PLAYED, MOST_PLAYED, RATING }
 enum class ArtistSort { NAME, MOST_PLAYED }
+
+/** An artist's own records: by date, by name, or grouped by [ReleaseType] where the library knows them. */
+enum class ArtistAlbumOrder(val label: String) {
+    DATE_RELEASED("Date Released"),
+    NAME("Name"),
+    RELEASE_TYPE("Release Type"),
+}
 enum class PlaylistSort { RECENTLY_UPDATED, NAME, DATE_CREATED }
 
 /**
@@ -89,8 +96,7 @@ enum class LastSection { LIBRARY, NOW_PLAYING }
 /**
  * How the bottom bar is arranged, and what that implies for the pages above it.
  *
- * [STANDARD] is the default, and the one the setting describes the absence of:
- * "Simplified Library View", off. There is no migration to it for older
+ * [STANDARD] is the default: "Library Tabs", on. There is no migration to it for older
  * installs: none could tell an old install from a fresh one.
  */
 enum class LayoutMode {
@@ -322,25 +328,44 @@ class AppSettings(
     val likedArtistsOnly: Pref<Boolean> = bool("pref.likedArtistsOnly", false)
 
     /**
-     * The tag each list is narrowed to, or blank for all of it. Per tab, as the
+     * Each list narrowed to what is downloaded: a song that is, an album or
+     * artist with at least one song that is — the rule offline uses. Per tab,
+     * as the liked switch is.
+     */
+    val downloadedAlbumsOnly: Pref<Boolean> = bool("pref.downloadedAlbumsOnly", false)
+    val downloadedSongsOnly: Pref<Boolean> = bool("pref.downloadedSongsOnly", false)
+    val downloadedArtistsOnly: Pref<Boolean> = bool("pref.downloadedArtistsOnly", false)
+
+    /**
+     * The genre each list is narrowed to, or blank for all of it. Per tab, as the
      * liked switch is: one shared setting would make each page silently change
      * the other.
      */
     val albumsGenre: Pref<String> = string("pref.albumsGenre")
-    val albumsComposer: Pref<String> = string("pref.albumsComposer")
     val songsGenre: Pref<String> = string("pref.songsGenre")
-    val songsComposer: Pref<String> = string("pref.songsComposer")
 
     /**
      * Drop every narrowing of the library lists — the liked switches and the
-     * genre and composer filters — in one write. See App.swapSource: these
+     * genre filters — in one write. See App.swapSource: these
      * are facts about one library, and a genre chosen on one server applied
      * to the next empties its lists with nothing on screen to say why.
      */
+    /**
+     * Drop the genre filters, at each start of the app: a one-off
+     * narrowing ("Jazz, for now") lasts the session, while the liked and
+     * downloaded switches, standing choices, stay. A week-old genre would
+     * otherwise still be narrowing a tab.
+     */
+    suspend fun clearTagFilters() {
+        val filters = listOf(albumsGenre, songsGenre)
+        dataStore.edit { p -> filters.forEach { p.remove(it.key) } }
+    }
+
     suspend fun clearLibraryFilters() {
         val filters = listOf(
             likedAlbumsOnly, likedSongsOnly, likedArtistsOnly,
-            albumsGenre, albumsComposer, songsGenre, songsComposer,
+            downloadedAlbumsOnly, downloadedSongsOnly, downloadedArtistsOnly,
+            albumsGenre, songsGenre,
         )
         dataStore.edit { p -> filters.forEach { p.remove(it.key) } }
     }
@@ -360,7 +385,7 @@ class AppSettings(
 
     val invertColors: Pref<Boolean> = bool("pref.invertColors", false)
 
-    val karaokeLyrics: Pref<Boolean> = bool("pref.karaokeLyrics", true)
+    val syncedLyrics: Pref<Boolean> = bool("pref.karaokeLyrics", true)
 
     /**
      * Even out the volume between tracks, from the loudness the server
@@ -369,6 +394,9 @@ class AppSettings(
      * a library with no measurements plays exactly as it does today.
      */
     val replayGain: Pref<Boolean> = bool("pref.replayGain", true)
+
+    /** How an artist's page orders their records — see [ArtistAlbumOrder]. */
+    val artistAlbumOrder: Pref<ArtistAlbumOrder> = enum("pref.artistAlbumOrder", ArtistAlbumOrder.DATE_RELEASED)
 
     /** Whether to use the simplified or standard layout mode. */
     val layoutMode: Pref<LayoutMode> = enum("pref.layoutMode", LayoutMode.STANDARD)
@@ -398,7 +426,7 @@ class AppSettings(
     /**
      * Drop the artists' own pictures, keeping every other kind of artwork.
      *
-     * Separate from Hide Artwork because they are separate things to dislike: a
+     * Separate from Enable Artwork because they are separate things to dislike: a
      * sleeve is the record's own cover and an artist photo is a publicity shot
      * the server went and found, and a library where only some artists have one
      * reads as broken rather than as sparse. With them off the artist rows fall
@@ -414,27 +442,42 @@ class AppSettings(
     val hideDownloadIcons: Pref<Boolean> = bool("pref.hideDownloadIcons", false)
 
 
-    /** TRIAL: every text drawn in the SDK style nearest its size, whole, instead of Amp's own. */
-    val sdkFontStyles: Pref<Boolean> = bool("pref.sdkFontStyles", false)
-
-    /**
-     * TRIAL: the album card's text stacked up from the cover's bottom edge, no
-     * buttons beside it, and Shuffle heading the track list instead.
-     */
-    val albumShuffleRow: Pref<Boolean> = bool("pref.albumShuffleRow", false)
-
     /** TRIAL: the tab bar's glyphs as white outlines, the chosen tab filled in. */
     val outlineTabIcons: Pref<Boolean> = bool("pref.outlineTabIcons", false)
 
+    /** TRIAL: More, its Sources page and the ⋮ menus at the settings pages' row size. */
+    val largeMenuText: Pref<Boolean> = bool("pref.largeMenuText", true)
+
+    /** TRIAL: the Settings gear on the menus a page's own ⋮ opens (album, playlist, player). */
+    val settingsInPageMenus: Pref<Boolean> = bool("pref.settingsInPageMenus", true)
+
+    /** TRIAL: list rows without artwork with their title a step up in type. */
+    val biggerArtlessText: Pref<Boolean> = bool("pref.biggerArtlessText", false)
+
+    /** TRIAL: with Bigger Artless List Text, one-line rows at 131px (seven a screen) rather than 115 (eight). */
+    val tallerOneLineRows: Pref<Boolean> = bool("pref.tallerOneLineRows", false)
+
+    /** TRIAL: list rows with artwork with their title a step up in type. */
+    val biggerArtworkText: Pref<Boolean> = bool("pref.biggerArtworkText", false)
+
     /**
-     * TRIAL: menus and settings without grey, and the library and player's
-     * grey lifted, the player's add, cast and queue row with it.
+     * TRIAL: under the three buttons, Liked as a switch on each tab's More page,
+     * as with the tabs, instead of liked lists on the library page.
      */
-    val brighterText: Pref<Boolean> = bool("pref.brighterText", false)
+    val likedAsFilter: Pref<Boolean> = bool("pref.likedAsFilter", false)
 
-    /** TRIAL: the tab bar laid out as the SDK's LightBottomBar lays out its icons. */
-    val sdkTabBar: Pref<Boolean> = bool("pref.sdkTabBar", false)
+    /**
+     * TRIAL: the Downloads page as the queue and the albums by size, one level
+     * up in Streams & Downloads, instead of every song under Storage.
+     */
+    val newDownloadsPage: Pref<Boolean> = bool("pref.newDownloadsPage", false)
 
+    /**
+     * Covers beside list rows (library, search, playlists, queue). Off keeps them
+     * on the player, the album page and the grid view, and lists take the
+     * text-only pitch. Artists' pictures have their own switch.
+     */
+    val listArtwork: Pref<Boolean> = bool("pref.listArtwork", true)
 
     /** How much of the player the cover gets, if any. */
     val artwork: Pref<ArtworkMode> = enum("pref.artworkMode", ArtworkMode.SMALL)

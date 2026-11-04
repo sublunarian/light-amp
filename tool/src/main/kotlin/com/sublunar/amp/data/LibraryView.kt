@@ -2,7 +2,7 @@ package com.sublunar.amp.data
 
 /**
  * What the chosen libraries show: [selected] (null for all of them), and never
- * one of [hidden]. The Songs tab and a playlist go by the same rule.
+ * one of [hidden]. The Songs tab goes by it; a playlist by [hidden] alone.
  *
  * A song belongs to its album's library. An album with no library recorded
  * shows everywhere, and so does a song with no album.
@@ -24,14 +24,6 @@ internal data class LibraryView(val selected: Set<String>?, val hidden: Set<Stri
     fun showsSong(albumId: String?, hasAlbum: Boolean, libraryId: String?): Boolean =
         !narrows || albumId == null || (hasAlbum && showsAlbum(libraryId))
 }
-
-/**
- * Whether a playlist is listed where the chosen library narrows the list rather
- * than the songs: it holds a song of that library ([songs]), or its songs aren't
- * known yet. An empty one is listed only when no library is [chosen].
- */
-internal fun playlistListed(ids: List<String>?, songs: Set<String>, chosen: Boolean): Boolean =
-    ids == null || ids.any { it in songs } || (ids.isEmpty() && !chosen)
 
 /**
  * Whether a playlist of [ids] gets the download mark: at least one song is

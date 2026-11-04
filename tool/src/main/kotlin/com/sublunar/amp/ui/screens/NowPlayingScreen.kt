@@ -268,9 +268,8 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     // A new song starts the line afresh, its drag dropped.
                     key(current.id) { SeekBand(alpha = if (coverOnly) ON_COVER_ALPHA else 1f) }
                     TransportRow()
-                    // TRIAL (Brighter Text): the page's grey, as its text.
-                    val brighter by App.settings.brighterText.state.collectAsState()
-                    SecondaryRow(current, alpha = if (brighter && !coverOnly) LocalDimTextAlpha.current else dim)
+                    // The page's grey, as its text.
+                    SecondaryRow(current, alpha = if (coverOnly) dim else LocalDimTextAlpha.current)
                 }
             }
         }
@@ -433,11 +432,8 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             }
         }
 
-        // TRIAL (Use SDK Font Styles): the title card's artist size, centred on
-        // the band at its own height.
-        val sdkClocks = App.settings.sdkFontStyles.state.collectAsState().value
-        val clockPx = if (sdkClocks) SDK_TIME_PX else TIME_PX
-        val clockFit = if (sdkClocks) Modifier.wrapContentHeight(unbounded = true) else Modifier
+        // Centred on the band at their own height.
+        val clockFit = Modifier.wrapContentHeight(unbounded = true)
         Band(TIME_UP_PX, TIME_ROW_PX) {
             Row(
                 modifier = Modifier
@@ -448,8 +444,8 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             ) {
                 AppText(
                     formatTime(if (dragRatio != null) (ratio * effectiveDuration).toLong() else position),
-                    pxSp(clockPx),
-                    lineHeight = pxSp(clockPx),
+                    pxSp(TIME_PX),
+                    lineHeight = pxSp(TIME_PX),
                     modifier = clockFit,
                     exact = true,
                     overflow = TextOverflow.Visible,
@@ -457,8 +453,8 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 Spacer(Modifier.weight(1f))
                 AppText(
                     formatTime(duration),
-                    pxSp(clockPx),
-                    lineHeight = pxSp(clockPx),
+                    pxSp(TIME_PX),
+                    lineHeight = pxSp(TIME_PX),
                     modifier = clockFit,
                     exact = true,
                     overflow = TextOverflow.Visible,
@@ -660,11 +656,8 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 // screen's own size: another panel gets the same controls at the same depths
 // and a cover sized to the rest.
 
-/** The clocks under the seek line. */
-private const val TIME_PX = 36
-
-/** TRIAL (Use SDK Font Styles): the title card's artist size (see TitleCard). */
-private const val SDK_TIME_PX = 38
+/** The clocks under the seek line: the title card's artist size (see TitleCard). */
+private const val TIME_PX = 38
 
 
 /** The block that stands in for the cover when artwork is off. */

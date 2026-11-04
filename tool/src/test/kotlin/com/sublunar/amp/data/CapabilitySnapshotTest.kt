@@ -68,13 +68,13 @@ class CapabilitySnapshotTest {
             SUBSONIC, neither: Y..YYY...Y mp3 opus raw | mp3 opus
             SUBSONIC, MP3 only: YYYYY.YYYY mp3 raw | mp3 raw
             SUBSONIC, no conversions: YYYYY.YYYY raw | raw
-            PLEX, never asked: .YY.Y.YYYY raw mp3 | raw mp3
-            PLEX, nothing missing: .YY.Y.YYYY raw mp3 | raw mp3
-            PLEX, no probes: .YY.Y.YYYY raw mp3 | raw mp3
-            PLEX, no copies: .YY.YY.YYY raw mp3 | raw mp3
-            PLEX, neither: .YY.YY.YYY raw mp3 | raw mp3
-            PLEX, MP3 only: .YY.Y.YYYY raw mp3 | raw mp3
-            PLEX, no conversions: .YY.Y.YYYY raw | raw
+            PLEX, never asked: .YYYY.YYYY raw mp3 | raw mp3
+            PLEX, nothing missing: .YYYY.YYYY raw mp3 | raw mp3
+            PLEX, no probes: .YYYY.YYYY raw mp3 | raw mp3
+            PLEX, no copies: .YYYYY.YYY raw mp3 | raw mp3
+            PLEX, neither: .YYYYY.YYY raw mp3 | raw mp3
+            PLEX, MP3 only: .YYYY.YYYY raw mp3 | raw mp3
+            PLEX, no conversions: .YYYY.YYYY raw | raw
             JELLYFIN, never asked: Y.YYY.YYYY mp3 opus raw | mp3 opus raw
             JELLYFIN, nothing missing: Y.YYY.YYYY mp3 opus raw | mp3 opus raw
             JELLYFIN, no probes: Y.YYY.YYYY mp3 opus raw | mp3 opus raw

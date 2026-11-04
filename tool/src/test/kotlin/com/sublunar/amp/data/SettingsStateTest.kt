@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -63,5 +64,33 @@ class SettingsStateTest {
         assertNull(settings.savedQueue())
         settings.saveQueue(listOf("t1", "t2", "t3"), index = 1, positionMs = 42_000L)
         assertEquals(SavedQueue(listOf("t1", "t2", "t3"), "t2", 42_000L), settings.savedQueue())
+    }
+
+    @Test
+    fun `a source switch clears every filter, downloaded included`() = runBlocking {
+        val settings = MemoryDataStore().settings()
+        settings.likedAlbumsOnly.set(true)
+        settings.downloadedSongsOnly.set(true)
+        settings.downloadedArtistsOnly.set(true)
+        settings.albumsGenre.set("Jazz")
+        settings.clearLibraryFilters()
+        assertEquals(false, settings.likedAlbumsOnly.first())
+        assertEquals(false, settings.downloadedSongsOnly.first())
+        assertEquals(false, settings.downloadedArtistsOnly.first())
+        assertEquals("", settings.albumsGenre.first())
+    }
+
+    @Test
+    fun `a new start drops the genre but keeps liked and downloaded`() = runBlocking {
+        val settings = MemoryDataStore().settings()
+        settings.likedAlbumsOnly.set(true)
+        settings.downloadedSongsOnly.set(true)
+        settings.albumsGenre.set("Jazz")
+        settings.songsGenre.set("Folk")
+        settings.clearTagFilters()
+        assertEquals(true, settings.likedAlbumsOnly.first())
+        assertEquals(true, settings.downloadedSongsOnly.first())
+        assertEquals("", settings.albumsGenre.first())
+        assertEquals("", settings.songsGenre.first())
     }
 }

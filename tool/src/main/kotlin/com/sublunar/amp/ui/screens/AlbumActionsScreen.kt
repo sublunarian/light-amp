@@ -10,8 +10,10 @@ import androidx.compose.runtime.setValue
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.components.ActionList
+import com.sublunar.amp.ui.components.CenteredNote
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.largeMenuText
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
 
@@ -19,6 +21,8 @@ import kotlinx.coroutines.launch
 class AlbumActionsScreen(
     sealed: SealedLightActivity,
     private val albumId: String,
+    /** Opened from the album page's own ⋮ rather than by holding a row. */
+    private val fromDetail: Boolean = false,
 ) : AmpScreen<Unit>(sealed) {
 
     @Composable
@@ -32,7 +36,19 @@ class AlbumActionsScreen(
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val fullyDownloaded = list.isNotEmpty() && list.all { it.id in downloadedIds }
 
-        ListScreen(onBack = { goBack() }, title = album?.title ?: "Album", subtitle = album?.artist) {
+        ListScreen(
+            onBack = { goBack() },
+            title = album?.title ?: "Album",
+            subtitle = album?.artist,
+            headingRows = largeMenuText(),
+            rightAction = settingsCorner(fromHeader = fromDetail),
+        ) {
+            // Nothing until the songs are known, as on a playlist's menu: rows
+            // that need them would arrive late and push the rest down.
+            if (tracks == null) {
+                CenteredNote("Loading…")
+                return@ListScreen
+            }
             ActionList {
                 PlayRows(list)
                 TextRow(title = "Play Next") {

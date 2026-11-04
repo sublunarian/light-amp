@@ -93,8 +93,9 @@ private const val EDIT_ARTWORK_ALPHA = 0.55f
 /** The artwork every select-mode row wears: a dimmed cover with the check bubble centred on it. */
 @Composable
 fun SelectionArtwork(coverArtId: String?, selected: Boolean) {
+    val covers = !App.hideListArtwork.collectAsState().value
     Box(Modifier.size(px(ROW_ART_PX)), contentAlignment = Alignment.Center) {
-        AppArtwork(coverArtId, size = px(ROW_ART_PX), modifier = Modifier.alpha(EDIT_ARTWORK_ALPHA))
+        if (covers) AppArtwork(coverArtId, size = px(ROW_ART_PX), modifier = Modifier.alpha(EDIT_ARTWORK_ALPHA))
         AppIcon(
             if (selected) AppIcons.Selected else AppIcons.Unselected,
             size = px(66),
@@ -130,12 +131,13 @@ fun TrackRow(
     /** The source the cover belongs to, where it isn't the browsed one — see ArtworkLoader.load. */
     coverSource: String? = null,
 ) {
-    val artworkHidden = App.hideArtwork.collectAsState().value
+    val artworkHidden = App.hideListArtwork.collectAsState().value
     val oneLine = subtitle.isBlank() && artworkHidden && selected == null
+    val type = rowType(artless = artworkHidden)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(px(if (oneLine) ROW_TEXT_H_PX else ROW_H_PX))
+            .height(px(if (oneLine) type.oneLinePx else type.rowPx))
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -149,21 +151,10 @@ fun TrackRow(
             Spacer(Modifier.width(px(ROW_GAP_PX)))
         }
         Column(modifier = Modifier.weight(1f)) {
-            RowTitle(title)
-            if (subtitle.isNotBlank()) {
-                AppText(
-                    subtitle,
-                    pxSp(ROW_SUB_PX),
-                    lineHeight = pxSp(ROW_SUB_LINE_PX),
-                    role = TextRole.Detail,
-                    dim = true,
-                    maxLines = 1,
-                )
-            }
+            RowTitle(title, type = type)
+            if (subtitle.isNotBlank()) RowSubtitle(subtitle, type)
         }
-        // Nothing at the end: the same gap after the text as before it, so a long
-        // title stops short of the scroll bar or A–Z strip.
-        if (trailing != null) trailing() else Spacer(Modifier.width(px(ROW_GAP_PX)))
+        trailing?.invoke()
     }
 }
 
@@ -181,15 +172,84 @@ private fun DownloadMark(downloaded: Boolean) {
 }
 
 @Composable
-private fun RowTitle(text: String, maxLines: Int = 1, modifier: Modifier = Modifier) {
+private fun RowTitle(text: String, maxLines: Int = 1, modifier: Modifier = Modifier, type: RowType = ROW_TYPE) {
     AppText(
         text,
-        pxSp(ROW_TITLE_PX),
-        lineHeight = pxSp(ROW_TITLE_LINE_PX),
-        role = TextRole.Fine,
+        pxSp(type.titlePx),
+        lineHeight = pxSp(type.titleLinePx),
+        role = type.titleRole,
         maxLines = maxLines,
         modifier = modifier,
     )
+}
+
+@Composable
+fun RowSubtitle(text: String, type: RowType = ROW_TYPE) {
+    AppText(
+        text,
+        pxSp(type.subPx),
+        lineHeight = pxSp(type.subLinePx),
+        role = type.subRole,
+        dim = true,
+        maxLines = 1,
+    )
+}
+
+/** A list row's two lines: each one's size, line and SDK role. */
+class RowType(
+    val titlePx: Int,
+    val titleLinePx: Int,
+    val titleRole: TextRole,
+    val subPx: Int,
+    val subLinePx: Int,
+    val subRole: TextRole,
+    /** The pitch of a row with a second line (songs, albums). */
+    val rowPx: Int,
+    /** The pitch of a one-line row (artists, playlists). */
+    val oneLinePx: Int,
+)
+
+private val ROW_TYPE = RowType(
+    ROW_TITLE_PX, ROW_TITLE_LINE_PX, TextRole.Fine,
+    ROW_SUB_PX, ROW_SUB_LINE_PX, TextRole.Detail,
+    ROW_H_PX, ROW_TEXT_H_PX,
+)
+
+/**
+ * TRIAL (Bigger Artless List Text): the title a step up, to copy, in the room a
+ * cover took; the line under it stays the list's own. On a pitch that fills the
+ * 920px between the header and the tab bar with whole rows: six with a second
+ * line, and eight of one line, or seven with Taller One-Line Rows.
+ */
+private fun artlessRowType(tallerOneLine: Boolean) = RowType(
+    LightType.COPY_PX, LightType.COPY_LINE_PX, TextRole.Copy,
+    ROW_SUB_PX, ROW_SUB_LINE_PX, TextRole.Detail,
+    rowPx = 153,
+    oneLinePx = if (tallerOneLine) 131 else ROW_TEXT_H_PX,
+)
+
+private val ARTLESS_ROW_TYPE = artlessRowType(tallerOneLine = false)
+private val ARTLESS_TALL_ROW_TYPE = artlessRowType(tallerOneLine = true)
+
+/** TRIAL (Bigger Artwork List Text): the title a step up beside the cover, on the list's own pitch. */
+private val ARTWORK_ROW_TYPE = RowType(
+    LightType.COPY_PX, LightType.COPY_LINE_PX, TextRole.Copy,
+    ROW_SUB_PX, ROW_SUB_LINE_PX, TextRole.Detail,
+    ROW_H_PX, ROW_TEXT_H_PX,
+)
+
+/** The list's type: its title a step up where Bigger Artless or Bigger Artwork List Text says so. */
+@Composable
+fun rowType(artless: Boolean): RowType {
+    val biggerArtless = App.settings.biggerArtlessText.state.collectAsState().value
+    val taller = App.settings.tallerOneLineRows.state.collectAsState().value
+    val biggerArtwork = App.settings.biggerArtworkText.state.collectAsState().value
+    return when {
+        !artless -> if (biggerArtwork) ARTWORK_ROW_TYPE else ROW_TYPE
+        !biggerArtless -> ROW_TYPE
+        taller -> ARTLESS_TALL_ROW_TYPE
+        else -> ARTLESS_ROW_TYPE
+    }
 }
 
 /**
@@ -215,8 +275,6 @@ const val ROW_TITLE_LINE_PX = 60
 const val ROW_SUB_PX = LightType.DETAIL_PX
 const val ROW_SUB_LINE_PX = 60
 
-/** Air above and below a name in a row without a picture: a one-line row is [ROW_TEXT_H_PX]. */
-private const val ROW_TEXT_AIR_PX = (ROW_TEXT_H_PX - ROW_TITLE_LINE_PX) / 2
 
 /** Cover size, and the gap beside it (the same gap that separates two covers). */
 const val ROW_ART_PX = 128
@@ -255,13 +313,14 @@ fun ArtistRow(
     val wantsCovers = !App.hideArtistImages.collectAsState().value
     val local = !App.source.collectAsState().value.hasServer
     val covers = wantsCovers && !local
+    val type = rowType(artless = !covers)
     Row(
         modifier = modifier
             .fillMaxWidth()
             // With pictures the pitch holds and a second line fits inside it.
             // Without, the row grows by the line, keeping the same air between
             // names whether a name takes one line or two.
-            .then(if (covers) Modifier.height(px(ROW_H_PX)) else Modifier.heightIn(min = px(ROW_TEXT_H_PX)))
+            .then(if (covers) Modifier.height(px(ROW_H_PX)) else Modifier.heightIn(min = px(type.oneLinePx)))
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -273,7 +332,7 @@ fun ArtistRow(
                 imageId,
                 size = px(ROW_ART_PX),
                 corner = px(ROW_ART_PX) / 2,
-                fallback = AppIcons.RecordVoiceOver,
+                fallback = TabGlyphs.Microphone,
             )
             Spacer(Modifier.width(px(ROW_GAP_PX)))
         }
@@ -281,12 +340,11 @@ fun ArtistRow(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .padding(vertical = if (covers) px(0) else px(ROW_TEXT_AIR_PX)),
+                .padding(vertical = if (covers) px(0) else px((type.oneLinePx - type.titleLinePx) / 2)),
             contentAlignment = Alignment.CenterStart,
         ) {
-            RowTitle(name, maxLines = ARTIST_NAME_LINES)
+            RowTitle(name, maxLines = ARTIST_NAME_LINES, type = type)
         }
-        Spacer(Modifier.width(px(ROW_GAP_PX)))
     }
 }
 
@@ -306,11 +364,12 @@ fun PlayAllRow(
     onClick: () -> Unit,
 ) {
     // Read before branching (see DownloadMark).
-    val artworkHidden = App.hideArtwork.collectAsState().value
+    val artworkHidden = App.hideListArtwork.collectAsState().value
+    val type = rowType(artless = artworkHidden)
     val heightPx = when {
         !headsList -> ROW_ACTION_H_PX
-        oneLineList && artworkHidden -> ROW_TEXT_H_PX
-        else -> ROW_H_PX
+        oneLineList && artworkHidden -> type.oneLinePx
+        else -> type.rowPx
     }
     Row(
         modifier = Modifier
@@ -354,9 +413,9 @@ fun SplitActionRow(
     onRight: (() -> Unit)? = null,
 ) {
     // Read before branching (see DownloadMark).
-    val inCoverBox = !App.hideArtwork.collectAsState().value
+    val inCoverBox = !App.hideListArtwork.collectAsState().value
     Row(
-        modifier = Modifier.fillMaxWidth().height(px(ROW_H_PX)),
+        modifier = Modifier.fillMaxWidth().height(px(rowType(artless = !inCoverBox).rowPx)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
@@ -394,17 +453,18 @@ private fun ActionButton(icon: ImageVector, label: String, inCoverBox: Boolean) 
     }
     Spacer(Modifier.width(px(ROW_GAP_PX)))
     // Not TextRole.Button: Bold at 0.15em shouts on a full-width row label.
-    RowTitle(label)
+    RowTitle(label, type = rowType(artless = !inCoverBox))
 }
 
 /**
  * An album's own tracks, a notch smaller than a library list: a running order
- * under the album's card, not a list to browse.
+ * under the album's card, not a list to browse. The player card's pair, 48px
+ * over 38px, each on its natural line (about 1.21 times the size).
  */
 private const val NUMBERED_TITLE_PX = 48
-private const val NUMBERED_TITLE_LINE_PX = 60
-private const val NUMBERED_SUB_PX = 36
-private const val NUMBERED_SUB_LINE_PX = 45
+private const val NUMBERED_TITLE_LINE_PX = 58
+private const val NUMBERED_SUB_PX = 38
+private const val NUMBERED_SUB_LINE_PX = 46
 
 /** The row's height with one line under the title, and with two. */
 private const val NUMBERED_ROW_H_PX = 132
@@ -418,20 +478,7 @@ private const val NUMBER_GAP_PX = 15
  * one width for every album, like a printed tracklist's margin. The lists' narrower
  * leading slot only fit a number shrunken and hard against the title.
  */
-private const val NUMBERED_LEAD_PX = 78
-
-/**
- * TRIAL (Use SDK Font Styles): the player card's pair, 48px over 38px, each on its
- * natural line (about 1.21 times the size). Amp's own rows still hold them; the
- * gutter widens to three digits of the bigger number.
- */
-private const val SDK_NUMBERED_TITLE_PX = 48
-private const val SDK_NUMBERED_TITLE_LINE_PX = 58
-private const val SDK_NUMBERED_SUB_PX = 38
-private const val SDK_NUMBERED_SUB_LINE_PX = 46
-private const val SDK_NUMBERED_ROW_H_PX = NUMBERED_ROW_H_PX
-private const val SDK_NUMBERED_ROW_TALL_PX = NUMBERED_ROW_TALL_PX
-private const val SDK_NUMBERED_LEAD_PX = 82
+private const val NUMBERED_LEAD_PX = 82
 
 /** Track number (or the waveform while it plays), title, and the lines under it. */
 @Composable
@@ -453,17 +500,10 @@ fun NumberedRow(
     /** The row's cover, needed only while selecting. */
     coverArtId: String? = null,
 ) {
-    val sdk = App.settings.sdkFontStyles.state.collectAsState().value
-    val titlePx = if (sdk) SDK_NUMBERED_TITLE_PX else NUMBERED_TITLE_PX
-    val subPx = if (sdk) SDK_NUMBERED_SUB_PX else NUMBERED_SUB_PX
-    val titleLinePx = if (sdk) SDK_NUMBERED_TITLE_LINE_PX else NUMBERED_TITLE_LINE_PX
-    val subLinePx = if (sdk) SDK_NUMBERED_SUB_LINE_PX else NUMBERED_SUB_LINE_PX
-    val rowPx = if (sdk) SDK_NUMBERED_ROW_H_PX else NUMBERED_ROW_H_PX
-    val tallPx = if (sdk) SDK_NUMBERED_ROW_TALL_PX else NUMBERED_ROW_TALL_PX
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(px(if (subtitle.isNotBlank()) tallPx else rowPx))
+            .height(px(if (subtitle.isNotBlank()) NUMBERED_ROW_TALL_PX else NUMBERED_ROW_H_PX))
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -472,7 +512,7 @@ fun NumberedRow(
             SelectionArtwork(coverArtId, selected)
             Spacer(Modifier.width(px(ROW_GAP_PX)))
         }
-        val leadPx = if (selected != null) 0 else if (sdk) SDK_NUMBERED_LEAD_PX else NUMBERED_LEAD_PX
+        val leadPx = if (selected != null) 0 else NUMBERED_LEAD_PX
         // Lines under the title rather than across the row, so long titles get the
         // whole width. The number reads as the title's, on its baseline, not as
         // the whole block's.
@@ -491,8 +531,8 @@ fun NumberedRow(
                         } else {
                             AppText(
                                 number.toString(),
-                                pxSp(subPx),
-                                lineHeight = pxSp(subLinePx),
+                                pxSp(NUMBERED_SUB_PX),
+                                lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
                                 role = TextRole.Detail,
                                 exact = true,
                                 dim = true,
@@ -503,8 +543,8 @@ fun NumberedRow(
                 }
                 AppText(
                     title,
-                    pxSp(titlePx),
-                    lineHeight = pxSp(titleLinePx),
+                    pxSp(NUMBERED_TITLE_PX),
+                    lineHeight = pxSp(NUMBERED_TITLE_LINE_PX),
                     maxLines = 1,
                     exact = true,
                     modifier = Modifier.alignByBaseline(),
@@ -513,8 +553,8 @@ fun NumberedRow(
             if (subtitle.isNotBlank()) {
                 AppText(
                     subtitle,
-                    pxSp(subPx),
-                    lineHeight = pxSp(subLinePx),
+                    pxSp(NUMBERED_SUB_PX),
+                    lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
                     dim = true,
                     maxLines = 1,
                     exact = true,
@@ -523,49 +563,14 @@ fun NumberedRow(
             }
             AppText(
                 detail,
-                pxSp(subPx),
-                lineHeight = pxSp(subLinePx),
+                pxSp(NUMBERED_SUB_PX),
+                lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
                 dim = true,
                 maxLines = 1,
                 exact = true,
                 modifier = Modifier.padding(start = px(leadPx)),
             )
         }
-        Spacer(Modifier.width(px(ROW_GAP_PX)))
-    }
-}
-
-/**
- * TRIAL (Album Shuffle Row): an action heading an album's tracks, on their axes:
- * the icon in the number gutter where a number sits, the label where the titles
- * start, at a track row's height.
- */
-@Composable
-fun NumberedActionRow(icon: ImageVector, label: String, onClick: () -> Unit) {
-    val sdk = App.settings.sdkFontStyles.state.collectAsState().value
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(px(if (sdk) SDK_NUMBERED_ROW_H_PX else NUMBERED_ROW_H_PX))
-            .appClickable(onClick = onClick),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .width(px(if (sdk) SDK_NUMBERED_LEAD_PX else NUMBERED_LEAD_PX))
-                .padding(end = px(NUMBER_GAP_PX)),
-            contentAlignment = Alignment.CenterEnd,
-        ) {
-            // The playing track's waveform size, the gutter's one glyph.
-            AppIcon(icon, size = px(41))
-        }
-        AppText(
-            label,
-            pxSp(if (sdk) SDK_NUMBERED_TITLE_PX else NUMBERED_TITLE_PX),
-            lineHeight = pxSp(if (sdk) SDK_NUMBERED_TITLE_LINE_PX else NUMBERED_TITLE_LINE_PX),
-            maxLines = 1,
-            exact = true,
-        )
     }
 }
 

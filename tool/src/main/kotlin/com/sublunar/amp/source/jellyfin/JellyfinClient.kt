@@ -562,7 +562,7 @@ class JellyfinClient(
 
     // --- Playlists -----------------------------------------------------------
 
-    override suspend fun getPlaylists(musicFolderId: String?): List<Playlist> =
+    override suspend fun getPlaylists(): List<Playlist> =
         paged(null, PLAYLIST_TYPE)
             // A playlist of films or episodes is not one to play here.
             .filter { it.mediaType.isNullOrBlank() || it.mediaType.equals(AUDIO_MEDIA, ignoreCase = true) }

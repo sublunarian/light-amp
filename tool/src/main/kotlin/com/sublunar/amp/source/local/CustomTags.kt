@@ -1,11 +1,13 @@
 package com.sublunar.amp.source.local
 
+import com.sublunar.amp.data.ReleaseType
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
 
 /**
- * ReplayGain read straight out of a file's own tags.
+ * A file's custom tags, read straight out of the file: ReplayGain, and the
+ * MusicBrainz release type.
  *
  * [MediaMetadataRetriever][android.media.MediaMetadataRetriever] — what
  * [LocalLibrary] reads everything else with — only answers a fixed list of
@@ -19,7 +21,7 @@ import java.io.RandomAccessFile
  * The gain lands on [Track.gainDb] at scan time exactly as a server's does, so
  * playback treats a local file no differently from a Navidrome track.
  */
-object ReplayGainTags {
+object CustomTags {
 
     /**
      * Track gain in dB, or null when the file carries none.
@@ -28,19 +30,41 @@ object ReplayGainTags {
      * the two fields a server sends: a record tagged only album-wide still
      * normalises, just against the album's reference instead of the track's.
      */
-    fun gainDb(file: File): Float? = runCatching {
+    fun gainDb(file: File): Float? = gainDb(read(file))
+
+    /** The same, from tags already [read]. */
+    fun gainDb(tags: Map<String, String>): Float? = pick(tags)
+
+    /**
+     * Every custom tag the file carries, by its name uppercased: Vorbis comments
+     * in FLAC/Ogg/Opus, `TXXX` descriptions in MP3, `----` atom names in MP4.
+     * Empty for a file it can't read.
+     */
+    fun read(file: File): Map<String, String> = runCatching {
         RandomAccessFile(file, "r").use { raf ->
             when (file.extension.lowercase()) {
-                "flac" -> pick(readFlac(raf))
-                "ogg", "oga", "opus" -> pick(readOgg(raf))
-                "mp3" -> pick(readId3(raf))
-                "m4a", "m4b", "mp4", "aac" -> pick(readMp4(raf))
+                "flac" -> readFlac(raf)
+                "ogg", "oga", "opus" -> readOgg(raf)
+                "mp3" -> readId3(raf)
+                "m4a", "m4b", "mp4", "aac" -> readMp4(raf)
                 // A container this doesn't know may still be one of the above
                 // wearing the wrong name; the magic bytes decide.
-                else -> pick(bySignature(raf))
+                else -> bySignature(raf)
             }
         }
-    }.getOrNull()
+    }.getOrDefault(emptyMap())
+
+    /**
+     * The release type as MusicBrainz Picard and its kin write it: `RELEASETYPE`
+     * in Vorbis comments, "MusicBrainz Album Type" as a `TXXX` frame or an MP4
+     * `----` atom. Every value counts ("album; live" names two). [compilation]
+     * is the file's own compilation flag, which the platform reads.
+     */
+    fun releaseType(tags: Map<String, String>, compilation: Boolean): ReleaseType {
+        val types = RELEASE_TYPE_KEYS.mapNotNull { tags[it] }
+        val flagged = compilation || tags["COMPILATION"]?.trim() == "1"
+        return ReleaseType.of(types, compilation = flagged)
+    }
 
     // --- picking a value out of the collected tags ---------------------------
 
@@ -445,4 +469,7 @@ object ReplayGainTags {
     private const val ID3_UTF8 = 3
     private const val ATOM_HEADER = 8L
     private const val MAX_ATOM_BYTES = 64 * 1024
+
+    /** Where a release type is written, by tool and container — see [releaseType]. */
+    private val RELEASE_TYPE_KEYS = listOf("RELEASETYPE", "MUSICBRAINZ_ALBUMTYPE", "MUSICBRAINZ ALBUM TYPE")
 }

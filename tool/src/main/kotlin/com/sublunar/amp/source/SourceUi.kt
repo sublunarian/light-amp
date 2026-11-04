@@ -41,7 +41,7 @@ class AddEntry(
 )
 
 /** Which icon an add row carries, named here and drawn by the screens. */
-enum class AddIcon { ADD, PHONE }
+enum class AddIcon { PHONE, SERVER }
 
 sealed interface AddAction {
     /** A page that asks for what this kind needs and saves the source itself. */

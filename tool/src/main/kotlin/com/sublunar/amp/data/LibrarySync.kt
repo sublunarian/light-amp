@@ -75,6 +75,12 @@ class LibrarySync(
      * which may no longer be the one on screen.
      */
     private val onCoversDropped: suspend (sourceId: String, coverArtIds: Set<String>) -> Unit,
+    /**
+     * Told which downloaded songs a finished sync took out of the library (a
+     * song deleted on the server, or given a new id by a re-scan or re-tag), so
+     * their files can go — see [reportLostDownloads].
+     */
+    private val onDownloadsLeftLibrary: suspend (sourceId: String, trackIds: Set<String>) -> Unit,
 ) {
     /**
      * Moved once a sync has finished writing, so every list reads its table again
@@ -233,6 +239,7 @@ class LibrarySync(
         try {
             // Read before the first write — see reportDroppedCovers.
             val coversBefore = coverIdsOrNull(dao)
+            val downloadsBefore = runCatching { dao.downloadedLibraryTrackIds().toSet() }.getOrNull()
             val hidden = source?.hiddenLibraries.orEmpty()
             folders = when {
                 musicFolderId == null -> client.getMusicFolders()
@@ -254,6 +261,7 @@ class LibrarySync(
             _syncState.update { it.copy(phase = "") }
             val (serverAlbums, libraryOf) = fetchAlbums(client, folderIds, starred, cached)
             dao.upsertAlbums(serverAlbums.map { it.toEntity(libraryOf[it.id]) })
+            logReleaseTypes(source?.name ?: "the server", serverAlbums)
             if (serverAlbums.isNotEmpty()) wrote.albums = true
             pruneGone(dao, cached, serverAlbums, musicFolderId, hidden, wrote)
 
@@ -286,6 +294,7 @@ class LibrarySync(
             }
 
             finishRun(dao, client, source, coversBefore, wrote)
+            reportLostDownloads(dao, source?.id, downloadsBefore)
             onSyncSucceeded()
             rememberLibraries(source, folders)
         } catch (e: CancellationException) {
@@ -545,6 +554,7 @@ class LibrarySync(
             dao.clearTracks()
             dao.clearAlbums()
             dao.upsertAlbums(scan.albums.map { it.toEntity() })
+            logReleaseTypes("the phone", scan.albums)
             dao.upsertTracks(scan.tracks)
             reportDroppedCovers(dao, sourceId, coversBefore)
             rereadLists(tracks = true)
@@ -589,6 +599,30 @@ class LibrarySync(
      * at. Only on success: a half-finished sync's covers are not orphans. What
      * this misses ages out — see ArtworkLoader.expireUnclaimed.
      */
+    /**
+     * The downloads whose songs this sync took out of the library: in it when
+     * the run began, gone now. Only those — a download of a song the library
+     * never held (a popular song, say) is no sign of anything, and deleting
+     * every download without a song row would take those on every sync.
+     * Held back, and said, when it would be more than a few and over a quarter
+     * of them: offline music is the last thing to lose to a bad answer.
+     * (The idea is from Garado's fork of Amp.)
+     */
+    private suspend fun reportLostDownloads(dao: LibraryDao, sourceId: String?, before: Set<String>?) {
+        if (sourceId == null || before.isNullOrEmpty()) return
+        val after = runCatching { dao.downloadedLibraryTrackIds().toSet() }.getOrNull() ?: return
+        val lost = before - after
+        if (lost.isEmpty()) return
+        if (lost.size > LOST_DOWNLOADS_ALWAYS_OK && lost.size * 4 > before.size) {
+            android.util.Log.w("AmpSync", "${lost.size} of ${before.size} downloads left the library; kept, too many to trust")
+            return
+        }
+        android.util.Log.i("AmpSync", "${lost.size} download(s) left the library; removing")
+        runCatching { onDownloadsLeftLibrary(sourceId, lost) }
+            .noteOom("sync: lost downloads")
+            .onFailure { if (it is CancellationException) throw it }
+    }
+
     private suspend fun reportDroppedCovers(dao: LibraryDao, sourceId: String?, before: Set<String>?) {
         if (sourceId == null || before.isNullOrEmpty()) return
         val after = coverIdsOrNull(dao) ?: return
@@ -813,6 +847,13 @@ class LibrarySync(
         }
     }
 
+    /** What each server or scan says its albums are — what decides whether Release Type is offered. */
+    private fun logReleaseTypes(of: String, albums: List<Album>) {
+        val counts = albums.groupingBy { it.releaseType }.eachCount().entries
+            .sortedBy { it.key.ordinal }.joinToString { "${it.key.heading} ${it.value}" }
+        android.util.Log.i("AmpSync", "release types of $of: ${counts.ifEmpty { "none" }}")
+    }
+
     companion object {
         /**
          * Bump when a change to how a track is *parsed* makes the cached rows
@@ -825,6 +866,9 @@ class LibrarySync(
          * container list.
          */
         const val TRACK_PARSER_GENERATION = 4
+
+        /** How many downloads a sync may take out without being doubted — see reportLostDownloads. */
+        private const val LOST_DOWNLOADS_ALWAYS_OK = 10
 
         /** Albums whose songs are written per transaction. */
         private const val SYNC_WRITE_BATCH = 40

@@ -183,6 +183,8 @@ class SubsonicClient(
      * that never said so, which then hears nothing new.
      */
     internal val reportsPlayback: Boolean = false,
+    /** The server's own bitrates by format, where it said — see ServerFeatures.bitrates. */
+    private val bitrates: Map<String, Int> = emptyMap(),
 ) : MusicServer {
 
     private val http = ServerHttp()
@@ -252,7 +254,9 @@ class SubsonicClient(
             params.add("format" to "raw")
         } else {
             params.add("format" to format.id)
-            format.maxBitRate?.let { params.add("maxBitRate" to it.toString()) }
+            // The server's own bitrate where it said, named rather than left
+            // out, so a player cap set on the server can't make it something else.
+            (bitrates[format.id] ?: format.maxBitRate)?.let { params.add("maxBitRate" to it.toString()) }
             if (estimateContentLength) params.add("estimateContentLength" to "true")
         }
         if (timeOffsetSeconds > 0) {
@@ -421,7 +425,7 @@ class SubsonicClient(
         val asked = known != null &&
             known.checkedVersion == tag &&
             known.generation == ServerFeatures.GENERATION
-        if (asked && known!!.missing.isEmpty()) return known
+        if (asked && known!!.missing.isEmpty()) return known.copy(bitrates = serverBitrates(known.missing, sampleTrackId))
 
         val questions = if (asked) known!!.missing else ServerFeatures.ALL
         val missing = mutableListOf<String>()
@@ -448,7 +452,30 @@ class SubsonicClient(
             checkedVersion = tag,
             missing = missing,
             generation = if (unanswered) 0 else ServerFeatures.GENERATION,
+            bitrates = serverBitrates(missing, sampleTrackId),
         )
+    }
+
+    /**
+     * The bitrate the server converts each format it makes to by its own
+     * setting, asked as [transcodeDecision] is but naming no bitrate, so its
+     * answer is the server's choice (Navidrome's transcoding "Default Bit
+     * Rate"). Only where the server can be asked; empty otherwise, and a
+     * format it won't name a figure for is left out.
+     */
+    private suspend fun serverBitrates(missing: List<String>, sampleTrackId: String?): Map<String, Int> {
+        val id = sampleTrackId ?: return emptyMap()
+        if (listsExtension(ServerFeatures.TRANSCODING_EXTENSION) != true) return emptyMap()
+        val found = listOf(StreamFormat.MP3, StreamFormat.OPUS)
+            .filter { ServerFeatures.transcodeKey(it) !in missing }
+            .mapNotNull { format ->
+                val decision = decide(id, format, bitsPerSecond = null) ?: return@mapNotNull null
+                val bps = decision.transcodeStream?.audioBitrate?.takeIf { decision.sends(format) && it > 0 }
+                bps?.let { format.id to it / 1000 }
+            }
+            .toMap()
+        android.util.Log.i("AmpSync", "server bitrates: ${found.ifEmpty { mapOf("none" to 0) }}")
+        return found
     }
 
     /**
@@ -493,12 +520,19 @@ class SubsonicClient(
      */
     private suspend fun transcodeDecision(trackId: String, format: StreamFormat): Boolean? {
         val bitsPerSecond = (format.maxBitRate ?: return null) * 1000
+        return decide(trackId, format, bitsPerSecond)?.sends(format)
+    }
+
+    /** The server's answer to `getTranscodeDecision` for [format], capped at [bitsPerSecond] or not at all. */
+    private suspend fun decide(trackId: String, format: StreamFormat, bitsPerSecond: Int?): TranscodeDecisionDto? {
         val container = if (format == StreamFormat.OPUS) "ogg" else format.id
         val clientInfo = buildJsonObject {
             put("name", CLIENT_NAME)
             put("platform", "Android")
-            put("maxAudioBitrate", bitsPerSecond)
-            put("maxTranscodingAudioBitrate", bitsPerSecond)
+            if (bitsPerSecond != null) {
+                put("maxAudioBitrate", bitsPerSecond)
+                put("maxTranscodingAudioBitrate", bitsPerSecond)
+            }
             putJsonArray("directPlayProfiles") {}
             putJsonArray("transcodingProfiles") {
                 add(
@@ -513,13 +547,12 @@ class SubsonicClient(
             putJsonArray("codecProfiles") {}
         }
         return try {
-            val decision = request(
+            request(
                 "getTranscodeDecision",
                 listOf("mediaId" to trackId, "mediaType" to "song"),
                 via = http.quick,
                 json = clientInfo.toString(),
-            ).transcodeDecision ?: return null
-            decision.sends(format)
+            ).transcodeDecision
         } catch (e: SubsonicException) {
             null
         }
@@ -863,8 +896,8 @@ class SubsonicClient(
 
     // --- Playlists -----------------------------------------------------------
 
-    override suspend fun getPlaylists(musicFolderId: String?): List<Playlist> {
-        val body = request("getPlaylists", musicFolderParam(musicFolderId))
+    override suspend fun getPlaylists(): List<Playlist> {
+        val body = request("getPlaylists")
         return body.playlists?.playlist.orEmpty().map { it.toPlaylist() }
     }
 

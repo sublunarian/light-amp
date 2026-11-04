@@ -9,6 +9,7 @@ import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.largeMenuText
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
 
@@ -38,7 +39,12 @@ class AddActionsScreen(
         val queue by App.playback.queue.collectAsState()
         val queueName by App.playback.queueName.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = track?.title ?: "Track", subtitle = track?.artist) {
+        ListScreen(
+            onBack = { goBack() },
+            title = track?.title ?: "Track",
+            subtitle = track?.artist,
+            headingRows = largeMenuText(),
+        ) {
             if (track == null) {
                 EmptyState("Track not found")
                 return@ListScreen

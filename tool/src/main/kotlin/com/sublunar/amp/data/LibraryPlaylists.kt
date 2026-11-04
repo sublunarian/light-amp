@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -57,8 +56,6 @@ data class PlaylistView(val all: List<Track>, val complete: Boolean, val shown: 
 class LibraryPlaylists(
     private val daos: StateFlow<LibraryDao?>,
     private val serverClient: StateFlow<MusicServer?>,
-    /** The persisted library choice, read as stored — see LibrarySync's. */
-    private val libraryId: Flow<String?>,
     /** Whether the server may be spoken to at all — see App.metadataAllowed. */
     private val metadataAllowed: () -> Boolean,
     /** Whether bulk background fetching is worth the link now: false on a metered link outside Make it Hurt. */
@@ -178,48 +175,25 @@ class LibraryPlaylists(
 
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
 
-    /** Whether a chosen library narrows a playlist's songs — see SourceProvider.libraryNarrowsPlaylistSongs. */
-    private val narrowsPlaylistSongs: StateFlow<Boolean> =
-        settings.activeSource
-            .map { it?.provider?.libraryNarrowsPlaylistSongs ?: true }
-            .distinctUntilChanged()
-            .stateIn(scope, SharingStarted.Eagerly, true)
-
-    /** The chosen library's songs, where it narrows the playlist list instead; null where it doesn't. */
-    private val listingLibrary: StateFlow<ListingLibrary?> =
-        combine(library.indexed, library.selectedLibrary, library.hiddenLibraries, narrowsPlaylistSongs) {
-                inLibrary, selected, hidden, songsRule ->
-            val narrows = LibraryView(selected, hidden).narrows
-            // Nothing read yet is a library still loading, not one with no songs.
-            if (!songsRule && narrows && inLibrary.tracks.isNotEmpty()) {
-                ListingLibrary(inLibrary.ids, chosen = selected != null)
-            } else {
-                null
-            }
-        }.stateIn(scope, SharingStarted.Eagerly, null)
-
-    private class ListingLibrary(val songs: Set<String>, val chosen: Boolean)
-
     /** Every playlist the source lists, whichever library is chosen: for its own pages, the picker, and priming. */
     val allPlaylists: StateFlow<List<Playlist>> get() = _playlists
 
     /**
-     * The playlists as the UI should see them — narrowed offline, as the other
-     * three lists are, and to the chosen library's where the source's own app
-     * lists them that way (see [playlistListed]).
+     * The playlists as the UI should see them: every one, whichever library is
+     * chosen — a playlist is something you made, and one that vanished or shrank
+     * on a library switch would read as lost — narrowed only offline, as the
+     * other three lists are.
      *
      * A playlist whose membership isn't known stays visible: an empty
      * [Playlist.trackIds] means "not asked yet" far more often than "empty", and
      * hiding those would hide downloaded, playable playlists.
      */
     val playlists: StateFlow<List<Playlist>> =
-        combine(_playlists, membership, library.downloadedTrackIds, library.offline, listingLibrary) {
-                list, known, downloaded, offlineOnlyNow, listing ->
+        combine(_playlists, membership, library.downloadedTrackIds, library.offline) {
+                list, known, downloaded, offlineOnlyNow ->
             list.filter { playlist ->
-                val held = known[playlist.id]
-                val ids = held ?: playlist.trackIds
-                (listing == null || playlistListed(held, listing.songs, listing.chosen)) &&
-                    (!offlineOnlyNow || ids.isEmpty() || ids.any { it in downloaded })
+                val ids = known[playlist.id] ?: playlist.trackIds
+                !offlineOnlyNow || ids.isEmpty() || ids.any { it in downloaded }
             }
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
@@ -241,7 +215,7 @@ class LibraryPlaylists(
             return
         }
         val d = daos.value
-        val fetched = if (!metadataAllowed()) null else runCatching { serverClient.value?.getPlaylists(libraryId.first()) }.getOrNull()
+        val fetched = if (!metadataAllowed()) null else runCatching { serverClient.value?.getPlaylists() }.getOrNull()
         if (fetched != null) {
             _playlists.value = fetched
             settings.setCachedPlaylists(sourceId, json.encodeToString(fetched))
@@ -339,20 +313,15 @@ class LibraryPlaylists(
     }
 
     /**
-     * Which of [tracks] a playlist page shows: the chosen library's, by the Songs
-     * tab's rule, where the source's own app narrows a playlist's songs; otherwise
-     * every song but a hidden library's — see SourceProvider.libraryNarrowsPlaylistSongs.
+     * Which of [tracks] a playlist page shows: every song but a hidden library's,
+     * whichever library is chosen (see [playlists]).
      *
      * Read from the database and the stored choice rather than the lists held
      * in memory, which are still loading when a playlist is opened at launch.
      */
     private suspend fun inLibraryView(d: LibraryDao?, tracks: List<Track>): (Track) -> Boolean {
         val source = settings.activeSource.first()
-        val songsFollowLibrary = source?.provider?.libraryNarrowsPlaylistSongs ?: true
-        val view = LibraryView(
-            if (songsFollowLibrary) source?.selectedLibraries else null,
-            source?.hiddenLibraries.orEmpty(),
-        )
+        val view = LibraryView(null, source?.hiddenLibraries.orEmpty())
         if (!view.narrows || d == null) return { true }
         val rows = runCatching {
             tracks.mapNotNullTo(HashSet()) { it.albumId }.toList().chunked(MAX_BOUND_IDS).flatMap { d.albumLibraries(it) }
@@ -480,7 +449,7 @@ class LibraryPlaylists(
             .joinAll()
     }
 
-    /** Playlists whose every song the chosen library shows is downloaded — drives the download badge. */
+    /** Playlists whose every shown song is downloaded — drives the download badge. */
     val downloadedPlaylistIds: StateFlow<Set<String>> =
         combine(membership, library.downloadedTrackIds, playlistShown()) { known, downloaded, shown ->
             known.entries.mapNotNullTo(mutableSetOf()) { (playlistId, ids) ->
@@ -489,25 +458,16 @@ class LibraryPlaylists(
         }.stateIn(scope, SharingStarted.Eagerly, emptySet())
 
     /**
-     * The songs a playlist page shows, where the chosen library narrows them: the
-     * Songs tab's, or every library's but a hidden one's — see [inLibraryView].
-     * Null where every song shows.
+     * The songs a playlist page shows: every library's but a hidden one's — see
+     * [inLibraryView]. Null where every song shows.
      */
     private fun playlistShown(): Flow<Set<String>?> =
-        combine(
-            combine(library.indexed, library.cachedTracks, library.albumRows) { inLibrary, rows, albums ->
-                Triple(inLibrary, rows, albums)
-            },
-            library.selectedLibrary,
-            library.hiddenLibraries,
-            narrowsPlaylistSongs,
-        ) { (inLibrary, rows, albums), selected, hidden, songsRule ->
-            val narrows = LibraryView(selected, hidden).narrows
-            if (hidden.isEmpty()) unhidden = null
-            when {
-                narrows && songsRule -> inLibrary.ids
-                !songsRule && hidden.isNotEmpty() -> unhiddenIds(rows, albums, hidden)
-                else -> null
+        combine(library.cachedTracks, library.albumRows, library.hiddenLibraries) { rows, albums, hidden ->
+            if (hidden.isEmpty()) {
+                unhidden = null
+                null
+            } else {
+                unhiddenIds(rows, albums, hidden)
             }
         }
 

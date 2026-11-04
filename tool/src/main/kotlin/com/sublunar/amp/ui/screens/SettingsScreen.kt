@@ -38,7 +38,7 @@ private fun downloadQualityLabel(source: MusicSource): String = when {
 /** A format as [source] is asked for it: at its own bitrate, which a server may cap lower. */
 private fun formatLabel(format: StreamFormat, source: MusicSource?): String {
     source?.let { it.provider.qualityLabel(it, format) }?.let { return it }
-    val kbps = source?.provider?.kbps(format) ?: format.maxBitRate
+    val kbps = source?.kbps(format) ?: format.maxBitRate
     return when (format) {
         StreamFormat.MP3 -> "MP3 ($kbps kbps)"
         StreamFormat.OPUS -> "Opus ($kbps kbps)"
@@ -59,7 +59,7 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val hasServers = sources.any { it.hasServer }
         val dataMode by App.settings.dataMode.state.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = "Settings", settings = true) {
+        ListScreen(onBack = { goBack() }, title = "Settings", headingRows = true) {
             ScrollableList {
                 item { TextRow(title = "Appearance") { go { AppearanceScreen(it) } } }
                 item { TextRow(title = "Sources") { go { SourceListScreen(it) } } }
@@ -74,6 +74,7 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     item { TextRow(title = "Streams & Downloads") { go { StreamsDownloadsScreen(it) } } }
                 }
                 item { TextRow(title = "Playback") { go { PlaybackScreen(it) } } }
+                item { TextRow(title = "Test") { go { TestScreen(it) } } }
                 item { TextRow(title = "About") { go { AboutScreen(it) } } }
             }
         }
@@ -87,7 +88,7 @@ class PlaybackScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     override fun Content() {
         val replayGain by App.settings.replayGain.state.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = "Playback", settings = true) {
+        ListScreen(onBack = { goBack() }, title = "Playback", headingRows = true) {
             ScrollableList {
                 item {
                     // From the loudness the server measured. Only ever turns a
@@ -108,99 +109,141 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val invert by App.settings.invertColors.state.collectAsState()
-        val karaoke by App.settings.karaokeLyrics.state.collectAsState()
+        val syncedLyrics by App.settings.syncedLyrics.state.collectAsState()
         val hideArtistImages by App.settings.hideArtistImages.state.collectAsState()
         val hideDownloadIcons by App.settings.hideDownloadIcons.state.collectAsState()
-        val sdkFontStyles by App.settings.sdkFontStyles.state.collectAsState()
-        val albumShuffleRow by App.settings.albumShuffleRow.state.collectAsState()
-        val outlineTabIcons by App.settings.outlineTabIcons.state.collectAsState()
-        val brighterText by App.settings.brighterText.state.collectAsState()
-        val sdkTabBar by App.settings.sdkTabBar.state.collectAsState()
+        val sources by App.settings.sources.state.collectAsState()
         val artwork by App.settings.artwork.state.collectAsState()
+        val listArtwork by App.settings.listArtwork.state.collectAsState()
         val layoutMode by App.settings.layoutMode.state.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = "Appearance", settings = true) {
+        ListScreen(onBack = { goBack() }, title = "Appearance", headingRows = true) {
             ScrollableList {
                 item {
-                    ToggleRow("Invert Colors", invert) {
-                        App.scope.launch { App.settings.invertColors.set(!invert) }
-                    }
-                }
-                item {
                     // Covers everywhere or none, which also stops the app
-                    // fetching and decoding them. Phrased as what switching it
-                    // on does, like its neighbours.
-                    ToggleRow("Hide Artwork", artwork == ArtworkMode.NONE) {
+                    // fetching and decoding them.
+                    val shown = artwork != ArtworkMode.NONE
+                    ToggleRow("Enable Artwork", shown) {
                         App.scope.launch {
-                            App.settings.artwork.set(
-                                if (artwork == ArtworkMode.NONE) {
-                                    ArtworkMode.SMALL
-                                } else {
-                                    ArtworkMode.NONE
-                                },
-                            )
+                            App.settings.artwork.set(if (shown) ArtworkMode.NONE else ArtworkMode.SMALL)
                         }
                     }
                 }
-                // With Hide Artwork on, the artists have already lost theirs.
+                // With Enable Artwork off, the lists and the artists have already lost theirs.
                 if (artwork != ArtworkMode.NONE) {
                     item {
-                        ToggleRow("Hide Artist Photos", hideArtistImages) {
+                        ToggleRow("Album Art in Lists", listArtwork) {
+                            App.scope.launch { App.settings.listArtwork.set(!listArtwork) }
+                        }
+                    }
+                    item {
+                        ToggleRow("Artist Thumbnails", !hideArtistImages) {
                             App.scope.launch {
                                 App.settings.hideArtistImages.set(!hideArtistImages)
                             }
                         }
                     }
                 }
-                item {
-                    // The marks go; the layout does not move with them — see
-                    // AppSettings.hideDownloadIcons.
-                    ToggleRow("Hide Download Icons", hideDownloadIcons) {
-                        App.scope.launch {
-                            App.settings.hideDownloadIcons.set(!hideDownloadIcons)
+                // Only where something can be downloaded: the phone's own music
+                // is all on the phone, so it never wears the mark.
+                if (sources.any { it.supportsDownloads }) {
+                    item {
+                        // The marks go; the layout does not move with them — see
+                        // AppSettings.hideDownloadIcons.
+                        ToggleRow("Download Icons", !hideDownloadIcons) {
+                            App.scope.launch {
+                                App.settings.hideDownloadIcons.set(!hideDownloadIcons)
+                            }
                         }
                     }
                 }
                 item {
-                    ToggleRow("Use SDK Font Styles", sdkFontStyles) {
-                        App.scope.launch { App.settings.sdkFontStyles.set(!sdkFontStyles) }
+                    // On, the default, spreads the four tabs across the bar. Off is
+                    // the phone's own three buttons with the library as a page.
+                    val tabs = layoutMode == LayoutMode.STANDARD
+                    ToggleRow("Library Tabs", tabs) {
+                        // Each layout's own front page, as at launch: the index
+                        // for the three buttons, the last tab for the tabs.
+                        LibraryNav.libraryIndex.value = tabs
+                        App.scope.launch {
+                            App.settings.layoutMode.set(
+                                if (tabs) LayoutMode.SIMPLIFIED else LayoutMode.STANDARD,
+                            )
+                        }
                     }
                 }
                 item {
-                    ToggleRow("Album Shuffle Row", albumShuffleRow) {
-                        App.scope.launch { App.settings.albumShuffleRow.set(!albumShuffleRow) }
+                    ToggleRow("Synced Lyrics", syncedLyrics) {
+                        App.scope.launch { App.settings.syncedLyrics.set(!syncedLyrics) }
                     }
                 }
+                item {
+                    ToggleRow("Invert Colors", invert) {
+                        App.scope.launch { App.settings.invertColors.set(!invert) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Trials: looks being tried out, each to be kept or dropped. */
+class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
+
+    @Composable
+    override fun Content() {
+        val outlineTabIcons by App.settings.outlineTabIcons.state.collectAsState()
+        val largeMenus by App.settings.largeMenuText.state.collectAsState()
+        val settingsInMenus by App.settings.settingsInPageMenus.state.collectAsState()
+        val biggerArtless by App.settings.biggerArtlessText.state.collectAsState()
+        val tallerOneLine by App.settings.tallerOneLineRows.state.collectAsState()
+        val biggerArtwork by App.settings.biggerArtworkText.state.collectAsState()
+        val likedAsFilter by App.settings.likedAsFilter.state.collectAsState()
+        val newDownloads by App.settings.newDownloadsPage.state.collectAsState()
+
+        ListScreen(onBack = { goBack() }, title = "Test", headingRows = true) {
+            ScrollableList {
                 item {
                     ToggleRow("Outline Tab Icons", outlineTabIcons) {
                         App.scope.launch { App.settings.outlineTabIcons.set(!outlineTabIcons) }
                     }
                 }
                 item {
-                    ToggleRow("Brighter Text", brighterText) {
-                        App.scope.launch { App.settings.brighterText.set(!brighterText) }
+                    ToggleRow("Large Menu Text", largeMenus) {
+                        App.scope.launch { App.settings.largeMenuText.set(!largeMenus) }
                     }
                 }
                 item {
-                    ToggleRow("SDK Tab Bar", sdkTabBar) {
-                        App.scope.launch { App.settings.sdkTabBar.set(!sdkTabBar) }
+                    ToggleRow("Settings in Page Menus", settingsInMenus) {
+                        App.scope.launch { App.settings.settingsInPageMenus.set(!settingsInMenus) }
                     }
                 }
                 item {
-                    // On is the phone's own three buttons with the library as a
-                    // page. Off, the default, spreads the four tabs across the bar.
-                    val simplified = layoutMode == LayoutMode.SIMPLIFIED
-                    ToggleRow("Simplified Library View", simplified) {
-                        App.scope.launch {
-                            App.settings.layoutMode.set(
-                                if (simplified) LayoutMode.STANDARD else LayoutMode.SIMPLIFIED,
-                            )
+                    ToggleRow("Bigger Artless List Text", biggerArtless) {
+                        App.scope.launch { App.settings.biggerArtlessText.set(!biggerArtless) }
+                    }
+                }
+                // Only changes anything with the bigger text on.
+                if (biggerArtless) {
+                    item {
+                        ToggleRow("Taller One-Line Rows", tallerOneLine) {
+                            App.scope.launch { App.settings.tallerOneLineRows.set(!tallerOneLine) }
                         }
                     }
                 }
                 item {
-                    ToggleRow("Karaoke Lyrics", karaoke) {
-                        App.scope.launch { App.settings.karaokeLyrics.set(!karaoke) }
+                    ToggleRow("Bigger Artwork List Text", biggerArtwork) {
+                        App.scope.launch { App.settings.biggerArtworkText.set(!biggerArtwork) }
+                    }
+                }
+                item {
+                    ToggleRow("Liked as Filter", likedAsFilter) {
+                        App.scope.launch { App.settings.likedAsFilter.set(!likedAsFilter) }
+                    }
+                }
+                item {
+                    ToggleRow("New Downloads Page", newDownloads) {
+                        App.scope.launch { App.settings.newDownloadsPage.set(!newDownloads) }
                     }
                 }
             }
@@ -220,8 +263,9 @@ class StreamsDownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(seal
     @Composable
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
+        val newDownloadsPage by App.settings.newDownloadsPage.state.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = "Streams & Downloads", settings = true) {
+        ListScreen(onBack = { goBack() }, title = "Streams & Downloads", headingRows = true) {
             ScrollableList {
                 ServerSetting.entries.forEach { setting ->
                     val servers = setting.servers(sources)
@@ -235,6 +279,10 @@ class StreamsDownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(seal
                             }
                         }
                     }
+                }
+                // TRIAL (New Downloads Page): one level up from Storage.
+                if (newDownloadsPage) {
+                    item { TextRow(title = "Downloads") { go { DownloadsOverviewScreen(it) } } }
                 }
                 item { TextRow(title = "Storage") { go { StorageScreen(it) } } }
             }
@@ -262,10 +310,11 @@ class StorageScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     override fun Content() {
         val limit by App.settings.downloadLimit.state.collectAsState()
         val reserve by App.cacheReserve.bytes.collectAsState()
+        val newDownloadsPage by App.settings.newDownloadsPage.state.collectAsState()
         // Again each time the page comes back to the top: the pages it leads to move the numbers.
         LaunchedEffect(Unit) { measure() }
 
-        ListScreen(onBack = { goBack() }, title = "Storage", settings = true) {
+        ListScreen(onBack = { goBack() }, title = "Storage", headingRows = true) {
             ScrollableList {
                 // The limit's two shares, neither hidden: the cache's is kept for
                 // it so downloads can't crowd out new covers — see CacheReserve.
@@ -278,35 +327,88 @@ class StorageScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     )
                 }
                 item { TextRow(title = "Storage Limit") { go { SizeLimitScreen(it) } } }
-                item { TextRow(title = "Downloads") { go { DownloadsScreen(it) } } }
-                // Every server's audio, not the active one's — see App.deleteAllDownloads.
+                if (!newDownloadsPage) {
+                    item { TextRow(title = "Downloads") { go { DownloadsScreen(it) } } }
+                }
+                // Every server's audio, or one server's when there are several
+                // — see ClearDownloadsScreen.
                 item {
-                    TextRow(title = "Clear All Downloads") {
-                        navigateTo<Boolean>(
-                            {
-                                ConfirmScreen(
-                                    it,
-                                    title = "Clear All Downloads",
-                                    message = "This removes every source's downloaded music " +
-                                        "from this phone. Your libraries on the servers are " +
-                                        "untouched.",
-                                    confirmLabel = "Clear",
-                                )
-                            },
-                            resultCallback = { confirmed ->
-                                if (confirmed == true) {
-                                    App.scope.launch {
-                                        App.deleteAllDownloads()
-                                        measure()
-                                    }
-                                }
-                            },
-                        )
+                    TextRow(title = "Clear Downloads") {
+                        val servers = App.settings.sources.value.filter { it.supportsDownloads }
+                        if (servers.size > 1) {
+                            go { ClearDownloadsScreen(it) }
+                        } else {
+                            confirmClearDownloads(null) { measure() }
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/**
+ * Clear Downloads with several servers: all of them, or one, each with what it
+ * takes up, so the choice says what it frees.
+ */
+class ClearDownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
+
+    // Off the disk; held on the screen, as Storage's figures are.
+    private var sizes by mutableStateOf<Map<String, Long>>(emptyMap())
+
+    @Composable
+    override fun Content() {
+        val sources by App.settings.sources.state.collectAsState()
+        val servers = sources.filter { it.supportsDownloads }
+        LaunchedEffect(servers) {
+            sizes = withContext(Dispatchers.IO) { servers.associate { it.id to App.downloads.usedBytes(it.id) } }
+        }
+        ListScreen(onBack = { goBack() }, title = "Clear Downloads", headingRows = true) {
+            ScrollableList {
+                item {
+                    TextRow(title = "All Servers", value = sizes.takeIf { it.isNotEmpty() }?.let { formatBytes(it.values.sum()) }) {
+                        confirmClearDownloads(null) { goBack() }
+                    }
+                }
+                items(servers, key = { it.id }) { source ->
+                    TextRow(title = source.name, value = sizes[source.id]?.let { formatBytes(it) }) {
+                        confirmClearDownloads(source) { goBack() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Ask, then clear [source]'s downloads, or every server's when null. Auto-Download
+ * starts again straight after — see App.deleteAllDownloads. [then] runs once done.
+ */
+private fun SimpleLightScreen<*>.confirmClearDownloads(source: MusicSource?, then: suspend () -> Unit) {
+    navigateTo<Boolean>(
+        {
+            ConfirmScreen(
+                it,
+                title = if (source == null) "Clear All Downloads" else "Clear ${source.name} Downloads",
+                message = if (source == null) {
+                    "This removes every source's downloaded music from this phone. Your " +
+                        "libraries on the servers are untouched."
+                } else {
+                    "This removes ${source.name}'s downloaded music from this phone. Its " +
+                        "library on the server is untouched."
+                },
+                confirmLabel = "Clear",
+            )
+        },
+        resultCallback = { confirmed ->
+            if (confirmed == true) {
+                App.scope.launch {
+                    if (source == null) App.deleteAllDownloads() else App.deleteDownloadsFor(source)
+                    withContext(Dispatchers.Main) { then() }
+                }
+            }
+        },
+    )
 }
 
 /** A setting each server keeps its own of, set from [StreamsDownloadsScreen]. */
@@ -356,7 +458,7 @@ class ServerSettingScreen(
     @Composable
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
-        ListScreen(onBack = { goBack() }, title = setting.title, settings = true) {
+        ListScreen(onBack = { goBack() }, title = setting.title, headingRows = true) {
             ScrollableList {
                 items(setting.servers(sources), key = { it.id }) { server ->
                     TextRow(title = server.name, value = setting.value(server)) {
@@ -409,7 +511,7 @@ class FormatPickerScreen(
         val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
         val current = source?.let(slot::current) ?: StreamFormat.DEFAULT
-        ListScreen(onBack = { goBack() }, title = slot.title, settings = true) {
+        ListScreen(onBack = { goBack() }, title = slot.title, headingRows = true) {
             ScrollableList {
                 items(source?.let(slot::choices) ?: StreamFormat.entries.toList()) { format ->
                     TextRow(
@@ -426,12 +528,13 @@ class FormatPickerScreen(
     }
 }
 
+/** A switch before its label, as on the phone's own settings pages (APN Enabled). */
 @Composable
 fun ToggleRow(label: String, value: Boolean, onToggle: () -> Unit) {
     TextRow(
         title = label,
         onClick = onToggle,
-        trailing = {
+        leading = {
             LightIcon(
                 icon = if (value) LightIcons.TOGGLE_STATE_ON else LightIcons.TOGGLE_STATE_OFF,
                 size = 2.2f,

@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
@@ -17,7 +16,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
-import com.sublunar.amp.App
 import com.sublunar.amp.ui.LocalDimTextAlpha
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.ui.LightProgressBar
@@ -41,7 +39,6 @@ object AppIcons {
      * Artists: a filled mic, at the same weight as the note and the disc beside it.
      * LightOS's own is a thin outline and reads as a hole in the row.
      */
-    val RecordVoiceOver = Icons.Filled.Mic
     val QueueMusic = Icons.AutoMirrored.Filled.QueueMusic
     val MoreVert = Icons.Filled.MoreVert
 
@@ -79,6 +76,7 @@ object AppIcons {
     val VolumeDown = Icons.AutoMirrored.Filled.VolumeDown
     val Bluetooth = Icons.Filled.Bluetooth
     val Smartphone = Icons.Filled.Smartphone
+    val Dns = Icons.Filled.Dns
     val DeleteOutline = Icons.Filled.DeleteOutline
     val ArrowUpward = Icons.Filled.ArrowUpward
     val ArrowDownward = Icons.Filled.ArrowDownward
@@ -166,11 +164,10 @@ fun appTextStyle(
     role: TextRole = TextRole.Copy,
     weight: FontWeight? = null,
     align: TextAlign? = null,
-    /** Drawn as asked even with Use SDK Font Styles on. */
+    /** Drawn at exactly the size asked, not snapped to the nearest SDK style. */
     exact: Boolean = false,
 ): TextStyle {
-    val sdkStyles = App.settings.sdkFontStyles.state.collectAsState().value
-    if (sdkStyles && !exact) return nearestSdkStyle(size, role, weight, align)
+    if (!exact) return nearestSdkStyle(size, role, weight, align)
     val base = role.style()
     return base.copy(
         fontSize = size,
@@ -182,7 +179,7 @@ fun appTextStyle(
 }
 
 /**
- * TRIAL (Use SDK Font Styles): the SDK style nearest [size], whole, as the SDK
+ * The SDK style nearest [size], whole, as the SDK
  * draws it: its size, line height, tracking and weight (unless [weight] is
  * given), scaled to the screen's height. Between styles of the same size the
  * text's own [role] wins, else the first listed.
@@ -225,7 +222,7 @@ fun AppText(
     maxLines: Int = Int.MAX_VALUE,
     align: TextAlign? = null,
     overflow: TextOverflow = TextOverflow.Ellipsis,
-    /** Drawn as asked even with Use SDK Font Styles on. */
+    /** Drawn at exactly the size asked, not snapped to the nearest SDK style. */
     exact: Boolean = false,
     /** How the text came out (its line count), for a neighbour that makes room. */
     onTextLayout: (TextLayoutResult) -> Unit = {},

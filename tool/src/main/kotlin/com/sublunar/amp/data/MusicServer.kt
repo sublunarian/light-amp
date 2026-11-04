@@ -297,7 +297,7 @@ interface MusicServer {
 
     // --- Playlists -----------------------------------------------------------
 
-    suspend fun getPlaylists(musicFolderId: String? = null): List<Playlist> = emptyList()
+    suspend fun getPlaylists(): List<Playlist> = emptyList()
     suspend fun getPlaylistTracks(id: String): List<Track> = emptyList()
 
     /** Only the ids of [getPlaylistTracks], for a server that can read them more cheaply. */

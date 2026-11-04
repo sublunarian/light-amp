@@ -27,12 +27,8 @@ fun PlayerTheme(
     library: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val brighter by App.settings.brighterText.state.collectAsState()
-    val dimAlpha = when {
-        !brighter -> DIM_TEXT_ALPHA
-        library -> BRIGHTER_LIBRARY_DIM_ALPHA
-        else -> 1f
-    }
+    // Menus and settings have no grey.
+    val dimAlpha = if (library) DIM_TEXT_ALPHA else 1f
     val invert by App.settings.invertColors.state.collectAsState()
     val colors = if (invert) LightThemeColors.Light else LightThemeColors.Dark
     LightTheme(colors = colors) {
@@ -58,7 +54,5 @@ fun PlayerTheme(
 /** How strongly dimmed (grey) text is drawn on this screen, white being 1. */
 val LocalDimTextAlpha = compositionLocalOf { DIM_TEXT_ALPHA }
 
-private const val DIM_TEXT_ALPHA = 0.5f
-
-/** TRIAL (Brighter Text): the library and player's grey; menus and settings have none. */
-private const val BRIGHTER_LIBRARY_DIM_ALPHA = 0.5675f
+/** The library and player's grey. */
+private const val DIM_TEXT_ALPHA = 0.5675f

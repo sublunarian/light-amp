@@ -2,6 +2,7 @@ package com.sublunar.amp.ui.screens
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -9,6 +10,7 @@ import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.listPadding
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
 
@@ -33,7 +35,7 @@ class AlbumViewScreen(
             title = "View",
             subtitle = if (forArtist) "An artist's albums" else "All albums",
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize().padding(listPadding())) {
                 TextRow(title = "List", checked = !grid) { choose(false) }
                 TextRow(title = "Grid", checked = grid) { choose(true) }
             }

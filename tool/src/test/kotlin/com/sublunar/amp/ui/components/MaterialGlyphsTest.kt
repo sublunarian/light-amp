@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Dehaze
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
@@ -28,7 +29,6 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.FilterNone
 import androidx.compose.material.icons.filled.LibraryMusic
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
@@ -138,6 +138,7 @@ class MaterialGlyphsTest {
             Material.Filled.Dehaze to Icons.Filled.Dehaze,
             Material.Filled.DeleteOutline to Icons.Filled.DeleteOutline,
             Material.Filled.Download to Icons.Filled.Download,
+            Material.Filled.Dns to Icons.Filled.Dns,
             Material.Filled.FastForward to Icons.Filled.FastForward,
             Material.Filled.FastRewind to Icons.Filled.FastRewind,
             Material.Filled.Favorite to Icons.Filled.Favorite,
@@ -146,7 +147,6 @@ class MaterialGlyphsTest {
             Material.Filled.StarBorder to Icons.Filled.StarBorder,
             Material.Filled.FilterNone to Icons.Filled.FilterNone,
             Material.Filled.LibraryMusic to Icons.Filled.LibraryMusic,
-            Material.Filled.Mic to Icons.Filled.Mic,
             Material.Filled.MoreVert to Icons.Filled.MoreVert,
             Material.Filled.MusicNote to Icons.Filled.MusicNote,
             Material.Filled.Pause to Icons.Filled.Pause,

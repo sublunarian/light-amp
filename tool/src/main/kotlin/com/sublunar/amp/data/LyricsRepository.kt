@@ -157,7 +157,7 @@ object LyricsRepository {
         return Lyrics(lines, synced = lines.all { it.timeMs != null })
     }
 
-    /** Timed lyrics from lrclib, or null — used when downloading for karaoke. */
+    /** Timed lyrics from lrclib, or null — used when downloading for Synced Lyrics. */
     suspend fun timedFromLrclib(track: Track): Lyrics? =
         fetchLrclib(track)?.takeIf { it.synced }
 

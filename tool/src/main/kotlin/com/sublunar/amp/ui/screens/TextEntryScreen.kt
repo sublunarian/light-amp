@@ -40,16 +40,15 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import com.sublunar.amp.ui.PlayerTheme
+import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.ChoiceButton
+import com.sublunar.amp.ui.components.LONG_PRESS_MS
 import com.sublunar.amp.ui.components.rememberTapHaptics
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
-import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightThemeTokens
-import com.thelightphone.sdk.ui.LightTopBar
-import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.LocalHapticsEnabled
 import com.thelightphone.sdk.ui.designVerticalPxToDp
 import com.thelightphone.sdk.ui.designVerticalPxToSp
@@ -58,7 +57,9 @@ import com.thelightphone.sdk.ui.keyboard.LightEmbeddedLp3Keyboard
 
 /**
  * Full-screen text entry backed by the LP3 keyboard. Returns the submitted text
- * as its navigation result, or null when dismissed with back.
+ * as its navigation result, or null when dismissed with back. [onDismissed] runs
+ * when it closes without a submit, by the arrow or the system's back gesture,
+ * which delivers no result at all.
  *
  * Holding the text swaps the keys for Notes' menu — see [TextEditor].
  */
@@ -67,7 +68,14 @@ class TextEntryScreen(
     private val title: String,
     private val initial: String = "",
     private val submitLabel: String = "DONE",
+    private val onDismissed: () -> Unit = {},
 ) : AmpScreen<String?>(sealed) {
+
+    private var submitted = false
+
+    override fun onScreenDestroy() {
+        if (!submitted) onDismissed()
+    }
 
     @Composable
     override fun Content() {
@@ -77,7 +85,10 @@ class TextEntryScreen(
                 title = title,
                 state = state,
                 submitLabel = submitLabel,
-                onSubmit = { goBack(state.text.toString()) },
+                onSubmit = {
+                    submitted = true
+                    goBack(state.text.toString())
+                },
                 onBack = { goBack(null) },
             )
         }
@@ -135,11 +146,9 @@ private fun TextEditor(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        LightTopBar(
-            leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = onBack),
-            center = LightTopBarCenter.Text(title),
-            modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
-        )
+        // Amp's header, so the page matches the one it was opened from.
+        AppHeader(onBack = onBack, title = title)
+        Spacer(Modifier.height(1f.gridUnitsAsDp()))
 
         Box(
             modifier = Modifier
@@ -154,7 +163,7 @@ private fun TextEditor(
                         // cursor. Moving first drags it, as in the SDK. Neither
                         // by the deadline is the hold.
                         var dragged = false
-                        val ended = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                        val ended = withTimeoutOrNull(LONG_PRESS_MS) {
                             while (true) {
                                 val change = awaitPointerEvent().changes
                                     .firstOrNull { it.id == down.id } ?: break

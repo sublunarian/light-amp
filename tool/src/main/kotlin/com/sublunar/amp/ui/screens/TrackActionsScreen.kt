@@ -14,6 +14,7 @@ import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.largeMenuText
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -88,7 +89,13 @@ class TrackActionsScreen(
         // Managing storage is a library job, not the player's or the queue's.
         val showDownload = !fromPlayer && queueIndex == null
 
-        ListScreen(onBack = { goBack() }, title = track?.title ?: "Track", subtitle = track?.artist) {
+        ListScreen(
+            onBack = { goBack() },
+            title = track?.title ?: "Track",
+            subtitle = track?.artist,
+            headingRows = largeMenuText(),
+            rightAction = settingsCorner(fromHeader = fromPlayer),
+        ) {
             if (track == null) {
                 EmptyState("Track not found")
                 return@ListScreen
@@ -116,6 +123,14 @@ class TrackActionsScreen(
                     }
                 }
                 if (!isCurrent) {
+                    // This song alone: the queue becomes just it. Not from the
+                    // queue itself, where a tap on the row already plays it.
+                    if (queueIndex == null) {
+                        TextRow(title = "Play") {
+                            App.playback.playQueue(listOf(track), 0)
+                            replaceWithPlayer()
+                        }
+                    }
                     if (!playsNext) {
                         TextRow(title = "Play Next") {
                             App.playback.playNext(listOf(track))

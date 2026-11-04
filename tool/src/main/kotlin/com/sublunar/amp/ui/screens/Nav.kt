@@ -1,8 +1,12 @@
 package com.sublunar.amp.ui.screens
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import com.sublunar.amp.App
 import com.sublunar.amp.data.LastSection
 import com.sublunar.amp.data.Track
+import com.sublunar.amp.ui.components.AppIcons
+import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.ScrollAnchors
 import com.sublunar.amp.ui.components.SelectionState
 import com.sublunar.amp.ui.components.Selections
@@ -159,6 +163,17 @@ fun SimpleLightScreen<*>.go(factory: (SealedLightActivity) -> SimpleLightScreen<
 }
 
 /**
+ * TRIAL (Settings in Page Menus): the gear in the corner of a menu opened from a
+ * page's own ⋮, as More has it, so Settings is two taps from every page. Null
+ * with the switch off, and for a menu opened by holding a row.
+ */
+@Composable
+fun SimpleLightScreen<*>.settingsCorner(fromHeader: Boolean): HeaderAction? {
+    val on = App.settings.settingsInPageMenus.state.collectAsState().value
+    return if (on && fromHeader) HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } } else null
+}
+
+/**
  * Push the bulk-action sheet for [tracks] and leave selection mode only if an
  * action actually ran — backing out of the sheet keeps a selection that may have
  * taken a while to build.
@@ -188,7 +203,17 @@ fun SimpleLightScreen<Unit>.replaceWithPlayer() {
 /** The SDK's full-screen editor: Simplified's way of typing a query. */
 fun SimpleLightScreen<*>.editSearch(current: String) {
     navigateTo<String?>(
-        { TextEntryScreen(it, title = "Search", initial = current, submitLabel = "SEARCH") },
+        {
+            TextEntryScreen(
+                it,
+                title = "Search",
+                initial = current,
+                submitLabel = "SEARCH",
+                // Backed out of before anything was searched: there are no
+                // results to go back to, so back is to where search began.
+                onDismissed = { if (current.isBlank()) LibraryNav.closeSearch() },
+            )
+        },
         resultCallback = { text -> if (text != null) LibraryNav.setQuery(text) },
     )
 }

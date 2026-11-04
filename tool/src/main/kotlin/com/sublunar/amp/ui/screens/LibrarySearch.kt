@@ -36,11 +36,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.LayoutMode
+import com.sublunar.amp.ui.LightType
+import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppText
@@ -58,6 +61,7 @@ import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.SectionLabel
+import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.listPadding
@@ -118,40 +122,51 @@ internal fun SimpleLightScreen<*>.SearchView() {
     // The rows take the scrollbar's lane back individually, so the list itself
     // keeps equal margins.
     val lane = px(SCROLLBAR_LANE_PX) - px(LIST_EDGE_PX)
+    // The cross abandons the search, query included: back to the list it was
+    // started from, as if it never happened.
+    val cancel = {
+        state.clearText()
+        LibraryNav.setQuery("")
+        LibraryNav.typing.value = false
+        LibraryNav.closeSearch()
+    }
+    val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
     Column(Modifier.fillMaxSize()) {
-        SearchHeader(
-            query = live,
-            // While typing, where the next key lands; a tap or drag in the
-            // field moves it, raising the keyboard if it was down. Simplified
-            // edits in the SDK's own screen, which has its own cursor.
-            cursor = if (typing) state.selection.min else null,
-            onPlaceCursor = if (App.settings.layoutMode.value == LayoutMode.SIMPLIFIED) {
-                null
-            } else {
-                { offset ->
+        if (simplified) {
+            // Stock Music's results page: back, the query as the title, nothing
+            // else. A tap on the query edits it in the SDK's own screen.
+            AppHeader(
+                onBack = cancel,
+                titleContent = {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().appClickable { editSearch(live) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        AppText(
+                            live.ifBlank { "Search" },
+                            pxSp(LightType.FINE_PX),
+                            role = TextRole.Subheading,
+                            maxLines = 1,
+                            align = TextAlign.Center,
+                        )
+                    }
+                },
+            )
+        } else {
+            SearchHeader(
+                query = live,
+                // While typing, where the next key lands; a tap or drag in the
+                // field moves it, raising the keyboard if it was down.
+                cursor = if (typing) state.selection.min else null,
+                onPlaceCursor = { offset ->
                     state.edit { selection = TextRange(offset) }
                     LibraryNav.typing.value = true
-                }
-            },
-            onEdit = {
-                // Simplified never raises the inline keyboard: its search is the
-                // SDK's own screen.
-                if (App.settings.layoutMode.value == LayoutMode.SIMPLIFIED) {
-                    editSearch(live)
-                } else {
-                    LibraryNav.typing.value = true
-                }
-            },
-            onCancel = {
-                // The cross abandons the search, query included: back to the
-                // list it was started from, as if it never happened.
-                state.clearText()
-                LibraryNav.setQuery("")
-                LibraryNav.typing.value = false
-                LibraryNav.closeSearch()
-            },
-            onMenu = { go { MoreScreen(it, LibraryPage.SEARCH) } },
-        )
+                },
+                onEdit = { LibraryNav.typing.value = true },
+                onCancel = cancel,
+                onMenu = { go { MoreScreen(it, LibraryPage.SEARCH) } },
+            )
+        }
         Box(modifier = Modifier.weight(1f)) {
             // Nothing typed yet, so nothing listed: results come with the first
             // keystroke.

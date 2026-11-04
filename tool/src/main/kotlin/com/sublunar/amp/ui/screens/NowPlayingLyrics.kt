@@ -33,7 +33,7 @@ import com.sublunar.amp.ui.pxSp
 
 @Composable
 internal fun LyricsOverlay(current: Track, modifier: Modifier) {
-    val karaoke by App.settings.karaokeLyrics.state.collectAsState()
+    val syncedOn by App.settings.syncedLyrics.state.collectAsState()
     // Read only inside the derivedStateOf below: a position tick then
     // recomposes nothing unless the active line changes.
     val position = App.playback.positionMs.collectAsState()
@@ -60,7 +60,7 @@ internal fun LyricsOverlay(current: Track, modifier: Modifier) {
     }
     val lyrics = (outcome as? LyricsRepository.Outcome.Found)?.lyrics
     val lines = lyrics?.lines ?: emptyList()
-    val synced = (lyrics?.synced == true) && karaoke
+    val synced = (lyrics?.synced == true) && syncedOn
     val activeIndex by remember(lines, synced) {
         derivedStateOf { if (synced) indexForTime(lines, position.value) else -1 }
     }

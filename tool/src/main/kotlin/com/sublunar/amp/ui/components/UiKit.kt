@@ -130,8 +130,8 @@ fun rememberTapHaptics(): Pair<() -> Unit, () -> Unit> {
 }
 
 /**
- * A long press held for [LONG_PRESS_MS], longer than the platform's ~500ms, which
- * let a lazy thumb scrolling a list open a context menu.
+ * A long press held for [LONG_PRESS_MS], a little longer than the platform's
+ * ~400–500ms, which let a thumb resting mid-scroll open a context menu.
  */
 @Composable
 fun Modifier.slowLongPress(onClick: () -> Unit, onLongPress: () -> Unit): Modifier {
@@ -163,8 +163,12 @@ fun Modifier.slowLongPress(onClick: () -> Unit, onLongPress: () -> Unit): Modifi
     }
 }
 
-/** Long enough to be deliberate, short enough not to feel broken. */
-const val LONG_PRESS_MS = 900L
+/**
+ * Every hold in the app, text fields included: long enough that a thumb resting
+ * mid-scroll doesn't open a menu, short enough not to feel slow. (900ms was
+ * safe but sluggish.)
+ */
+const val LONG_PRESS_MS = 600L
 
 /**
  * A row that responds to a tap, and optionally to a long press through
@@ -245,6 +249,8 @@ fun TextRow(
     modifier: Modifier = Modifier,
     /** A setting's current value, drawn large under the title, which becomes its label. */
     value: String? = null,
+    /** A glyph on the [value]'s line, just after it: a sort's direction. */
+    valueTrailing: (@Composable () -> Unit)? = null,
     /**
      * A line under the title saying what the row does or how it stands. One line
      * unless [subtitleLines] says otherwise, so a list of names doesn't go ragged.
@@ -267,7 +273,8 @@ fun TextRow(
         modifier = modifier
             .fillMaxWidth()
             .let { if (onClick == null) it else it.rowClickable(onClick) }
-            .padding(horizontal = px(MENU_INSET_PX), vertical = px(MENU_PAD_PX)),
+            // Inset at the start only: the list already ends at its scroll bar's lane.
+            .padding(start = px(MENU_ROW_INSET_PX), top = px(MENU_PAD_PX), bottom = px(MENU_PAD_PX)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (leading != null) {
@@ -277,7 +284,15 @@ fun TextRow(
         Column(modifier = Modifier.weight(1f)) {
             if (value != null) {
                 MenuLabel(title)
-                MenuLine(value, dim = onClick == null, heading)
+                if (valueTrailing != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        MenuLine(value, dim = onClick == null, heading)
+                        Spacer(Modifier.width(px(VALUE_GLYPH_GAP_PX)))
+                        valueTrailing()
+                    }
+                } else {
+                    MenuLine(value, dim = onClick == null, heading)
+                }
             } else {
                 MenuLine(title, dim = onClick == null, heading)
                 if (!subtitle.isNullOrBlank()) MenuLabel(subtitle, maxLines = subtitleLines)
@@ -292,6 +307,13 @@ fun TextRow(
 
 /** TRIAL: whether this page's menu rows are drawn at Heading, set by [ListScreen]. */
 val LocalMenuHeading = compositionLocalOf { false }
+
+/**
+ * TRIAL (Large Menu Text): whether More, its Sources page and the ⋮ menus draw
+ * their rows at Heading, as the settings pages always do, or a step below.
+ */
+@Composable
+fun largeMenuText(): Boolean = App.settings.largeMenuText.state.collectAsState().value
 
 /** The tick's size, as a multiple of the SDK icon's own. */
 private const val CHECK_SCALE = 1.4f
@@ -329,11 +351,17 @@ private const val MENU_LABEL_LINE_PX = 60
 /** Where a menu row's text starts: two grid units, as on the phone's own text-only lists. */
 const val MENU_INSET_PX = 80
 
+/** The same, measured inside a list, which already keeps [LIST_EDGE_PX] from the screen's edge. */
+const val MENU_ROW_INSET_PX = MENU_INSET_PX - LIST_EDGE_PX
+
 /** Above and below a row's text: with Copy's line, a 136px pitch. */
 private const val MENU_PAD_PX = 32
 
 /** Between a leading glyph and the text: one unit. */
 private const val MENU_GAP_PX = 40
+
+/** Between a value and the glyph after it: close enough to read as one. */
+private const val VALUE_GLYPH_GAP_PX = 24
 
 /**
  * One of Light's centred verbs: a word in capitals on its own line, as on the
@@ -381,20 +409,36 @@ fun EmptyState(text: String) {
 }
 
 @Composable
-fun SectionLabel(text: String) {
-    AppText(
-        text,
-        pxSp(LightType.DETAIL_PX),
-        lineHeight = pxSp(LightType.DETAIL_LINE_PX),
-        role = TextRole.Detail,
-        dim = true,
-        modifier = Modifier.padding(
-            start = px(MENU_INSET_PX),
-            top = px(SECTION_TOP_PX),
-            bottom = px(SECTION_BOTTOM_PX),
-        ),
-    )
+fun SectionLabel(
+    text: String,
+    /** Grey, as a note between rows; white where it heads a group of the rows below it. */
+    dim: Boolean = true,
+    /** Makes the whole line a button — with [trailing] to say so. */
+    onClick: (() -> Unit)? = null,
+    /** A glyph just after the words, on their line. */
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .then(if (onClick != null) Modifier.fillMaxWidth().appClickable(onClick = onClick) else Modifier)
+            .padding(start = px(MENU_ROW_INSET_PX), top = px(SECTION_TOP_PX), bottom = px(SECTION_BOTTOM_PX)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppText(
+            text,
+            pxSp(LightType.DETAIL_PX),
+            lineHeight = pxSp(LightType.DETAIL_LINE_PX),
+            role = TextRole.Detail,
+            dim = dim,
+        )
+        if (trailing != null) {
+            Spacer(Modifier.width(px(SECTION_GLYPH_GAP_PX)))
+            trailing()
+        }
+    }
 }
+
+private const val SECTION_GLYPH_GAP_PX = 16
 
 private const val SECTION_TOP_PX = 40
 private const val SECTION_BOTTOM_PX = 12

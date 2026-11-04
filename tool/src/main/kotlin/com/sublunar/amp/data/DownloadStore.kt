@@ -92,7 +92,14 @@ class DownloadStore(private val filesDir: File) {
      * temporary file first so an interrupted download can never be mistaken for
      * a complete one.
      */
-    suspend fun download(sourceId: String, url: String, trackId: String, format: StreamFormat): Fetched =
+    suspend fun download(
+        sourceId: String,
+        url: String,
+        trackId: String,
+        format: StreamFormat,
+        /** The song's length, which sets how small a real copy of it can be — see [MIN_BYTES_PER_SECOND]. */
+        durationMs: Long = 0,
+    ): Fetched =
         withContext(Dispatchers.IO) {
             val target = fileFor(sourceId, trackId, format)
             target.parentFile?.mkdirs()
@@ -145,9 +152,16 @@ class DownloadStore(private val filesDir: File) {
                     val kbPerSec = bytes * 1000 / elapsedMs / 1024
                     Log.i(TAG, "downloaded $bytes bytes in ${elapsedMs}ms (${kbPerSec} KB/s) $trackId")
                 }
-                if (bytes == 0L) {
+                // A conversion that failed on the server can still answer 200
+                // with a few bytes, and kept, that is the song from then on: a
+                // file that never plays and is never fetched again. (From
+                // Garado's fork of Amp, scaled here by the song's length so a
+                // short voice memo isn't mistaken for one.)
+                val plausible = maxOf(MIN_BYTES, durationMs / 1000 * MIN_BYTES_PER_SECOND)
+                if (bytes < plausible) {
+                    Log.w(TAG, "download $trackId: $bytes bytes for ${durationMs / 1000} s, discarded")
                     partial.delete()
-                    return@withContext Fetched.Failed("Server sent an empty file")
+                    return@withContext Fetched.Failed(if (bytes == 0L) "Server sent an empty file" else "Server sent a broken file")
                 }
                 if (!partial.renameTo(target)) {
                     partial.delete()
@@ -191,12 +205,15 @@ class DownloadStore(private val filesDir: File) {
      * this is weighed against covers the whole phone. Files are the truth here
      * anyway — a row without its file is not using any storage.
      */
-    fun usedBytesEverywhere(): Long =
-        allRoots().sumOf { root ->
-            root.listFiles().orEmpty()
-                .filter { it.isFile && !it.name.endsWith(PART_SUFFIX) }
-                .sumOf { it.length() }
-        }
+    fun usedBytesEverywhere(): Long = allRoots().sumOf { usedBytesIn(it) }
+
+    /** One source's share of [usedBytesEverywhere], off the disk the same way. */
+    fun usedBytes(sourceId: String): Long = usedBytesIn(rootFor(sourceId))
+
+    private fun usedBytesIn(root: File): Long =
+        root.listFiles().orEmpty()
+            .filter { it.isFile && !it.name.endsWith(PART_SUFFIX) }
+            .sumOf { it.length() }
 
     /**
      * The largest limit the user may choose.
@@ -219,6 +236,15 @@ class DownloadStore(private val filesDir: File) {
     }
 
     companion object {
+        /** Below this a download is no song at all, however short. */
+        private const val MIN_BYTES = 2048L
+
+        /**
+         * 8 kbps, a third of the lowest bitrate anything is encoded at (a 24 kbps
+         * voice memo): a real copy is always bigger than its length at this.
+         */
+        private const val MIN_BYTES_PER_SECOND = 1024L
+
         private const val TAG = "Downloads"
         private const val BUFFER_BYTES = 64 * 1024
         private const val CONNECT_TIMEOUT_MS = 15_000

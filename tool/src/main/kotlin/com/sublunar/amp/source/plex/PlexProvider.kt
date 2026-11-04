@@ -32,19 +32,17 @@ object PlexProvider : SourceProvider {
      */
     override val streamFormats: List<StreamFormat> = listOf(StreamFormat.RAW, StreamFormat.MP3)
 
-    // Plexamp lists the chosen library's playlists and plays each one whole.
-    override val libraryNarrowsPlaylistSongs: Boolean get() = false
 
     /**
      * Plex has star ratings but no separate favourite, so nothing for a heart
-     * to sync to. And it has no call for an empty playlist, so "New Playlist"
-     * on its own isn't offered, though filing songs into a new one still is.
+     * to sync to. An empty playlist is made by naming the library as its
+     * contents — see PlexClient.createPlaylist.
      */
     override fun capabilities(features: ServerFeatures?) = SourceCapabilities(
         likes = false,
         ratings = true,
         radio = true,
-        emptyPlaylists = false,
+        emptyPlaylists = true,
         downloads = true,
         originalDownload = true,
         serverScan = true,
@@ -102,7 +100,7 @@ object PlexProvider : SourceProvider {
 internal fun relocationOrder(source: MusicSource): List<String> = (source.connections - source.baseUrl) + source.baseUrl
 
 private object PlexUi : SourceUi {
-    override val addEntries = listOf(AddEntry("Plex Server", AddIcon.ADD, AddAction.OpenScreen { PlexLinkScreen(it) }))
+    override val addEntries = listOf(AddEntry("Plex Server", AddIcon.SERVER, AddAction.OpenScreen { PlexLinkScreen(it) }))
 
     // Plex signs in by token, so there are no fields to edit: a different
     // server or account means linking again, which updates this source in

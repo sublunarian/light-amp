@@ -37,6 +37,13 @@ data class ServerFeatures(
      * written before the field existed.
      */
     val generation: Int = 0,
+    /**
+     * The bitrate the server converts to by its own setting, in kbps, by format
+     * id ("mp3", "opus"), where it says — asked again at every sync, so a change
+     * on the server shows at the next one. Empty where it can't be asked: the
+     * app's own bitrate stands, as with Jellyfin and Plex, which keep none.
+     */
+    val bitrates: Map<String, Int> = emptyMap(),
 ) {
     fun has(endpoint: String): Boolean = endpoint !in missing
 

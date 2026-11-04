@@ -17,6 +17,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import com.sublunar.amp.data.Album
+import com.sublunar.amp.data.ReleaseType
 import com.sublunar.amp.data.ArtistRef
 import com.sublunar.amp.data.KnownStream
 import com.sublunar.amp.data.LyricLine
@@ -26,7 +27,6 @@ import com.sublunar.amp.data.MusicFolder
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.RADIO_LENGTH
-import com.sublunar.amp.data.RefusedWrite
 import com.sublunar.amp.data.ScanRequest
 import com.sublunar.amp.data.ServerException
 import com.sublunar.amp.data.SongChanges
@@ -728,7 +728,7 @@ class PlexClient(
 
     // --- Playlists -----------------------------------------------------------
 
-    override suspend fun getPlaylists(musicFolderId: String?): List<Playlist> =
+    override suspend fun getPlaylists(): List<Playlist> =
         fetch("/playlists", listOf("playlistType" to "audio")).container.metadata.map {
             Playlist(
                 id = it.ratingKey,
@@ -745,16 +745,19 @@ class PlexClient(
         paged("/playlists/$id/items").map { it.toTrack() }
 
     /**
-     * Plex has no call for an empty playlist: creating one means naming its
-     * contents, and a request without a `uri` is refused. So the songs go in
-     * here rather than in a second pass (see [MusicServer.createPlaylist]), and
-     * an empty one is never offered (see PlexProvider.capabilities).
+     * Plex makes a playlist only with a `uri` naming its contents: a request
+     * without one is refused (400). So the songs go in here rather than in a
+     * second pass (see [MusicServer.createPlaylist]). An empty one is named by
+     * the library itself, which holds no songs to add: Plex makes the playlist,
+     * logs that it couldn't read the address, and answers 200 — as it does for
+     * Plexamp, whose empty playlists arrive with an address that resolves to
+     * nothing.
      */
     override suspend fun createPlaylist(name: String, songIds: List<String>): String? {
-        if (songIds.isEmpty()) throw RefusedWrite()
+        val contents = if (songIds.isEmpty()) "server://${machineId()}/$LIBRARY_IDENTIFIER" else itemUri(songIds)
         val created = body(
             "/playlists",
-            listOf("type" to "audio", "smart" to "0", "title" to name, "uri" to itemUri(songIds)),
+            listOf("type" to "audio", "smart" to "0", "title" to name, "uri" to contents),
             HttpMethod.Post,
         )
         // Made, whatever the body says: an answer this can't read is still a playlist on the server.
@@ -895,6 +898,7 @@ class PlexClient(
         lastPlayedMs = (lastViewedAt ?: 0L) * 1000L,
         rating = starsFrom(userRating),
         genre = genres.firstOrNull()?.tag.orEmpty(),
+        releaseType = ReleaseType.of((formats + subformats).map { it.tag }),
     )
 
     private fun PlexMetadata.toTrack(): Track = Track(

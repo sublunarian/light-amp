@@ -88,26 +88,19 @@ fun Track.primaryAlbumArtist(): String =
 /**
  * One tag field, split into the values it holds. Servers join a multi-valued tag
  * with a comma or a semicolon, so both separate here — unlike an artist credit
- * (see [albumArtistNames]), a genre or composer has no comma inside its name.
+ * (see [albumArtistNames]), a genre has no comma inside its name.
  */
 fun splitTagValues(raw: String): List<String> =
     raw.split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }
 
-/**
- * What a library list has been narrowed to; blank means "not narrowed". The two
- * combine: a genre *and* a composer leaves what carries both.
- */
-data class TagFilter(val genre: String = "", val composer: String = "") {
-    val isEmpty: Boolean get() = genre.isEmpty() && composer.isEmpty()
+/** The genre a library list has been narrowed to; blank means "not narrowed". */
+data class TagFilter(val genre: String = "") {
+    val isEmpty: Boolean get() = genre.isEmpty()
 }
 
 /** Whether this track carries [value] as one of its genres. */
 fun Track.hasGenre(value: String): Boolean =
     splitTagValues(genre).any { it.equals(value, ignoreCase = true) }
-
-/** Whether this track carries [value] as one of its composers. */
-fun Track.hasComposer(value: String): Boolean =
-    splitTagValues(composer).any { it.equals(value, ignoreCase = true) }
 
 /** An album as listed by the server; its songs are fetched separately. */
 data class Album(
@@ -133,6 +126,8 @@ data class Album(
     /** Star rating 1–5, or 0 when unrated. */
     val rating: Int = 0,
     val genre: String = "",
+    /** What kind of record it is — see [ReleaseType]. Album where nothing says. */
+    val releaseType: ReleaseType = ReleaseType.ALBUM,
 )
 
 /** Derived from the tracks' album-artist credits, not fetched. */
@@ -233,3 +228,48 @@ enum class RepeatMode { OFF, TRACK, QUEUE }
 data class LyricLine(val timeMs: Long?, val text: String)
 
 data class Lyrics(val lines: List<LyricLine>, val synced: Boolean)
+
+/**
+ * What kind of record an album is, from its MusicBrainz release type: a primary
+ * type (album, EP, single) and any secondary ones (live, soundtrack,
+ * compilation), as servers pass them on and files carry them. Listed in the
+ * order an artist's page groups them by.
+ */
+enum class ReleaseType(val heading: String) {
+    ALBUM("Albums"),
+    EP("EPs"),
+    SINGLE("Singles"),
+    SOUNDTRACK("Soundtracks"),
+    COMPILATION("Compilations"),
+    LIVE("Live Albums"),
+    ;
+
+    /** Rank in [of]'s order, most specific first: live, soundtrack, compilation, EP, single, album. */
+    val specificity: Int get() = SPECIFICITY.indexOf(this)
+
+    companion object {
+        private val SPECIFICITY = listOf(LIVE, SOUNDTRACK, COMPILATION, EP, SINGLE, ALBUM)
+
+        /**
+         * The most specific of [types], so a live album or a soundtrack is filed
+         * as that rather than as an album: live, then soundtrack, compilation,
+         * EP, single. Types come as a list or joined ("album; live"); any other
+         * (broadcast, remix, spokenword…) is an album. [compilation] is a
+         * server's or file's own compilation flag.
+         */
+        fun of(types: Collection<String>, compilation: Boolean = false): ReleaseType {
+            val all = types.flatMap { it.split(';', ',', '/') }.map { it.trim().lowercase() }.toSet()
+            return when {
+                "live" in all -> LIVE
+                "soundtrack" in all -> SOUNDTRACK
+                compilation || "compilation" in all -> COMPILATION
+                "ep" in all -> EP
+                "single" in all -> SINGLE
+                else -> ALBUM
+            }
+        }
+
+        /** As stored: the name, or Album for a row from before the column. */
+        fun stored(name: String): ReleaseType = entries.firstOrNull { it.name == name } ?: ALBUM
+    }
+}

@@ -16,6 +16,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 import com.sublunar.amp.data.Album
+import com.sublunar.amp.data.ReleaseType
 import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.Track
 
@@ -120,19 +121,21 @@ object LocalLibrary : PhoneLibrary {
         val retriever = MediaMetadataRetriever()
         val tracks = mutableListOf<Track>()
         val modifiedMs = mutableMapOf<String, Long>()
+        val releaseTypes = mutableMapOf<String, ReleaseType>()
         try {
             files.forEachIndexed { index, file ->
                 coroutineContext.ensureActive()
-                readTrack(retriever, file)?.let { track ->
+                readTrack(retriever, file)?.let { (track, releaseType) ->
                     tracks += track
                     modifiedMs[track.id] = file.lastModified()
+                    releaseTypes[track.id] = releaseType
                 }
                 if (index % PROGRESS_EVERY == 0) onProgress(index)
             }
         } finally {
             runCatching { retriever.release() }
         }
-        PhoneScan(tracks, albumsFrom(tracks, modifiedMs))
+        PhoneScan(tracks, albumsFrom(tracks, modifiedMs, releaseTypes))
     }
 
     private fun collect(dir: File, depth: Int, into: MutableList<File>) {
@@ -148,7 +151,8 @@ object LocalLibrary : PhoneLibrary {
         }
     }
 
-    private fun readTrack(retriever: MediaMetadataRetriever, file: File): Track? = runCatching {
+    /** The file's track, with the release type its tags give its album. */
+    private fun readTrack(retriever: MediaMetadataRetriever, file: File): Pair<Track, ReleaseType>? = runCatching {
         retriever.setDataSource(file.absolutePath)
         fun tag(key: Int): String = retriever.extractMetadata(key)?.trim().orEmpty()
         // A file with no tags at all is still music: the name is what the Light
@@ -157,6 +161,12 @@ object LocalLibrary : PhoneLibrary {
         val album = tag(MediaMetadataRetriever.METADATA_KEY_ALBUM).ifBlank { file.parentFile?.name.orEmpty() }
         val artist = tag(MediaMetadataRetriever.METADATA_KEY_ARTIST).ifBlank { UNKNOWN_ARTIST }
         val albumArtist = tag(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST).ifBlank { artist }
+        // ReplayGain and the release type are custom tags, which the retriever can't see.
+        val custom = CustomTags.read(file)
+        val releaseType = CustomTags.releaseType(
+            custom,
+            compilation = tag(MediaMetadataRetriever.METADATA_KEY_COMPILATION) == "1",
+        )
         Track(
             id = PhoneFiles.idFor(file),
             title = title,
@@ -180,16 +190,23 @@ object LocalLibrary : PhoneLibrary {
             lastPlayedMs = 0L,
             genre = tag(MediaMetadataRetriever.METADATA_KEY_GENRE),
             composer = tag(MediaMetadataRetriever.METADATA_KEY_COMPOSER),
-            // ReplayGain is always a custom tag, which the retriever can't see.
-            gainDb = ReplayGainTags.gainDb(file),
-        )
+            gainDb = CustomTags.gainDb(custom),
+        ) to releaseType
     }.getOrElse {
         Log.w(TAG, "Unreadable audio file: ${file.name}")
         null
     }
 
-    /** Albums are derived from the tags, the way the Artists list already is. [modifiedMs] is each track's file date. */
-    private fun albumsFrom(tracks: List<Track>, modifiedMs: Map<String, Long>): List<Album> =
+    /**
+     * Albums are derived from the tags, the way the Artists list already is.
+     * [modifiedMs] is each track's file date, [releaseTypes] what its tags say
+     * its album is: the most specific any of the album's songs says.
+     */
+    private fun albumsFrom(
+        tracks: List<Track>,
+        modifiedMs: Map<String, Long>,
+        releaseTypes: Map<String, ReleaseType>,
+    ): List<Album> =
         tracks.groupBy { it.albumId }
             .mapNotNull { (id, group) ->
                 if (id == null) return@mapNotNull null
@@ -206,6 +223,9 @@ object LocalLibrary : PhoneLibrary {
                     // Newest file in the album, so "Recently Added" means what it
                     // does everywhere else.
                     createdMs = group.mapNotNull { modifiedMs[it.id] }.maxOrNull() ?: 0L,
+                    releaseType = group.mapNotNull { releaseTypes[it.id] }
+                        .filter { it != ReleaseType.ALBUM }
+                        .minByOrNull { it.specificity } ?: ReleaseType.ALBUM,
                 )
             }
 

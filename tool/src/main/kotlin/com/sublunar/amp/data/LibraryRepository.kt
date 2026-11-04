@@ -387,9 +387,9 @@ class LibraryRepository(
         }.stateIn(scope, SharingStarted.Eagerly, emptySet())
 
     /**
-     * The tag values this library actually uses, derived from the cache (no server
-     * lists composers). Empty means the server doesn't fill that field, which is
-     * how the More page decides whether to offer it.
+     * The genres this library actually uses, derived from the cache. Empty means
+     * the server doesn't fill that field, which is how the More page decides
+     * whether to offer it.
      *
      * Worked out only while a page shows them, not on every read of the library.
      * Stopped, they keep their last answer for the next page to show meanwhile —
@@ -399,8 +399,6 @@ class LibraryRepository(
     private val tagValues = mutableListOf<MutableStateFlow<List<String>>>()
 
     val genres: StateFlow<List<String>> = tagValuesOf { it.genre }
-
-    val composers: StateFlow<List<String>> = tagValuesOf { it.composer }
 
     /**
      * What stateIn with WhileSubscribed does, by hand: a stateIn's value can't

@@ -3,7 +3,7 @@ package com.sublunar.amp.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
 import com.sublunar.amp.App
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.ui.components.AppIcon
@@ -23,6 +22,8 @@ import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.TabGlyphs
 import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.px
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightThemeTokens
 
 /**
@@ -39,66 +40,74 @@ fun Navbar(
      */
     onSelect: (LibraryTab) -> Unit,
     onSearch: () -> Unit,
-    searchActive: Boolean = false,
     onNowPlaying: () -> Unit,
     /** Simplified's library button — see [LibraryNav.libraryIndex]. */
     onBrowse: () -> Unit,
+    /** False on the library page itself, where Simplified's library button would lead nowhere. */
+    showLibrary: Boolean = true,
 ) {
     // The eager state rather than the preference Flow: the bar is on every
     // screen, and a fresh collect draws a frame of the wrong bar.
     val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
     if (simplified) {
-        SimplifiedNavbar(onSearch, onNowPlaying, onBrowse, searchActive)
+        SimplifiedNavbar(onSearch, onNowPlaying, onBrowse, showLibrary)
     } else {
         StandardNavbar(current, onSelect, onNowPlaying)
     }
 }
 
-/** Simplified layout: the library, search and the player, as the phone's own three buttons. */
+/**
+ * Simplified layout: the library, search and the player as the phone's own three
+ * buttons, laid out as the SDK's LightBottomBar lays out three: start, centre and
+ * end, each glyph two grid units, its outer edge two units from the screen's.
+ * Buttons, not tabs: all three full white, none lit. On the library page itself
+ * its own button would lead nowhere, so its slot stands empty and the others
+ * keep their places: the slot only ever means Library.
+ */
 @Composable
 private fun SimplifiedNavbar(
     onSearch: () -> Unit,
     onNowPlaying: () -> Unit,
     onBrowse: () -> Unit,
-    searchActive: Boolean,
+    showLibrary: Boolean,
 ) {
-    val artworkEdge = px(EDGE_GLYPH_PX)
-    // The end glyphs' outer edges line up with that edge. They are centred in
-    // boxes of the bar's own height, so the padding is that distance less the
-    // slack the glyph has inside its box, which differs with the glyph's size.
-    val tile = px(BOTTOM_BAR_PX)
-    val librarySlack = (tile - px(NAV_ICON_PX) * navScale(LIBRARY_DRAWN_PX, TALL_TARGET_PX)) / 2
-    val playerSlack = (tile - px(NAV_ICON_PX) * NOW_PLAYING_SCALE) / 2
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(px(BOTTOM_BAR_PX))
-            .padding(
-                start = (artworkEdge - librarySlack).coerceAtLeast(0.dp),
-                end = (artworkEdge - playerSlack).coerceAtLeast(0.dp),
-            ),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(horizontal = px(EDGE_GLYPH_PX - (BOTTOM_BAR_PX - SDK_GLYPH_PX) / 2)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Exactly one of the two browsing buttons is lit. The library covers the
-        // index and everything reached from it. The player hides the bar, so it
-        // is never the lit one.
-        NavTile(
-            AppIcons.LibraryMusic,
-            active = !searchActive,
-            scale = navScale(LIBRARY_DRAWN_PX, TALL_TARGET_PX),
-            box = BOTTOM_BAR_PX,
-        ) { onBrowse() }
-        Spacer(Modifier.weight(1f))
-        NavTile(AppIcons.Search, active = searchActive) { onSearch() }
-        Spacer(Modifier.weight(1f))
-        NavTile(
-            AppIcons.Waveform,
-            active = false,
-            scale = NOW_PLAYING_SCALE,
-            box = BOTTOM_BAR_PX,
-        ) { onNowPlaying() }
+        BarSlot(Alignment.CenterStart) {
+            if (showLibrary) {
+                BarButton(onBrowse) {
+                    AppIcon(AppIcons.LibraryMusic, size = px(LIBRARY_BOX_PX), tint = LightThemeTokens.colors.content)
+                }
+            }
+        }
+        BarSlot(Alignment.Center) {
+            BarButton(onSearch) { LightIcon(LightIcons.SEARCH, size = SDK_GLYPH_UNITS) }
+        }
+        BarSlot(Alignment.CenterEnd) {
+            BarButton(onNowPlaying) {
+                AppIcon(AppIcons.Waveform, size = px(SDK_GLYPH_PX), tint = LightThemeTokens.colors.content)
+            }
+        }
     }
+}
+
+@Composable
+private fun RowScope.BarSlot(align: Alignment, content: @Composable () -> Unit) {
+    Box(Modifier.weight(1f), contentAlignment = align) { content() }
+}
+
+/** The bar's height square, the glyph centred: a tap target the full height of the bar. */
+@Composable
+private fun BarButton(onClick: () -> Unit, glyph: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier.size(px(BOTTOM_BAR_PX)).appClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { glyph() }
 }
 
 /** Standard layout: the four tabs across the bar, then the player. */
@@ -109,20 +118,13 @@ private fun StandardNavbar(
     onNowPlaying: () -> Unit,
 ) {
     // TRIAL (Outline Tab Icons): every tab an outline, white, the one you are
-    // on filled in; the artists' glyph is LightOS's own microphone.
+    // on filled in.
     val outlines = App.settings.outlineTabIcons.state.collectAsState().value
-    // TRIAL (SDK Tab Bar): LightBottomBar's layout. Every glyph in the same
-    // 2-unit square, which is also its whole tap target, none trimmed to match
-    // the others, spread edge to edge inside 2 units of padding.
-    val sdkBar = App.settings.sdkTabBar.state.collectAsState().value
-    val box = if (sdkBar) SDK_BAR_ICON_PX else NAV_BOX_PX
-    fun trim(scale: Float) = if (sdkBar) SDK_BAR_ICON_PX.toFloat() / NAV_ICON_PX else scale
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(px(BOTTOM_BAR_PX))
-            .padding(horizontal = px(if (sdkBar) SDK_BAR_PADDING_PX else 0)),
-        horizontalArrangement = if (sdkBar) Arrangement.SpaceBetween else Arrangement.SpaceEvenly,
+            .height(px(BOTTOM_BAR_PX)),
+        horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         NavIcon(
@@ -130,33 +132,30 @@ private fun StandardNavbar(
             AppIcons.QueueMusic,
             current == LibraryTab.PLAYLISTS,
             outlines,
-            scale = trim(PLAYLISTS_SCALE),
-            lift = if (sdkBar) 0 else PLAYLISTS_LIFT_PX,
-            box = box,
+            scale = PLAYLISTS_SCALE,
+            lift = PLAYLISTS_LIFT_PX,
         ) { onSelect(LibraryTab.PLAYLISTS) }
+        // LightOS's own microphone either way; only Outline Tab Icons fills it in.
         NavIcon(
-            if (outlines) TabGlyphs.Microphone else AppIcons.RecordVoiceOver,
-            if (outlines) TabGlyphs.MicrophoneFilled else AppIcons.RecordVoiceOver,
+            TabGlyphs.Microphone,
+            if (outlines) TabGlyphs.MicrophoneFilled else TabGlyphs.Microphone,
             current == LibraryTab.ARTISTS,
             outlines,
-            scale = trim(navScale(if (outlines) LIGHT_MIC_DRAWN_PX else ARTISTS_DRAWN_PX, ARTISTS_TARGET_PX)),
-            box = box,
+            scale = navScale(LIGHT_MIC_DRAWN_PX, ARTISTS_TARGET_PX),
         ) { onSelect(LibraryTab.ARTISTS) }
         NavIcon(
             AppIcons.AlbumStack,
             if (outlines) TabGlyphs.AlbumStackFilled else AppIcons.AlbumStack,
             current == LibraryTab.ALBUMS,
             outlines,
-            scale = trim(navScale(ALBUMS_DRAWN_PX, TALL_TARGET_PX)),
-            box = box,
+            scale = navScale(ALBUMS_DRAWN_PX, TALL_TARGET_PX),
         ) { onSelect(LibraryTab.ALBUMS) }
         NavIcon(
             if (outlines) AppIcons.MusicNoteOutline else AppIcons.MusicNote,
             AppIcons.MusicNote,
             current == LibraryTab.SONGS,
             outlines,
-            scale = trim(navScale(SONGS_DRAWN_PX, TALL_TARGET_PX)),
-            box = box,
+            scale = navScale(SONGS_DRAWN_PX, TALL_TARGET_PX),
         ) { onSelect(LibraryTab.SONGS) }
         // The player after the four ways of looking at the library: the one
         // thing here you arrive at rather than browse to. Never lit, since it
@@ -167,7 +166,6 @@ private fun StandardNavbar(
             active = false,
             outlines,
             scale = NOW_PLAYING_SCALE,
-            box = box,
         ) { onNowPlaying() }
     }
 }
@@ -208,34 +206,6 @@ private fun NavIcon(
 }
 
 /** A bar button with no tab behind it: Simplified's three. */
-@Composable
-private fun NavTile(
-    icon: ImageVector,
-    /** The one you are on is the bright one; the rest step back, as in the tabs. */
-    active: Boolean = false,
-    /** Trims a glyph that draws larger than the rest at the same box size. */
-    scale: Float = SEARCH_SCALE,
-    /** The square the glyph centres in, and the size of its tap target. */
-    box: Int = NAV_BOX_PX,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(px(box))
-            .appClickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        AppIcon(
-            icon = icon,
-            // The size the tabs are drawn at, so the bar reads as one row
-            // whichever layout is showing.
-            size = px(NAV_ICON_PX) * scale,
-            tint = LightThemeTokens.colors.content,
-            modifier = if (active) Modifier else Modifier.alpha(NAV_DIM_ALPHA),
-        )
-    }
-}
-
 /** Height of the library's bottom bar: 4 grid units, as the stock LightOS bar. */
 private const val BOTTOM_BAR_PX = 160
 
@@ -244,13 +214,6 @@ private const val NAV_BOX_PX = 144
 
 /** The glyph box every bar icon is scaled from. */
 private const val NAV_ICON_PX = 114
-
-/**
- * TRIAL (SDK Tab Bar): LightBottomBar's icon square and side padding, 2 grid
- * units each (LightBarButtonDefaults.ICON_SIZE_UNITS, HORIZONTAL_PADDING_MULTI_UNITS).
- */
-private const val SDK_BAR_ICON_PX = 80
-private const val SDK_BAR_PADDING_PX = 80
 
 /** Matches the player's secondary row: the app's one "present but not chosen". */
 private const val NAV_DIM_ALPHA = 0.45f
@@ -264,20 +227,22 @@ private const val NAV_DIM_ALPHA = 0.45f
  * off the panel, and the target is what it should draw instead. Re-measure rather
  * than guess if a glyph changes. The playlist glyph is the reference.
  */
-private const val ARTISTS_DRAWN_PX = 90
 private const val ALBUMS_DRAWN_PX = 105 // 89 measured under a 0.85 trim, so 89 / 0.85
 private const val SONGS_DRAWN_PX = 86
 
-/** TRIAL (Outline Tab Icons), from the glyphs' own boxes, not yet measured on the panel. */
+/** The artists' microphone, from the glyph's own box, not yet measured on the panel. */
 private const val LIGHT_MIC_DRAWN_PX = 108 // 38 of its 40 units
 
 
+/** The SDK's bar glyph: two grid units (LightBarButtonDefaults.ICON_SIZE_UNITS). */
+private const val SDK_GLYPH_UNITS = 2f
+private const val SDK_GLYPH_PX = 80
+
 /**
- * The simplified bar's library glyph, which stands in for the Albums tab. Its own
- * measure, not the album stack's heavier trim. An estimate, not a panel
- * measurement: re-measure if it reads off.
+ * The library glyph's box: a Material icon fills 20 of its 24 units, so at this
+ * box it draws the SDK glyphs' 80px.
  */
-private const val LIBRARY_DRAWN_PX = 95
+private const val LIBRARY_BOX_PX = 96
 
 /** Where the tall glyphs land: above the playlist's own 66, well under their 90. */
 private const val TALL_TARGET_PX = 72
@@ -298,8 +263,6 @@ const val EDGE_GLYPH_PX = 80
 private const val PLAYLISTS_SCALE = 0.94f
 private const val PLAYLISTS_LIFT_PX = 5
 
-/** The magnifier, at the same reference size as the rest of the bar. */
-private const val SEARCH_SCALE = PLAYLISTS_SCALE
 
 /**
  * The waveform at the 80px box LightOS itself gives it, two grid units: 2px to

@@ -322,6 +322,43 @@ object Icons {
             }
         }
 
+        val Dns: ImageVector by glyph("Filled.Dns") {
+            shape {
+                moveTo(20.0f, 13.0f)
+                horizontalLineTo(4.0f)
+                curveToRelative(-0.55f, 0.0f, -1.0f, 0.45f, -1.0f, 1.0f)
+                verticalLineToRelative(6.0f)
+                curveToRelative(0.0f, 0.55f, 0.45f, 1.0f, 1.0f, 1.0f)
+                horizontalLineToRelative(16.0f)
+                curveToRelative(0.55f, 0.0f, 1.0f, -0.45f, 1.0f, -1.0f)
+                verticalLineToRelative(-6.0f)
+                curveToRelative(0.0f, -0.55f, -0.45f, -1.0f, -1.0f, -1.0f)
+                close()
+                moveTo(7.0f, 19.0f)
+                curveToRelative(-1.1f, 0.0f, -2.0f, -0.9f, -2.0f, -2.0f)
+                reflectiveCurveToRelative(0.9f, -2.0f, 2.0f, -2.0f)
+                reflectiveCurveToRelative(2.0f, 0.9f, 2.0f, 2.0f)
+                reflectiveCurveToRelative(-0.9f, 2.0f, -2.0f, 2.0f)
+                close()
+                moveTo(20.0f, 3.0f)
+                horizontalLineTo(4.0f)
+                curveToRelative(-0.55f, 0.0f, -1.0f, 0.45f, -1.0f, 1.0f)
+                verticalLineToRelative(6.0f)
+                curveToRelative(0.0f, 0.55f, 0.45f, 1.0f, 1.0f, 1.0f)
+                horizontalLineToRelative(16.0f)
+                curveToRelative(0.55f, 0.0f, 1.0f, -0.45f, 1.0f, -1.0f)
+                verticalLineTo(4.0f)
+                curveToRelative(0.0f, -0.55f, -0.45f, -1.0f, -1.0f, -1.0f)
+                close()
+                moveTo(7.0f, 9.0f)
+                curveToRelative(-1.1f, 0.0f, -2.0f, -0.9f, -2.0f, -2.0f)
+                reflectiveCurveToRelative(0.9f, -2.0f, 2.0f, -2.0f)
+                reflectiveCurveToRelative(2.0f, 0.9f, 2.0f, 2.0f)
+                reflectiveCurveToRelative(-0.9f, 2.0f, -2.0f, 2.0f)
+                close()
+            }
+        }
+
         val Download: ImageVector by glyph("Filled.Download") {
             shape {
                 moveTo(5.0f, 20.0f)
@@ -474,30 +511,6 @@ object Icons {
                 verticalLineToRelative(-2.0f)
                 lineTo(4.0f, 20.0f)
                 lineTo(4.0f, 6.0f)
-                close()
-            }
-        }
-
-        val Mic: ImageVector by glyph("Filled.Mic") {
-            shape {
-                moveTo(12.0f, 14.0f)
-                curveToRelative(1.66f, 0.0f, 2.99f, -1.34f, 2.99f, -3.0f)
-                lineTo(15.0f, 5.0f)
-                curveToRelative(0.0f, -1.66f, -1.34f, -3.0f, -3.0f, -3.0f)
-                reflectiveCurveTo(9.0f, 3.34f, 9.0f, 5.0f)
-                verticalLineToRelative(6.0f)
-                curveToRelative(0.0f, 1.66f, 1.34f, 3.0f, 3.0f, 3.0f)
-                close()
-                moveTo(17.3f, 11.0f)
-                curveToRelative(0.0f, 3.0f, -2.54f, 5.1f, -5.3f, 5.1f)
-                reflectiveCurveTo(6.7f, 14.0f, 6.7f, 11.0f)
-                lineTo(5.0f, 11.0f)
-                curveToRelative(0.0f, 3.41f, 2.72f, 6.23f, 6.0f, 6.72f)
-                lineTo(11.0f, 21.0f)
-                horizontalLineToRelative(2.0f)
-                verticalLineToRelative(-3.28f)
-                curveToRelative(3.28f, -0.48f, 6.0f, -3.3f, 6.0f, -6.72f)
-                horizontalLineToRelative(-1.7f)
                 close()
             }
         }

@@ -15,6 +15,7 @@ import androidx.room.Transaction
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
 import com.sublunar.amp.data.Album
+import com.sublunar.amp.data.ReleaseType
 import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.forEachTrackPage
@@ -89,6 +90,9 @@ data class AlbumEntity(
      * LibraryRepository.allAlbums.
      */
     val libraryId: String? = null,
+    /** [ReleaseType]'s name; Album for rows from before the column, until the next sync. */
+    @ColumnInfo(defaultValue = "ALBUM")
+    val releaseType: String = ReleaseType.ALBUM.name,
 )
 
 /**
@@ -518,6 +522,9 @@ interface LibraryDao {
     @Query("SELECT trackId, albumId, fileName, format, bytes, downloadedAtMs FROM downloads")
     fun observeDownloads(): Flow<List<DownloadFile>>
 
+    @Query("SELECT trackId, albumId, fileName, format, bytes, downloadedAtMs FROM downloads")
+    suspend fun downloadFiles(): List<DownloadFile>
+
     @Query("SELECT * FROM downloads WHERE trackId = :trackId")
     suspend fun download(trackId: String): DownloadEntity?
 
@@ -538,6 +545,13 @@ interface LibraryDao {
 
     @Query("DELETE FROM downloads WHERE trackId = :trackId")
     suspend fun deleteDownload(trackId: String)
+
+    /**
+     * The downloaded songs the library holds — read before and after a sync, so
+     * the ones it let go of can be told from downloads that were never in it.
+     */
+    @Query("SELECT trackId FROM downloads WHERE trackId IN (SELECT id FROM tracks)")
+    suspend fun downloadedLibraryTrackIds(): List<String>
 
     @Query("DELETE FROM downloads")
     suspend fun clearDownloads()
@@ -645,7 +659,7 @@ interface LibraryDao {
         ArtistImageEntity::class,
         LyricsEntity::class,
     ],
-    version = 17,
+    version = 18,
     exportSchema = true,
     // Generated from the committed schemas in tool/src/main/assets/schemas (assets,
     // because that is what Light's store builder copies). Every schema change adds
@@ -667,6 +681,8 @@ interface LibraryDao {
         // Adds tracks.codec and tracks.bitRateKbps, blank until the next sync
         // reads every song again (LibrarySync.TRACK_PARSER_GENERATION 3).
         AutoMigration(from = 16, to = 17),
+        // Adds albums.releaseType, Album until the next sync reads every album again.
+        AutoMigration(from = 17, to = 18),
     ],
 )
 abstract class LibraryDatabase : RoomDatabase() {
@@ -698,6 +714,7 @@ fun AlbumEntity.toAlbum(): Album = Album(
     liked = liked,
     rating = rating,
     genre = genre,
+    releaseType = ReleaseType.stored(releaseType),
 )
 
 fun Album.toEntity(libraryId: String? = null): AlbumEntity = AlbumEntity(
@@ -717,4 +734,5 @@ fun Album.toEntity(libraryId: String? = null): AlbumEntity = AlbumEntity(
     liked = liked,
     rating = rating,
     genre = genre,
+    releaseType = releaseType.name,
 )

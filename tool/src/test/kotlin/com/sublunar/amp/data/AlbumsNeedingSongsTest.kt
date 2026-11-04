@@ -21,6 +21,25 @@ class AlbumsNeedingSongsTest {
     )
 
     @Test
+    fun `an album the server says changed is read even with the same count`() {
+        // Every file replaced keeps the count; the server's own time moves.
+        val server = listOf(album("replaced", 3, updatedMs = 2_000), album("untouched", 3, updatedMs = 1_000))
+        val cached = listOf(row("replaced", 3, updatedMs = 1_000), row("untouched", 3, updatedMs = 1_000)).associateBy { it.id }
+        val fetch = albumsNeedingSongs(server, cached, mapOf("replaced" to 3, "untouched" to 3), reread = null, refill = false)
+        assertEquals(listOf("replaced"), fetch.albums.map { it.id })
+        assertEquals(mapOf("album changed on the server" to 1), fetch.reasons)
+    }
+
+    @Test
+    fun `a time on one side only is no sign of a change`() {
+        // Rows from before the column read 0: a count that matches keeps them.
+        val server = listOf(album("a", 3, updatedMs = 2_000))
+        val cached = listOf(row("a", 3, updatedMs = 0)).associateBy { it.id }
+        val fetch = albumsNeedingSongs(server, cached, mapOf("a" to 3), reread = null, refill = false)
+        assertEquals(emptyList(), fetch.albums.map { it.id })
+    }
+
+    @Test
     fun `only new, emptied and re-counted albums are read, each with its reason`() {
         val server = listOf(
             album("new", 3),

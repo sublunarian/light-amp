@@ -243,4 +243,50 @@ class DownloadQueueTest {
         assertEquals(0, q.size)
         assertEquals(emptySet(), q.sourceIds())
     }
+
+    @Test
+    fun `the snapshot lists the manual lane first, each in the order it will be fetched`() {
+        val q = DownloadQueue()
+        q.add(entry("a", "auto1"), manual = false)
+        q.add(entry("a", "hand1"), manual = true)
+        q.add(entry("b", "hand2"), manual = true)
+        assertEquals(
+            listOf("a:hand1" to true, "b:hand2" to true, "a:auto1" to false),
+            q.snapshot().map { "${it.entry.sourceId}:${it.entry.trackId}" to it.manual },
+        )
+    }
+
+    @Test
+    fun `cancelling takes only what was asked for by hand`() {
+        val q = DownloadQueue()
+        q.add(entry("a", "auto1"), manual = false)
+        q.add(entry("a", "hand1"), manual = true)
+        q.add(entry("a", "hand2"), manual = true)
+        val gone = q.removeManual(
+            listOf(DownloadQueue.Key("a", "hand1"), DownloadQueue.Key("a", "auto1")),
+        )
+        assertEquals(1, gone)
+        assertEquals(listOf("a:hand2", "a:auto1"), q.drain())
+    }
+
+    @Test
+    fun `download first moves a group to the front, keeping its own order`() {
+        val q = DownloadQueue()
+        q.add(entry("a", "one"), manual = true)
+        q.add(entry("a", "two"), manual = true)
+        q.add(entry("b", "three"), manual = true)
+        q.add(entry("b", "four"), manual = true)
+        q.add(entry("a", "auto"), manual = false)
+        q.putFirst(listOf(DownloadQueue.Key("b", "three"), DownloadQueue.Key("b", "four")))
+        assertEquals(listOf("b:three", "b:four", "a:one", "a:two", "a:auto"), q.drain())
+    }
+
+    @Test
+    fun `download first leaves the queue alone for what isn't waiting by hand`() {
+        val q = DownloadQueue()
+        q.add(entry("a", "one"), manual = true)
+        q.add(entry("a", "auto"), manual = false)
+        q.putFirst(listOf(DownloadQueue.Key("a", "auto"), DownloadQueue.Key("a", "gone")))
+        assertEquals(listOf("a:one", "a:auto"), q.drain())
+    }
 }

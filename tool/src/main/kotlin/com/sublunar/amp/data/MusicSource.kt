@@ -294,9 +294,12 @@ data class MusicSource(
      * bitrate isn't known goes by the choice. Where the original can't be had
      * ([download]s from a server with no call for it), the choice stands.
      */
+    /** What [format] is converted to on this server: its own setting where it says, else the app's. */
+    fun kbps(format: StreamFormat): Int? = features?.bitrates?.get(format.id) ?: provider.kbps(format)
+
     fun formatFor(track: Track, chosen: StreamFormat, download: Boolean = false): StreamFormat {
         if (chosen == StreamFormat.RAW || track.isLossless() != false) return chosen
-        val ceiling = provider.kbps(chosen) ?: return chosen
+        val ceiling = kbps(chosen) ?: return chosen
         val fits = track.bitRateKbps?.let { it <= ceiling } ?: return chosen
         if (!fits) return chosen
         val original = if (download) StreamFormat.RAW in downloadFormats else StreamFormat.RAW in streamFormats

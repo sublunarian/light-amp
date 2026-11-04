@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -37,6 +38,8 @@ fun AlbumGrid(
     onOpen: (Album) -> Unit,
     onLongPress: (Album) -> Unit,
     state: LazyGridState,
+    /** Full-width rows drawn before the album at each index: a grouped page's headings. */
+    headings: Map<Int, @Composable () -> Unit> = emptyMap(),
     header: LazyGridScope.() -> Unit,
 ) {
     // Read unconditionally: behind an `if` it stops following the state and the
@@ -54,19 +57,26 @@ fun AlbumGrid(
             verticalArrangement = Arrangement.spacedBy(px(GRID_GAP_PX)),
         ) {
             header()
-            // Read through [rows], never captured (see LatestList).
-            items(albums.size, key = { rows[it]?.id ?: it }) { index ->
-                val album = rows[index] ?: return@items
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                        .rowClickable(
-                            onClick = { onOpen(album) },
-                            onLongClick = { onLongPress(album) },
-                        ),
-                ) {
-                    GridCover(album)
+            // Runs of covers between the headings, each heading spanning the row.
+            val bounds = (headings.keys + 0 + albums.size).filter { it in 0..albums.size }.toSortedSet().toList()
+            bounds.zipWithNext().forEach { (from, until) ->
+                headings[from]?.let { heading ->
+                    item(key = "heading-$from", span = { GridItemSpan(maxLineSpan) }) { heading() }
+                }
+                // Read through [rows], never captured (see LatestList).
+                items(until - from, key = { rows[from + it]?.id ?: (from + it) }) { offset ->
+                    val album = rows[from + offset] ?: return@items
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(1f)
+                            .rowClickable(
+                                onClick = { onOpen(album) },
+                                onLongClick = { onLongPress(album) },
+                            ),
+                    ) {
+                        GridCover(album)
+                    }
                 }
             }
         }

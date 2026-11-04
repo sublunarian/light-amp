@@ -16,17 +16,38 @@ class ScrollTarget(
     val totalItems: Int,
     val visibleItems: Int,
     val scrollTo: suspend (Int) -> Unit,
+    /**
+     * How far down the list is, in items, counting the part of the top one scrolled
+     * off: a list a part-row too long scrolls without its first item changing, and
+     * the bar's thumb still has to move.
+     */
+    val position: Float = firstVisibleIndex.toFloat(),
+    /** How many items the screen holds, in the same fractional measure. */
+    val extent: Float = visibleItems.toFloat(),
 )
 
 @Composable
 fun rememberScrollTarget(state: LazyListState): ScrollTarget {
     val info = state.layoutInfo
-    return remember(state, state.firstVisibleItemIndex, info.totalItemsCount, info.visibleItemsInfo.size) {
+    // Only rows wholly on screen count as shown: a list a part-row too long still
+    // scrolls, and with every row partly showing it would look as if it didn't.
+    val shown = info.visibleItemsInfo.count {
+        it.offset >= info.viewportStartOffset && it.offset + it.size <= info.viewportEndOffset
+    }.coerceAtLeast(1)
+    val items = info.visibleItemsInfo
+    val top = items.firstOrNull()
+    val position = state.firstVisibleItemIndex +
+        if (top == null || top.size == 0) 0f else state.firstVisibleItemScrollOffset.toFloat() / top.size
+    val averageSize = if (items.isEmpty()) 0f else items.sumOf { it.size }.toFloat() / items.size
+    val extent = if (averageSize == 0f) shown.toFloat() else info.viewportSize.height / averageSize
+    return remember(state, info.totalItemsCount, shown, position, extent) {
         ScrollTarget(
             firstVisibleIndex = state.firstVisibleItemIndex,
             totalItems = info.totalItemsCount,
-            visibleItems = info.visibleItemsInfo.size,
+            visibleItems = shown,
             scrollTo = { state.scrollToItem(it) },
+            position = position,
+            extent = extent.coerceAtMost(info.totalItemsCount.toFloat()),
         )
     }
 }
@@ -45,25 +66,20 @@ fun rememberScrollTarget(state: LazyGridState): ScrollTarget {
 }
 
 /**
- * The same facts from a plain scrolling column (the action sheets), which has
- * pixels where a list has indices. A nominal row height converts one into the
- * other: the bar only shows proportions.
+ * The same facts from a plain scrolling column (the action sheets), counted in
+ * pixels where a list counts items: the bar only shows proportions, and a sheet
+ * a few pixels too long still has a bar.
  */
 @Composable
 fun rememberScrollTarget(state: ScrollState): ScrollTarget {
     val viewport = state.viewportSize
     val content = viewport + state.maxValue
     return remember(state, state.value, viewport, content) {
-        val rows = (content / SCROLL_ROW_PX).coerceAtLeast(1)
-        val onScreen = (viewport / SCROLL_ROW_PX).coerceAtLeast(1)
         ScrollTarget(
-            firstVisibleIndex = state.value / SCROLL_ROW_PX,
-            totalItems = rows,
-            visibleItems = onScreen.coerceAtMost(rows),
-            scrollTo = { state.scrollTo(it * SCROLL_ROW_PX) },
+            firstVisibleIndex = state.value,
+            totalItems = content,
+            visibleItems = viewport,
+            scrollTo = { state.scrollTo(it) },
         )
     }
 }
-
-/** A text row's height, near enough for proportions. */
-private const val SCROLL_ROW_PX = 108

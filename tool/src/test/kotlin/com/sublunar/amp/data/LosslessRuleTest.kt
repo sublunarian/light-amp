@@ -67,4 +67,15 @@ class LosslessRuleTest {
         val bandcamp = navidrome.copy(baseUrl = "https://bandcamp.com/api/subsonic")
         assertEquals(StreamFormat.MP3, bandcamp.formatFor(track("mp3", 245), StreamFormat.MP3))
     }
+
+    @Test
+    fun `a server's own bitrate sets the ceiling, and the label's figure`() {
+        val own = navidrome.copy(features = ServerFeatures(bitrates = mapOf("opus" to 128)))
+        assertEquals(128, own.kbps(StreamFormat.OPUS))
+        // Not said for MP3: the app's own figure stands.
+        assertEquals(StreamFormat.MP3.maxBitRate, own.kbps(StreamFormat.MP3))
+        // A 160 kbps MP3 is within Opus 192 but above the server's Opus 128.
+        assertEquals(StreamFormat.RAW, navidrome.formatFor(track("mp3", 160), StreamFormat.OPUS))
+        assertEquals(StreamFormat.OPUS, own.formatFor(track("mp3", 160), StreamFormat.OPUS))
+    }
 }

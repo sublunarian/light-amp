@@ -22,12 +22,17 @@ fun ListScreen(
     onBack: () -> Unit,
     title: String,
     subtitle: String? = null,
-    /** TRIAL: a settings page, its rows a step up at the stock menus' Heading — see [LocalMenuHeading]. */
-    settings: Boolean = false,
+    /**
+     * Rows a step up, at the stock menus' Heading, as LightOS's own settings
+     * are: Amp's settings pages — see [LocalMenuHeading]. The More page and the
+     * ⋮ menus stay a step below.
+     */
+    headingRows: Boolean = false,
+    rightAction: HeaderAction? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     PlayerTheme {
-        CompositionLocalProvider(LocalMenuHeading provides settings) {
+        CompositionLocalProvider(LocalMenuHeading provides headingRows) {
             Column(modifier = Modifier.fillMaxSize()) {
                 AppHeader(
                     onBack = onBack,
@@ -39,6 +44,7 @@ fun ListScreen(
                     } else {
                         null
                     },
+                    rightAction = rightAction,
                 )
                 content()
             }
@@ -59,7 +65,7 @@ fun ActionList(content: @Composable ColumnScope.() -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(state)
-                .padding(end = px(SCROLLBAR_LANE_PX)),
+                .padding(start = px(LIST_EDGE_PX), end = px(SCROLLBAR_LANE_PX)),
             content = content,
         )
         // The lists' scroll bar, via rememberScrollTarget(ScrollState).

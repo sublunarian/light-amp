@@ -3,7 +3,12 @@ package com.sublunar.amp.ui.screens
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -26,34 +31,45 @@ import com.sublunar.amp.data.TagFilter
 import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.PhoneLibrary
+import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AlbumGrid
 import com.sublunar.amp.ui.components.AlphabetIndex
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
+import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.ArtistRow
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.INDEX_STRIP_PX
 import com.sublunar.amp.ui.components.LatestList
 import com.sublunar.amp.ui.components.ListScrollBar
+import com.sublunar.amp.ui.components.MENU_ROW_INSET_PX
 import com.sublunar.amp.ui.components.PlayAllRow
-import com.sublunar.amp.ui.components.ShuffleRow
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.SelectionHeader
+import com.sublunar.amp.ui.components.ShuffleRow
+import com.sublunar.amp.ui.components.TabGlyphs
+import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.TitleCard
 import com.sublunar.amp.ui.components.TrackRow
+import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.listPadding
 import com.sublunar.amp.ui.components.rememberGridAnchor
 import com.sublunar.amp.ui.components.rememberLatest
 import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.components.rememberScrollTarget
 import com.sublunar.amp.ui.components.rememberSelection
+import com.sublunar.amp.ui.components.rowClickable
 import com.sublunar.amp.ui.px
+import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.rememberPermissionRequestLauncher
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -67,7 +83,7 @@ enum class LibraryTab(val title: String) {
 
 internal fun iconFor(tab: LibraryTab): ImageVector = when (tab) {
     LibraryTab.PLAYLISTS -> AppIcons.QueueMusic
-    LibraryTab.ARTISTS -> AppIcons.RecordVoiceOver
+    LibraryTab.ARTISTS -> TabGlyphs.Microphone
     LibraryTab.SONGS -> AppIcons.MusicNote
     LibraryTab.ALBUMS -> AppIcons.AlbumStack
 }
@@ -81,6 +97,8 @@ fun SimpleLightScreen<*>.LibraryShell() {
     val currentTab by LibraryNav.currentTab.collectAsState()
     val libraryIndex by LibraryNav.libraryIndex.collectAsState()
     val searchActive by LibraryNav.searchActive.collectAsState()
+    val typing by LibraryNav.typing.collectAsState()
+    val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
     PlayerTheme(library = true) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
@@ -92,17 +110,18 @@ fun SimpleLightScreen<*>.LibraryShell() {
                     TabContent(currentTab)
                 }
             }
-            // None while searching: the keyboard takes the bottom while typing,
-            // and the results are left by a result or the header's ✕, not by
-            // the bar.
-            if (!searchActive) {
+            // Not while typing, where the keyboard takes the bottom. Over the
+            // results it is back, with no tab lit: search is none of them, and
+            // a tab tapped there leaves it for that tab. Simplified's results
+            // are stock Music's page, which has no bar: its back is the way out.
+            if (!searchActive || (!typing && !simplified)) {
                 Navbar(
-                    current = if (libraryIndex) null else currentTab,
+                    current = if (libraryIndex || searchActive) null else currentTab,
                     onSelect = { LibraryNav.tapTab(it) },
                     onSearch = { startSearch() },
-                    searchActive = searchActive,
                     onNowPlaying = { go { NowPlayingScreen(it) } },
                     onBrowse = { LibraryNav.pressLibrary() },
+                    showLibrary = !libraryIndex || searchActive,
                 )
             }
         }
@@ -132,8 +151,12 @@ internal fun SimpleLightScreen<*>.TabContent(tab: LibraryTab, header: Boolean = 
 @Composable
 private fun SimpleLightScreen<*>.TabHeader(tab: LibraryTab) {
     val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
+    val title = tabTitle(tab, likedOnly(tab))
+    // A filter shows as a second line, the title's own staying as it was.
+    val filters = tabFilterLine(tab)
     AppHeader(
-        title = tabTitle(tab, likedOnly(tab), tagFilter(tab)),
+        title = if (filters == null) title else null,
+        titleContent = filters?.let { line -> { TitleCard(title, line) } },
         onBack = if (simplified) ({ LibraryNav.openLibraryIndex() }) else null,
         // Beside the page's menu, as a way of narrowing the list like the sort
         // and filters. Straight to the keyboard: a magnifier is a request to type.
@@ -157,10 +180,10 @@ val LibraryTab.page: LibraryPage
     }
 
 /**
- * The genre and composer a tab has been narrowed to — see [TagFilterScreen].
+ * The genre a tab has been narrowed to — see [TagFilterScreen].
  *
- * Only the two lists of things a tag describes have one: an artist is not a
- * genre's or a composer's, and a playlist is whatever was put in it.
+ * Only the two lists of things a genre describes have one: an artist is not a
+ * genre's, and a playlist is whatever was put in it.
  */
 @Composable
 fun tagFilter(tab: LibraryTab): TagFilter = when (tab) {
@@ -188,14 +211,21 @@ fun likedOnly(tab: LibraryTab?): Boolean {
     }
 }
 
+/** What the tab is called: "Liked" in front when only liked items show. The other filters get [tabFilterLine]. */
+fun tabTitle(tab: LibraryTab, likedOnly: Boolean): String =
+    if (likedOnly) "Liked " + tab.title else tab.title
+
 /**
- * What the tab is called, given the narrowing over it (liked, genre, composer):
- * the title is the only thing on the page that says a list has been narrowed.
+ * The filters narrowing a tab other than Liked, which the title already names —
+ * Downloaded, then the genre — for the line under it; null with
+ * none. On a line of its own, as the title has no room for them.
  */
-fun tabTitle(tab: LibraryTab, likedOnly: Boolean, filter: TagFilter = TagFilter()): String {
-    val base = if (likedOnly) "Liked " + tab.title else tab.title
-    val tags = listOf(filter.genre, filter.composer).filter { it.isNotEmpty() }
-    return if (tags.isEmpty()) base else (listOf(base) + tags).joinToString(" · ")
+@Composable
+fun tabFilterLine(tab: LibraryTab): String? {
+    val downloaded = downloadedOnly(tab)
+    val tags = tagFilter(tab)
+    val parts = listOfNotNull("Downloaded".takeIf { downloaded }, tags.genre.ifEmpty { null })
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
 /** Whether the active source's music can be read: false only for a phone library not let in yet. */
@@ -553,58 +583,137 @@ private fun SimpleLightScreen<*>.LibraryIndex() {
     val likedAlbums by App.library.hasLikedAlbums.collectAsState()
     val likedTracks by App.library.hasLikedTracks.collectAsState()
     val likes = source.supportsLikes
+    val likedAsFilter = App.settings.likedAsFilter.state.collectAsState().value
 
     // A Column of its own: the shell hands each page a Box.
     Column(modifier = Modifier.fillMaxSize()) {
         AppHeader(
-            title = "Library",
-            fitTitle = true,
-            rightAction = libraryCornerAction(LibraryPage.LIBRARY),
+            // The source's name with the SDK's chevron: a picker, as the library's
+            // name is at the top of Plexamp. Choosing a source is the whole
+            // library's business, so this page is where it lives in this layout.
+            titleContent = { SourceTitle(source.name) { go { SourcesScreen(it) } } },
+            // Settings' one place in this layout, two taps from anywhere: the
+            // More menus leave it out here.
+            rightAction = HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
         )
         ScrollableList {
             item { IndexRow(LibraryTab.PLAYLISTS) }
             item { IndexRow(LibraryTab.ARTISTS) }
             item { IndexRow(LibraryTab.ALBUMS) }
             item { IndexRow(LibraryTab.SONGS) }
-            // The same three again, narrowed, as a block under the plain lists.
-            if (likes && likedArtists) {
+            // The same three again, narrowed, as a block under the plain lists —
+            // or, with Liked as Filter (TRIAL), a switch on each tab's More page.
+            if (likes && likedArtists && !likedAsFilter) {
                 item { LikedRow(LibraryTab.ARTISTS) }
             }
-            if (likes && likedAlbums) {
+            if (likes && likedAlbums && !likedAsFilter) {
                 item { LikedRow(LibraryTab.ALBUMS) }
             }
-            if (likes && likedTracks) {
+            if (likes && likedTracks && !likedAsFilter) {
                 item { LikedRow(LibraryTab.SONGS) }
             }
         }
     }
 }
 
+@Composable
+private fun SourceTitle(name: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxWidth().appClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AppText(
+                name,
+                pxSp(LightType.FINE_PX),
+                role = TextRole.Subheading,
+                maxLines = 1,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Spacer(Modifier.width(px(SOURCE_CHEVRON_GAP_PX)))
+            LightIcon(LightIcons.DOWN, size = SOURCE_CHEVRON_UNITS, contentDescription = "Choose source")
+        }
+    }
+}
+
+/** The chevron at one grid unit, about the title's cap height, a little apart from it. */
+private const val SOURCE_CHEVRON_UNITS = 1f
+private const val SOURCE_CHEVRON_GAP_PX = 16
+
 /** One tab, on the index: its own bar icon, and its name. */
 @Composable
 private fun IndexRow(tab: LibraryTab) {
-    TextRow(
-        title = tab.title,
-        leading = { AppIcon(iconFor(tab), size = px(56)) },
-        onClick = {
-            // The unnarrowed list: "Albums" showing only the liked ones would lie.
-            App.scope.launch { setLikedOnly(tab, false) }
-            LibraryNav.selectTab(tab)
-        },
-    )
+    val likedAsFilter = App.settings.likedAsFilter.state.collectAsState().value
+    IndexLine(tab.title, iconFor(tab)) {
+        // The unnarrowed list: "Albums" showing only the liked ones would lie.
+        // With Liked as a switch (TRIAL), it is the switch's to say, as on the tabs.
+        if (!likedAsFilter) App.scope.launch { setLikedOnly(tab, false) }
+        LibraryNav.selectTab(tab)
+    }
 }
 
 /** The same tab, narrowed to what you kept. */
 @Composable
 private fun LikedRow(tab: LibraryTab) {
-    TextRow(
-        title = "Liked ${tab.title}",
-        leading = { AppIcon(AppIcons.Favorite, size = px(56)) },
-        onClick = {
-            App.scope.launch { setLikedOnly(tab, true) }
-            LibraryNav.selectTab(tab)
-        },
-    )
+    IndexLine("Liked ${tab.title}", AppIcons.Favorite) {
+        App.scope.launch { setLikedOnly(tab, true) }
+        LibraryNav.selectTab(tab)
+    }
+}
+
+/**
+ * A row of the index: a menu of places, so the settings pages' Heading type, on
+ * a pitch that fits six whole rows in the 920px between the header and the bar;
+ * a seventh (all three liked lists) scrolls. The glyph on the menus' text axis,
+ * the name after it.
+ */
+@Composable
+private fun IndexLine(title: String, icon: ImageVector, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(px(INDEX_ROW_PX))
+            .rowClickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Spacer(Modifier.width(px(MENU_ROW_INSET_PX)))
+        AppIcon(icon, size = px(INDEX_GLYPH_PX))
+        Spacer(Modifier.width(px(INDEX_GLYPH_GAP_PX)))
+        AppText(
+            title,
+            pxSp(LightType.HEADING_PX),
+            lineHeight = pxSp(LightType.HEADING_LINE_PX),
+            role = TextRole.Heading,
+            maxLines = 1,
+        )
+    }
+}
+
+private const val INDEX_ROW_PX = 153
+private const val INDEX_GLYPH_PX = 66
+private const val INDEX_GLYPH_GAP_PX = 40
+
+/** Whether this tab is narrowed to what is downloaded — see AppSettings.downloadedAlbumsOnly. */
+@Composable
+fun downloadedOnly(tab: LibraryTab?): Boolean {
+    val albums = App.settings.downloadedAlbumsOnly.state.collectAsState().value
+    val songs = App.settings.downloadedSongsOnly.state.collectAsState().value
+    val artists = App.settings.downloadedArtistsOnly.state.collectAsState().value
+    return when (tab) {
+        LibraryTab.ALBUMS -> albums
+        LibraryTab.SONGS -> songs
+        LibraryTab.ARTISTS -> artists
+        else -> false
+    }
+}
+
+suspend fun setDownloadedOnly(tab: LibraryTab, value: Boolean) {
+    when (tab) {
+        LibraryTab.ALBUMS -> App.settings.downloadedAlbumsOnly.set(value)
+        LibraryTab.SONGS -> App.settings.downloadedSongsOnly.set(value)
+        LibraryTab.ARTISTS -> App.settings.downloadedArtistsOnly.set(value)
+        LibraryTab.PLAYLISTS -> Unit
+    }
 }
 
 suspend fun setLikedOnly(tab: LibraryTab, value: Boolean) {

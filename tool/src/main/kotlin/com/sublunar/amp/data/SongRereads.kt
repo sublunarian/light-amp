@@ -45,6 +45,11 @@ internal fun albumsNeedingSongs(
         val why = when {
             prev == null -> "new album"
             cachedCount == 0 -> "no songs cached"
+            // A count that held steady doesn't mean nothing changed: every
+            // file replaced keeps it. Where both sides carry the server's own
+            // "last changed" (Plex), a new one says so. (From Garado's fork.)
+            album.updatedMs != 0L && prev.updatedMs != 0L && album.updatedMs != prev.updatedMs ->
+                "album changed on the server"
             // A song count of 0 means "not sent" (Plex leaves leafCount
             // off), not zero: compared as a count, every album looks
             // changed on every sync. Ask when the server last touched the

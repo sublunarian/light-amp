@@ -47,9 +47,8 @@ fun BoxScope.ListScrollBar(target: ScrollTarget, lane: Dp = px(SCROLLBAR_LANE_PX
     val visible = target.visibleItems
     if (total == 0 || visible == 0 || visible >= total) return
 
-    val fraction = (visible.toFloat() / total).coerceAtLeast(MIN_FRACTION)
-    val first = target.firstVisibleIndex.toFloat() / total
-    val travel = (first / (1f - fraction).coerceAtLeast(0.0001f)).coerceIn(0f, 1f)
+    val fraction = (target.extent / total).coerceAtLeast(MIN_FRACTION)
+    val travel = (target.position / (total - target.extent).coerceAtLeast(0.0001f)).coerceIn(0f, 1f)
 
     val scope = rememberCoroutineScope()
     // The gesture reads the current target: a ScrollTarget is rebuilt on every
@@ -135,8 +134,8 @@ fun BoxScope.OverlayScrollBar(target: ScrollTarget, scrolling: Boolean) {
     val visible = target.visibleItems
     if (alpha == 0f || total == 0 || visible == 0 || visible >= total) return
 
-    val fraction = (visible.toFloat() / total).coerceIn(OVERLAY_MIN_FRACTION, OVERLAY_MAX_FRACTION)
-    val travel = (target.firstVisibleIndex.toFloat() / (total - visible)).coerceIn(0f, 1f)
+    val fraction = (target.extent / total).coerceIn(OVERLAY_MIN_FRACTION, OVERLAY_MAX_FRACTION)
+    val travel = (target.position / (total - target.extent).coerceAtLeast(0.0001f)).coerceIn(0f, 1f)
     val scope = rememberCoroutineScope()
     // Read live in the gesture, as in ListScrollBar.
     val latest by rememberUpdatedState(target)

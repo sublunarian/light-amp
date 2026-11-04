@@ -41,8 +41,6 @@ object JellyfinProvider : SourceProvider {
 
     private const val MP3_KBPS = 256
 
-    // Jellyfin's own app lists a library's playlists by their songs and shows each one whole.
-    override val libraryNarrowsPlaylistSongs: Boolean get() = false
 
     /**
      * Closer to Subsonic than Plex is — real favourites, playlists that can be
@@ -94,7 +92,7 @@ object JellyfinProvider : SourceProvider {
 private const val SIGN_OUT_TIMEOUT_MS = 5_000L
 
 private object JellyfinUi : SourceUi {
-    override val addEntries = listOf(AddEntry("Jellyfin Server", AddIcon.ADD, AddAction.OpenScreen { JellyfinLinkScreen(it) }))
+    override val addEntries = listOf(AddEntry("Jellyfin Server", AddIcon.SERVER, AddAction.OpenScreen { JellyfinLinkScreen(it) }))
 
     // Signing in again, here rather than by logging out and adding the
     // server anew, keeps its library and downloads.

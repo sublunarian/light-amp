@@ -10,8 +10,10 @@ import androidx.compose.runtime.setValue
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.components.ActionList
+import com.sublunar.amp.ui.components.CenteredNote
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.largeMenuText
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
 
@@ -46,7 +48,20 @@ class PlaylistActionsScreen(
             .firstOrNull { it.id == playlistId }?.readOnly == true
         val kind = if (readOnly) "Smart playlist" else "Playlist"
 
-        ListScreen(onBack = { goBack() }, title = playlistName, subtitle = kind) {
+        ListScreen(
+            onBack = { goBack() },
+            title = playlistName,
+            subtitle = kind,
+            headingRows = largeMenuText(),
+            rightAction = settingsCorner(fromHeader = fromDetail),
+        ) {
+            // Nothing until the songs are known: the rows that need them would
+            // otherwise arrive late and push the rest down under a finger
+            // already on its way to Edit or Delete.
+            if (tracks == null) {
+                CenteredNote("Loading…")
+                return@ListScreen
+            }
             ActionList {
                 PlayRows(list)
                 DownloadRow(source, list, fullyDownloaded, "Download Playlist")

@@ -82,6 +82,9 @@ data class PlexMetadata(
      */
     val playlistItemID: Long? = null,
     @SerialName("Genre") val genres: List<PlexTag> = emptyList(),
+    /** An album's primary type (Album, EP, Single) and its secondary ones (Live, Soundtrack, Compilation…). */
+    @SerialName("Format") val formats: List<PlexTag> = emptyList(),
+    @SerialName("Subformat") val subformats: List<PlexTag> = emptyList(),
     @SerialName("Media") val media: List<PlexMedia> = emptyList(),
 ) {
     /** Plex builds this one from a filter, so its contents can't be edited. */

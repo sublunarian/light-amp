@@ -18,6 +18,9 @@ object Providers {
 
     private val byKind = all.associateBy { it.kind }
 
+    /** Subsonic next to Bandcamp, which is a Subsonic server underneath. */
+    private val addOrder: List<SourceProvider> = listOf(LocalProvider, SubsonicProvider, PlexProvider, JellyfinProvider)
+
     /** The provider for [kind]. Every kind has one — ProvidersTest fails the build otherwise. */
     fun of(kind: SourceKind): SourceProvider = byKind.getValue(kind)
 
@@ -27,7 +30,7 @@ object Providers {
      * what needs no server of your own, then the servers.
      */
     fun addEntries(existing: List<MusicSource>): List<AddEntry> =
-        all.flatMap { provider ->
+        addOrder.flatMap { provider ->
             provider.ui.addEntries.filter { entry ->
                 !entry.singleton || existing.none { it.kind == provider.kind }
             }

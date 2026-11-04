@@ -34,13 +34,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.Track
-import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.LocalDimTextAlpha
 import com.sublunar.amp.ui.components.AppArtwork
 import com.sublunar.amp.ui.components.AppHeader
@@ -59,10 +56,7 @@ import com.sublunar.amp.ui.components.ROW_ART_PX
 import com.sublunar.amp.ui.components.ROW_GAP_PX
 import com.sublunar.amp.ui.components.ROW_H_PX
 import com.sublunar.amp.ui.components.ROW_LEAD_PX
-import com.sublunar.amp.ui.components.ROW_SUB_LINE_PX
-import com.sublunar.amp.ui.components.ROW_SUB_PX
-import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
-import com.sublunar.amp.ui.components.ROW_TITLE_PX
+import com.sublunar.amp.ui.components.RowSubtitle
 import com.sublunar.amp.ui.components.SelectionArtwork
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.SelectionState
@@ -76,6 +70,7 @@ import com.sublunar.amp.ui.components.rememberDragReorderState
 import com.sublunar.amp.ui.components.rememberScrollTarget
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.components.rowClickable
+import com.sublunar.amp.ui.components.rowType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SimpleLightScreen
@@ -199,31 +194,7 @@ internal fun SimpleLightScreen<*>.QueuePlayer(queue: List<Track>, index: Int, on
  */
 @Composable
 private fun QueueTitle(title: String, subtitle: String?) {
-    // TRIAL (Use SDK Font Styles): the player's own two-line card.
-    if (App.settings.sdkFontStyles.state.collectAsState().value) {
-        TitleCard(title, subtitle.orEmpty())
-        return
-    }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        AppText(
-            title,
-            pxSp(LightType.FINE_PX),
-            role = TextRole.Subheading,
-            maxLines = 1,
-            align = TextAlign.Center,
-        )
-        if (subtitle != null) {
-            AppText(
-                subtitle,
-                pxSp(QUEUE_SUBTITLE_PX),
-                lineHeight = pxSp(QUEUE_SUBTITLE_LINE_PX),
-                weight = FontWeight.Normal,
-                dim = true,
-                maxLines = 1,
-                align = TextAlign.Center,
-            )
-        }
-    }
+    TitleCard(title, subtitle.orEmpty())
 }
 
 /**
@@ -260,7 +231,7 @@ private fun SimpleLightScreen<*>.QueueView(
     listState: LazyListState = rememberLazyListState(),
 ) {
     val drag = rememberDragReorderState<String>()
-    val artworkHidden by App.hideArtwork.collectAsState()
+    val artworkHidden by App.hideListArtwork.collectAsState()
     val rowPx = with(LocalDensity.current) { px(ROW_H_PX).toPx() }
     // Read unconditionally, branch on the result — see ARCHITECTURE.md on
     // conditional composable calls.
@@ -347,8 +318,6 @@ private fun SimpleLightScreen<*>.QueueView(
                         // Drag handle for reordering within the upcoming part of the queue.
                         if (!isPast && !isCurrent) {
                             DragHandle { drag.iconCoords[rowKey] = it }
-                        } else {
-                            Spacer(Modifier.width(px(ROW_GAP_PX)))
                         }
                     }
                     if (dropTarget?.beforeKey == rowKey) DropIndicatorLine(Modifier.align(Alignment.TopStart))
@@ -381,6 +350,7 @@ private fun RowScope.QueueRowContent(
         AppArtwork(track.coverArtId, size = px(ROW_ART_PX))
         Spacer(Modifier.width(px(ROW_GAP_PX)))
     }
+    val type = rowType(artless = artworkHidden)
     Column(Modifier.weight(1f)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (isCurrent) {
@@ -389,20 +359,13 @@ private fun RowScope.QueueRowContent(
             }
             AppText(
                 track.title,
-                pxSp(ROW_TITLE_PX),
-                lineHeight = pxSp(ROW_TITLE_LINE_PX),
-                role = TextRole.Fine,
+                pxSp(type.titlePx),
+                lineHeight = pxSp(type.titleLinePx),
+                role = type.titleRole,
                 maxLines = 1,
             )
         }
-        AppText(
-            track.artist,
-            pxSp(ROW_SUB_PX),
-            lineHeight = pxSp(ROW_SUB_LINE_PX),
-            role = TextRole.Detail,
-            dim = true,
-            maxLines = 1,
-        )
+        RowSubtitle(track.artist, type)
     }
 }
 
@@ -459,10 +422,6 @@ private const val QUEUE_END_PX = HEADER_BAR_PX
 private const val UNDERLINE_GAP_PX = 3
 private const val UNDERLINE_W_PX = 51
 private const val UNDERLINE_H_PX = 3
-
-/** The queue header's second line, the size of the title card's own. */
-private const val QUEUE_SUBTITLE_PX = 36
-private const val QUEUE_SUBTITLE_LINE_PX = 42
 
 /**
  * Shuffle and repeat at the foot of the queue, sized off the Light music app's

@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -23,8 +22,6 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.TextUnit
-import com.sublunar.amp.App
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
@@ -54,47 +51,15 @@ const val INNER_SLOT_PX = 80
 const val CORNER_ICON_PX = 66
 
 /**
- * A header's title, dropped to the player's title-card size only when the full one
- * will not fit. Measured before drawing (drawing and correcting shows a frame at the
- * wrong size), in the exact style it is drawn in ([appTextStyle]) and the room left.
- */
-@Composable
-private fun HeaderTitle(title: String, fit: Boolean, roomPx: Int) {
-    if (App.settings.sdkFontStyles.state.collectAsState().value) {
-        SdkHeaderTitle(title, fit, roomPx)
-        return
-    }
-    val full = pxSp(LightType.FINE_PX)
-    val style = appTextStyle(full, role = TextRole.Subheading, align = TextAlign.Center)
-    val measurer = rememberTextMeasurer()
-    val fits = !fit || roomPx <= 0 || remember(title, roomPx, style) {
-        !measurer.measure(
-            AnnotatedString(title),
-            style = style,
-            maxLines = 1,
-            constraints = Constraints(maxWidth = roomPx),
-        ).hasVisualOverflow
-    }
-    AppText(
-        title,
-        if (fits) full else pxSp(SUBPAGE_TITLE_PX),
-        lineHeight = if (fits) TextUnit.Unspecified else pxSp(SUBPAGE_TITLE_LINE_PX),
-        role = TextRole.Subheading,
-        maxLines = 1,
-        align = TextAlign.Center,
-    )
-}
-
-/**
- * TRIAL (Use SDK Font Styles): the title at the largest size it fits at, a pixel
- * at a time down from fine's 52px to [SDK_TITLE_MIN_PX], so a long one fills the
+ * A header's title at the largest size it fits at, a pixel at a time down from
+ * fine's 52px to [SDK_TITLE_MIN_PX], so a long one fills the
  * header rather than dropping a whole SDK step. Below the full size the sizes are
  * drawn as asked, not snapped back to an SDK style. Each is measured in the style
  * it would be drawn in. One that fits at none is cut off at the smallest: it
  * neither shrinks to fine print nor wraps.
  */
 @Composable
-private fun SdkHeaderTitle(title: String, fit: Boolean, roomPx: Int) {
+private fun HeaderTitle(title: String, fit: Boolean, roomPx: Int) {
     val full = LightType.FINE_PX
     val sizes = if (fit) (full downTo SDK_TITLE_MIN_PX).toList() else listOf(full)
     val styles = sizes.map {
@@ -138,10 +103,6 @@ private const val SDK_TITLE_MIN_PX = 48
 
 /** How long a title takes to fade in or out of the header. */
 private const val TITLE_FADE_MS = 200
-
-/** The size a title that will not fit drops to: the player's title card. */
-private const val SUBPAGE_TITLE_PX = 45
-private const val SUBPAGE_TITLE_LINE_PX = 54
 
 /**
  * Header height in LP3 pixels, the same 4 grid units as the bottom bars. Fixed, not

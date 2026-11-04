@@ -147,6 +147,32 @@ class DownloadQueue {
 
     private fun laneOf(picked: Picked) = if (picked.manual) manualLane else autoLane
 
+    /** What is waiting, in the order it will be fetched: the manual lane, then the automatic one. */
+    fun snapshot(): List<Picked> =
+        manualLane.values.map { Picked(it, manual = true) } + autoLane.values.map { Picked(it, manual = false) }
+
+    /**
+     * Drop [keys] from the manual lane; returns how many went. The automatic
+     * lane is left alone: what an offline mode wants, it queues again at the
+     * next top-up, so only changing the mode takes it away.
+     */
+    fun removeManual(keys: Collection<Key>): Int {
+        val before = manualLane.size
+        keys.forEach { manualLane.remove(it); strikes.remove(it) }
+        return before - manualLane.size
+    }
+
+    /** Move [keys] to the front of the manual lane, keeping their own order — Download First. */
+    fun putFirst(keys: Collection<Key>) {
+        val first = keys.mapNotNull { key -> manualLane[key]?.let { key to it } }
+        if (first.isEmpty()) return
+        val rest = LinkedHashMap(manualLane)
+        first.forEach { rest.remove(it.first) }
+        manualLane.clear()
+        first.forEach { (key, entry) -> manualLane[key] = entry }
+        manualLane.putAll(rest)
+    }
+
     /** Drop everything waiting for one source; returns how many went. */
     fun removeSource(sourceId: String): Int {
         val before = size

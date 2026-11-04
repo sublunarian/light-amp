@@ -40,7 +40,6 @@ import com.sublunar.amp.ui.components.appTextStyle
 import com.sublunar.amp.ui.components.ArtworkTile
 import com.sublunar.amp.ui.components.CenteredNote
 import com.sublunar.amp.ui.components.HeaderAction
-import com.sublunar.amp.ui.components.NumberedActionRow
 import com.sublunar.amp.ui.components.NumberedRow
 import com.sublunar.amp.ui.components.ROW_GAP_PX
 import com.sublunar.amp.ui.components.ROW_LEAD_PX
@@ -90,18 +89,14 @@ class AlbumDetailScreen(
         // A row above the tracks only where there is a card: an album opened
         // from a playlist or a radio track can be missing from the album list.
         val card = album?.takeIf { !selection.active }
-        // TRIAL (Album Shuffle Row): Shuffle heads the tracks, under the card.
-        val shuffleRow = App.settings.albumShuffleRow.state.collectAsState().value && !selection.active
-        val headerRows = (if (card != null) 1 else 0) + (if (shuffleRow) 1 else 0)
-        val listState = rememberListAnchor("album:$albumId", headerCount = headerRows)
-        // TRIAL (Use SDK Font Styles): the card names the album, and the header
-        // takes the name only once the card's title has scrolled up under it.
-        val sdkSizes = App.settings.sdkFontStyles.state.collectAsState().value
-        // Unmeasured counts as never reached, so the header doesn't flash the name first.
+        val listState = rememberListAnchor("album:$albumId", headerCount = if (card != null) 1 else 0)
+        // The card names the album, and the header takes the name only once the
+        // card's title has scrolled up under it. Unmeasured counts as never
+        // reached, so the header doesn't flash the name first.
         var cardTitleBottomPx by remember(albumId) { mutableStateOf(Int.MAX_VALUE) }
-        val headerTitleShown by remember(card, sdkSizes) {
+        val headerTitleShown by remember(card) {
             derivedStateOf {
-                !sdkSizes || card == null || listState.firstVisibleItemIndex > 0 ||
+                card == null || listState.firstVisibleItemIndex > 0 ||
                     listState.firstVisibleItemScrollOffset >= cardTitleBottomPx
             }
         }
@@ -125,7 +120,7 @@ class AlbumDetailScreen(
                         AppIcons.MoreVert,
                         onLongClick = { go { SettingsScreen(it) } },
                     ) {
-                        go { AlbumActionsScreen(it, albumId) }
+                        go { AlbumActionsScreen(it, albumId, fromDetail = true) }
                     },
                     fitTitle = true,
                     titleShown = headerTitleShown,
@@ -145,7 +140,6 @@ class AlbumDetailScreen(
                 }
                 ScrollableList(state = listState) {
                     if (card != null) item { AlbumCard(card, list) { cardTitleBottomPx = it } }
-                    if (shuffleRow) item { NumberedActionRow(AppIcons.Shuffle, "Shuffle") { shuffleAlbum(list) } }
                     itemsIndexed(list, key = { _, t -> t.id }) { index, track ->
                         NumberedRow(
                             number = track.trackNumber ?: (index + 1),
@@ -228,11 +222,6 @@ class AlbumDetailScreen(
      */
     @Composable
     private fun AlbumCard(album: Album, tracks: List<Track>, onTitleBottom: (Int) -> Unit) {
-        val sdkSizes = App.settings.sdkFontStyles.state.collectAsState().value
-        // TRIAL (Album Shuffle Row): the buttons leave the card (Shuffle heads
-        // the track list; liking and rating are in the ⋮ menu), so the title
-        // gets a third line, and the facts take the cover's bottom line.
-        val noButtons = App.settings.albumShuffleRow.state.collectAsState().value
         // Loaded here rather than in the tile, so a record with no cover can go
         // without the empty square.
         val cardArtPx = with(LocalDensity.current) { px(CARD_ART_PX).roundToPx() }
@@ -241,8 +230,6 @@ class AlbumDetailScreen(
         // The title has first claim on the room: a title over more than one
         // line leaves the artist one.
         var titleLines by remember(album.id) { mutableStateOf(1) }
-        val subPx = if (sdkSizes) LightType.DETAIL_PX else CARD_SUB_PX
-        val subLinePx = if (sdkSizes) SDK_CARD_SUB_LINE_PX else CARD_SUB_LINE_PX
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -269,12 +256,12 @@ class AlbumDetailScreen(
             Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                 CardTitle(
                     album.title,
-                    fullPx = if (sdkSizes) ROW_TITLE_PX else CARD_TITLE_PX,
-                    fullLinePx = if (sdkSizes) ROW_TITLE_LINE_PX else CARD_TITLE_LINE_PX,
+                    fullPx = ROW_TITLE_PX,
+                    fullLinePx = ROW_TITLE_LINE_PX,
                     // No smaller than the credit under it.
-                    minPx = subPx,
-                    role = if (sdkSizes) TextRole.Fine else TextRole.Copy,
-                    maxLines = if (noButtons) SHUFFLE_ROW_TITLE_LINES else CARD_TITLE_LINES,
+                    minPx = CARD_SUB_PX,
+                    role = TextRole.Fine,
+                    maxLines = CARD_TITLE_LINES,
                     onTitleBottom = onTitleBottom,
                 ) { titleLines = it }
                 // The credit, then the facts. The credit's lines sit closer than
@@ -283,8 +270,8 @@ class AlbumDetailScreen(
                 // on detail's looser 60px line).
                 AppText(
                     album.artist,
-                    pxSp(subPx),
-                    lineHeight = pxSp(subLinePx),
+                    pxSp(CARD_SUB_PX),
+                    lineHeight = pxSp(CARD_SUB_LINE_PX),
                     dim = true,
                     maxLines = if (titleLines > 1) 1 else CARD_ARTIST_LINES,
                     exact = true,
@@ -292,19 +279,16 @@ class AlbumDetailScreen(
                 Spacer(Modifier.height(px(CARD_FACTS_GAP_PX)))
                 // Title and credit belong together at the top; the facts are of
                 // another kind and sit on the cover's bottom edge.
-                if (noButtons) Spacer(Modifier.weight(1f))
                 AppText(
                     albumFacts(album, tracks),
-                    pxSp(subPx),
-                    lineHeight = pxSp(subLinePx),
+                    pxSp(CARD_SUB_PX),
+                    lineHeight = pxSp(CARD_SUB_LINE_PX),
                     dim = true,
                     maxLines = 1,
                     exact = true,
                 )
-                if (!noButtons) {
-                    Spacer(Modifier.weight(1f))
-                    CardButtons(album, tracks)
-                }
+                Spacer(Modifier.weight(1f))
+                CardButtons(album, tracks)
             }
         }
     }
@@ -361,8 +345,6 @@ class AlbumDetailScreen(
 
 /** The record's own block at the head of its list. */
 private const val CARD_ART_PX = 300
-private const val CARD_TITLE_PX = LightType.COPY_PX
-private const val CARD_TITLE_LINE_PX = LightType.COPY_LINE_PX
 private const val CARD_GAP_PX = 24
 private const val CARD_ICON_PX = 60
 private const val CARD_ICON_GAP_PX = 66
@@ -373,18 +355,9 @@ private const val CARD_ARTIST_LINES = 2
 /** The title takes up to two lines, shrinking to fit them before it is cut off. */
 private const val CARD_TITLE_LINES = 2
 
-/** TRIAL (Album Shuffle Row): three, with no buttons beside the cover to make room for. */
-private const val SHUFFLE_ROW_TITLE_LINES = 3
-
-/**
- * The card's credit and facts, the sizes list subtitles had before they took the
- * SDK's detail, each on its natural line (about 1.21 times the size).
- */
-private const val CARD_SUB_PX = 39
-private const val CARD_SUB_LINE_PX = 47
-
-/** TRIAL (Use SDK Font Styles): the SDK's detail size on its natural line. */
-private const val SDK_CARD_SUB_LINE_PX = 50
+/** The card's credit and facts: the SDK's detail size on its natural line. */
+private const val CARD_SUB_PX = LightType.DETAIL_PX
+private const val CARD_SUB_LINE_PX = 50
 
 /** Extra air above the facts, so a wrapped credit's lines sit closer than the facts do. */
 private const val CARD_FACTS_GAP_PX = 10

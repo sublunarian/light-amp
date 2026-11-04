@@ -34,6 +34,7 @@ import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -126,7 +127,7 @@ class DownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     return@Column
                 }
                 LibraryList(anchor = "downloaded-songs") {
-                    downloadProblems(unmet, refused, parked, holds)
+                    downloadProblems(this@DownloadsScreen, unmet, refused, parked, holds)
                     if (progress.active || paused) {
                         item {
                             // Separate from pause: this throws away a queue that can
@@ -184,63 +185,64 @@ class DownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             }
         }
     }
+}
 
-    /** A row per server whose downloads are stuck, saying why and, where it can, what to do. */
-    private fun LazyListScope.downloadProblems(
-        unmet: List<MusicSource>,
-        refused: List<MusicSource>,
-        parked: List<MusicSource>,
-        holds: Map<String, Downloader.Hold>,
-    ) {
-        unmet.forEach { source ->
-            item(key = "unmet/${source.id}") {
-                if (source.downloadsRefused) {
-                    RefusedDownloadsRow(source)
-                } else {
-                    TextRow(
-                        title = "${source.name} can't keep original files",
-                        subtitle = "Choose another download quality",
-                        subtitleLines = 2,
-                        onClick = { go { FormatPickerScreen(it, source.id, FormatSlot.DOWNLOAD) } },
-                    )
-                }
-            }
-        }
-        refused.forEach { source ->
-            item(key = "refused/${source.id}") {
-                if ((holds[source.id] as? Downloader.Hold.Refused)?.status == 401) {
-                    TextRow(
-                        title = "${source.name} refused the login",
-                        subtitle = "Sign in again in Sources",
-                        subtitleLines = 2,
-                        onClick = { go { SourceDetailScreen(it, source.id) } },
-                    )
-                } else {
-                    RefusedDownloadsRow(source)
-                }
-            }
-        }
-        parked.forEach { source ->
-            item(key = "parked/${source.id}") {
-                // A tap is someone saying the server is back: try now.
+/** A row per server whose downloads are stuck, saying why and, where it can, what to do. */
+internal fun LazyListScope.downloadProblems(
+    screen: SimpleLightScreen<*>,
+    unmet: List<MusicSource>,
+    refused: List<MusicSource>,
+    parked: List<MusicSource>,
+    holds: Map<String, Downloader.Hold>,
+) {
+    unmet.forEach { source ->
+        item(key = "unmet/${source.id}") {
+            if (source.downloadsRefused) {
+                RefusedDownloadsRow(source)
+            } else {
                 TextRow(
-                    title = "${source.name} isn't answering",
-                    subtitle = listOfNotNull("Its downloads wait for it", (holds[source.id] as? Downloader.Hold.Parked)?.error).joinToString(" · "),
+                    title = "${source.name} can't keep original files",
+                    subtitle = "Choose another download quality",
                     subtitleLines = 2,
-                    onClick = { App.downloader.tryNow(source.id) },
+                    onClick = { screen.go { FormatPickerScreen(it, source.id, FormatSlot.DOWNLOAD) } },
                 )
             }
         }
     }
-
-    @Composable
-    private fun RefusedDownloadsRow(source: MusicSource) {
-        TextRow(
-            title = "${source.name} won't let this account download",
-            subtitle = "Its owner can allow it in the server's user settings",
-            subtitleLines = 2,
-        )
+    refused.forEach { source ->
+        item(key = "refused/${source.id}") {
+            if ((holds[source.id] as? Downloader.Hold.Refused)?.status == 401) {
+                TextRow(
+                    title = "${source.name} refused the login",
+                    subtitle = "Sign in again in Sources",
+                    subtitleLines = 2,
+                    onClick = { screen.go { SourceDetailScreen(it, source.id) } },
+                )
+            } else {
+                RefusedDownloadsRow(source)
+            }
+        }
     }
+    parked.forEach { source ->
+        item(key = "parked/${source.id}") {
+            // A tap is someone saying the server is back: try now.
+            TextRow(
+                title = "${source.name} isn't answering",
+                subtitle = listOfNotNull("Its downloads wait for it", (holds[source.id] as? Downloader.Hold.Parked)?.error).joinToString(" · "),
+                subtitleLines = 2,
+                onClick = { App.downloader.tryNow(source.id) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun RefusedDownloadsRow(source: MusicSource) {
+    TextRow(
+        title = "${source.name} won't let this account download",
+        subtitle = "Its owner can allow it in the server's user settings",
+        subtitleLines = 2,
+    )
 }
 
 /**
@@ -255,7 +257,7 @@ class OfflineModeScreen(
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
         val current = sources.firstOrNull { it.id == sourceId }?.offlineMode ?: OfflineMode.MANUAL
-        ListScreen(onBack = { goBack() }, title = "Auto-Download", settings = true) {
+        ListScreen(onBack = { goBack() }, title = "Auto-Download", headingRows = true) {
             ScrollableList {
                 items(OfflineMode.entries.toList()) { mode ->
                     TextRow(
@@ -278,7 +280,7 @@ class DataModeScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val current by App.settings.dataMode.state.collectAsState()
-        ListScreen(onBack = { goBack() }, title = "Data Mode", settings = true) {
+        ListScreen(onBack = { goBack() }, title = "Data Mode", headingRows = true) {
             ScrollableList {
                 items(DataMode.entries.toList()) { mode ->
                     TextRow(
@@ -313,7 +315,7 @@ class SizeLimitScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             listOf(1L, 2L, 5L, 10L, 20L, 32L, 48L).map { it * gb }.filter { it < max } + listOf(max)
         }
 
-        ListScreen(onBack = { goBack() }, title = "Storage Limit", settings = true) {
+        ListScreen(onBack = { goBack() }, title = "Storage Limit", headingRows = true) {
             ScrollableList {
                 // Both numbers, because a limit is chosen against both.
                 item {

@@ -30,12 +30,13 @@ import com.sublunar.amp.data.SongSort
 import com.sublunar.amp.data.SourceRoute
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.TagFilter
+import com.sublunar.amp.data.albumArtistNames
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.db.LibraryDao
+import com.sublunar.amp.data.db.DownloadFile
 import com.sublunar.amp.data.db.LibraryDatabase
 import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.sublunar.amp.data.db.libraryDatabaseName
-import com.sublunar.amp.data.hasComposer
 import com.sublunar.amp.data.hasGenre
 import com.sublunar.amp.data.noteOom
 import com.sublunar.amp.data.sortAlbums
@@ -193,6 +194,14 @@ object App {
      * is missing (the cache cleared, no sync since) is left out; its bytes
      * still count in the storage figure, which is read off the disk.
      */
+    /** Every source's download rows (size, when), by source id — for the Downloads page's albums. */
+    suspend fun downloadFilesBySource(): Map<String, List<DownloadFile>> =
+        settings.sources.first().associate { source ->
+            source.id to runCatching { databaseFor(source).libraryDao().downloadFiles() }
+                .noteOom("download files of ${source.name}")
+                .getOrDefault(emptyList())
+        }
+
     suspend fun downloadsBySource(): List<Pair<MusicSource, List<Track>>> =
         settings.sources.first().mapNotNull { source ->
             val dao = databaseFor(source).libraryDao()
@@ -295,6 +304,10 @@ object App {
     suspend fun deleteAllDownloads() {
         downloader.cancelAll()
         settings.sources.first().forEach { wipeDownloads(it) }
+        // Auto-Download's wants are rules, not a record of what was fetched:
+        // they stand, so what they want comes straight back. Space is had back
+        // by changing the rules.
+        topUpDownloads()
     }
 
     /**
@@ -304,6 +317,7 @@ object App {
     suspend fun deleteDownloadsFor(source: MusicSource) {
         downloader.cancelSource(source.id)
         wipeDownloads(source)
+        topUpDownloads()
     }
 
     private suspend fun wipeDownloads(source: MusicSource) {
@@ -562,6 +576,9 @@ object App {
                 // the library would narrow to downloads and hide a good cache.
                 onSyncFailed = { authFailure -> if (!authFailure) reportServerReachable(false) },
                 onCoversDropped = { sourceId, ids -> artwork.drop(sourceId, ids) },
+                onDownloadsLeftLibrary = { sourceId, ids ->
+                    settings.sources.first().firstOrNull { it.id == sourceId }?.let { downloader.removeFrom(it, ids) }
+                },
             )
             library = LibraryRepository(
                 daos = _dao,
@@ -579,7 +596,6 @@ object App {
             playlists = LibraryPlaylists(
                 daos = _dao,
                 serverClient = serverClient,
-                libraryId = settings.libraryId,
                 metadataAllowed = ::metadataAllowed,
                 bulkAllowed = ::heavyDataAllowed,
                 yieldToPlayback = ::yieldToPlayback,
@@ -687,6 +703,8 @@ object App {
             // audio would be fetched again.
             scope.launch { downloader.reindexFromDisk() }
             scope.launch { covers.atLaunch() }
+            // A genre lasts the session — see AppSettings.clearTagFilters.
+            scope.launch { settings.clearTagFilters() }
             // A source's downloads yield to its sync, hundreds of small requests
             // that a saturated transcoder turns into a crawl. Only the browsed
             // source syncs, so only its downloads wait.
@@ -793,16 +811,12 @@ object App {
      */
     data class SortedView<T>(val items: List<T> = emptyList(), val letters: List<Char> = emptyList())
 
-    /**
-     * Which tag each list is narrowed to, as one value so the views below stay
-     * inside `combine`'s five-flow form. Blank means no filter.
-     */
-    val songsTagFilter: StateFlow<TagFilter> by lazy {
-        held(settings.songsGenre.state, settings.songsComposer.state, ::TagFilter)
-    }
-    val albumsTagFilter: StateFlow<TagFilter> by lazy {
-        held(settings.albumsGenre.state, settings.albumsComposer.state, ::TagFilter)
-    }
+    /** Which genre each list is narrowed to. Blank means no filter. */
+    val songsTagFilter: StateFlow<TagFilter> by lazy { tagFilterOf(settings.songsGenre.state) }
+    val albumsTagFilter: StateFlow<TagFilter> by lazy { tagFilterOf(settings.albumsGenre.state) }
+
+    private fun tagFilterOf(genre: StateFlow<String>): StateFlow<TagFilter> =
+        genre.map(::TagFilter).stateIn(scope, SharingStarted.Eagerly, TagFilter(genre.value))
 
     /**
      * [a] and [b] combined by [f], held, starting from what they hold now: the
@@ -813,8 +827,8 @@ object App {
 
     /**
      * The albums a tag filter leaves standing, or null when nothing is filtered.
-     * Derived from the songs: an album carries one genre of its own and no
-     * composer, and is a Bach album because Bach wrote what is on it.
+     * Derived from the songs: an album carries one genre of its own, while its
+     * songs can carry several, and a song's genre is what puts the album in.
      */
     private val albumsMatchingTags: StateFlow<Set<String>?> by lazy {
         combine(library.tracks, albumsTagFilter) { tracks, filter ->
@@ -826,20 +840,46 @@ object App {
         }.stateIn(scope, SharingStarted.Eagerly, null)
     }
 
+    /**
+     * The albums and the artists with at least one downloaded song, for the
+     * Downloaded filters — the same rule the lists follow offline.
+     */
+    private val downloadedOwners: StateFlow<Pair<Set<String>, Set<String>>> by lazy {
+        combine(library.tracks, library.downloadedTrackIds) { tracks, ids ->
+            if (ids.isEmpty()) return@combine emptySet<String>() to emptySet<String>()
+            val albums = HashSet<String>()
+            val artists = HashSet<String>()
+            for (track in tracks) {
+                if (track.id !in ids) continue
+                track.albumId?.let(albums::add)
+                artists.addAll(track.albumArtistNames())
+            }
+            albums to artists
+        }.stateIn(scope, SharingStarted.Eagerly, emptySet<String>() to emptySet())
+    }
+
     val sortedSongs: StateFlow<SortedView<Track>> by lazy {
         // Folded into one flow, as sortedAlbums' order is: combine takes five at most.
         val order = combine(settings.songSort.state, settings.songSortReversed.state, ::Pair)
         // Recently Added goes by album dates. Distinct, so liking an album doesn't sort the songs again.
         val albumAdded = library.albums.map { list -> list.associate { it.id to it.createdMs } }.distinctUntilChanged()
+        // Liked and Downloaded folded into one, as the order is: combine takes five at most.
+        val narrowing = combine(
+            settings.likedSongsOnly.state,
+            settings.downloadedSongsOnly.state,
+            library.downloadedTrackIds,
+            ::Triple,
+        )
         combine(
             library.tracks,
             order,
-            settings.likedSongsOnly.state,
+            narrowing,
             songsTagFilter,
             albumAdded,
-        ) { list, (sort, rev), liked, tags, added ->
+        ) { list, (sort, rev), (liked, downloadedOnly, downloaded), tags, added ->
             val narrowed = list.asSequence()
                 .filter { !liked || it.liked }
+                .filter { !downloadedOnly || it.id in downloaded }
                 .filter { tags.admits(it) }
                 .toList()
             val sorted = sortSongs(narrowed, sort, rev, added)
@@ -854,9 +894,8 @@ object App {
         }.stateIn(scope, SharingStarted.Eagerly, SortedView())
     }
 
-    /** Whether [track] has the filter's genre and composer, a blank one matching all. */
-    private fun TagFilter.admits(track: Track): Boolean =
-        (genre.isEmpty() || track.hasGenre(genre)) && (composer.isEmpty() || track.hasComposer(composer))
+    /** Whether [track] has the filter's genre, a blank one matching all. */
+    private fun TagFilter.admits(track: Track): Boolean = genre.isEmpty() || track.hasGenre(genre)
 
     /**
      * Whether covers are switched off, as state: every row in a long list asks,
@@ -866,6 +905,11 @@ object App {
         val artwork = settings.artwork.state
         artwork.map { it == ArtworkMode.NONE }
             .stateIn(scope, SharingStarted.Eagerly, artwork.value == ArtworkMode.NONE)
+    }
+
+    /** Covers off beside list rows — see [AppSettings.listArtwork]. Also true whenever artwork is off. */
+    val hideListArtwork: StateFlow<Boolean> by lazy {
+        held(settings.listArtwork.state, hideArtwork) { on, all -> !on || all }
     }
 
     /**
@@ -899,9 +943,15 @@ object App {
             settings.shuffleNonce.state,
             ::Triple,
         )
-        combine(library.albums, order, settings.likedAlbumsOnly.state, albumsMatchingTags) {
-                list, (sort, rev, nonce), liked, tagged ->
-            val narrowed = list.filter { (!liked || it.liked) && (tagged == null || it.id in tagged) }
+        val narrowing = combine(settings.likedAlbumsOnly.state, settings.downloadedAlbumsOnly.state, downloadedOwners) {
+                liked, downloadedOnly, owners ->
+            Pair(liked, if (downloadedOnly) owners.first else null)
+        }
+        combine(library.albums, order, narrowing, albumsMatchingTags) {
+                list, (sort, rev, nonce), (liked, downloaded), tagged ->
+            val narrowed = list.filter {
+                (!liked || it.liked) && (downloaded == null || it.id in downloaded) && (tagged == null || it.id in tagged)
+            }
             val sorted = sortAlbums(narrowed, sort, rev, nonce)
             // The letters follow the sort's own key, or they would disagree
             // with the order.
@@ -922,8 +972,10 @@ object App {
             settings.artistSort.state,
             settings.artistSortReversed.state,
             settings.likedArtistsOnly.state,
-        ) { list, sort, rev, liked ->
-            val sorted = sortArtists(list.filter { !liked || it.liked }, sort, rev)
+            combine(settings.downloadedArtistsOnly.state, downloadedOwners) { on, owners -> if (on) owners.second else null },
+        ) { list, sort, rev, liked, downloaded ->
+            val narrowed = list.filter { (!liked || it.liked) && (downloaded == null || it.name in downloaded) }
+            val sorted = sortArtists(narrowed, sort, rev)
             SortedView(
                 sorted,
                 if (sort == ArtistSort.NAME) sorted.map { indexLetterOf(sortName(it.name)) } else emptyList(),

@@ -170,9 +170,9 @@ private fun BoxScope.ScrollMarker(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
-                .align(Alignment.TopStart)
+                .align(Alignment.TopCenter)
                 .offset(y = maxHeight * fraction)
-                .fillMaxWidth()
+                .width(px(MARKER_W_PX))
                 .height(px(MARKER_H_PX))
                 .background(LightThemeTokens.colors.content),
         )
@@ -181,10 +181,12 @@ private fun BoxScope.ScrollMarker(
 
 /**
  * Width of the strip, so lists keep their text clear of it. The scroll bar shares
- * the lane, which reaches the queue's grab bars (they end 68px from the edge), so a
- * touch beside a handle always lands on one or the other.
+ * the lane: two grid units, wider than a thumb's edge and so easy to hit.
  */
-const val INDEX_STRIP_PX = 68
+const val INDEX_STRIP_PX = 80
+
+/** The position marker: short of the strip's edges, so it reads as a mark, not a rule. */
+private const val MARKER_W_PX = 60
 private const val MARKER_H_PX = 3
 
 /**

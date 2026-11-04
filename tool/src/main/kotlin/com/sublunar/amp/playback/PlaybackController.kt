@@ -1,5 +1,7 @@
 package com.sublunar.amp.playback
 
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
@@ -26,9 +28,9 @@ import com.sublunar.amp.playback.output.OutputFamily
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.Outputs
-import com.sublunar.amp.playback.output.previousRestarts
 import com.sublunar.amp.playback.output.QueueEdit
 import com.sublunar.amp.playback.output.Refound
+import com.sublunar.amp.playback.output.previousRestarts
 import com.thelightphone.sdk.audio.LightAudio
 import com.thelightphone.sdk.audio.LightAudioError
 import com.thelightphone.sdk.audio.LightAudioErrorKind
@@ -1586,6 +1588,28 @@ class PlaybackController(
      * kind of failure it was; what the server said, if anything, only the
      * door saw — see StreamProxy.lastOutcome.
      */
+    /**
+     * Whether the song at the current row is Apple Lossless, which the LP3's
+     * decoders reject on the first buffer until LightOS fixes them
+     * (light-sdk#192): by what the server said it is, or, for a file on the
+     * phone, by the file's own audio track, which a scan of the phone's music
+     * doesn't record. Asked only once a song has failed, so the file is read
+     * at most once.
+     */
+    private fun isAppleLossless(source: LightAudioSource?): Boolean {
+        if (_queue.value.getOrNull(_index.value)?.codec == "alac") return true
+        val file = (source as? LightAudioSource.FileSource)?.file ?: return false
+        return runCatching {
+            val extractor = MediaExtractor()
+            try {
+                extractor.setDataSource(file.path)
+                (0 until extractor.trackCount).any { extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME) == ALAC_MIME }
+            } finally {
+                extractor.release()
+            }
+        }.getOrDefault(false)
+    }
+
     private fun playerFailed(p: LightAudioPlayer, error: LightAudioError) {
         // The stand-in's silence, not the music: nothing to park or blame.
         if (standIn.active) {
@@ -1615,8 +1639,8 @@ class PlaybackController(
         when (failure) {
             // Neither retried nor blamed on the link or the server. It says what
             // it is, and playback moves on if it was moving.
-            PlayFailure.FILE -> blockedAtCurrent(because = CANT_PLAY_FILE)
-            PlayFailure.FORMAT -> blockedAtCurrent(because = CANT_PLAY_FORMAT)
+            PlayFailure.FILE -> blockedAtCurrent(because = if (isAppleLossless(source)) CANT_PLAY_ALAC else CANT_PLAY_FILE)
+            PlayFailure.FORMAT -> blockedAtCurrent(because = if (isAppleLossless(source)) CANT_PLAY_ALAC else CANT_PLAY_FORMAT)
             // The server isn't unreachable, it is unasked, so there is nothing
             // to fall back to or latch.
             PlayFailure.UNASKED -> blockedAtCurrent()
@@ -3133,6 +3157,10 @@ class PlaybackController(
 
         /** A stream that arrived and wouldn't decode. */
         private const val CANT_PLAY_FORMAT = "Can't play this format"
+
+        /** Apple Lossless, which the phone's own decoders fail on — see [isAppleLossless]. */
+        private const val CANT_PLAY_ALAC = "Can't play Apple Lossless"
+        private const val ALAC_MIME = "audio/alac"
 
         /** The loopback door the player streams through isn't up — see StreamProxy. */
         private const val STREAM_UNAVAILABLE = "Can't stream right now"

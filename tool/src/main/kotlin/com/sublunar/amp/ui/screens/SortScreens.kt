@@ -29,24 +29,20 @@ private val PLAYLIST_SORT_OPTIONS =
     listOf(PlaylistSort.NAME, PlaylistSort.DATE_CREATED, PlaylistSort.RECENTLY_UPDATED)
 
 /**
- * Narrow a list to one genre, or to one composer. The values are the library's own
+ * Narrow a list to one genre. The values are the library's own
  * (LibraryRepository.genres), so each leads somewhere. "All" clears the narrowing.
- * Genre and composer are separate settings and combine.
  */
 class TagFilterScreen(
     sealed: SealedLightActivity,
     private val tab: LibraryTab,
-    private val byComposer: Boolean,
 ) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val values by (if (byComposer) App.library.composers else App.library.genres)
-            .collectAsState()
-        val filter = tagFilter(tab)
-        val current = if (byComposer) filter.composer else filter.genre
+        val values by App.library.genres.collectAsState()
+        val current = tagFilter(tab).genre
         ListScreen(
             onBack = { goBack() },
-            title = if (byComposer) "Composer" else "Genre",
+            title = "Genre",
             subtitle = tab.title,
         ) {
             ScrollableList {
@@ -62,16 +58,13 @@ class TagFilterScreen(
 
     private fun choose(value: String) {
         App.scope.launch {
-            when {
-                tab == LibraryTab.ALBUMS && byComposer -> App.settings.albumsComposer.set(value)
-                tab == LibraryTab.ALBUMS -> App.settings.albumsGenre.set(value)
-                tab == LibraryTab.SONGS && byComposer -> App.settings.songsComposer.set(value)
-                tab == LibraryTab.SONGS -> App.settings.songsGenre.set(value)
+            when (tab) {
+                LibraryTab.ALBUMS -> App.settings.albumsGenre.set(value)
+                LibraryTab.SONGS -> App.settings.songsGenre.set(value)
                 else -> Unit
             }
         }
-        // A narrowed list is the point of the tap, so leave with the answer, as
-        // the sort pickers do (see MoreScreen.change).
+        // Back to the More page's Filters, where another may be set too.
         goBack(Unit)
     }
 }

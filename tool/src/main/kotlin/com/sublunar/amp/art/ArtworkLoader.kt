@@ -299,7 +299,8 @@ class ArtworkLoader(
      * [protectedFiles] are the covers the budget may never take — see
      * [trimToBudget] — read only if the budget is reached. The library being
      * synced is added to them while this runs, so room for its covers is never
-     * made at its own expense; its full covers stop where the room runs out.
+     * made at its own expense. Only small copies make room; full ones stop
+     * where the room runs out, rather than evicting another library's.
      */
     suspend fun syncCovers(
         sourceId: String,
@@ -325,9 +326,17 @@ class ArtworkLoader(
             },
             store = { id, bytes -> writeDisk(sourceId, id, small, bytes) },
             cacheBytes = { coverFiles().sumOf { it.length() } },
-            // Below the line, not to it, or a cache at its ceiling walks the
-            // directory again for every cover that follows.
-            makeRoom = { trimToBudget(keep(), budgetBytes, budgetBytes - budgetBytes / 10) },
+            // Small copies make room (below the line, not to it, or a cache at
+            // its ceiling walks the directory again for every cover that
+            // follows). Full ones never do: what they would evict is another
+            // library's full covers, which that library's sync would fetch
+            // again, each sync taking the room back in turn. A full pass
+            // stops where the room runs out, and the rest load when opened.
+            makeRoom = if (small) {
+                { trimToBudget(keep(), budgetBytes, budgetBytes - budgetBytes / 10) }
+            } else {
+                { coverFiles().sumOf { it.length() } }
+            },
             budgetBytes = budgetBytes,
             // Switched off part-way is switched off: see [artworkOff].
             mayContinue = { !artworkOff() && mayContinue() },

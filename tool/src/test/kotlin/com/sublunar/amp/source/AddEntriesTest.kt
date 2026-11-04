@@ -12,13 +12,13 @@ import kotlin.test.assertIs
  */
 class AddEntriesTest {
 
-    private val labels = listOf("Music on This Phone", "Bandcamp", "Plex Server", "Jellyfin Server", "Subsonic Server")
+    private val labels = listOf("Music on Phone", "Bandcamp", "Subsonic Server", "Plex Server", "Jellyfin Server")
 
     @Test
     fun `with no sources, every way to add one, in order`() {
         val entries = Providers.addEntries(emptyList())
         assertEquals(labels, entries.map { it.label })
-        assertEquals(listOf(AddIcon.PHONE) + List(4) { AddIcon.ADD }, entries.map { it.icon })
+        assertEquals(listOf(AddIcon.PHONE) + List(4) { AddIcon.SERVER }, entries.map { it.icon })
     }
 
     @Test

@@ -3,8 +3,8 @@ package com.sublunar.amp.ui.screens
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,18 +20,19 @@ import com.sublunar.amp.source.AddIcon
 import com.sublunar.amp.source.PendingServer
 import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.Providers
+import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.ListScreen
-import com.sublunar.amp.ui.components.PlayAllRow
-import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.ScrollableList
+import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.largeMenuText
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Which library the app is showing, and nothing else: every source's libraries,
@@ -62,7 +63,7 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val sync by App.librarySync.syncState.collectAsState()
         val current = choice ?: active?.let { Choice(it.id, it.selectedLibraries) }
 
-        ListScreen(onBack = { goBack() }, title = "Sources") {
+        ListScreen(onBack = { goBack() }, title = "Sources", headingRows = largeMenuText()) {
             ScrollableList {
                 sources.forEach { source ->
                     // The source is the heading its libraries sit under: there is
@@ -216,7 +217,7 @@ class LibraryVisibilityScreen(
         val sources by App.settings.sources.state.collectAsState()
         val source = sources.firstOrNull { it.id == sourceId }
 
-        ListScreen(onBack = { leave() }, title = if (adding) "Choose Libraries" else "Shown in Amp", settings = true) {
+        ListScreen(onBack = { leave() }, title = if (adding) "Choose Libraries" else "Library", headingRows = true) {
             ScrollableList {
                 if (source == null) return@ScrollableList
                 item {
@@ -309,8 +310,6 @@ private fun relativeTime(ms: Long): String {
     }
 }
 
-/** The row that means the whole server rather than one of its libraries. */
-
 /** One row under a source: a library to switch to, or the whole server. */
 private data class LibraryEntry(val name: String, val libraryId: String?)
 
@@ -327,7 +326,7 @@ class SourceListScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = "Sources", settings = true) {
+        ListScreen(onBack = { goBack() }, title = "Sources", headingRows = true) {
             ScrollableList {
                 items(sources, key = { it.id }) { source ->
                     TextRow(
@@ -336,9 +335,12 @@ class SourceListScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         onClick = { go { SourceDetailScreen(it, source.id) } },
                     )
                 }
-                item { SectionLabel("Add") }
                 item {
-                    PlayAllRow(AppIcons.Add, "Add Source") { go { AddSourceScreen(it) } }
+                    TextRow(
+                        title = "Add Source",
+                        leading = { AppIcon(AppIcons.Add, size = px(56)) },
+                        onClick = { go { AddSourceScreen(it) } },
+                    )
                 }
             }
         }
@@ -352,12 +354,16 @@ class AddSourceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = "Add Source", settings = true) {
+        ListScreen(onBack = { goBack() }, title = "Add Source", headingRows = true) {
             ScrollableList {
                 Providers.addNotes.forEach { note -> item { SectionLabel(note) } }
                 Providers.addEntries(sources).forEach { entry ->
                     item {
-                        PlayAllRow(entry.icon.vector, entry.label) { begin(entry, thenBack = true) }
+                        TextRow(
+                            title = entry.label,
+                            leading = { AppIcon(entry.icon.vector, size = px(56)) },
+                            onClick = { begin(entry, thenBack = true) },
+                        )
                     }
                 }
             }
@@ -387,8 +393,8 @@ internal fun SimpleLightScreen<*>.begin(entry: AddEntry, thenBack: Boolean) {
 
 private val AddIcon.vector: ImageVector
     get() = when (this) {
-        AddIcon.ADD -> AppIcons.Add
         AddIcon.PHONE -> AppIcons.Smartphone
+        AddIcon.SERVER -> AppIcons.Dns
     }
 
 /** Where a source's music comes from, for the row that names it. */
@@ -419,7 +425,7 @@ class SourceDetailScreen(
         val canRead = access == PhoneAccess.GRANTED
         val askAccess = rememberAccessRequest(source?.phoneLibrary)
 
-        ListScreen(onBack = { goBack() }, title = source?.name ?: "Source", settings = true) {
+        ListScreen(onBack = { goBack() }, title = source?.name ?: "Source", headingRows = true) {
             ScrollableList {
                 if (source == null) return@ScrollableList
                 if (source.phoneLibrary != null && !canRead) {
@@ -482,10 +488,9 @@ class SourceDetailScreen(
                 }
                 // Only with a choice to make: one library has nothing to hide.
                 if (source.libraries.size >= 2) {
-                    item { SectionLabel("Library") }
                     item {
                         TextRow(
-                            title = "Shown in Amp",
+                            title = "Library",
                             value = "${source.visibleLibraries.size} of ${source.libraries.size}",
                             onClick = { go { LibraryVisibilityScreen(it, source.id) } },
                         )
@@ -493,7 +498,6 @@ class SourceDetailScreen(
                 }
                 // Logging out of a server is forgetting it: one row, named for
                 // what it does to this kind of source.
-                item { SectionLabel("Remove") }
                 item {
                     val local = !source.hasServer
                     TextRow(

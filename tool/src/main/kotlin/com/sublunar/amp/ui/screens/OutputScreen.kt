@@ -31,9 +31,11 @@ import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppProgressBar
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.ListScreen
+import com.sublunar.amp.ui.components.MENU_ROW_INSET_PX
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.horizontalScrub
+import com.sublunar.amp.ui.components.listPadding
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
@@ -111,7 +113,7 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             }
 
             Spacer(Modifier.height(px(20)))
-            LazyColumn(modifier = Modifier.weight(1f)) {
+            LazyColumn(modifier = Modifier.weight(1f), contentPadding = listPadding()) {
                 item { SectionLabel("Playing on") }
                 item {
                     OutputRow(
@@ -169,7 +171,7 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         pxSp(LightType.DETAIL_PX),
                         lineHeight = pxSp(LightType.DETAIL_LINE_PX),
                         dim = true,
-                        modifier = Modifier.padding(horizontal = px(80), vertical = px(31)),
+                        modifier = Modifier.padding(start = px(MENU_ROW_INSET_PX), top = px(31), bottom = px(31)),
                     )
                 }
             }
@@ -211,7 +213,7 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             pxSp(LightType.DETAIL_PX),
             lineHeight = pxSp(LightType.DETAIL_LINE_PX),
             dim = true,
-            modifier = Modifier.padding(horizontal = px(80), vertical = px(20)),
+            modifier = Modifier.padding(start = px(MENU_ROW_INSET_PX), top = px(20), bottom = px(20)),
         )
     }
 

@@ -67,7 +67,11 @@ object SubsonicProvider : SourceProvider {
     // server found to take playback reports is sent them from then on.
     override fun createClient(source: MusicSource): MusicServer? =
         source.toSubsonicConfig()?.let {
-            SubsonicClient(it, reportsPlayback = source.features.promises(ServerFeatures.REPORT_PLAYBACK))
+            SubsonicClient(
+                it,
+                reportsPlayback = source.features.promises(ServerFeatures.REPORT_PLAYBACK),
+                bitrates = source.features?.bitrates.orEmpty(),
+            )
         }
 
     override val ui: SourceUi get() = SubsonicUi
@@ -80,11 +84,11 @@ private object SubsonicUi : SourceUi {
     override val addEntries = listOf(
         AddEntry(
             "Bandcamp",
-            AddIcon.ADD,
+            AddIcon.SERVER,
             AddAction.OpenScreen { ServerScreen(it, sourceId = null, bandcamp = true) },
             selfHosted = false,
         ),
-        AddEntry("Subsonic Server", AddIcon.ADD, AddAction.OpenScreen { ServerScreen(it, sourceId = null) }),
+        AddEntry("Subsonic Server", AddIcon.SERVER, AddAction.OpenScreen { ServerScreen(it, sourceId = null) }),
     )
 
     // Named because "Subsonic" is the protocol, not the thing most people

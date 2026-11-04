@@ -67,8 +67,8 @@
   offers Rescan Library instead of Sync Now.
 - Add Source lists music on this phone and Bandcamp first, and the QR scan
   for a username and password is offered for Bandcamp only.
-- Playlists follow the library you pick: on Navidrome you see and edit only
-  its songs, and Plex and Jellyfin list only the playlists that hold them.
+- Every playlist shows, whole, whichever library you pick; only songs from
+  libraries you hide stay out.
 - Choosing a speaker while paused no longer starts playback, and switching
   source while casting keeps the speaker.
 - Contributions now come as issues, with pull requests by invitation.

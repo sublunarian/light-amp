@@ -423,6 +423,40 @@ class Downloader(
         }
     }
 
+    /** What is waiting, manual lane first — for the Downloads page. The one transferring is [progress]'s. */
+    suspend fun queued(): List<DownloadQueue.Picked> = lock.withLock { queue.snapshot() }
+
+    /** Drop [trackIds] of [sourceId] from what was asked for by hand — see [DownloadQueue.removeManual]. */
+    fun cancelQueued(sourceId: String, trackIds: Collection<String>) {
+        scope.launch {
+            lock.withLock {
+                queue.removeManual(trackIds.map { DownloadQueue.Key(sourceId, it) })
+                val current = inFlight
+                _progress.value = if (queue.isEmpty() && current == null) {
+                    DownloadProgress(completed = _progress.value.completed)
+                } else {
+                    _progress.value.copy(pending = queue.size + (if (current != null) 1 else 0))
+                }
+            }
+        }
+    }
+
+    /** Fetch [trackIds] of [sourceId] before anything else asked for by hand. */
+    fun downloadFirst(sourceId: String, trackIds: Collection<String>) {
+        scope.launch {
+            lock.withLock { queue.putFirst(trackIds.map { DownloadQueue.Key(sourceId, it) }) }
+        }
+    }
+
+    /**
+     * What [sourceId]'s Favorites mode wanted at its last top-up, or null before
+     * one has run this session: a download in it would only come back if
+     * removed, so the Downloads page says it is kept rather than offering to.
+     */
+    fun autoKept(sourceId: String): Set<String>? = autoWanted[sourceId]
+
+    private val autoWanted = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
+
     /** A source removed: its queue goes, and what was learnt of its playlists. */
     suspend fun forget(sourceId: String) {
         cancelSource(sourceId)
@@ -471,6 +505,15 @@ class Downloader(
     }
 
     suspend fun removeAll(trackIds: List<String>) = trackIds.forEach { remove(it) }
+
+    /** Remove [source]'s downloads of [trackIds], whichever source is browsed — see LibrarySync.reportLostDownloads. */
+    suspend fun removeFrom(source: MusicSource, trackIds: Collection<String>) {
+        val dao = daoFor(source)
+        trackIds.forEach { trackId ->
+            dao.download(trackId)?.let { store.delete(source.id, it.fileName) }
+            dao.deleteDownload(trackId)
+        }
+    }
 
     /** Lyrics captured with a download, for offline display. */
     suspend fun cachedLyrics(trackId: String): String? =
@@ -542,12 +585,12 @@ class Downloader(
         val dao = daoFor(source)
         val ids = dao.downloadsMissingLyrics(LYRICS_REFILL_PER_RUN)
         if (ids.isEmpty()) return
-        val wantKaraoke = settings.karaokeLyrics.first()
+        val wantSynced = settings.syncedLyrics.first()
         val tracks = dao.tracksByIds(ids).associateBy { it.id }
         for (id in ids) {
             val track = tracks[id] ?: continue
             val row = dao.download(id) ?: continue
-            val words = runCatching { fetchLyrics(client, track, wantKaraoke) }.getOrNull()
+            val words = runCatching { fetchLyrics(client, track, wantSynced) }.getOrNull()
             dao.upsertDownload(row.copy(lyrics = words.orEmpty()))
         }
     }
@@ -679,7 +722,7 @@ class Downloader(
         // The list, once, behind the metadata gate a sync waits on.
         val known = backgroundPlaylistTracks[source.id] ?: run {
             if (!metadataAllowed()) return emptySet()
-            val playlists = runCatching { client.getPlaylists(source.libraryId) }.getOrNull()
+            val playlists = runCatching { client.getPlaylists() }.getOrNull()
                 ?: return emptySet()
             HashMap<String, List<String>?>()
                 .also { map -> playlists.forEach { map[it.id] = null } }
@@ -735,8 +778,11 @@ class Downloader(
             addAll(likedArtistTrackIds)
         }
         when (source.offlineMode) {
-            OfflineMode.MANUAL -> return
-            OfflineMode.FAVORITES -> Unit
+            OfflineMode.MANUAL -> {
+                autoWanted.remove(source.id)
+                return
+            }
+            OfflineMode.FAVORITES -> autoWanted[source.id] = wanted.toSet()
             // Everything, but favourites first so they are never the tracks that
             // lose out when the budget runs dry. And the rest only while there is
             // room for any of it: with the budget spent, the worker would empty
@@ -844,7 +890,7 @@ class Downloader(
     /**
      * Lyrics to store beside a downloaded track.
      *
-     * With karaoke on, timed lyrics are the point — so when the server only has
+     * With Synced Lyrics on, timed lyrics are the point — so when the server only has
      * plain text, lrclib is asked as well, exactly as the player does when
      * online. Without it, whatever the server has is enough and the extra
      * request isn't worth making on every track in the library.
@@ -852,10 +898,10 @@ class Downloader(
     private suspend fun fetchLyrics(
         client: MusicServer,
         track: Track,
-        wantKaraoke: Boolean,
+        wantSynced: Boolean,
     ): String? {
         val fromServer = runCatching { client.getLyrics(track.id) }.getOrNull()
-        val best = if (wantKaraoke && fromServer?.synced != true) {
+        val best = if (wantSynced && fromServer?.synced != true) {
             runCatching { LyricsRepository.timedFromLrclib(track) }.getOrNull() ?: fromServer
         } else {
             fromServer
@@ -873,7 +919,7 @@ class Downloader(
 
     private suspend fun drain() {
         val service = ServiceHold()
-        val wantKaraoke = settings.karaokeLyrics.first()
+        val wantSynced = settings.syncedLyrics.first()
         val used = UsedBytes()
         var completed = 0
 
@@ -926,7 +972,7 @@ class Downloader(
                 continue
             }
 
-            when (fetch(picked, sources, used, completed, service, wantKaraoke)) {
+            when (fetch(picked, sources, used, completed, service, wantSynced)) {
                 Fetch.SAVED -> completed++
                 Fetch.NEXT -> Unit
                 Fetch.OVER_BUDGET -> {
@@ -996,7 +1042,7 @@ class Downloader(
         used: UsedBytes,
         completed: Int,
         service: ServiceHold,
-        wantKaraoke: Boolean,
+        wantSynced: Boolean,
     ): Fetch {
         val entry = picked.entry
         val source = sources.firstOrNull { it.id == entry.sourceId }
@@ -1055,7 +1101,7 @@ class Downloader(
         }
 
         service.start()
-        return when (val fetched = store.download(source.id, client.downloadUrl(track, format), track.id, format)) {
+        return when (val fetched = store.download(source.id, client.downloadUrl(track, format), track.id, format, track.durationMs)) {
             is DownloadStore.Fetched.Saved -> {
                 // Disowned while it was transferring — its source's downloads
                 // were deleted, or the source itself was. Whatever landed goes.
@@ -1063,7 +1109,7 @@ class Downloader(
                     fetched.file.delete()
                     return Fetch.NEXT
                 }
-                keep(fetched.file, track, format, source, client, dao, wantKaraoke)
+                keep(fetched.file, track, format, source, client, dao, wantSynced)
                 used.add(fetched.file.length())
                 clearBackOff(source.id)
                 if (_progress.value.error != null) _progress.value = _progress.value.copy(error = null)
@@ -1100,7 +1146,7 @@ class Downloader(
         source: MusicSource,
         client: MusicServer,
         dao: LibraryDao,
-        wantKaraoke: Boolean,
+        wantSynced: Boolean,
     ) {
         // An mp3 that came down as a stream has no index, and every
         // player that opens it has to guess its length — see
@@ -1116,7 +1162,7 @@ class Downloader(
         // Always: the words are a few kilobytes beside a song, and an
         // offline track without them is the one place they cannot be
         // fetched on demand.
-        val lyrics = fetchLyrics(client, track, wantKaraoke)
+        val lyrics = fetchLyrics(client, track, wantSynced)
         dao.upsertDownload(
             DownloadEntity(
                 trackId = track.id,
