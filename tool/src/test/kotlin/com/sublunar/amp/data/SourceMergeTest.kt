@@ -72,7 +72,7 @@ class SourceMergeTest {
             kind = SourceKind.SUBSONIC,
             name = "Navidrome",
             baseUrl = "https://music.example.com",
-            username = "armin",
+            username = "kim",
         )
         val (list, id) = mergeSource(listOf(one), one.copy(id = "s2"))
         assertEquals("s2", id)
@@ -172,7 +172,7 @@ class SourceMergeTest {
 
     @Test
     fun `a Plex player name is folded to what a header can carry`() {
-        assertEquals("Armin's Amp", "Armin’s Amp".headerSafe())
+        assertEquals("Kim's Amp", "Kim’s Amp".headerSafe())
         assertEquals("Amp", "東京".headerSafe())
     }
 }

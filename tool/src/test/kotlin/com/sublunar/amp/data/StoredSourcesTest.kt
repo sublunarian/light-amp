@@ -170,7 +170,7 @@ class StoredSourcesTest {
         kind = SourceKind.SUBSONIC,
         name = "Navidrome",
         baseUrl = "https://music.example.com",
-        username = "armin",
+        username = "kim",
         password = "secret",
         streamFormatId = "flac",
         cellularFormatId = "mp3",
@@ -228,7 +228,7 @@ class StoredSourcesTest {
         kind = SourceKind.JELLYFIN,
         name = "Jellyfin",
         baseUrl = "https://jf.example",
-        username = "armin",
+        username = "kim",
         cellularFormatId = "opus",
         token = "jf-token",
         userId = "5f2b8c1d",
@@ -242,7 +242,7 @@ class StoredSourcesTest {
         kind = SourceKind.JELLYFIN,
         name = "Jellyfin",
         baseUrl = "http://10.0.0.3:8096",
-        username = "armin",
+        username = "kim",
         token = "t1",
         userId = "u0",
     )
@@ -263,7 +263,7 @@ class StoredSourcesTest {
         // Each canonical record is exactly what today's encoder writes: keys in
         // constructor order, defaults left out.
         const val SUBSONIC_FULL =
-            """{"id":"server","kind":"SUBSONIC","name":"Navidrome","baseUrl":"https://music.example.com","username":"armin","password":"secret","streamFormatId":"flac","cellularFormatId":"mp3","downloadFormatId":"raw","offlineModeName":"FAVORITES","downloadLimitBytes":21474836480,"playerName":"Kitchen","parserGeneration":2,"libraryId":"3","libraries":[{"id":"1","name":"Music"},{"id":"3","name":"Kids"},{"id":"5","name":"Live"}],"hiddenLibraryIds":["5",null],"features":{"checkedVersion":"1.16.1/navidrome/0.58.0","generation":3}}"""
+            """{"id":"server","kind":"SUBSONIC","name":"Navidrome","baseUrl":"https://music.example.com","username":"kim","password":"secret","streamFormatId":"flac","cellularFormatId":"mp3","downloadFormatId":"raw","offlineModeName":"FAVORITES","downloadLimitBytes":21474836480,"playerName":"Kitchen","parserGeneration":2,"libraryId":"3","libraries":[{"id":"1","name":"Music"},{"id":"3","name":"Kids"},{"id":"5","name":"Live"}],"hiddenLibraryIds":["5",null],"features":{"checkedVersion":"1.16.1/navidrome/0.58.0","generation":3}}"""
         const val BANDCAMP =
             """{"id":"src-b1","kind":"SUBSONIC","name":"Bandcamp","baseUrl":"https://bandcamp.com/api/subsonic","username":"fan123","password":"0123456789abcdef0123456789abcdef01234567","downloadFormatId":"mp3","features":{"checkedVersion":"1.16.1/BandcampServer/1.0","missing":["getScanStatus","setRating","getSimilarSongs","download"],"generation":3}}"""
         const val PLEX =
@@ -271,9 +271,9 @@ class StoredSourcesTest {
         const val PLEX_OLD =
             """{"id":"src-p0","kind":"PLEX","name":"Plex","baseUrl":"http://10.0.0.2:32400","token":"t0","machineIdentifier":"m0"}"""
         const val JELLYFIN =
-            """{"id":"src-j1","kind":"JELLYFIN","name":"Jellyfin","baseUrl":"https://jf.example","username":"armin","cellularFormatId":"opus","token":"jf-token","userId":"5f2b8c1d","deviceId":"amp-0002","libraries":[{"id":"a1","name":"Music"}],"features":{"missing":["keepCopies"]}}"""
+            """{"id":"src-j1","kind":"JELLYFIN","name":"Jellyfin","baseUrl":"https://jf.example","username":"kim","cellularFormatId":"opus","token":"jf-token","userId":"5f2b8c1d","deviceId":"amp-0002","libraries":[{"id":"a1","name":"Music"}],"features":{"missing":["keepCopies"]}}"""
         const val JELLYFIN_OLD =
-            """{"id":"src-j0","kind":"JELLYFIN","name":"Jellyfin","baseUrl":"http://10.0.0.3:8096","username":"armin","token":"t1","userId":"u0"}"""
+            """{"id":"src-j0","kind":"JELLYFIN","name":"Jellyfin","baseUrl":"http://10.0.0.3:8096","username":"kim","token":"t1","userId":"u0"}"""
         const val LOCAL = """{"id":"local","kind":"LOCAL","name":"Local Music"}"""
         const val SUBSONIC_OLD =
             """{"id":"src-s0","kind":"SUBSONIC","name":"Old","baseUrl":"https://old.example","username":"u","password":"p","streamFormatId":"mp3"}"""
