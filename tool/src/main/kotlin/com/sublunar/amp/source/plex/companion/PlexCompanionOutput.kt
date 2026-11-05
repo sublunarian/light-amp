@@ -87,7 +87,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     private var pushedStopped = false
 
     /** The little HTTP server a subscription pushes to. Built once: a port per cast would leak. */
-    private val listener = PlexCompanionListener { body ->
+    private val listener = PlexCompanionListener({ steered()?.directUrl }) { body ->
         lastPush = System.currentTimeMillis()
         plexTimelineFrom(body)?.let { t ->
             pushedStopped = t.state == "stopped"
@@ -518,7 +518,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         pushedStopped = false
         subscribed = client.companionSubscribe(target, port, nextCommandId())
         log(
-            if (subscribed) "subscribed; ${target.name} pushes to ${listener.localAddress()}:$port"
+            if (subscribed) "subscribed; ${target.name} pushes to port $port"
             else "subscribe declined — polling",
         )
     }

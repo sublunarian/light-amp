@@ -3,6 +3,7 @@ package com.sublunar.amp.playback
 import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.Player
+import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.Track
 import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioSource
@@ -214,7 +215,7 @@ internal class StandIn(
                 p.repeatMode = Player.REPEAT_MODE_OFF
                 p.setMediaQueueAt(listOf(track.toAudioItem(LightAudioSource.FileSource(file))), 0, at)
                 if (outputPlaying) p.play() else p.pause()
-                Log.i(TAG, "standing in for ${track.id} at=$at playing=$outputPlaying")
+                Log.i(TAG, "standing in for ${track.id.takeUnless(PhoneFiles::isPhoneFile) ?: "a phone file"} at=$at playing=$outputPlaying")
                 // Only now: until the new item was in, the player could still
                 // reopen the old file.
                 scope.launch(Dispatchers.IO) { if (gen == generation) Silence.prune(dir, keep = file) }

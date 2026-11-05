@@ -39,7 +39,7 @@ suspend fun PlexClient.companionPlayers(): List<PlexPlayer> = coroutineScope {
     val server = fromServer.await()
     val account = fromAccount.await()
     val seen = server.map { it.id }.toSet()
-    Log.i(TAG, "players: server=${server.map { it.name }} account=${account.map { "${it.name}@${it.directUrl}" }}")
+    Log.i(TAG, "players: server=${server.map { it.name }} account=${account.map { it.name }}")
     server + account.filter { it.id !in seen }
 }
 
@@ -207,7 +207,7 @@ suspend fun PlexClient.playerIsWhoWeThink(target: PlexPlayer): Boolean = runCatc
         return@runCatching true
     }
     (reported == target.id).also {
-        if (!it) Log.i(TAG, "${target.directUrl} is $reported, not ${target.id}")
+        if (!it) Log.i(TAG, "${target.name} is $reported, not ${target.id}")
     }
 }.getOrElse {
     Log.i(TAG, "couldn't check who ${target.name} is: ${it::class.simpleName}")
