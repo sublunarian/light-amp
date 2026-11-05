@@ -236,8 +236,13 @@ object App {
         if (source.id == this.source.value.id) playback.stop()
         scope.launch { source.provider.signOut(source) }
         scope.launch {
-            forgetSource(source)
-            settings.removeSource(source.id)
+            // The login goes even when clearing the rest fails.
+            try {
+                forgetSource(source)
+            } finally {
+                settings.removeSource(source.id)
+                pending.forgetSource(source.id)
+            }
         }
     }
 
@@ -283,13 +288,18 @@ object App {
         // through the ids this database holds — see ArtworkLoader.drop.
         val covers = runCatching { db.libraryDao().allCoverArtIds() }
             .noteOom("covers of ${source.name}").getOrDefault(emptyList())
-        db.libraryDao().apply {
-            clearTracks()
-            clearAlbums()
-            clearLikedArtists()
-            clearDownloads()
-            clearAllTopSongs()
-            clearAllPlaylistTracks()
+        // A full phone can refuse the deletes: the files below are what frees it.
+        runCatching {
+            db.libraryDao().apply {
+                clearTracks()
+                clearAlbums()
+                clearLikedArtists()
+                clearDownloads()
+                clearAllTopSongs()
+                clearAllPlaylistTracks()
+                clearArtistImages()
+                clearLyrics()
+            }
         }
         downloads.deleteSource(source.id)
         artwork.drop(source.id, covers)
