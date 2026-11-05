@@ -19,7 +19,8 @@ server.
 - Offline downloads, by album, playlist, track, or everything you've liked.
 - Data Mode: choose what happens off Wi-Fi. By default Amp streams on cellular
   and leaves downloads for Wi-Fi. Nothing is silently downgraded.
-- Synced lyrics.
+- Synced lyrics. When your server has none for a song, Amp looks it up on
+  lrclib.net by its title, artist, album and length.
 - Song radio, on servers that have it.
 - Play counts, ratings, likes and playlist edits sync back to the server.
 - Cast to a DLNA speaker or receiver, or from Plex to another Plex player (it
@@ -80,6 +81,9 @@ without adb is waiting on Light
   ([light-sdk#192](https://github.com/lightphone/light-sdk/issues/192)). Until
   then, stream and download in Opus or MP3 (MP3 on Plex), or convert the files
   to FLAC.
+- Casting gives the speaker a stream address with your server login in it, and
+  other devices on that network can read it from the speaker. Cast only on
+  networks and to speakers you trust.
 
 Also waiting on Light:
 
