@@ -245,7 +245,8 @@ through the gated client, deciding per request under the rules in force at that
 moment. That is why a network or data-mode change never needs the player's
 queue edited. Plain HTTP, which the SDK's `cleartext-http` capability permits
 in every build. It proves itself at start by fetching from itself; if that
-fails, `wrap()` returns the server's own URL and the About page says why.
+fails, `wrap()` hands out an address that fails at once (`UNAVAILABLE_URL`),
+never the server's own, and the About page says why.
 Anything that hands the player a URL must go through `App.streamProxy.wrap()`,
 which `TrackSources.playerUrl` does for every stream.
 Between server and player sits a bounded read-ahead pipe fed by its own thread;
