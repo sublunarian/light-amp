@@ -83,9 +83,9 @@ without adb is waiting on Light
   ([light-sdk#192](https://github.com/lightphone/light-sdk/issues/192)). Until
   then, stream and download in Opus or MP3 (MP3 on Plex), or convert the files
   to FLAC.
-- Casting gives the speaker a stream address with your server login in it, and
-  other devices on that network can read it from the speaker. Cast only on
-  networks and to speakers you trust.
+- Casting to a DLNA speaker or a Plex player hands it your server login, and
+  other devices on that network can read it. Cast only on networks and to
+  devices you trust.
 
 Also waiting on Light:
 
