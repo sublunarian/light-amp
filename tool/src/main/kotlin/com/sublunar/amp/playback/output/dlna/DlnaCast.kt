@@ -1,7 +1,9 @@
 package com.sublunar.amp.playback.output.dlna
 
 import com.sublunar.amp.data.Track
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.HttpURLConnection
@@ -75,6 +77,15 @@ object DlnaCast {
     private const val DISCOVERY_MS = 3_000L
     private const val RECEIVE_SLICE_MS = 400
 
+    /** Far above any real description or SOAP answer, which run to a few KB. */
+    private const val MAX_BODY_BYTES = 256 * 1024
+
+    /** How long a body may take in all: the read timeout is per read, and a drip of bytes never trips it. */
+    private const val BODY_DEADLINE_MS = 10_000L
+
+    /** Devices one search describes, one after another: more is a flood, not a home's speakers. */
+    private const val MAX_LOCATIONS = 32
+
     /** The tag a failed call is logged under: the cast's own. */
     private const val LOG_TAG = "AmpCast"
 
@@ -86,8 +97,8 @@ object DlnaCast {
 
     private val SERVICE_BLOCK = Regex("<service>.*?</service>", RegexOption.DOT_MATCHES_ALL)
 
-    /** [tagValue]'s pattern for each tag, compiled once: a cast's poll reads four tags a second. */
-    private val TAG_PATTERNS = ConcurrentHashMap<String, Regex>()
+    /** [tagValue]'s opener and closer for each tag, compiled once: a cast's poll reads four tags a second. */
+    private val TAG_PATTERNS = ConcurrentHashMap<String, Pair<Regex, Regex>>()
 
     // --- Discovery -----------------------------------------------------------
 
@@ -127,13 +138,15 @@ object DlnaCast {
                         continue
                     }
                     headerValue(String(packet.data, 0, packet.length), "LOCATION")
+                        ?.takeIf { locations.size < MAX_LOCATIONS }
                         ?.let { locations.add(it) }
                 }
             }
         } catch (_: IOException) {
             return@withContext emptyList()
         }
-        locations.mapNotNull { describe(it) }
+        // One speaker can answer from two addresses, and the list is keyed by its UDN.
+        locations.mapNotNull { describe(it) }.distinctBy { it.id }
     }
 
     /** Fetch and parse a device description document. */
@@ -157,7 +170,9 @@ object DlnaCast {
 
     /** The controlURL of the service block whose serviceType contains [service]. */
     internal fun controlUrlFor(xml: String, service: String): String? =
-        SERVICE_BLOCK.findAll(xml)
+        // Only up to the last closer: from each opener past it the search would
+        // rescan to the end, minutes on a document of nothing but openers.
+        SERVICE_BLOCK.findAll(xml.substringBeforeLast("</service>", "") + "</service>")
             .map { it.value }
             .firstOrNull { it.contains(service, ignoreCase = true) }
             ?.let { tagValue(it, "controlURL") }
@@ -444,7 +459,7 @@ object DlnaCast {
         """.trimIndent()
 
         try {
-            val connection = (URL(controlUrl).openConnection() as HttpURLConnection).apply {
+            val connection = (URL(controlUrl).openConnection() as? HttpURLConnection ?: return@withContext null).apply {
                 requestMethod = "POST"
                 connectTimeout = HTTP_TIMEOUT_MS
                 readTimeout = HTTP_TIMEOUT_MS
@@ -456,7 +471,7 @@ object DlnaCast {
             val status = connection.responseCode
             val ok = status in 200..299
             val body = (if (ok) connection.inputStream else connection.errorStream)
-                ?.use { it.readBytes().decodeToString() }
+                ?.use(::readCapped)
             connection.disconnect()
             // A failed call is logged with the renderer's own reason, where it gave one.
             if (ok) {
@@ -464,11 +479,11 @@ object DlnaCast {
             } else {
                 noteFailure(action, controlUrl, "HTTP $status${upnpError(body)?.let { ", $it" }.orEmpty()}")
             }
-            if (ok) body.orEmpty() else null
+            if (ok) body else null
         } catch (e: IOException) {
             noteFailure(action, controlUrl, "${e::class.simpleName}")
             null
-        } catch (e: IllegalStateException) {
+        } catch (e: RuntimeException) {
             noteFailure(action, controlUrl, "${e::class.simpleName}")
             null
         }
@@ -530,20 +545,34 @@ object DlnaCast {
         return if (kept.isEmpty()) path else path + "?" + kept.joinToString("&")
     }
 
-    private fun httpGet(url: String): String? = if (!allowsNetwork()) null else try {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+    /** [url]'s body, or null. Never throws: a LOCATION is whatever any device on the LAN sends. */
+    internal fun httpGet(url: String): String? = if (!allowsNetwork()) null else try {
+        val connection = (URL(url).openConnection() as? HttpURLConnection ?: return null).apply {
             connectTimeout = HTTP_TIMEOUT_MS
             readTimeout = HTTP_TIMEOUT_MS
         }
         val body = if (connection.responseCode in 200..299) {
-            connection.inputStream.use { it.readBytes().decodeToString() }
+            connection.inputStream.use(::readCapped)
         } else {
             null
         }
         connection.disconnect()
         body
-    } catch (_: IOException) {
+    } catch (_: Exception) {
         null
+    }
+
+    /** [stream] read whole, or null once it outgrows any real answer or drags past [BODY_DEADLINE_MS]. */
+    internal fun readCapped(stream: InputStream): String? {
+        val out = ByteArrayOutputStream()
+        val chunk = ByteArray(8192)
+        val deadline = System.currentTimeMillis() + BODY_DEADLINE_MS
+        while (true) {
+            val n = stream.read(chunk)
+            if (n < 0) return out.toByteArray().decodeToString()
+            out.write(chunk, 0, n)
+            if (out.size() > MAX_BODY_BYTES || System.currentTimeMillis() > deadline) return null
+        }
     }
 
     // --- Parsing helpers -----------------------------------------------------
@@ -560,14 +589,18 @@ object DlnaCast {
      * First value of an XML element, ignoring namespace prefixes. Regex rather
      * than a parser: the documents are small and only a few leaf values are read.
      */
-    internal fun tagValue(xml: String, tag: String): String? =
-        tagPattern(tag).find(xml)
-            ?.groupValues
-            ?.get(1)
-            ?.let(::unescape)
+    internal fun tagValue(xml: String, tag: String): String? {
+        val (opener, closer) = tagPatterns(tag)
+        val open = opener.find(xml) ?: return null
+        val close = closer.find(xml, open.range.last + 1) ?: return null
+        return unescape(xml.substring(open.range.last + 1, close.range.first))
+    }
 
-    private fun tagPattern(tag: String): Regex = TAG_PATTERNS.getOrPut(tag) {
-        Regex("<(?:[A-Za-z0-9_.-]+:)?$tag[^>]*>(.*?)</(?:[A-Za-z0-9_.-]+:)?$tag>", RegexOption.DOT_MATCHES_ALL)
+    // Opener and closer are found apart, and an opener ends at the next `<`: as one
+    // `<tag>(.*?)</tag>` the search rescans to the end from every opener a document
+    // repeats unclosed, minutes on a hostile one.
+    private fun tagPatterns(tag: String): Pair<Regex, Regex> = TAG_PATTERNS.getOrPut(tag) {
+        Regex("<(?:[A-Za-z0-9_.-]+:)?$tag[^<>]*>") to Regex("</(?:[A-Za-z0-9_.-]+:)?$tag>")
     }
 
     private fun escape(value: String): String = value
@@ -599,7 +632,7 @@ object DlnaCast {
         append("<upnp:artist>").append(escape(artist)).append("</upnp:artist>")
         append("<upnp:album>").append(escape(album)).append("</upnp:album>")
         append("<upnp:class>object.item.audioItem.musicTrack</upnp:class>")
-        append("""<res protocolInfo="http-get:*:$mimeType:*" """)
+        append("""<res protocolInfo="http-get:*:${escape(mimeType)}:*" """)
         append("""duration="${formatClock(durationMs)}">""")
         append(escape(url))
         append("</res>")

@@ -139,6 +139,12 @@ class DlnaCastTest {
     }
 
     @Test
+    fun `didl metadata escapes the mime type a server sent`() {
+        val didl = DlnaCast.didlMetadata("http://host/a", "t", "a", "b", 1_000, mimeType = "audio/x\" foo=\"1")
+        assertTrue("http-get:*:audio/x&quot; foo=&quot;1:*" in didl, "mime type not escaped: $didl")
+    }
+
+    @Test
     fun `finds the RenderingControl endpoint separately from AVTransport`() {
         assertEquals(
             "/MediaRenderer/RenderingControl/Control",
@@ -267,5 +273,40 @@ class DlnaCastTest {
             DlnaCast.loggable("http://plex:32400/library/parts/42/1700000000/file.flac?download=0&X-Plex-Token=tok"),
         )
         assertEquals("nothing", DlnaCast.loggable(null))
+    }
+
+    @Test
+    fun `reads the first element, attributes and all`() {
+        val xml = """<friendlyName lang="en">Den</friendlyName><friendlyName>Other</friendlyName>"""
+        assertEquals("Den", DlnaCast.tagValue(xml, "friendlyName"))
+    }
+
+    @Test
+    fun `a document of openers that never close is read in no time`() {
+        // Read as one pattern, each unclosed opener costs a rescan to the end: tens of seconds a document.
+        val started = System.currentTimeMillis()
+        assertNull(DlnaCast.tagValue("<friendlyName>".repeat(20_000), "friendlyName"))
+        assertNull(DlnaCast.tagValue("<friendlyName".repeat(20_000), "friendlyName"))
+        assertNull(DlnaCast.controlUrlFor("<service>".repeat(30_000), "AVTransport"))
+        assertTrue(System.currentTimeMillis() - started < 5_000, "parsing went quadratic")
+    }
+
+    @Test
+    fun `a body is read whole, and not at all once it outgrows any real answer`() {
+        assertEquals("<root/>", DlnaCast.readCapped("<root/>".byteInputStream()))
+        assertNull(DlnaCast.readCapped(ByteArray(300 * 1024).inputStream()))
+    }
+
+    @Test
+    fun `a location that isn't http is skipped`() {
+        // Any device on the network picks the LOCATION: a file: one must never reach the HTTP cast.
+        val allowed = DlnaCast.allowsNetwork
+        DlnaCast.allowsNetwork = { true }
+        try {
+            assertNull(DlnaCast.httpGet("file:///etc/hosts"))
+            assertNull(DlnaCast.httpGet("jar:file:/x.jar!/y"))
+        } finally {
+            DlnaCast.allowsNetwork = allowed
+        }
     }
 }
