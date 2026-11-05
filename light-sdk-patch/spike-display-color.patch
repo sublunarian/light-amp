@@ -1,9 +1,9 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/display/LightDisplayColor.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/display/LightDisplayColor.kt
 new file mode 100644
-index 0000000..4c33670
+index 0000000..009be5f
 --- /dev/null
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/display/LightDisplayColor.kt
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,151 @@
 +package com.thelightphone.sdk.display
 +
 +import android.content.Context
@@ -133,6 +133,7 @@ index 0000000..4c33670
 +    /** Colour off: whatever the device had before this app opened. */
 +    fun restore(context: Context) {
 +        val marker = File(context.filesDir, MARKER)
++        if (!enabled && !marker.exists()) return
 +        val previous = runCatching { marker.readText().trim().toInt() }.getOrNull() ?: DEFAULT_ON
 +        write(context, previous)
 +        runCatching { marker.delete() }
