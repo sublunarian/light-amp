@@ -310,6 +310,9 @@ class Downloader(
                     // enqueue here would ask the server for an id it has never
                     // heard of, once per track.
                     if (PhoneFiles.isPhoneFile(entry.trackId)) return@forEach
+                    // DownloadStore.download refuses an id that is a path, and
+                    // queued, it would be retried until it parked the source.
+                    if ('/' in entry.trackId) return@forEach
                     queue.add(entry, manual)
                 }
                 _progress.value = _progress.value.copy(

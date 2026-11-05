@@ -3,7 +3,9 @@ package com.sublunar.amp.data
 import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -67,5 +69,14 @@ class DownloadNamingTest {
         assertFalse(partial.exists())
         assertFalse(indexing.exists())
         assertTrue(done.exists())
+    }
+
+    @Test
+    fun `a track id that is a path is refused before anything is written`() {
+        val store = DownloadStore(tmp.root)
+        val fetched = runBlocking { store.download("s", "http://127.0.0.1:9/x", "../../t", StreamFormat.MP3) }
+        assertIs<DownloadStore.Fetched.Failed>(fetched)
+        assertEquals(listOf("downloads"), tmp.root.list()?.toList())
+        assertEquals(emptyList(), downloads.list()?.toList())
     }
 }
