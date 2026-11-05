@@ -199,7 +199,7 @@ private fun queueFrom(body: String): PlexQueue? {
  * answers there now. GDM replies carry their own identity.
  */
 suspend fun PlexClient.playerIsWhoWeThink(target: PlexPlayer): Boolean = runCatching {
-    val reported = plexXmlElements(companionXml("/resources", target = target), "Player")
+    val reported = plexXmlElements(whoItSaysItIs(target), "Player")
         .firstNotNullOfOrNull { it["machineIdentifier"] }
     if (reported == null) {
         // Nothing said either way. Not proof of an impostor, and refusing
@@ -213,6 +213,19 @@ suspend fun PlexClient.playerIsWhoWeThink(target: PlexPlayer): Boolean = runCatc
 }.getOrElse {
     Log.i(TAG, "couldn't check who ${target.name} is: ${it::class.simpleName}")
     false
+}
+
+/**
+ * [target]'s `/resources`, asked with no key: the device answering may not be
+ * the player meant. Only one that refuses without a key is asked again, with a
+ * short-lived one (see [mintPlayerKey]).
+ */
+private suspend fun PlexClient.whoItSaysItIs(target: PlexPlayer): String = try {
+    companionXml("/resources", target = target, key = null)
+} catch (e: PlexException) {
+    if (e.status != 401 && e.status != 403) throw e
+    Log.i(TAG, "the player wants a key to say who it is (HTTP ${e.status})")
+    companionXml("/resources", target = target, key = mintPlayerKey() ?: throw e)
 }
 
 /** Tell [target] its play queue changed underneath it. */
@@ -255,6 +268,10 @@ suspend fun PlexClient.companionPlay(
         Log.i(TAG, "playMedia refused: ${it::class.simpleName}")
         return false
     }
+    // A new key with every queue handed over, as Plex's own apps do: a key
+    // lapses, and playMedia is the only way to give the player another.
+    val key = mintPlayerKey() ?: return false
+    playerKey = key
     return playerCommand(
         target,
         "/player/playback/playMedia",
@@ -269,7 +286,8 @@ suspend fun PlexClient.companionPlay(
             // The window the queue was pushed with: a smaller one here and
             // the player re-reads less of the queue than we pushed.
             "containerKey" to "/playQueues/${queue.id}?window=$window&own=1",
-            "token" to token,
+            // What the player fetches the queue and the audio with.
+            "token" to key,
         ),
         music = false,
     )
@@ -328,18 +346,21 @@ private suspend fun PlexClient.playerCommand(
 
 /**
  * A Companion request: to the player itself when one is named, to the
- * server otherwise (the client list and play queues are the server's).
+ * server otherwise (the client list and play queues are the server's). A
+ * request to a player carries [key] at most — see [companionToken].
  */
 private suspend fun PlexClient.companionXml(
     path: String,
     params: List<Pair<String, String>> = emptyList(),
     method: HttpMethod = HttpMethod.Get,
     target: PlexPlayer? = null,
+    key: String? = playerKey,
 ): String {
     val host = target?.directUrl ?: baseUrl
     // XML on purpose: a player answers XML whatever is asked for, so asking
     // for it everywhere keeps one parser.
-    suspend fun send() = request(path, params, method, host = host, accept = "application/xml") {
+    suspend fun send() = request(path, params, method, host = host, accept = "application/xml", withToken = false) {
+        companionToken(target, key)?.let { header("X-Plex-Token", it) }
         if (target != null) {
             header("X-Plex-Target-Client-Identifier", target.id)
             // A player answering for itself refuses an unknown controller with
@@ -354,10 +375,42 @@ private suspend fun PlexClient.companionXml(
     if (!response.status.isSuccess()) {
         // The server says why in the body.
         val why = runCatching { response.bodyAsText() }.getOrDefault("").take(300).replace('\n', ' ')
-        throw PlexException("Plex says ${response.status.value} for $path at $host — $why")
+        throw PlexException("Plex says ${response.status.value} for $path at $host — $why", response.status.value)
     }
     return response.bodyAsText()
 }
+
+/**
+ * The token a Companion request carries: the server gets this client's own,
+ * a player only the short-lived [key] it was handed, if there is one. Players
+ * are spoken to in clear, and on a server the user owns, the client's token
+ * opens the whole Plex account.
+ */
+internal fun PlexClient.companionToken(target: PlexPlayer?, key: String?): String? =
+    if (target == null) token else key
+
+/**
+ * A key for a player, from the server, or null when the server won't give
+ * one. It opens only this server, for at most 48 hours and never past a
+ * restart of the server. Without one the cast fails, as it does in Plex's own
+ * apps: the player is never given this client's token instead.
+ */
+private suspend fun PlexClient.mintPlayerKey(): String? {
+    val body = runCatching {
+        companionXml("/security/token", listOf("type" to "delegation", "scope" to "all"))
+    }.getOrElse {
+        val why = (it as? PlexException)?.status?.let { status -> "HTTP $status" } ?: it::class.simpleName
+        Log.i(TAG, "the server gave no key for the player: $why")
+        return null
+    }
+    return transientKeyIn(body).also {
+        Log.i(TAG, if (it != null) "the server gave a key for the player" else "the server's answer held no key for the player")
+    }
+}
+
+/** The transient token in a `/security/token` answer; anything else isn't handed to a player. */
+internal fun transientKeyIn(body: String): String? =
+    plexXmlElements(body, "MediaContainer").firstOrNull()?.get("token")?.takeIf { it.startsWith("transient-") }
 
 private const val TAG = "AmpPlex"
 

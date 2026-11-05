@@ -83,9 +83,10 @@ without adb is waiting on Light
   ([light-sdk#192](https://github.com/lightphone/light-sdk/issues/192)). Until
   then, stream and download in Opus or MP3 (MP3 on Plex), or convert the files
   to FLAC.
-- Casting to a DLNA speaker or a Plex player hands it your server login, and
-  other devices on that network can read it. Cast only on networks and to
-  devices you trust.
+- Casting to a DLNA speaker hands it your server login, and casting to a Plex
+  player hands it a key to your Plex server that lasts up to two days. Other
+  devices on that network can read both. Cast only on networks and to devices
+  you trust.
 
 Also waiting on Light:
 

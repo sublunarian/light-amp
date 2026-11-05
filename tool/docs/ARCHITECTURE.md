@@ -150,7 +150,10 @@ own container (`formatChoiceKey`). Plex Companion is the other, in
 `source/plex/companion` — discovery, the listener, the cast and its calls
 (`PlexCompanionCalls.kt`, extensions on `PlexClient`, which holds the token and
 the lock they need) — offered by the Plex provider
-(`SourceProvider.outputFamilies`), so only a Plex source lists its players. The
+(`SourceProvider.outputFamilies`), so only a Plex source lists its players. A
+player is never sent that token, which on a server the user owns opens the
+whole Plex account, but a transient one the server mints for each queue
+handed over (`mintPlayerKey`). The
 Output page lists `OutputFamilies` — the source's and the phone's — without
 naming any of them.
 
