@@ -59,6 +59,9 @@ __pycache__/
 release.keystore
 release.jks
 keystore.properties
+*.jks
+*.keystore
+*.p12
 
 # Staged release APKs — these belong in GitHub Releases, not the repo.
 dist/
