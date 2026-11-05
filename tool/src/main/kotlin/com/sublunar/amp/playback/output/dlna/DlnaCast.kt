@@ -11,8 +11,11 @@ import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 /** A media renderer as [DlnaCast.discover] described it. */
 data class DlnaRenderer(
@@ -40,7 +43,8 @@ data class DlnaPosition(
 /**
  * Just enough of a UPnP AV control point to push a stream at a renderer: SSDP
  * discovery, then SOAP calls against the device's AVTransport service. SSDP is
- * raw UDP and SOAP is plain HTTP, so `java.net` covers all of it.
+ * raw UDP and SOAP is plain HTTP, so `java.net` covers all of it but the
+ * description fetch (see [describer]).
  */
 object DlnaCast {
 
@@ -145,9 +149,22 @@ object DlnaCast {
         } catch (_: IOException) {
             return@withContext emptyList()
         }
-        // One speaker can answer from two addresses, and the list is keyed by its UDN.
-        locations.mapNotNull { describe(it) }.distinctBy { it.id }
+        distinctRenderers(locations.mapNotNull { describe(it) })
     }
+
+    /**
+     * One row per UDN and host, under ids that never repeat: the list is keyed
+     * by id. The same UDN from another host keeps a row of its own, so a device
+     * copying a speaker's UDN can't stand in for it unseen.
+     */
+    internal fun distinctRenderers(found: List<DlnaRenderer>): List<DlnaRenderer> {
+        val ids = HashSet<String>()
+        return found.distinctBy { it.id to hostOf(it.controlUrl) }
+            .map { if (ids.add(it.id)) it else it.copy(id = "${it.id}@${hostOf(it.controlUrl)}") }
+            .distinctBy { it.id }
+    }
+
+    private fun hostOf(url: String): String? = runCatching { URL(url).host }.getOrNull()
 
     /** Fetch and parse a device description document. */
     private fun describe(location: String): DlnaRenderer? {
@@ -545,19 +562,25 @@ object DlnaCast {
         return if (kept.isEmpty()) path else path + "?" + kept.joinToString("&")
     }
 
+    /**
+     * For descriptions: one deadline over the whole exchange, and a cap on the
+     * headers. HttpURLConnection has a per-read timeout only, so a status line
+     * sent a byte at a time holds the search for ever, and one with no end runs
+     * the app out of memory.
+     */
+    private val describer by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(HTTP_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(HTTP_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            .callTimeout(BODY_DEADLINE_MS, TimeUnit.MILLISECONDS)
+            .build()
+    }
+
     /** [url]'s body, or null. Never throws: a LOCATION is whatever any device on the LAN sends. */
     internal fun httpGet(url: String): String? = if (!allowsNetwork()) null else try {
-        val connection = (URL(url).openConnection() as? HttpURLConnection ?: return null).apply {
-            connectTimeout = HTTP_TIMEOUT_MS
-            readTimeout = HTTP_TIMEOUT_MS
+        describer.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            if (response.isSuccessful) response.body.byteStream().use(::readCapped) else null
         }
-        val body = if (connection.responseCode in 200..299) {
-            connection.inputStream.use(::readCapped)
-        } else {
-            null
-        }
-        connection.disconnect()
-        body
     } catch (_: Exception) {
         null
     }

@@ -1,5 +1,9 @@
 package com.sublunar.amp.playback.output.dlna
 
+import java.io.OutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -308,5 +312,49 @@ class DlnaCastTest {
         } finally {
             DlnaCast.allowsNetwork = allowed
         }
+    }
+
+    @Test
+    fun `a description is fetched whole, and a header that never ends is given up on`() {
+        val allowed = DlnaCast.allowsNetwork
+        DlnaCast.allowsNetwork = { true }
+        try {
+            val whole = serveOnce { it.write("HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\n<root/>".toByteArray()) }
+            assertEquals("<root/>", DlnaCast.httpGet(whole))
+            val endless = serveOnce { out ->
+                out.write("HTTP/1.1 200 OK\r\nX-Pad: ".toByteArray())
+                val pad = ByteArray(8192) { 'a'.code.toByte() }
+                while (true) out.write(pad)
+            }
+            assertNull(DlnaCast.httpGet(endless))
+        } finally {
+            DlnaCast.allowsNetwork = allowed
+        }
+    }
+
+    @Test
+    fun `a speaker answering twice is one row, and its UDN from another host a row of its own`() {
+        fun at(id: String, host: String) = DlnaRenderer(id, "Den", "http://$host:8080/ctl", null, null)
+        val rows = DlnaCast.distinctRenderers(
+            listOf(at("uuid:a", "10.0.0.5"), at("uuid:a", "10.0.0.5"), at("uuid:a", "10.0.0.9"), at("uuid:a@10.0.0.9", "10.0.0.7")),
+        )
+        assertEquals(listOf("uuid:a" to "10.0.0.5", "uuid:a@10.0.0.9" to "10.0.0.9"), rows.map { it.id to java.net.URL(it.controlUrl).host })
+    }
+
+    /** One connection on loopback, answered with whatever [respond] writes once the request is in; its address. */
+    private fun serveOnce(respond: (OutputStream) -> Unit): String {
+        val server = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
+        thread(isDaemon = true) {
+            server.use {
+                runCatching {
+                    it.accept().use { socket ->
+                        val request = socket.getInputStream().bufferedReader()
+                        while (request.readLine()?.isNotEmpty() == true) Unit
+                        respond(socket.getOutputStream())
+                    }
+                }
+            }
+        }
+        return "http://127.0.0.1:${server.localPort}/description.xml"
     }
 }
