@@ -10,9 +10,10 @@ import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.md5Hex
-import io.ktor.client.call.body
-import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.isSuccess
+import io.ktor.utils.io.readRemaining
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.io.readByteArray
 
 /**
  * What a cover is wanted for, which decides whether it may cost cellular data —
@@ -201,19 +203,26 @@ class ArtworkLoader(
     private suspend fun download(url: String?): CoverFetch {
         if (url == null) return CoverFetch.None("no url")
         return try {
-            val response = http.get(url)
-            val status = response.status.value
-            when {
-                response.status.isSuccess() -> {
-                    val bytes = response.body<ByteArray>()
-                    // Whether they are a picture is settled in [writeDisk]: Subsonic
-                    // says "not found" with a 200.
-                    if (bytes.isNotEmpty()) CoverFetch.Got(bytes) else CoverFetch.None("empty body")
+            http.prepareGet(url).execute { response ->
+                val status = response.status.value
+                when {
+                    response.status.isSuccess() -> {
+                        // Read up to a cap, not whole: OkHttp unpacks gzip, and a few
+                        // KB can unpack to more than the app's memory.
+                        val bytes = response.bodyAsChannel().readRemaining(MAX_COVER_BYTES + 1L).readByteArray()
+                        when {
+                            bytes.size > MAX_COVER_BYTES -> CoverFetch.None("too large")
+                            // Whether they are a picture is settled in [writeDisk]: Subsonic
+                            // says "not found" with a 200.
+                            bytes.isNotEmpty() -> CoverFetch.Got(bytes)
+                            else -> CoverFetch.None("empty body")
+                        }
+                    }
+                    // Refusals about *us* or about the moment, not about the cover.
+                    status == 401 || status == 403 || status == 408 || status == 429 || status >= 500 ->
+                        CoverFetch.Failed("HTTP $status")
+                    else -> CoverFetch.None("HTTP $status")
                 }
-                // Refusals about *us* or about the moment, not about the cover.
-                status == 401 || status == 403 || status == 408 || status == 429 || status >= 500 ->
-                    CoverFetch.Failed("HTTP $status")
-                else -> CoverFetch.None("HTTP $status")
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -574,6 +583,9 @@ class ArtworkLoader(
          * draw throws every time that cover is shown.
          */
         private const val MAX_DECODED_SIDE_PX = 4096
+
+        /** Above the ~20 MB originals some servers keep. */
+        private const val MAX_COVER_BYTES = 32 shl 20
 
         internal fun calculateInSampleSize(width: Int, height: Int, target: Int): Int {
             if (target <= 0 || width <= 0 || height <= 0) return 1
