@@ -19,8 +19,10 @@ server.
 - Offline downloads, by album, playlist, track, or everything you've liked.
 - Data Mode: choose what happens off Wi-Fi. By default Amp streams on cellular
   and leaves downloads for Wi-Fi. Nothing is silently downgraded.
-- Synced lyrics. When your server has none for a song, Amp looks it up on
-  lrclib.net by its title, artist, album and length.
+- Synced lyrics. When your server has no timed lyrics for a song, which is
+  most songs, Amp looks it up on lrclib.net by title, artist, album and
+  length. It does this when you show a song's lyrics and, with Synced Lyrics
+  on, for every song it downloads.
 - Song radio, on servers that have it.
 - Play counts, ratings, likes and playlist edits sync back to the server.
 - Cast to a DLNA speaker or receiver, or from Plex to another Plex player (it
