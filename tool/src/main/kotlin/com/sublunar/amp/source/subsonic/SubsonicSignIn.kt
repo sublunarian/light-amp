@@ -1,6 +1,7 @@
 package com.sublunar.amp.source.subsonic
 
 import com.sublunar.amp.data.MusicSource
+import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.SourceKind
 import com.sublunar.amp.data.SourceLibrary
 import com.sublunar.amp.data.newSourceId
@@ -8,6 +9,10 @@ import com.sublunar.amp.source.PendingServer
 import com.sublunar.amp.source.SignInOutcome
 import com.sublunar.amp.source.causes
 import com.sublunar.amp.source.unreachedReason
+import io.ktor.client.request.get
+import io.ktor.http.URLProtocol
+import io.ktor.http.Url
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 
 /**
@@ -25,7 +30,15 @@ internal suspend fun inspectSubsonicServer(
     password: String,
     name: String,
 ): SignInOutcome {
-    val client = SubsonicClient(SubsonicConfig(uri, username, password))
+    val base = try {
+        securedBase(uri)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // The ping would fail the same way: the two differ only in the query.
+        return SignInOutcome.Missed(explain(e), answered = false)
+    }
+    val client = SubsonicClient(SubsonicConfig(base, username, password))
     try {
         runCatching { client.ping() }.exceptionOrNull()?.let { error ->
             // A ping refused in Subsonic's own words has found the server, and
@@ -33,7 +46,7 @@ internal suspend fun inspectSubsonicServer(
             // a connection error.
             val subsonic = error.subsonicAnswer()
             return if (subsonic != null && (subsonic.code != null || subsonic.envelope)) {
-                SignInOutcome.Settled(uri, explain(error))
+                SignInOutcome.Settled(base, explain(error))
             } else {
                 SignInOutcome.Missed(explain(error), answered = false)
             }
@@ -42,9 +55,9 @@ internal suspend fun inspectSubsonicServer(
         val refused = folders.exceptionOrNull()
         when (loginVerdict(refused)) {
             LoginVerdict.ACCEPTED, LoginVerdict.UNCHECKABLE -> Unit
-            LoginVerdict.REFUSED -> return SignInOutcome.Settled(uri, refusedLogin(refused!!))
+            LoginVerdict.REFUSED -> return SignInOutcome.Settled(base, refusedLogin(refused!!))
             LoginVerdict.UNREACHED -> return SignInOutcome.Settled(
-                uri,
+                base,
                 "That address answered, then stopped answering before the account could be checked. Try Save again.",
             )
         }
@@ -53,7 +66,7 @@ internal suspend fun inspectSubsonicServer(
             id = newSourceId(),
             kind = SourceKind.SUBSONIC,
             name = name,
-            baseUrl = uri,
+            baseUrl = base,
             username = username,
             password = password,
             // With two or more, the user picks which to show before the first
@@ -65,6 +78,36 @@ internal suspend fun inspectSubsonicServer(
         client.close()
     }
 }
+
+/**
+ * Where a server that moves http:// to https:// really is, asked by a ping
+ * without the login: kept at the http:// address, every request would send
+ * the login in clear before being redirected.
+ */
+private suspend fun securedBase(uri: String): String {
+    if (!uri.startsWith("http://", ignoreCase = true)) return uri
+    val http = NetworkGate.httpClient { expectSuccess = false }
+    try {
+        return landedBase(uri, http.get("$uri$PING").call.request.url)
+    } finally {
+        http.close()
+    }
+}
+
+/**
+ * The https:// address to use for [typed], given where a ping to it [landed]:
+ * only on the same host, so the password goes nowhere the user didn't name,
+ * and only with the path intact. [typed] itself otherwise.
+ */
+internal fun landedBase(typed: String, landed: Url): String {
+    val path = landed.toString().substringBefore('?')
+    val secured = landed.protocol == URLProtocol.HTTPS &&
+        landed.host.equals(Url(typed).host, ignoreCase = true) &&
+        path.endsWith(PING)
+    return if (secured) path.removeSuffix(PING) else typed
+}
+
+private const val PING = "/rest/ping.view"
 
 /** What the folders call said about the account, once the ping has settled the address. */
 internal enum class LoginVerdict { ACCEPTED, REFUSED, UNCHECKABLE, UNREACHED }
