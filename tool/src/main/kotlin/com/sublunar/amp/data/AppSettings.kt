@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -24,9 +26,9 @@ import kotlinx.serialization.json.Json
 /**
  * How much of the player the cover gets.
  *
- * [SMALL] is the default: the cover in its own panel keeps the controls on black
- * where they need no help to be read. A stored value from an older build that
- * named a mode this no longer has falls back to it — see AppSettings.pref.
+ * [NONE] is the default; [SMALL] is what Enable Artwork turns on: the cover in its
+ * own panel keeps the controls on black where they need no help to be read. An
+ * install that had covers by default keeps them — see AppSettings.CHANGED_DEFAULTS.
  */
 enum class ArtworkMode {
     /** In the panel between the header and the controls, as a square. */
@@ -74,9 +76,17 @@ enum class DataMode {
 
 enum class AlbumSort { TITLE, ARTIST, YEAR, DATE_ADDED, RECENTLY_PLAYED, MOST_PLAYED, RATING, RANDOM }
 enum class SongSort { TITLE, ARTIST, DATE_ADDED, RECENTLY_PLAYED, MOST_PLAYED, RATING }
-enum class ArtistSort { NAME, MOST_PLAYED }
+/**
+ * The Artists list's orders. [NAME] is the album artists by name (stored under
+ * that name from before [ARTIST] existed); [ARTIST] is everyone the songs credit.
+ */
+enum class ArtistSort(val credit: ArtistCredit) {
+    NAME(ArtistCredit.ALBUM),
+    ARTIST(ArtistCredit.SONG),
+    MOST_PLAYED(ArtistCredit.ALBUM),
+}
 
-/** An artist's own records: by date, by name, or grouped by [ReleaseType] where the library knows them. */
+/** An artist's own records: grouped by [ReleaseType] where the library knows them (the default; by date elsewhere), by date, or by name. */
 enum class ArtistAlbumOrder(val label: String) {
     DATE_RELEASED("Date Released"),
     NAME("Name"),
@@ -96,8 +106,9 @@ enum class LastSection { LIBRARY, NOW_PLAYING }
 /**
  * How the bottom bar is arranged, and what that implies for the pages above it.
  *
- * [STANDARD] is the default: "Library Tabs", on. There is no migration to it for older
- * installs: none could tell an old install from a fresh one.
+ * [SIMPLIFIED] is the default, as Light's own tools are laid out; Library Tabs is
+ * the heavier choice. Installs from before it was keep [STANDARD] — see
+ * [AppSettings.CHANGED_DEFAULTS].
  */
 enum class LayoutMode {
     /** Expanded: the four library tabs along the bar, with search as a fifth. */
@@ -121,10 +132,21 @@ open class Stored<T> internal constructor(flow: Flow<T>, val state: StateFlow<T>
 class Pref<T> internal constructor(
     internal val key: Preferences.Key<*>,
     flow: Flow<T>,
-    state: StateFlow<T>,
+    private val held: MutableStateFlow<T>,
+    private val scope: CoroutineScope,
     private val write: suspend (T) -> Unit,
-) : Stored<T>(flow, state) {
+) : Stored<T>(flow, held) {
     suspend fun set(value: T) = write(value)
+
+    /**
+     * For a value the next screen reads as it opens: [state] has it before that
+     * screen's first frame, where [set] would land a frame or two late and the
+     * screen would draw the old value first. The store follows a moment later.
+     */
+    fun setNow(value: T) {
+        held.value = value
+        scope.launch { write(value) }
+    }
 }
 
 /**
@@ -147,7 +169,10 @@ class AppSettings(
      * starts. Let go once they all have (see the init block after the last
      * of them), as it holds the cached playlists and up to a thousand queue ids.
      */
-    private var launchSnapshot: Preferences? = runBlocking { dataStore.data.first() }
+    private var launchSnapshot: Preferences? = runBlocking {
+        keepEarlierDefaults()
+        dataStore.data.first()
+    }
     private val loaded: Preferences get() = checkNotNull(launchSnapshot) { "settings read after construction" }
 
     // --- Sources -------------------------------------------------------------
@@ -224,6 +249,7 @@ class AppSettings(
      * write. The records it can't read go back where they were.
      */
     private fun MutablePreferences.editSources(block: (List<MusicSource>) -> List<MusicSource>) {
+        if (this[SOURCES] == null) settleNewDefaults()
         val stored = readSources(this[SOURCES])
         this[SOURCES] = stored.encode(sourcesJson, block(stored.readable))
     }
@@ -329,12 +355,14 @@ class AppSettings(
 
     /**
      * Each list narrowed to what is downloaded: a song that is, an album or
-     * artist with at least one song that is — the rule offline uses. Per tab,
+     * artist with at least one song that is — the rule offline uses — and a
+     * playlist whose every song is, the rule its download mark uses. Per tab,
      * as the liked switch is.
      */
     val downloadedAlbumsOnly: Pref<Boolean> = bool("pref.downloadedAlbumsOnly", false)
     val downloadedSongsOnly: Pref<Boolean> = bool("pref.downloadedSongsOnly", false)
     val downloadedArtistsOnly: Pref<Boolean> = bool("pref.downloadedArtistsOnly", false)
+    val downloadedPlaylistsOnly: Pref<Boolean> = bool("pref.downloadedPlaylistsOnly", false)
 
     /**
      * The genre each list is narrowed to, or blank for all of it. Per tab, as the
@@ -364,7 +392,7 @@ class AppSettings(
     suspend fun clearLibraryFilters() {
         val filters = listOf(
             likedAlbumsOnly, likedSongsOnly, likedArtistsOnly,
-            downloadedAlbumsOnly, downloadedSongsOnly, downloadedArtistsOnly,
+            downloadedAlbumsOnly, downloadedSongsOnly, downloadedArtistsOnly, downloadedPlaylistsOnly,
             albumsGenre, songsGenre,
         )
         dataStore.edit { p -> filters.forEach { p.remove(it.key) } }
@@ -387,6 +415,9 @@ class AppSettings(
 
     val syncedLyrics: Pref<Boolean> = bool("pref.karaokeLyrics", true)
 
+    /** Lyrics in another script shown in Latin letters, chosen at the end of such lyrics. */
+    val latinLyrics: Pref<Boolean> = bool("pref.latinLyrics", false)
+
     /**
      * Even out the volume between tracks, from the loudness the server
      * measured. On by default — with it off, a remaster can be 10 dB louder
@@ -396,10 +427,10 @@ class AppSettings(
     val replayGain: Pref<Boolean> = bool("pref.replayGain", true)
 
     /** How an artist's page orders their records — see [ArtistAlbumOrder]. */
-    val artistAlbumOrder: Pref<ArtistAlbumOrder> = enum("pref.artistAlbumOrder", ArtistAlbumOrder.DATE_RELEASED)
+    val artistAlbumOrder: Pref<ArtistAlbumOrder> = enum("pref.artistAlbumOrder", ArtistAlbumOrder.RELEASE_TYPE)
 
     /** Whether to use the simplified or standard layout mode. */
-    val layoutMode: Pref<LayoutMode> = enum("pref.layoutMode", LayoutMode.STANDARD)
+    val layoutMode: Pref<LayoutMode> = enum(LAYOUT_MODE.name, LayoutMode.SIMPLIFIED)
 
     /** Where the app was when it was last closed — see [LastSection]. */
     val lastSection: Pref<LastSection> = enum("pref.lastSection", LastSection.LIBRARY)
@@ -451,21 +482,6 @@ class AppSettings(
     /** TRIAL: the Settings gear on the menus a page's own ⋮ opens (album, playlist, player). */
     val settingsInPageMenus: Pref<Boolean> = bool("pref.settingsInPageMenus", true)
 
-    /** TRIAL: list rows without artwork with their title a step up in type. */
-    val biggerArtlessText: Pref<Boolean> = bool("pref.biggerArtlessText", false)
-
-    /** TRIAL: with Bigger Artless List Text, one-line rows at 131px (seven a screen) rather than 115 (eight). */
-    val tallerOneLineRows: Pref<Boolean> = bool("pref.tallerOneLineRows", false)
-
-    /** TRIAL: list rows with artwork with their title a step up in type. */
-    val biggerArtworkText: Pref<Boolean> = bool("pref.biggerArtworkText", false)
-
-    /**
-     * TRIAL: under the three buttons, Liked as a switch on each tab's More page,
-     * as with the tabs, instead of liked lists on the library page.
-     */
-    val likedAsFilter: Pref<Boolean> = bool("pref.likedAsFilter", false)
-
     /**
      * TRIAL: the Downloads page as the queue and the albums by size, one level
      * up in Streams & Downloads, instead of every song under Storage.
@@ -479,8 +495,8 @@ class AppSettings(
      */
     val listArtwork: Pref<Boolean> = bool("pref.listArtwork", true)
 
-    /** How much of the player the cover gets, if any. */
-    val artwork: Pref<ArtworkMode> = enum("pref.artworkMode", ArtworkMode.SMALL)
+    /** How much of the player the cover gets, if any. None to start, as Light's own tools: covers are the heavier choice. */
+    val artwork: Pref<ArtworkMode> = enum(ARTWORK_MODE.name, ArtworkMode.NONE)
 
     // --- Network and downloads -----------------------------------------------
 
@@ -599,7 +615,9 @@ class AppSettings(
     private fun <S, T> pref(key: Preferences.Key<S>, default: T, decode: (S) -> T?, encode: (T) -> S): Pref<T> {
         val read = { p: Preferences -> p[key]?.let(decode) ?: default }
         val flow = dataStore.data.map(read).distinctUntilChanged()
-        return Pref(key, flow, flow.stateIn(scope, SharingStarted.Eagerly, read(loaded))) { value ->
+        val state = MutableStateFlow(read(loaded))
+        scope.launch { flow.collect { state.value = it } }
+        return Pref(key, flow, state, scope) { value ->
             dataStore.edit { it[key] = encode(value) }
         }
     }
@@ -622,8 +640,43 @@ class AppSettings(
         dataStore.edit { it[key] = value }
     }
 
+    /**
+     * An install from before a default changed, still on it because it never
+     * chose, keeps it: the earlier value is written down. Such an install has
+     * sources saved; a fresh one has none until [settleNewDefaults] has run.
+     */
+    private suspend fun keepEarlierDefaults() {
+        dataStore.edit { p ->
+            if (p[SOURCES] == null) return@edit
+            for ((key, change) in CHANGED_DEFAULTS) if (p[key] !in change.known) p[key] = change.was
+        }
+    }
+
+    /** A fresh install's first source: today's defaults written down, so [keepEarlierDefaults] never mistakes it for an old one. */
+    private fun MutablePreferences.settleNewDefaults() {
+        for ((key, change) in CHANGED_DEFAULTS) if (this[key] !in change.known) this[key] = change.now
+    }
+
     companion object {
         private val SOURCES = stringPreferencesKey("pref.sources")
+        private val LAYOUT_MODE = stringPreferencesKey("pref.layoutMode")
+        private val ARTWORK_MODE = stringPreferencesKey("pref.artworkMode")
+
+        /**
+         * A default that has changed. A stored value outside [known] (unset, or
+         * a mode since dropped) was read as the default, so counts as unchosen.
+         */
+        private class ChangedDefault(val was: String, val now: String, val known: Set<String>)
+
+        private inline fun <reified E : Enum<E>> changed(was: E, now: E) =
+            ChangedDefault(was.name, now.name, enumValues<E>().mapTo(HashSet()) { it.name })
+
+        /** Each default that has changed, by its key. */
+        private val CHANGED_DEFAULTS = mapOf(
+            // 2026-11: Simple and no covers, as Light's own tools are.
+            LAYOUT_MODE to changed(LayoutMode.STANDARD, LayoutMode.SIMPLIFIED),
+            ARTWORK_MODE to changed(ArtworkMode.SMALL, ArtworkMode.NONE),
+        )
         private val ACTIVE_SOURCE = stringPreferencesKey("pref.activeSource")
         private val SHUFFLE_NONCE = intPreferencesKey("pref.shuffleNonce")
         private val CACHED_PLAYLISTS = stringPreferencesKey("state.playlists")

@@ -26,6 +26,9 @@ class SettingsKeysTest {
             mapOf(
                 "pref.sources" to """[{"id":"src-1","kind":"LOCAL","name":"Local Music"}]""",
                 "pref.activeSource" to "src-1",
+                // A first source settles the defaults — see ChangedDefaultsTest.
+                "pref.layoutMode" to "SIMPLIFIED",
+                "pref.artworkMode" to "NONE",
             ),
             store.all(),
         )
@@ -72,6 +75,7 @@ class SettingsKeysTest {
     fun `display and playback`() = runBlocking {
         settings.invertColors.set(true)
         settings.syncedLyrics.set(false)
+        settings.latinLyrics.set(true)
         settings.replayGain.set(false)
         settings.layoutMode.set(LayoutMode.SIMPLIFIED)
         settings.lastSection.set(LastSection.NOW_PLAYING)
@@ -85,6 +89,7 @@ class SettingsKeysTest {
             mapOf(
                 "pref.invertColors" to true,
                 "pref.karaokeLyrics" to false,
+                "pref.latinLyrics" to true,
                 "pref.replayGain" to false,
                 "pref.layoutMode" to "SIMPLIFIED",
                 "pref.lastSection" to "NOW_PLAYING",

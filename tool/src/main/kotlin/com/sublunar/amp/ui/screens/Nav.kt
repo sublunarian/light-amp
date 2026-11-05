@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import com.sublunar.amp.data.ArtistCredit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import com.sublunar.amp.App
@@ -233,8 +234,21 @@ fun SimpleLightScreen<*>.newPlaylist(trackIds: List<String> = emptyList(), onCre
 }
 
 /** Long-press sheet for a track in a list that supports multi-select. */
-fun SimpleLightScreen<*>.openTrackActions(trackId: String, selection: SelectionState?) {
-    go { TrackActionsScreen(it, trackId, onSelect = selection?.let { s -> { s.begin(trackId) } }) }
+fun SimpleLightScreen<*>.openTrackActions(
+    trackId: String,
+    selection: SelectionState?,
+    onAlbumPage: String? = null,
+    onArtistPage: String? = null,
+) {
+    go {
+        TrackActionsScreen(
+            it,
+            trackId,
+            onSelect = selection?.let { s -> { s.begin(trackId) } },
+            onAlbumPage = onAlbumPage,
+            onArtistPage = onArtistPage,
+        )
+    }
 }
 
 /**
@@ -300,8 +314,8 @@ fun SimpleLightScreen<*>.openAlbum(albumId: String, parent: Parent) {
     go { AlbumDetailScreen(it, albumId) }
 }
 
-fun SimpleLightScreen<*>.openArtist(name: String, parent: Parent) {
+fun SimpleLightScreen<*>.openArtist(name: String, parent: Parent, credit: ArtistCredit = ArtistCredit.ALBUM) {
     if (name.isBlank()) return
     layDown(parent)
-    go { ArtistDetailScreen(it, name) }
+    go { ArtistDetailScreen(it, name, credit) }
 }

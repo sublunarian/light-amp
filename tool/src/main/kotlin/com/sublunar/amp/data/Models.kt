@@ -41,6 +41,11 @@ data class Track(
     val codec: String = "",
     /** The file's own bitrate in kbps, where the server gives one. */
     val bitRateKbps: Int? = null,
+    /**
+     * Everyone the song itself credits, joined with "; " as [albumArtist] is, from
+     * the server's own list. Blank where it sends none: [artist] stands in.
+     */
+    val artists: String = "",
 )
 
 /**
@@ -74,6 +79,18 @@ private const val MP4_LOSSLESS_KBPS = 500
  * ("Earth, Wind & Fire"). Tag values are the opposite — see [splitTagValues].
  */
 fun Track.albumArtistNames(): List<String> = creditNames(albumArtist.ifBlank { artist })
+
+/** The song's own artists, one name each: a compilation's real performers, a feature as its own name. */
+fun Track.songArtistNames(): List<String> = creditNames(artists.ifBlank { artist })
+
+/** Which credit makes someone an artist: the record's, or the song's own. */
+enum class ArtistCredit {
+    ALBUM,
+    SONG,
+    ;
+
+    fun names(track: Track): List<String> = if (this == ALBUM) track.albumArtistNames() else track.songArtistNames()
+}
 
 /** [albumArtistNames] for one stored credit, without a track — the download top-up reads credits, not rows. */
 fun creditNames(raw: String): List<String> {

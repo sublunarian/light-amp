@@ -26,7 +26,6 @@ import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
-import com.sublunar.amp.ui.components.largeMenuText
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
@@ -63,7 +62,7 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val sync by App.librarySync.syncState.collectAsState()
         val current = choice ?: active?.let { Choice(it.id, it.selectedLibraries) }
 
-        ListScreen(onBack = { goBack() }, title = "Sources", headingRows = largeMenuText()) {
+        ListScreen(onBack = { goBack() }, title = "Sources", listRows = true) {
             ScrollableList {
                 sources.forEach { source ->
                     // The source is the heading its libraries sit under: there is

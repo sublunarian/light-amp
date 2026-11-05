@@ -44,9 +44,6 @@ object AppIcons {
 
     /** LightOS's own waveform, see [WaveformSymbol]. */
     val Waveform = WaveformSymbol
-
-    /** The library: Now Playing's way back to it, and the bar's middle button. */
-    val LibraryMusic = Icons.Filled.LibraryMusic
     val Sort = Icons.AutoMirrored.Filled.Sort
     val Favorite = Icons.Filled.Favorite
     val FavoriteBorder = Icons.Filled.FavoriteBorder

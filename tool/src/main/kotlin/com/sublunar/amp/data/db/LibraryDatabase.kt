@@ -54,6 +54,9 @@ data class TrackEntity(
     @ColumnInfo(defaultValue = "")
     val codec: String = "",
     val bitRateKbps: Int? = null,
+    /** The song's own artist credits; see [Track.artists]. */
+    @ColumnInfo(defaultValue = "")
+    val artists: String = "",
 )
 
 @Entity(tableName = "albums")
@@ -659,7 +662,7 @@ interface LibraryDao {
         ArtistImageEntity::class,
         LyricsEntity::class,
     ],
-    version = 18,
+    version = 19,
     exportSchema = true,
     // Generated from the committed schemas in tool/src/main/assets/schemas (assets,
     // because that is what Light's store builder copies). Every schema change adds
@@ -683,6 +686,9 @@ interface LibraryDao {
         AutoMigration(from = 16, to = 17),
         // Adds albums.releaseType, Album until the next sync reads every album again.
         AutoMigration(from = 17, to = 18),
+        // Adds tracks.artists, blank until the next sync reads every song again
+        // (LibrarySync.TRACK_PARSER_GENERATION 5).
+        AutoMigration(from = 18, to = 19),
     ],
 )
 abstract class LibraryDatabase : RoomDatabase() {

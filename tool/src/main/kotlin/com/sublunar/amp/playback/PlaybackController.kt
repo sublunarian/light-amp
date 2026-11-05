@@ -435,6 +435,17 @@ class PlaybackController(
     /** The source the player was given for queue [row], or null when it doesn't hold the row. */
     private fun queuedSourceAt(row: Int): LightAudioSource? = window.positionOf(row)?.let(queuedSources::getOrNull)
 
+    /**
+     * How [trackId] reaches the phone, when it is the song playing here: what the
+     * player was given for it, not what would be chosen now. Null for any other
+     * song, and while a speaker plays it, which fetches its own. Main only.
+     */
+    fun playingAs(trackId: String): PlayingAs? {
+        if (_active.value != null) return null
+        val track = _queue.value.getOrNull(_index.value)?.takeIf { it.id == trackId } ?: return null
+        return sources.playingAs(track, queuedSourceAt(_index.value))
+    }
+
     init {
         // Times how long a speaker the phone owns has sat paused — see [forgetPausedSpeaker].
         scope.launch(Dispatchers.Main) {

@@ -863,9 +863,9 @@ class LibrarySync(
          * OpenSubsonic's display* fields; 2: multi-artist credits from its
          * structured `artists`; 3: each file's format and bitrate (see
          * Track.codec); 4: Jellyfin's from the audio stream, not its MP4
-         * container list.
+         * container list; 5: each song's own artist credits (Track.artists).
          */
-        const val TRACK_PARSER_GENERATION = 4
+        const val TRACK_PARSER_GENERATION = 5
 
         /** How many downloads a sync may take out without being doubted — see reportLostDownloads. */
         private const val LOST_DOWNLOADS_ALWAYS_OK = 10

@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import com.sublunar.amp.data.ArtistCredit
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -22,13 +23,12 @@ import com.sublunar.amp.data.titleKey
 import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.AlbumGrid
 import com.sublunar.amp.ui.components.AppHeader
-import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.EmptyState
+import com.sublunar.amp.ui.components.GroupLabel
 import com.sublunar.amp.ui.components.LibraryList
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.ScrollableList
-import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.ShuffleRow
 import com.sublunar.amp.ui.components.SplitActionRow
@@ -38,8 +38,9 @@ import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.largeMenuText
 import com.sublunar.amp.ui.components.rememberGridAnchor
 import com.sublunar.amp.ui.components.rememberSelection
-import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
@@ -47,6 +48,8 @@ import kotlinx.coroutines.launch
 class ArtistDetailScreen(
     sealed: SealedLightActivity,
     private val name: String,
+    /** SONG from the Artists list's Artist order: the records their songs are on. */
+    private val credit: ArtistCredit = ArtistCredit.ALBUM,
 ) : AmpScreen<Unit>(sealed) {
 
     /**
@@ -58,11 +61,11 @@ class ArtistDetailScreen(
         SplitActionRow(
             leftIcon = AppIcons.FormatListBulleted,
             leftLabel = "All Songs",
-            onLeft = { go { ArtistSongsScreen(it, name) } },
+            onLeft = { go { ArtistSongsScreen(it, name, credit = credit) } },
             rightIcon = if (hasPopular) AppIcons.Whatshot else null,
             rightLabel = "Popular",
             onRight = if (hasPopular) {
-                { go { ArtistSongsScreen(it, name, popular = true) } }
+                { go { ArtistSongsScreen(it, name, popular = true, credit = credit) } }
             } else {
                 null
             },
@@ -73,7 +76,7 @@ class ArtistDetailScreen(
     override fun Content() {
         val tracks by App.library.tracks.collectAsState()
         val albums by App.library.albums.collectAsState()
-        val artistAlbums = remember(tracks, albums, name) { App.library.albumsForArtist(name) }
+        val artistAlbums = remember(tracks, albums, name) { App.library.albumsForArtist(name, credit) }
         val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
 
         // Popular only when the server returns some (Navidrome needs Last.fm set up).
@@ -113,14 +116,14 @@ class ArtistDetailScreen(
                     groups.orEmpty().associate { (type, list) ->
                         val start = at
                         at += list.size
-                        start to @Composable { GroupHeading(type, list) }
+                        start to @Composable { GroupHeading(type, list, first = start == 0) }
                     }
                 }
                 AlbumGrid(
                     albums = shown,
                     headings = headings,
                     onOpen = { album -> openAlbum(album.id, Parent.Here) },
-                    onLongPress = { album -> go { AlbumActionsScreen(it, album.id) } },
+                    onLongPress = { album -> go { AlbumActionsScreen(it, album.id, onArtistPage = name) } },
                     // One anchor per artist, and one header item: the song shortcuts,
                     // spanning the row so they read as a header over the records.
                     state = rememberGridAnchor("artist-albums:$name/grid", headerCount = 1),
@@ -140,7 +143,9 @@ class ArtistDetailScreen(
                 item { SongShortcuts(hasPopular) }
                 val sections = groups ?: listOf(null to ordered)
                 sections.forEach { (type, list) ->
-                    if (type != null) item(key = "group-${type.name}") { GroupHeading(type, list) }
+                    if (type != null) {
+                        item(key = "group-${type.name}") { GroupHeading(type, list, first = type == sections.first().first) }
+                    }
                     items(list, key = { it.id }) { album ->
                         TrackRow(
                             title = album.title,
@@ -149,7 +154,7 @@ class ArtistDetailScreen(
                             fallback = AppIcons.Album,
                             downloaded = album.id in downloadedAlbums,
                             onClick = { openAlbum(album.id, Parent.Here) },
-                            onLongClick = { go { AlbumActionsScreen(it, album.id) } },
+                            onLongClick = { go { AlbumActionsScreen(it, album.id, onArtistPage = name) } },
                         )
                     }
                 }
@@ -157,45 +162,79 @@ class ArtistDetailScreen(
         }
     }
 
-    /** A group's heading: a play glyph after the words, and the line a button that plays the group in order. */
+    /**
+     * A group's heading, a button for the group's menu. The chevron after the
+     * words, as on the source's name, says a tap offers choices.
+     */
     @Composable
-    private fun GroupHeading(type: ReleaseType, albums: List<Album>) {
-        SectionLabel(
+    private fun GroupHeading(type: ReleaseType, albums: List<Album>, first: Boolean) {
+        GroupLabel(
             type.heading,
-            dim = false,
-            onClick = { playGroup(type, albums) },
-            trailing = { AppIcon(AppIcons.PlayArrow, size = px(GROUP_PLAY_PX)) },
+            first = first,
+            onClick = { go { GroupActionsScreen(it, name, type, albums) } },
+            trailing = { LightIcon(LightIcons.DOWN, size = GROUP_CHEVRON_UNITS) },
         )
     }
+}
 
-    /** Every song of [albums], record by record in the page's order, as one queue. */
-    private fun playGroup(type: ReleaseType, albums: List<Album>) {
-        val place = albums.withIndex().associate { it.value.id to it.index }
-        val songs = App.library.tracks.value
-            .filter { it.albumId in place }
-            .sortedWith(compareBy({ place[it.albumId] }, { it.discNumber ?: 0 }, { it.trackNumber ?: 0 }))
-        if (songs.isEmpty()) return
-        App.playback.playQueue(songs, 0, name = "$name · ${type.heading}")
-        go { NowPlayingScreen(it) }
+/** What to do with one of an artist's groups (their Singles): their songs, record by record in the page's order. */
+class GroupActionsScreen(
+    sealed: SealedLightActivity,
+    private val artist: String,
+    private val type: ReleaseType,
+    private val albums: List<Album>,
+) : AmpScreen<Unit>(sealed) {
+    @Composable
+    override fun Content() {
+        val source by App.source.collectAsState()
+        val tracks by App.library.tracks.collectAsState()
+        val songs = remember(tracks, albums) { groupSongs(tracks, albums) }
+        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
+        val downloaded = songs.isNotEmpty() && songs.all { it.id in downloadedIds }
+        ListScreen(
+            onBack = { goBack() },
+            title = type.heading,
+            subtitle = artist,
+            headingRows = largeMenuText(),
+        ) {
+            ActionList {
+                PlayRows(songs, queueName = "$artist · ${type.heading}")
+                TextRow(title = "Play Next") {
+                    App.playback.playNext(songs)
+                    goBack()
+                }
+                TextRow(title = "Add to Queue") {
+                    App.playback.addToQueue(songs)
+                    goBack()
+                }
+                AddToPlaylistRow(songs.map { it.id }) { goBack() }
+                DownloadRow(source, songs, downloaded, "Download ${type.heading}")
+            }
+        }
     }
+}
+
+private fun groupSongs(tracks: List<Track>, albums: List<Album>): List<Track> {
+    val place = albums.withIndex().associate { it.value.id to it.index }
+    return tracks
+        .filter { it.albumId in place }
+        .sortedWith(compareBy({ place[it.albumId] }, { it.discNumber ?: 0 }, { it.trackNumber ?: 0 }))
 }
 
 /** Long-press sheet for an artist, and the one place an artist is liked. */
 class ArtistActionsScreen(
     sealed: SealedLightActivity,
     private val name: String,
+    private val credit: ArtistCredit = ArtistCredit.ALBUM,
 ) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
-        val artists by App.library.artists.collectAsState()
-        val liked = remember(artists, name) {
-            artists.firstOrNull { it.name == name }?.liked == true
-        }
+        val liked = name in App.library.likedArtistNames.collectAsState().value
         val source by App.source.collectAsState()
         val tracks by App.library.tracks.collectAsState()
-        val artistTracks = remember(tracks, name) { App.library.tracksForArtist(name) }
-        val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
+        val artistTracks = remember(tracks, name) { App.library.tracksForArtist(name, credit) }
+        val downloadedArtists by App.library.downloadedArtistNames(credit).collectAsState()
         val fullyDownloaded = artistTracks.isNotEmpty() && name in downloadedArtists
 
         ListScreen(onBack = { goBack() }, title = name, headingRows = largeMenuText()) {
@@ -206,7 +245,7 @@ class ArtistActionsScreen(
                         goBack()
                     }
                 }
-                TextRow(title = "All Songs") { go { ArtistSongsScreen(it, name) } }
+                TextRow(title = "All Songs") { go { ArtistSongsScreen(it, name, credit = credit) } }
                 DownloadRow(source, artistTracks, fullyDownloaded, "Download All Albums")
             }
         }
@@ -222,6 +261,7 @@ class ArtistSongsScreen(
     sealed: SealedLightActivity,
     private val name: String,
     private val popular: Boolean = false,
+    private val credit: ArtistCredit = ArtistCredit.ALBUM,
 ) : AmpScreen<Unit>(sealed) {
 
     // Each visit to an artist's songs starts plain, and leaves nothing behind:
@@ -311,7 +351,7 @@ class ArtistSongsScreen(
                                 }
                             },
                             onLongClick = {
-                                if (!selection.active) openTrackActions(track.id, selection)
+                                if (!selection.active) openTrackActions(track.id, selection, onArtistPage = name)
                             },
                         )
                     }
@@ -332,7 +372,7 @@ class ArtistSongsScreen(
     @Composable
     private fun rememberAll(): List<Track> {
         val tracks by App.library.tracks.collectAsState()
-        return remember(tracks, name) { App.library.tracksForArtist(name) }
+        return remember(tracks, name) { App.library.tracksForArtist(name, credit) }
     }
 }
 
@@ -426,4 +466,5 @@ class ArtistAlbumOrderScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(seal
 }
 
 /** The group heading's play glyph: about the height of its words. */
-private const val GROUP_PLAY_PX = 41
+/** The chevron after a group's heading: the source name's, scaled to the smaller words. */
+private const val GROUP_CHEVRON_UNITS = 0.8f

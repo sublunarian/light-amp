@@ -17,12 +17,14 @@ import com.sublunar.amp.ui.components.largeMenuText
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
 
-/** Long-press actions for an album: play or queue it whole, like, rate, download, go to the artist. */
+/** Long-press actions for an album: play, queue or add it whole, like, rate, download, go to the artist. */
 class AlbumActionsScreen(
     sealed: SealedLightActivity,
     private val albumId: String,
     /** Opened from the album page's own ⋮ rather than by holding a row. */
     private val fromDetail: Boolean = false,
+    /** The artist page this was opened on: no Go to Artist where it would go there. */
+    private val onArtistPage: String? = null,
 ) : AmpScreen<Unit>(sealed) {
 
     @Composable
@@ -59,6 +61,7 @@ class AlbumActionsScreen(
                     if (list.isNotEmpty()) App.playback.addToQueue(list)
                     goBack()
                 }
+                if (list.isNotEmpty()) AddToPlaylistRow(list.map { it.id }) { goBack() }
                 if (album != null && source.supportsLikes) {
                     TextRow(title = if (album.liked) "Unlike Album" else "Like Album") {
                         App.scope.launch { App.library.setAlbumLiked(album, !album.liked) }
@@ -69,7 +72,7 @@ class AlbumActionsScreen(
                     RatingRow(album.id, album.title, album.rating, isAlbum = true)
                 }
                 DownloadRow(source, list, fullyDownloaded, "Download Album")
-                if (album != null && album.artist.isNotBlank()) {
+                if (album != null && album.artist.isNotBlank() && album.artist != onArtistPage) {
                     TextRow(title = "Go to Artist") {
                         openArtist(album.artist, Parent.tab(LibraryTab.ARTISTS))
                     }

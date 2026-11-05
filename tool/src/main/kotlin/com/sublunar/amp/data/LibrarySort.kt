@@ -24,7 +24,7 @@ val SongSort.descendingByNature: Boolean
 
 val ArtistSort.descendingByNature: Boolean
     get() = when (this) {
-        ArtistSort.NAME -> false
+        ArtistSort.NAME, ArtistSort.ARTIST -> false
         ArtistSort.MOST_PLAYED -> true
     }
 
@@ -227,7 +227,7 @@ fun sortSongs(
 
 fun sortArtists(artists: List<Artist>, sort: ArtistSort, reversed: Boolean = false): List<Artist> {
     val ordered = when (sort) {
-        ArtistSort.NAME -> artists.sortedByKeyOnce { sortNameKey(it.name) }
+        ArtistSort.NAME, ArtistSort.ARTIST -> artists.sortedByKeyOnce { sortNameKey(it.name) }
         ArtistSort.MOST_PLAYED -> artists.sortedByDescendingThenKey(
             primary = { it.playCount.toLong() },
             key = { sortNameKey(it.name) },

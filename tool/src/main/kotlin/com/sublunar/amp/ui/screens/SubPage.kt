@@ -15,11 +15,12 @@ import com.thelightphone.sdk.SimpleLightScreen
 
 /**
  * Open library search from a sub-page: search is a state of the shell, so
- * activate it and unwind to the shell.
+ * unwind to the shell and start it there the way the shell's own search button
+ * does, keyboard and all.
  */
 fun SimpleLightScreen<*>.openLibrarySearch() {
-    LibraryNav.openSearch()
     backToRoot()
+    startSearch()
 }
 
 /**

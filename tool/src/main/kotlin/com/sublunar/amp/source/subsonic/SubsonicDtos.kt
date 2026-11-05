@@ -258,6 +258,8 @@ data class SongDto(
     val composer: String? = null,
     /** The composer under OpenSubsonic's name, as with [displayAlbumArtist]: a Child has no plain `composer`. */
     val displayComposer: String? = null,
+    /** OpenSubsonic's structured credit for the song itself, as an album's [AlbumDto.artists] is for the record. */
+    val artists: List<AlbumArtistDto> = emptyList(),
     /**
      * OpenSubsonic ReplayGain, sent when the file is tagged. Gains are dB
      * relative to reference loudness — negative for loud masters.
@@ -390,6 +392,7 @@ internal fun SongDto.toTrack(
         gainDb = replayGain?.trackGain ?: replayGain?.albumGain,
         codec = suffix?.lowercase().orEmpty(),
         bitRateKbps = bitRate?.takeIf { it > 0 },
+        artists = artists.mapNotNull { it.name?.trim()?.takeIf(String::isNotEmpty) }.joinToString("; "),
     )
 }
 

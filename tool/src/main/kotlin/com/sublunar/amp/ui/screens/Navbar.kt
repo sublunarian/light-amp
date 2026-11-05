@@ -24,6 +24,8 @@ import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
+import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
 
 /**
@@ -57,7 +59,7 @@ fun Navbar(
 }
 
 /**
- * Simplified layout: the library, search and the player as the phone's own three
+ * Simplified layout: search, the library and the player as the phone's own three
  * buttons, laid out as the SDK's LightBottomBar lays out three: start, centre and
  * end, each glyph two grid units, its outer edge two units from the screen's.
  * Buttons, not tabs: all three full white, none lit. On the library page itself
@@ -79,14 +81,10 @@ private fun SimplifiedNavbar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BarSlot(Alignment.CenterStart) {
-            if (showLibrary) {
-                BarButton(onBrowse) {
-                    AppIcon(AppIcons.LibraryMusic, size = px(LIBRARY_BOX_PX), tint = LightThemeTokens.colors.content)
-                }
-            }
+            BarButton(onSearch) { LightIcon(LightIcons.SEARCH, size = SDK_GLYPH_UNITS) }
         }
         BarSlot(Alignment.Center) {
-            BarButton(onSearch) { LightIcon(LightIcons.SEARCH, size = SDK_GLYPH_UNITS) }
+            if (showLibrary) TextBarButton("HOME", onBrowse)
         }
         BarSlot(Alignment.CenterEnd) {
             BarButton(onNowPlaying) {
@@ -108,6 +106,21 @@ private fun BarButton(onClick: () -> Unit, glyph: @Composable () -> Unit) {
         modifier = Modifier.size(px(BOTTOM_BAR_PX)).appClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { glyph() }
+}
+
+/**
+ * A worded bar button as the SDK's LightBottomBar draws one (Weather's THIS WEEK):
+ * Button type, one line, its tap target the bar's height and the word's width.
+ */
+@Composable
+private fun TextBarButton(text: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(px(BOTTOM_BAR_PX))
+            .appClickable(onClick = onClick)
+            .padding(horizontal = px(TEXT_BUTTON_PAD_PX)),
+        contentAlignment = Alignment.Center,
+    ) { LightText(text, variant = LightTextVariant.Button, maxLines = 1) }
 }
 
 /** Standard layout: the four tabs across the bar, then the player. */
@@ -238,11 +251,8 @@ private const val LIGHT_MIC_DRAWN_PX = 108 // 38 of its 40 units
 private const val SDK_GLYPH_UNITS = 2f
 private const val SDK_GLYPH_PX = 80
 
-/**
- * The library glyph's box: a Material icon fills 20 of its 24 units, so at this
- * box it draws the SDK glyphs' 80px.
- */
-private const val LIBRARY_BOX_PX = 96
+/** Widens a worded button's tap target past the word's own edges. */
+private const val TEXT_BUTTON_PAD_PX = 40
 
 /** Where the tall glyphs land: above the playlist's own 66, well under their 90. */
 private const val TALL_TARGET_PX = 72

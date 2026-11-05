@@ -10,6 +10,7 @@ server.
   <img src="docs/screenshots/lyrics.png" width="24%" alt="Synced lyrics">
   <img src="docs/screenshots/artist.png" width="24%" alt="An artist's albums">
 </p>
+<p align="center"><sub>Shown with Library Tabs and artwork turned on.</sub></p>
 
 > Side-load only for now. Amp isn't in Light's Tool Library yet.
 
@@ -24,7 +25,9 @@ server.
 - Play counts, ratings, likes and playlist edits sync back to the server.
 - Cast to a DLNA speaker or receiver, or from Plex to another Plex player (it
   needs "Remote Control: Advertise as Player" turned on).
-- Artwork can be turned off completely.
+- Two looks, in Settings → Appearance. New installs start simple: the phone's
+  own three buttons and no artwork. Turn on Library Tabs and Enable Artwork for
+  tabs along the bottom and album covers.
 
 ## Installing
 
@@ -41,7 +44,8 @@ To update, install the new APK the same way. Don't uninstall first: that
 deletes your downloads, sign-ins and settings.
 
 Hold a song, album or playlist for its options. Hold the top-right button on
-any page for Settings.
+any page for Settings. In the simple look, Settings is also the gear at the top
+of the Library page.
 
 ## Music on the phone
 
@@ -63,7 +67,8 @@ Adding music through Light's Tool Manager, instead of adb, is on the to-do list.
 
 ## Color
 
-Artwork is grey until you run this once from a computer:
+Artwork is off on a new install. Turn it on in Settings → Appearance → Enable
+Artwork. It's grey until you run this once from a computer:
 
 ```bash
 adb shell pm grant com.sublunar.amp android.permission.WRITE_SECURE_SETTINGS

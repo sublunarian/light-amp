@@ -9,7 +9,7 @@ import androidx.compose.ui.unit.dp
 /**
  * TRIAL (Outline Tab Icons): glyphs as an outline-and-filled pair where Material
  * and the SDK don't hand one out, each filled one being its outline with the
- * hollow taken out. LightOS's microphone (the SDK has it only as a drawable),
+ * hollow taken out, and the library button's glyph. LightOS's microphone (the SDK has it only as a drawable),
  * the Albums tab's sleeves, and Material Design Icons' playlist, whose filled one
  * is Material's QueueMusic.
  */

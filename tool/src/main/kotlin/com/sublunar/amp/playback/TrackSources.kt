@@ -237,9 +237,47 @@ internal class TrackSources(
         // that can still be heard.
         val decision: (suspend () -> Unit)? =
             if (decideFirst) ({ serverClient.value?.prepareStream(track.id, format, sid) }) else null
-        return App.streamProxy.wrap(url, group = track.id, prepare = decision)
+        return App.streamProxy.wrap(url, group = track.id, prepare = decision).also { urlFormats[it] = format }
+    }
+
+    /**
+     * The format each address handed out asks for. By address rather than by
+     * song: a re-resolve works out a new answer for the playing song but leaves
+     * it playing from the address it had, and that address is what it plays as.
+     */
+    private val urlFormats = object : LinkedHashMap<String, StreamFormat>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, StreamFormat>) = size > URL_FORMATS_KEPT
+    }
+
+    /** How [track] reaches the phone when the player holds it as [from]; null where that can't be said. */
+    fun playingAs(track: Track, from: LightAudioSource?): PlayingAs? = when (from) {
+        is LightAudioSource.FileSource -> when {
+            PhoneFiles.isPhoneFile(track.id) -> PlayingAs(StreamFormat.RAW)
+            else -> localFiles[track.id]?.let { (file, format) ->
+                PlayingAs(format, copyKbps = averageKbps(file, track.durationMs))
+            }
+        }
+        is LightAudioSource.UrlSource -> urlFormats[from.url]?.let { PlayingAs(it) }
+        else -> null
+    }
+
+    /** A file's own bitrate over the song's length: what a download was really made at. */
+    private fun averageKbps(file: File, durationMs: Long): Int? {
+        val bytes = file.length()
+        if (bytes <= 0 || durationMs <= 0) return null
+        return (bytes * 8 / durationMs).toInt()
     }
 }
+
+/**
+ * What reaches the phone for the song playing: [format] as asked of the server
+ * (RAW: the file as it is). [copyKbps] is a download's own bitrate, measured,
+ * since the server's setting may have moved since it was made.
+ */
+data class PlayingAs(val format: StreamFormat, val copyKbps: Int? = null)
+
+/** A queue window's addresses in both of a link's formats, and then some: the playing song's is never let go. */
+private const val URL_FORMATS_KEPT = 2 * PLAYER_WINDOW + 1024
 
 /** [tracks] as player queue items, each from the source already resolved for it in [from]. */
 internal fun itemsFrom(tracks: List<Track>, from: List<LightAudioSource>): List<LightAudioItem> =

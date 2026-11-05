@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -269,12 +270,27 @@ fun TextRow(
      */
     onClick: (() -> Unit)? = null,
 ) {
+    val list = LocalMenuListType.current
+    // A one-line row takes a fixed pitch: the list's own on a list page, else
+    // the Heading one, which fits seven under the header.
+    val oneLine = value == null && subtitle.isNullOrBlank()
+    val pitch = when {
+        !oneLine -> null
+        list != null -> list.oneLinePx
+        heading -> HEADING_ROW_PX
+        else -> null
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .let { if (onClick == null) it else it.rowClickable(onClick) }
+            .let { if (pitch == null) it else it.height(px(pitch)) }
             // Inset at the start only: the list already ends at its scroll bar's lane.
-            .padding(start = px(MENU_ROW_INSET_PX), top = px(MENU_PAD_PX), bottom = px(MENU_PAD_PX)),
+            .padding(
+                start = px(MENU_ROW_INSET_PX),
+                top = px(if (pitch == null) MENU_PAD_PX else 0),
+                bottom = px(if (pitch == null) MENU_PAD_PX else 0),
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (leading != null) {
@@ -286,15 +302,15 @@ fun TextRow(
                 MenuLabel(title)
                 if (valueTrailing != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        MenuLine(value, dim = onClick == null, heading)
+                        MenuLine(value, dim = onClick == null, heading, list)
                         Spacer(Modifier.width(px(VALUE_GLYPH_GAP_PX)))
                         valueTrailing()
                     }
                 } else {
-                    MenuLine(value, dim = onClick == null, heading)
+                    MenuLine(value, dim = onClick == null, heading, list)
                 }
             } else {
-                MenuLine(title, dim = onClick == null, heading)
+                MenuLine(title, dim = onClick == null, heading, list)
                 if (!subtitle.isNullOrBlank()) MenuLabel(subtitle, maxLines = subtitleLines)
             }
         }
@@ -308,6 +324,9 @@ fun TextRow(
 /** TRIAL: whether this page's menu rows are drawn at Heading, set by [ListScreen]. */
 val LocalMenuHeading = compositionLocalOf { false }
 
+/** The library list type this page's menu rows take instead, set by [ListScreen]; null for menu type. */
+val LocalMenuListType = compositionLocalOf<RowType?> { null }
+
 /**
  * TRIAL (Large Menu Text): whether More, its Sources page and the ⋮ menus draw
  * their rows at Heading, as the settings pages always do, or a step below.
@@ -318,16 +337,48 @@ fun largeMenuText(): Boolean = App.settings.largeMenuText.state.collectAsState()
 /** The tick's size, as a multiple of the SDK icon's own. */
 private const val CHECK_SCALE = 1.4f
 
+/**
+ * Something stated whole rather than a row that does something: its name small
+ * above, its value on as many lines as it takes. For text cut short elsewhere.
+ */
+@Composable
+fun InfoRow(label: String, value: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = px(MENU_ROW_INSET_PX), top = px(MENU_PAD_PX), bottom = px(MENU_PAD_PX)),
+    ) {
+        MenuLabel(label)
+        MenuLine(
+            value,
+            dim = false,
+            heading = LocalMenuHeading.current,
+            list = LocalMenuListType.current,
+            maxLines = Int.MAX_VALUE,
+        )
+    }
+}
+
 /** A menu row's main line, in Light's Copy (see [TextRow]). */
 @Composable
-private fun MenuLine(text: String, dim: Boolean, heading: Boolean = false) {
+private fun MenuLine(
+    text: String,
+    dim: Boolean,
+    heading: Boolean = false,
+    list: RowType? = null,
+    maxLines: Int = 1,
+) {
+    if (list != null) {
+        AppText(text, pxSp(list.titlePx), lineHeight = pxSp(list.titleLinePx), role = list.titleRole, dim = dim, maxLines = maxLines)
+        return
+    }
     AppText(
         text,
         pxSp(if (heading) LightType.HEADING_PX else LightType.COPY_PX),
         lineHeight = pxSp(if (heading) LightType.HEADING_LINE_PX else MENU_LINE_PX),
         role = if (heading) TextRole.Heading else TextRole.Copy,
         dim = dim,
-        maxLines = 1,
+        maxLines = maxLines,
     )
 }
 
@@ -356,6 +407,9 @@ const val MENU_ROW_INSET_PX = MENU_INSET_PX - LIST_EDGE_PX
 
 /** Above and below a row's text: with Copy's line, a 136px pitch. */
 private const val MENU_PAD_PX = 32
+
+/** Seven to the 1080px under the header, rather than the 160 the padding would give. */
+private const val HEADING_ROW_PX = 154
 
 /** Between a leading glyph and the text: one unit. */
 private const val MENU_GAP_PX = 40
@@ -439,6 +493,43 @@ fun SectionLabel(
 }
 
 private const val SECTION_GLYPH_GAP_PX = 16
+
+/**
+ * A heading over a group of rows (an artist's Singles), in Detail. Against the
+ * titles' edge, and nearer the rows it names than the ones before.
+ */
+@Composable
+fun GroupLabel(
+    text: String,
+    /** The first group, straight under the page's own rows: no break to mark. */
+    first: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.appClickable(onClick = onClick) else Modifier)
+            .padding(start = px(ROW_LEAD_PX), top = px(if (first) GROUP_FIRST_TOP_PX else GROUP_TOP_PX), bottom = px(GROUP_BOTTOM_PX)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppText(
+            text,
+            pxSp(LightType.DETAIL_PX),
+            lineHeight = pxSp(LightType.DETAIL_LINE_PX),
+            role = TextRole.Detail,
+            maxLines = 1,
+        )
+        if (trailing != null) {
+            Spacer(Modifier.width(px(SECTION_GLYPH_GAP_PX)))
+            trailing()
+        }
+    }
+}
+
+private const val GROUP_TOP_PX = 72
+private const val GROUP_FIRST_TOP_PX = 32
+private const val GROUP_BOTTOM_PX = 20
 
 private const val SECTION_TOP_PX = 40
 private const val SECTION_BOTTOM_PX = 12

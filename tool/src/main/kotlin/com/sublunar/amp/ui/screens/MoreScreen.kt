@@ -1,15 +1,21 @@
 package com.sublunar.amp.ui.screens
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.BuildConfig
@@ -57,17 +63,15 @@ class MoreScreen(
         val view = viewOf(page)
         val sort = sortOf(page)
         // Under Simplified the liked lists are entries on the library index
-        // rather than a filter over a tab — unless Liked as Filter (TRIAL) says
-        // otherwise.
+        // rather than a filter over a tab.
         val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
-        val likedAsFilter = App.settings.likedAsFilter.state.collectAsState().value
-        val likedTab = likedFilterTab(page).takeUnless { simplified && !likedAsFilter }
+        val likedTab = likedFilterTab(page).takeUnless { simplified }
         val liked = likedOnly(likedTab)
         // Under both layouts, unlike the liked filter: these narrowings have no
         // other home.
         val genre = genreSettingOf(page)
         // The phone's own music is all on the phone already: nothing to narrow to.
-        val downloadedTab = filterTab(page).takeIf { App.source.collectAsState().value.supportsDownloads }
+        val downloadedTab = downloadedFilterTab(page).takeIf { App.source.collectAsState().value.supportsDownloads }
         val downloaded = downloadedOnly(downloadedTab)
         // An artist's songs carry their own, for the one visit — see ArtistSongsVisit.
         val visit = ArtistSongsVisit.view.collectAsState().value.takeIf { page == LibraryPage.ARTIST_SONGS }
@@ -111,7 +115,7 @@ class MoreScreen(
                                 // Plain "Liked", as "Downloaded" is: the page is already
                                 // this tab's, and the header says "Liked Albums" once on.
                                 ToggleRow("Liked", liked) {
-                                    App.scope.launch { setLikedOnly(likedTab, !liked) }
+                                    setLikedOnly(likedTab, !liked)
                                 }
                             }
                         }
@@ -322,6 +326,10 @@ private fun likedFilterTab(page: LibraryPage): LibraryTab? {
     return filterTab(page)
 }
 
+/** The tab the Downloaded switch narrows: the filter tabs, and the playlists too. */
+private fun downloadedFilterTab(page: LibraryPage): LibraryTab? =
+    if (page == LibraryPage.PLAYLISTS) LibraryTab.PLAYLISTS else filterTab(page)
+
 /** The tab whose lists a page's filters narrow: the albums, songs and artists tabs only. */
 private fun filterTab(page: LibraryPage): LibraryTab? = when (page) {
     LibraryPage.ALBUMS -> LibraryTab.ALBUMS
@@ -367,7 +375,7 @@ class AboutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 verticalArrangement = Arrangement.spacedBy(px(26)),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                AppText("amp", pxSp(LightType.HEADING_PX))
+                AppText("Amp", pxSp(LightType.HEADING_PX))
                 AppText("Version ${BuildConfig.VERSION_NAME}", pxSp(LightType.DETAIL_PX), dim = true)
                 // Only when the loopback stream proxy failed, and why: nothing
                 // streams without it, and it can't be seen any other way without a cable.
@@ -380,19 +388,32 @@ class AboutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         align = TextAlign.Center,
                     )
                 }
-                AppText(
-                    "Plays music you own: files on this phone, your Bandcamp " +
-                        "collection, or your own Plex, Jellyfin, Navidrome or other " +
-                        "Subsonic server.",
-                    pxSp(LightType.PARAGRAPH_PX),
-                    lineHeight = pxSp(LightType.PARAGRAPH_LINE_PX),
-                    dim = true,
-                    align = TextAlign.Center,
+                // Plain text, not a link: LightOS has no browser to open it in.
+                Column(
+                    modifier = Modifier.padding(top = px(54)),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    AppText("Buy Me a Coffee", pxSp(LightType.PARAGRAPH_PX))
+                    AppText("buymeacoffee.com/sublunarian", pxSp(LightType.PARAGRAPH_PX), dim = true)
+                }
+                // Whatever height is left, so the page never needs to scroll.
+                val qr = remember {
+                    App.readAsset(BMC_QR_ASSET).let { BitmapFactory.decodeByteArray(it, 0, it.size) }.asImageBitmap()
+                }
+                Image(
+                    bitmap = qr,
+                    contentDescription = "QR code for buymeacoffee.com/sublunarian",
+                    contentScale = ContentScale.Fit,
+                    // With the column's 26, the 54 kept above Buy Me a Coffee.
+                    modifier = Modifier.padding(top = px(28)).weight(1f).fillMaxWidth(),
                 )
             }
         }
     }
 }
+
+/** Buy Me a Coffee's own QR code, inverted to grey on black. */
+private const val BMC_QR_ASSET = "about/buymeacoffee-qr.png"
 
 /** The sort direction's arrow: about the picker pages' tick, and a multiple of 3 to stay sharp on the LP3. */
 private const val SORT_ARROW_PX = 60

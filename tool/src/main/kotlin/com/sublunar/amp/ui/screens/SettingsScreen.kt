@@ -36,7 +36,7 @@ private fun downloadQualityLabel(source: MusicSource): String = when {
 }
 
 /** A format as [source] is asked for it: at its own bitrate, which a server may cap lower. */
-private fun formatLabel(format: StreamFormat, source: MusicSource?): String {
+internal fun formatLabel(format: StreamFormat, source: MusicSource?): String {
     source?.let { it.provider.qualityLabel(it, format) }?.let { return it }
     val kbps = source?.kbps(format) ?: format.maxBitRate
     return when (format) {
@@ -158,7 +158,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     }
                 }
                 item {
-                    // On, the default, spreads the four tabs across the bar. Off is
+                    // On spreads the four tabs across the bar. Off, the default, is
                     // the phone's own three buttons with the library as a page.
                     val tabs = layoutMode == LayoutMode.STANDARD
                     ToggleRow("Library Tabs", tabs) {
@@ -195,13 +195,9 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val outlineTabIcons by App.settings.outlineTabIcons.state.collectAsState()
         val largeMenus by App.settings.largeMenuText.state.collectAsState()
         val settingsInMenus by App.settings.settingsInPageMenus.state.collectAsState()
-        val biggerArtless by App.settings.biggerArtlessText.state.collectAsState()
-        val tallerOneLine by App.settings.tallerOneLineRows.state.collectAsState()
-        val biggerArtwork by App.settings.biggerArtworkText.state.collectAsState()
-        val likedAsFilter by App.settings.likedAsFilter.state.collectAsState()
         val newDownloads by App.settings.newDownloadsPage.state.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = "Test", headingRows = true) {
+        ListScreen(onBack = { goBack() }, title = "Test") {
             ScrollableList {
                 item {
                     ToggleRow("Outline Tab Icons", outlineTabIcons) {
@@ -216,29 +212,6 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 item {
                     ToggleRow("Settings in Page Menus", settingsInMenus) {
                         App.scope.launch { App.settings.settingsInPageMenus.set(!settingsInMenus) }
-                    }
-                }
-                item {
-                    ToggleRow("Bigger Artless List Text", biggerArtless) {
-                        App.scope.launch { App.settings.biggerArtlessText.set(!biggerArtless) }
-                    }
-                }
-                // Only changes anything with the bigger text on.
-                if (biggerArtless) {
-                    item {
-                        ToggleRow("Taller One-Line Rows", tallerOneLine) {
-                            App.scope.launch { App.settings.tallerOneLineRows.set(!tallerOneLine) }
-                        }
-                    }
-                }
-                item {
-                    ToggleRow("Bigger Artwork List Text", biggerArtwork) {
-                        App.scope.launch { App.settings.biggerArtworkText.set(!biggerArtwork) }
-                    }
-                }
-                item {
-                    ToggleRow("Liked as Filter", likedAsFilter) {
-                        App.scope.launch { App.settings.likedAsFilter.set(!likedAsFilter) }
                     }
                 }
                 item {

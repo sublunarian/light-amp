@@ -315,6 +315,7 @@ internal fun JellyfinItem.toTrack(): Track = Track(
     composer = people.filter { it.type.equals("Composer", ignoreCase = true) }
         .joinToString("; ") { it.name }
         .trim(),
+    artists = artists.ifEmpty { artistItems.map { it.name } }.map { it.trim() }.filter { it.isNotEmpty() }.joinToString("; "),
     // The track's own gain first; a file tagged only album-wise still evens out.
     gainDb = normalizationGain ?: albumNormalizationGain,
     codec = audioStream?.codec?.lowercase() ?: containerName(),

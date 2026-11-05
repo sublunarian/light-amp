@@ -20,15 +20,15 @@ class SettingsStateTest {
         val settings = MemoryDataStore(
             preferencesOf(
                 booleanPreferencesKey("pref.invertColors") to true,
-                stringPreferencesKey("pref.artworkMode") to "NONE",
+                stringPreferencesKey("pref.artworkMode") to "SMALL",
                 stringPreferencesKey("pref.dataMode") to "WIFI_ONLY",
             ),
         ).settings()
         assertEquals(true, settings.invertColors.value)
-        assertEquals(ArtworkMode.NONE, settings.artwork.value)
+        assertEquals(ArtworkMode.SMALL, settings.artwork.value)
         assertEquals(DataMode.WIFI_ONLY, settings.dataMode.value)
         // Never written: the default.
-        assertEquals(LayoutMode.STANDARD, settings.layoutMode.value)
+        assertEquals(LayoutMode.SIMPLIFIED, settings.layoutMode.value)
     }
 
     @Test
@@ -72,11 +72,13 @@ class SettingsStateTest {
         settings.likedAlbumsOnly.set(true)
         settings.downloadedSongsOnly.set(true)
         settings.downloadedArtistsOnly.set(true)
+        settings.downloadedPlaylistsOnly.set(true)
         settings.albumsGenre.set("Jazz")
         settings.clearLibraryFilters()
         assertEquals(false, settings.likedAlbumsOnly.first())
         assertEquals(false, settings.downloadedSongsOnly.first())
         assertEquals(false, settings.downloadedArtistsOnly.first())
+        assertEquals(false, settings.downloadedPlaylistsOnly.first())
         assertEquals("", settings.albumsGenre.first())
     }
 

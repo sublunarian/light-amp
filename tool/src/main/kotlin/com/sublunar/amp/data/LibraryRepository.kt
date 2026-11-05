@@ -48,6 +48,9 @@ internal class Indexed(val tracks: List<Track>) {
     /** How many tracks each album artist has. */
     val artistSizes: Map<String, Int> by lazy { tracks.flatMap { it.albumArtistNames() }.groupingBy { it }.eachCount() }
 
+    /** How many tracks credit each song artist. */
+    val songArtistSizes: Map<String, Int> by lazy { tracks.flatMap { it.songArtistNames() }.groupingBy { it }.eachCount() }
+
     val byId: Map<String, Track> by lazy { tracks.associateBy { it.id } }
 
     val ids: Set<String> by lazy { tracks.mapTo(HashSet()) { it.id } }
@@ -370,13 +373,23 @@ class LibraryRepository(
      * download badge, the same way [downloadedAlbumIds] drives the album one.
      */
     val downloadedArtistNames: StateFlow<Set<String>> =
+        downloadedNames(ArtistCredit.ALBUM).stateIn(scope, SharingStarted.Eagerly, emptySet())
+
+    /** The same for the song artists, worked out once the Artists list first asks for them. */
+    private val downloadedSongArtistNames: StateFlow<Set<String>> =
+        downloadedNames(ArtistCredit.SONG).stateIn(scope, SharingStarted.Lazily, emptySet())
+
+    fun downloadedArtistNames(credit: ArtistCredit): StateFlow<Set<String>> =
+        if (credit == ArtistCredit.ALBUM) downloadedArtistNames else downloadedSongArtistNames
+
+    private fun downloadedNames(credit: ArtistCredit): Flow<Set<String>> =
         combine(indexed, downloadFiles) { library, rows ->
             if (rows.isEmpty()) return@combine emptySet()
-            val sizes = library.artistSizes
+            val sizes = if (credit == ArtistCredit.ALBUM) library.artistSizes else library.songArtistSizes
             val byId = library.byId
             val have = HashMap<String, Int>()
             for (row in rows) {
-                val credits = byId[row.trackId]?.albumArtistNames() ?: continue
+                val credits = byId[row.trackId]?.let(credit::names) ?: continue
                 for (artist in credits) {
                     have[artist] = (have[artist] ?: 0) + 1
                 }
@@ -384,7 +397,7 @@ class LibraryRepository(
             have.entries.mapNotNullTo(mutableSetOf()) { (artist, n) ->
                 artist.takeIf { sizes[artist] == n }
             }
-        }.stateIn(scope, SharingStarted.Eagerly, emptySet())
+        }
 
     /**
      * The genres this library actually uses, derived from the cache. Empty means
@@ -441,20 +454,31 @@ class LibraryRepository(
      */
     private val _artistImages = MutableStateFlow<Map<String, String>?>(null)
 
-    val artists: StateFlow<List<Artist>> =
+    val artists: StateFlow<List<Artist>> = artistsFlow(ArtistCredit.ALBUM, SharingStarted.Eagerly)
+
+    /**
+     * Everyone a song credits, a compilation's performers and a feature among
+     * them: the Artists list's Artist order. Worked out once it is first chosen.
+     */
+    private val songArtists: StateFlow<List<Artist>> = artistsFlow(ArtistCredit.SONG, SharingStarted.Lazily)
+
+    fun artists(credit: ArtistCredit): StateFlow<List<Artist>> = if (credit == ArtistCredit.ALBUM) artists else songArtists
+
+    private fun artistsFlow(credit: ArtistCredit, started: SharingStarted): StateFlow<List<Artist>> =
         combine(tracks, likedArtistNames, _artistImages) { list, liked, images ->
-            deriveArtists(list, liked, images.orEmpty())
-        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+            deriveArtists(list, liked, images.orEmpty(), credit)
+        }.stateIn(scope, started, emptyList())
 
     /** One pass over every credit, tallied per name in the order names first appear. */
     private fun deriveArtists(
         list: List<Track>,
         liked: Set<String>,
         images: Map<String, String>,
+        credit: ArtistCredit,
     ): List<Artist> {
         val tallies = LinkedHashMap<String, ArtistTally>()
         for (track in list) {
-            for (name in track.albumArtistNames()) {
+            for (name in credit.names(track)) {
                 val tally = tallies.getOrPut(name, ::ArtistTally)
                 track.albumId?.let { tally.albumIds += it }
                 tally.tracks++
@@ -592,8 +616,8 @@ class LibraryRepository(
     }
 
     /** All tracks for an artist, from cache, ordered by album then track. */
-    fun tracksForArtist(name: String): List<Track> =
-        tracks.value.filter { name in it.albumArtistNames() }
+    fun tracksForArtist(name: String, credit: ArtistCredit = ArtistCredit.ALBUM): List<Track> =
+        tracks.value.filter { name in credit.names(it) }
             .sortedWith(compareBy({ it.album.lowercase() }, { it.discNumber ?: 0 }, { it.trackNumber ?: 0 }))
 
     /**
@@ -673,9 +697,9 @@ class LibraryRepository(
     }
 
     /** An artist's albums as a discography: oldest release first, undated last. */
-    fun albumsForArtist(name: String): List<Album> {
+    fun albumsForArtist(name: String, credit: ArtistCredit = ArtistCredit.ALBUM): List<Album> {
         val albumIds = tracks.value
-            .filter { name in it.albumArtistNames() }
+            .filter { name in credit.names(it) }
             .mapNotNull { it.albumId }
             .toSet()
         return albums.value.filter { it.id in albumIds }.sortedWith(RELEASE_ORDER)

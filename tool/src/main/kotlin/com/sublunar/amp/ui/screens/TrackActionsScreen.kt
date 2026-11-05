@@ -48,6 +48,9 @@ class TrackActionsScreen(
     private val onRemoveFromPlaylist: (() -> Unit)? = null,
     /** The song as the opening page holds it: a playlist can list one the chosen library doesn't. */
     private val known: Track? = null,
+    /** The album or artist page this was opened on: no row that would go to it. */
+    private val onAlbumPage: String? = null,
+    private val onArtistPage: String? = null,
 ) : AmpScreen<Unit>(sealed) {
 
     // What the radio row is up to, said above the menu. Held on the screen, not in
@@ -208,14 +211,17 @@ class TrackActionsScreen(
                 // stack: both name the walk that leads to them. One artist, the
                 // record's first credit (see primaryAlbumArtist).
                 val artist = track.primaryAlbumArtist()
-                if (track.albumId != null) {
+                if (track.albumId != null && track.albumId != onAlbumPage) {
                     TextRow(title = "Go to Album") {
                         openAlbum(track.albumId, Parent.artist(artist))
                     }
                 }
-                TextRow(title = "Go to Artist") {
-                    openArtist(artist, Parent.tab(LibraryTab.ARTISTS))
+                if (artist != onArtistPage) {
+                    TextRow(title = "Go to Artist") {
+                        openArtist(artist, Parent.tab(LibraryTab.ARTISTS))
+                    }
                 }
+                TextRow(title = "Song Info") { go { SongInfoScreen(it, track) } }
             }
         }
     }

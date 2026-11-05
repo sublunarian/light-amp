@@ -2,12 +2,12 @@ package com.sublunar.amp.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,7 +41,10 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.style.TextOverflow
 import com.sublunar.amp.App
 import com.sublunar.amp.art.ArtworkNeed
@@ -56,6 +59,7 @@ import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppProgressBar
 import com.sublunar.amp.ui.components.AppText
+import com.sublunar.amp.ui.components.appTextStyle
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.TitleCard
@@ -371,16 +375,55 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Artist above the song, album below it.
-                HeroLine(credit, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
-                HeroLine(current.title, HERO_TITLE_PX, HERO_TITLE_LINE_PX, dim = false)
-                HeroLine(current.album, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
+                // Holding the text opens it whole, as the cover's hold opens the
+                // cover whole. A tap does nothing, as on a cover.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .slowLongPress(onClick = {}, onLongPress = { go { SongInfoScreen(it, current) } }),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    // Artist above the song, album below it, each one line, cut
+                    // where too long: only the title takes a second.
+                    HeroLine(credit, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
+                    HeroTitle(current.title)
+                    HeroLine(current.album, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
+                }
+            }
+        }
+    }
+
+    /** The song at Heading where it fits on one line; a longer one a step down, on two. */
+    @Composable
+    private fun HeroTitle(text: String) {
+        if (text.isBlank()) return
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val room = constraints.maxWidth
+            val heading = appTextStyle(
+                pxSp(HERO_TITLE_PX),
+                pxSp(HERO_TITLE_LINE_PX),
+                TextRole.Subheading,
+                align = TextAlign.Center,
+            )
+            val measurer = rememberTextMeasurer()
+            val oneLine = remember(text, room, heading) {
+                !measurer.measure(
+                    AnnotatedString(text),
+                    style = heading,
+                    maxLines = 1,
+                    constraints = Constraints(maxWidth = room),
+                ).hasVisualOverflow
+            }
+            if (oneLine) {
+                HeroLine(text, HERO_TITLE_PX, HERO_TITLE_LINE_PX, dim = false)
+            } else {
+                HeroLine(text, HERO_LONG_TITLE_PX, HERO_LONG_TITLE_LINE_PX, dim = false, maxLines = 2)
             }
         }
     }
 
     @Composable
-    private fun HeroLine(text: String, sizePx: Int, linePx: Int, dim: Boolean) {
+    private fun HeroLine(text: String, sizePx: Int, linePx: Int, dim: Boolean, maxLines: Int = 1) {
         if (text.isBlank()) return
         AppText(
             text,
@@ -388,9 +431,10 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             lineHeight = pxSp(linePx),
             role = TextRole.Subheading,
             dim = dim,
-            maxLines = 1,
+            // Cut, not scrolled, as the stock tools do; Song Info has it whole.
+            maxLines = maxLines,
             align = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().basicMarquee(),
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 
@@ -660,9 +704,11 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 private const val TIME_PX = 38
 
 
-/** The block that stands in for the cover when artwork is off. */
+/** The block that stands in for the cover when artwork is off: see HeroTitle. */
 private const val HERO_TITLE_PX = LightType.HEADING_PX
 private const val HERO_TITLE_LINE_PX = LightType.HEADING_LINE_PX
+private const val HERO_LONG_TITLE_PX = LightType.COPY_PX
+private const val HERO_LONG_TITLE_LINE_PX = LightType.COPY_LINE_PX
 private const val HERO_SIDE_PX = LightType.FINE_PX
 private const val HERO_SIDE_LINE_PX = LightType.FINE_LINE_PX
 

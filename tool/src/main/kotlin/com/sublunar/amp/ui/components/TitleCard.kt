@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.components
 
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
@@ -32,9 +31,10 @@ private fun TitleLine(text: String, sizePx: Int, linePx: Int, dim: Boolean) {
         // Regular on both lines, whatever the role's own weight.
         weight = FontWeight.Normal,
         dim = dim,
+        // Cut, not scrolled: nothing in LightOS moves, and Song Info has it whole.
         maxLines = 1,
         align = TextAlign.Center,
-        modifier = Modifier.fillMaxWidth().basicMarquee(),
+        modifier = Modifier.fillMaxWidth(),
         exact = true,
     )
 }

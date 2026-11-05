@@ -28,11 +28,16 @@ fun ListScreen(
      * ⋮ menus stay a step below.
      */
     headingRows: Boolean = false,
+    /** Rows at an artless library list's type and pitch, for a page of things to listen to — see [LocalMenuListType]. */
+    listRows: Boolean = false,
     rightAction: HeaderAction? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     PlayerTheme {
-        CompositionLocalProvider(LocalMenuHeading provides headingRows) {
+        CompositionLocalProvider(
+            LocalMenuHeading provides headingRows,
+            LocalMenuListType provides if (listRows) rowType(artless = true) else null,
+        ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 AppHeader(
                     onBack = onBack,

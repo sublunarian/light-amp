@@ -67,6 +67,7 @@ class TrackRead(private val previous: TrackGeneration, expected: Int) {
         coverArtId = row.coverArtId?.let { canonical(it, before?.coverArtId) },
         genre = canonical(row.genre, before?.genre),
         composer = canonical(row.composer, before?.composer),
+        artists = canonical(row.artists, before?.artists),
         year = year(row, before),
     )
 

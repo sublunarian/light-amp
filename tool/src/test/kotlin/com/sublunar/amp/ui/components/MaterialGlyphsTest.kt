@@ -28,7 +28,6 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.FilterNone
-import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
@@ -146,7 +145,6 @@ class MaterialGlyphsTest {
             Material.Filled.Star to Icons.Filled.Star,
             Material.Filled.StarBorder to Icons.Filled.StarBorder,
             Material.Filled.FilterNone to Icons.Filled.FilterNone,
-            Material.Filled.LibraryMusic to Icons.Filled.LibraryMusic,
             Material.Filled.MoreVert to Icons.Filled.MoreVert,
             Material.Filled.MusicNote to Icons.Filled.MusicNote,
             Material.Filled.Pause to Icons.Filled.Pause,

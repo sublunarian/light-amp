@@ -14,16 +14,16 @@ import kotlinx.coroutines.launch
 
 /** Play [tracks] in order, or shuffled: the player takes the sheet's place. */
 @Composable
-fun SimpleLightScreen<Unit>.PlayRows(tracks: List<Track>) {
+fun SimpleLightScreen<Unit>.PlayRows(tracks: List<Track>, queueName: String? = null) {
     TextRow(title = "Play") {
         if (tracks.isNotEmpty()) {
-            App.playback.playQueue(tracks, 0)
+            App.playback.playQueue(tracks, 0, name = queueName)
             replaceWithPlayer()
         }
     }
     TextRow(title = "Shuffle") {
         if (tracks.isNotEmpty()) {
-            App.playback.playQueue(shuffled(tracks), 0)
+            App.playback.playQueue(shuffled(tracks), 0, name = queueName)
             replaceWithPlayer()
         }
     }

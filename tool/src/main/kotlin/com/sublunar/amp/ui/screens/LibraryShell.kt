@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import com.sublunar.amp.data.ArtistCredit
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -64,6 +65,7 @@ import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.components.rememberScrollTarget
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.components.rowClickable
+import com.sublunar.amp.ui.components.rowType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SimpleLightScreen
@@ -71,8 +73,11 @@ import com.thelightphone.sdk.rememberPermissionRequestLauncher
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class LibraryTab(val title: String) {
     PLAYLISTS("Playlists"),
@@ -488,7 +493,8 @@ private fun SimpleLightScreen<*>.ArtistsTab(header: Boolean = true) {
     val rows = rememberLatest(sorted)
     val letters = view.letters
     val reversed by App.settings.artistSortReversed.state.collectAsState()
-    val downloadedArtists by App.library.downloadedArtistNames.collectAsState()
+    val credit = App.settings.artistSort.state.collectAsState().value.credit
+    val downloadedArtists by App.library.downloadedArtistNames(credit).collectAsState()
     // One request for the server's own artist records, which is where their
     // pictures are: the library's artists come from track tags and have none.
     // Skipped while the pictures are switched off.
@@ -510,8 +516,8 @@ private fun SimpleLightScreen<*>.ArtistsTab(header: Boolean = true) {
                     name = artist.name,
                     downloaded = artist.name in downloadedArtists,
                     imageId = artist.imageId,
-                    onClick = { openArtist(artist.name, Parent.Here) },
-                    onLongClick = { go { ArtistActionsScreen(it, artist.name) } },
+                    onClick = { openArtist(artist.name, Parent.Here, credit) },
+                    onLongClick = { go { ArtistActionsScreen(it, artist.name, credit) } },
                 )
             }
         }
@@ -583,7 +589,6 @@ private fun SimpleLightScreen<*>.LibraryIndex() {
     val likedAlbums by App.library.hasLikedAlbums.collectAsState()
     val likedTracks by App.library.hasLikedTracks.collectAsState()
     val likes = source.supportsLikes
-    val likedAsFilter = App.settings.likedAsFilter.state.collectAsState().value
 
     // A Column of its own: the shell hands each page a Box.
     Column(modifier = Modifier.fillMaxSize()) {
@@ -601,15 +606,14 @@ private fun SimpleLightScreen<*>.LibraryIndex() {
             item { IndexRow(LibraryTab.ARTISTS) }
             item { IndexRow(LibraryTab.ALBUMS) }
             item { IndexRow(LibraryTab.SONGS) }
-            // The same three again, narrowed, as a block under the plain lists —
-            // or, with Liked as Filter (TRIAL), a switch on each tab's More page.
-            if (likes && likedArtists && !likedAsFilter) {
+            // The same three again, narrowed, as a block under the plain lists.
+            if (likes && likedArtists) {
                 item { LikedRow(LibraryTab.ARTISTS) }
             }
-            if (likes && likedAlbums && !likedAsFilter) {
+            if (likes && likedAlbums) {
                 item { LikedRow(LibraryTab.ALBUMS) }
             }
-            if (likes && likedTracks && !likedAsFilter) {
+            if (likes && likedTracks) {
                 item { LikedRow(LibraryTab.SONGS) }
             }
         }
@@ -643,36 +647,49 @@ private const val SOURCE_CHEVRON_GAP_PX = 16
 /** One tab, on the index: its own bar icon, and its name. */
 @Composable
 private fun IndexRow(tab: LibraryTab) {
-    val likedAsFilter = App.settings.likedAsFilter.state.collectAsState().value
-    IndexLine(tab.title, iconFor(tab)) {
-        // The unnarrowed list: "Albums" showing only the liked ones would lie.
-        // With Liked as a switch (TRIAL), it is the switch's to say, as on the tabs.
-        if (!likedAsFilter) App.scope.launch { setLikedOnly(tab, false) }
-        LibraryNav.selectTab(tab)
-    }
+    // The unnarrowed list: "Albums" showing only the liked ones would lie.
+    IndexLine(tab.title, iconFor(tab)) { openNarrowed(tab, liked = false) }
 }
 
 /** The same tab, narrowed to what you kept. */
 @Composable
 private fun LikedRow(tab: LibraryTab) {
-    IndexLine("Liked ${tab.title}", AppIcons.Favorite) {
-        App.scope.launch { setLikedOnly(tab, true) }
+    IndexLine("Liked ${tab.title}", AppIcons.Favorite) { openNarrowed(tab, liked = true) }
+}
+
+/**
+ * Opens [tab] with Liked set to [liked], once its list is narrowed to match: the
+ * list is sorted off the main thread, and opening at once drew a frame of the
+ * other list first. The wait is that one sort, so a few milliseconds.
+ */
+private fun openNarrowed(tab: LibraryTab, liked: Boolean) {
+    setLikedOnly(tab, liked)
+    val view: Flow<App.SortedView<*>>? = when (tab) {
+        LibraryTab.ALBUMS -> App.sortedAlbums
+        LibraryTab.SONGS -> App.sortedSongs
+        LibraryTab.ARTISTS -> App.sortedArtists
+        LibraryTab.PLAYLISTS -> null
+    }
+    App.scope.launch(Dispatchers.Main.immediate) {
+        // Bounded, so a sort that never comes can't keep the page shut.
+        if (view != null) withTimeoutOrNull(NARROWED_WAIT_MS) { view.first { it.liked == liked } }
         LibraryNav.selectTab(tab)
     }
 }
 
+private const val NARROWED_WAIT_MS = 500L
+
 /**
- * A row of the index: a menu of places, so the settings pages' Heading type, on
- * a pitch that fits six whole rows in the 920px between the header and the bar;
- * a seventh (all three liked lists) scrolls. The glyph on the menus' text axis,
- * the name after it.
+ * A row of the index: the glyph on the menus' text axis, the name after it, at an
+ * artless list's pitch and type, so the page steps as the artists do without pictures.
  */
 @Composable
 private fun IndexLine(title: String, icon: ImageVector, onClick: () -> Unit) {
+    val list = rowType(artless = true)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(px(INDEX_ROW_PX))
+            .height(px(list.oneLinePx))
             .rowClickable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -681,16 +698,15 @@ private fun IndexLine(title: String, icon: ImageVector, onClick: () -> Unit) {
         Spacer(Modifier.width(px(INDEX_GLYPH_GAP_PX)))
         AppText(
             title,
-            pxSp(LightType.HEADING_PX),
-            lineHeight = pxSp(LightType.HEADING_LINE_PX),
-            role = TextRole.Heading,
+            pxSp(list.titlePx),
+            lineHeight = pxSp(list.titleLinePx),
+            role = list.titleRole,
             maxLines = 1,
         )
     }
 }
 
-private const val INDEX_ROW_PX = 153
-private const val INDEX_GLYPH_PX = 66
+private const val INDEX_GLYPH_PX = 56
 private const val INDEX_GLYPH_GAP_PX = 40
 
 /** Whether this tab is narrowed to what is downloaded — see AppSettings.downloadedAlbumsOnly. */
@@ -699,11 +715,13 @@ fun downloadedOnly(tab: LibraryTab?): Boolean {
     val albums = App.settings.downloadedAlbumsOnly.state.collectAsState().value
     val songs = App.settings.downloadedSongsOnly.state.collectAsState().value
     val artists = App.settings.downloadedArtistsOnly.state.collectAsState().value
+    val playlists = App.settings.downloadedPlaylistsOnly.state.collectAsState().value
     return when (tab) {
         LibraryTab.ALBUMS -> albums
         LibraryTab.SONGS -> songs
         LibraryTab.ARTISTS -> artists
-        else -> false
+        LibraryTab.PLAYLISTS -> playlists
+        null -> false
     }
 }
 
@@ -712,15 +730,16 @@ suspend fun setDownloadedOnly(tab: LibraryTab, value: Boolean) {
         LibraryTab.ALBUMS -> App.settings.downloadedAlbumsOnly.set(value)
         LibraryTab.SONGS -> App.settings.downloadedSongsOnly.set(value)
         LibraryTab.ARTISTS -> App.settings.downloadedArtistsOnly.set(value)
-        LibraryTab.PLAYLISTS -> Unit
+        LibraryTab.PLAYLISTS -> App.settings.downloadedPlaylistsOnly.set(value)
     }
 }
 
-suspend fun setLikedOnly(tab: LibraryTab, value: Boolean) {
+/** At once, so a page opened right after draws its first frame already narrowed (or not). */
+fun setLikedOnly(tab: LibraryTab, value: Boolean) {
     when (tab) {
-        LibraryTab.ALBUMS -> App.settings.likedAlbumsOnly.set(value)
-        LibraryTab.SONGS -> App.settings.likedSongsOnly.set(value)
-        LibraryTab.ARTISTS -> App.settings.likedArtistsOnly.set(value)
+        LibraryTab.ALBUMS -> App.settings.likedAlbumsOnly.setNow(value)
+        LibraryTab.SONGS -> App.settings.likedSongsOnly.setNow(value)
+        LibraryTab.ARTISTS -> App.settings.likedArtistsOnly.setNow(value)
         LibraryTab.PLAYLISTS -> Unit
     }
 }

@@ -22,13 +22,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
+import com.sublunar.amp.data.LatinLetters
 import com.sublunar.amp.data.LyricLine
 import com.sublunar.amp.data.LyricsRepository
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.CenteredNote
 import com.sublunar.amp.ui.components.TextRole
+import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.px
+import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.pxSp
 
 @Composable
@@ -60,6 +63,9 @@ internal fun LyricsOverlay(current: Track, modifier: Modifier) {
     }
     val lyrics = (outcome as? LyricsRepository.Outcome.Found)?.lyrics
     val lines = lyrics?.lines ?: emptyList()
+    val latinOn by App.settings.latinLyrics.state.collectAsState()
+    val offerLatin = remember(lines) { LatinLetters.needed(lines) }
+    val shown = remember(lines, latinOn, offerLatin) { if (latinOn && offerLatin) LatinLetters.of(lines) else lines }
     val synced = (lyrics?.synced == true) && syncedOn
     val activeIndex by remember(lines, synced) {
         derivedStateOf { if (synced) indexForTime(lines, position.value) else -1 }
@@ -107,7 +113,9 @@ internal fun LyricsOverlay(current: Track, modifier: Modifier) {
                             bottom = if (synced) halfPane else px(46),
                         ),
                     ) {
-                        itemsIndexed(lines) { i, line ->
+                        itemsIndexed(shown) { i, line ->
+                            // A synced line is a way into the song: a tap plays from it.
+                            val startMs = line.timeMs?.takeIf { synced }
                             AppText(
                                 text = line.text,
                                 size = pxSp(LYRIC_PX),
@@ -116,8 +124,27 @@ internal fun LyricsOverlay(current: Track, modifier: Modifier) {
                                 exact = true,
                                 align = TextAlign.Center,
                                 dim = synced && i != activeIndex,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = px(LYRIC_GAP_PX)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .let { if (startMs == null) it else it.appClickable { App.playback.seekTo(startMs) } }
+                                    .padding(vertical = px(LYRIC_GAP_PX)),
                             )
+                        }
+                        // Offered only where there is another script to spell out.
+                        if (offerLatin) {
+                            item(key = "latin") {
+                                AppText(
+                                    text = if (latinOn) "Show Original Script" else "Show in Latin Letters",
+                                    size = pxSp(LightType.DETAIL_PX),
+                                    lineHeight = pxSp(LightType.DETAIL_LINE_PX),
+                                    role = TextRole.Detail,
+                                    align = TextAlign.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .appClickable { App.settings.latinLyrics.setNow(!latinOn) }
+                                        .padding(vertical = px(LATIN_ROW_PAD_PX)),
+                                )
+                            }
                         }
                     }
                 }
@@ -136,9 +163,12 @@ private fun indexForTime(lines: List<LyricLine>, positionMs: Long): Int {
     return result
 }
 
-/** A little under the Notes tool's body size (Light's fine, 52), on its natural line. */
-private const val LYRIC_PX = 48
-private const val LYRIC_LINE_PX = 58
+/** The Notes tool's body size, Light's Fine, as the artless lists' titles are. */
+private const val LYRIC_PX = LightType.FINE_PX
+private const val LYRIC_LINE_PX = LightType.FINE_LINE_PX
+
+/** Above and below the Latin letters line: clear of the last lyric, and a finger's height to tap. */
+private const val LATIN_ROW_PAD_PX = 40
 
 /** Above and below each lyric, so the next one starts further off than a wrapped line. */
 private const val LYRIC_GAP_PX = 5

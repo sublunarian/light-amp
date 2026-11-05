@@ -216,40 +216,20 @@ private val ROW_TYPE = RowType(
 )
 
 /**
- * TRIAL (Bigger Artless List Text): the title a step up, to copy, in the room a
- * cover took; the line under it stays the list's own. On a pitch that fills the
- * 920px between the header and the tab bar with whole rows: six with a second
- * line, and eight of one line, or seven with Taller One-Line Rows.
+ * Without covers, the title a step up, to copy, in the room a cover took; the
+ * line under it stays the list's own. On a pitch that fills the 920px between
+ * the header and the tab bar with whole rows: six with a second line, seven of one.
  */
-private fun artlessRowType(tallerOneLine: Boolean) = RowType(
+private val ARTLESS_ROW_TYPE = RowType(
     LightType.COPY_PX, LightType.COPY_LINE_PX, TextRole.Copy,
     ROW_SUB_PX, ROW_SUB_LINE_PX, TextRole.Detail,
     rowPx = 153,
-    oneLinePx = if (tallerOneLine) 131 else ROW_TEXT_H_PX,
+    oneLinePx = 131,
 )
 
-private val ARTLESS_ROW_TYPE = artlessRowType(tallerOneLine = false)
-private val ARTLESS_TALL_ROW_TYPE = artlessRowType(tallerOneLine = true)
-
-/** TRIAL (Bigger Artwork List Text): the title a step up beside the cover, on the list's own pitch. */
-private val ARTWORK_ROW_TYPE = RowType(
-    LightType.COPY_PX, LightType.COPY_LINE_PX, TextRole.Copy,
-    ROW_SUB_PX, ROW_SUB_LINE_PX, TextRole.Detail,
-    ROW_H_PX, ROW_TEXT_H_PX,
-)
-
-/** The list's type: its title a step up where Bigger Artless or Bigger Artwork List Text says so. */
-@Composable
+/** The list's type: with covers, the list's own; without, its title a step up. */
 fun rowType(artless: Boolean): RowType {
-    val biggerArtless = App.settings.biggerArtlessText.state.collectAsState().value
-    val taller = App.settings.tallerOneLineRows.state.collectAsState().value
-    val biggerArtwork = App.settings.biggerArtworkText.state.collectAsState().value
-    return when {
-        !artless -> if (biggerArtwork) ARTWORK_ROW_TYPE else ROW_TYPE
-        !biggerArtless -> ROW_TYPE
-        taller -> ARTLESS_TALL_ROW_TYPE
-        else -> ARTLESS_ROW_TYPE
-    }
+    return if (artless) ARTLESS_ROW_TYPE else ROW_TYPE
 }
 
 /**

@@ -8,6 +8,7 @@ import com.sublunar.amp.art.CoverUpkeep
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.AppSettings
+import com.sublunar.amp.data.ArtistCredit
 import com.sublunar.amp.data.Artist
 import com.sublunar.amp.data.ArtistSort
 import com.sublunar.amp.data.ArtworkMode
@@ -31,6 +32,7 @@ import com.sublunar.amp.data.SourceRoute
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.TagFilter
 import com.sublunar.amp.data.albumArtistNames
+import com.sublunar.amp.data.songArtistNames
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.DownloadFile
@@ -72,6 +74,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -144,6 +147,9 @@ object App {
     private val databases = mutableMapOf<String, LibraryDatabase>()
     private lateinit var lightContext: SealedLightContext
     private val _dao = MutableStateFlow<LibraryDao?>(null)
+
+    /** A file shipped in the tool's assets. */
+    fun readAsset(path: String): ByteArray = lightContext.readAsset(path)
 
     /** The active source's DAO. Never read before [boot] has built the first. */
     private fun dao(): LibraryDao = _dao.value ?: error("Library database not ready")
@@ -808,8 +814,14 @@ object App {
      * A sorted library view plus its A–Z buckets, computed once per change on
      * [scope], off the main thread. Sorting a large library takes long enough
      * that doing it in a tab's composition, on every visit, froze the app.
+     * [liked] says whether it is the liked-only view, so a page can wait for the
+     * one it is about to show.
      */
-    data class SortedView<T>(val items: List<T> = emptyList(), val letters: List<Char> = emptyList())
+    data class SortedView<T>(
+        val items: List<T> = emptyList(),
+        val letters: List<Char> = emptyList(),
+        val liked: Boolean = false,
+    )
 
     /** Which genre each list is narrowed to. Blank means no filter. */
     val songsTagFilter: StateFlow<TagFilter> by lazy { tagFilterOf(settings.songsGenre.state) }
@@ -840,22 +852,30 @@ object App {
         }.stateIn(scope, SharingStarted.Eagerly, null)
     }
 
-    /**
-     * The albums and the artists with at least one downloaded song, for the
-     * Downloaded filters — the same rule the lists follow offline.
-     */
-    private val downloadedOwners: StateFlow<Pair<Set<String>, Set<String>>> by lazy {
+    /** The albums, album artists and song artists with at least one downloaded song. */
+    private class DownloadedOwners(
+        val albums: Set<String> = emptySet(),
+        val albumArtists: Set<String> = emptySet(),
+        val songArtists: Set<String> = emptySet(),
+    ) {
+        fun artists(credit: ArtistCredit): Set<String> = if (credit == ArtistCredit.ALBUM) albumArtists else songArtists
+    }
+
+    /** For the Downloaded filters — the same rule the lists follow offline. */
+    private val downloadedOwners: StateFlow<DownloadedOwners> by lazy {
         combine(library.tracks, library.downloadedTrackIds) { tracks, ids ->
-            if (ids.isEmpty()) return@combine emptySet<String>() to emptySet<String>()
+            if (ids.isEmpty()) return@combine DownloadedOwners()
             val albums = HashSet<String>()
-            val artists = HashSet<String>()
+            val albumArtists = HashSet<String>()
+            val songArtists = HashSet<String>()
             for (track in tracks) {
                 if (track.id !in ids) continue
                 track.albumId?.let(albums::add)
-                artists.addAll(track.albumArtistNames())
+                albumArtists.addAll(track.albumArtistNames())
+                songArtists.addAll(track.songArtistNames())
             }
-            albums to artists
-        }.stateIn(scope, SharingStarted.Eagerly, emptySet<String>() to emptySet())
+            DownloadedOwners(albums, albumArtists, songArtists)
+        }.stateIn(scope, SharingStarted.Eagerly, DownloadedOwners())
     }
 
     val sortedSongs: StateFlow<SortedView<Track>> by lazy {
@@ -890,6 +910,7 @@ object App {
                     SongSort.ARTIST -> sorted.map { indexLetterOf(sortName(it.artist)) }
                     else -> emptyList()
                 },
+                liked,
             )
         }.stateIn(scope, SharingStarted.Eagerly, SortedView())
     }
@@ -945,7 +966,7 @@ object App {
         )
         val narrowing = combine(settings.likedAlbumsOnly.state, settings.downloadedAlbumsOnly.state, downloadedOwners) {
                 liked, downloadedOnly, owners ->
-            Pair(liked, if (downloadedOnly) owners.first else null)
+            Pair(liked, if (downloadedOnly) owners.albums else null)
         }
         combine(library.albums, order, narrowing, albumsMatchingTags) {
                 list, (sort, rev, nonce), (liked, downloaded), tagged ->
@@ -962,30 +983,42 @@ object App {
                     AlbumSort.ARTIST -> sorted.map { indexLetterOf(sortName(it.artist)) }
                     else -> emptyList()
                 },
+                liked,
             )
         }.stateIn(scope, SharingStarted.Eagerly, SortedView())
     }
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val sortedArtists: StateFlow<SortedView<Artist>> by lazy {
+        // The list follows the order's credit: Artist is everyone the songs name.
+        val artists = settings.artistSort.state.flatMapLatest { library.artists(it.credit) }
         combine(
-            library.artists,
+            artists,
             settings.artistSort.state,
             settings.artistSortReversed.state,
             settings.likedArtistsOnly.state,
-            combine(settings.downloadedArtistsOnly.state, downloadedOwners) { on, owners -> if (on) owners.second else null },
+            combine(settings.downloadedArtistsOnly.state, downloadedOwners, settings.artistSort.state) { on, owners, sort ->
+                if (on) owners.artists(sort.credit) else null
+            },
         ) { list, sort, rev, liked, downloaded ->
             val narrowed = list.filter { (!liked || it.liked) && (downloaded == null || it.name in downloaded) }
             val sorted = sortArtists(narrowed, sort, rev)
             SortedView(
                 sorted,
-                if (sort == ArtistSort.NAME) sorted.map { indexLetterOf(sortName(it.name)) } else emptyList(),
+                if (sort != ArtistSort.MOST_PLAYED) sorted.map { indexLetterOf(sortName(it.name)) } else emptyList(),
+                liked,
             )
         }.stateIn(scope, SharingStarted.Eagerly, SortedView())
     }
 
     val sortedPlaylists: StateFlow<SortedView<Playlist>> by lazy {
-        combine(playlists.playlists, settings.playlistSort.state, settings.playlistSortReversed.state) { list, sort, rev ->
-            val sorted = sortPlaylists(list, sort, rev)
+        val narrowing = combine(settings.downloadedPlaylistsOnly.state, playlists.downloadedPlaylistIds) { on, ids ->
+            if (on) ids else null
+        }
+        combine(playlists.playlists, settings.playlistSort.state, settings.playlistSortReversed.state, narrowing) {
+                list, sort, rev, downloaded ->
+            val shown = if (downloaded == null) list else list.filter { it.id in downloaded }
+            val sorted = sortPlaylists(shown, sort, rev)
             SortedView(
                 sorted,
                 if (sort == PlaylistSort.NAME) sorted.map { indexLetterOf(titleKey(it.name)) } else emptyList(),
