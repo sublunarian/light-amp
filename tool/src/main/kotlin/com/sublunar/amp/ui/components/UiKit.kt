@@ -264,6 +264,8 @@ fun TextRow(
     checked: Boolean = false,
     /** TRIAL: the line one SDK step up, at the stock menus' Heading. */
     heading: Boolean = LocalMenuHeading.current,
+    /** A hold, for a row that does a second thing (only with [onClick]). Before [onClick], so a trailing lambda stays the tap. */
+    onLongClick: (() -> Unit)? = null,
     /**
      * Null for a row that states something rather than opening it (a setting with
      * only one possible value): it takes no press and its main line is dimmed.
@@ -283,7 +285,7 @@ fun TextRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .let { if (onClick == null) it else it.rowClickable(onClick) }
+            .let { if (onClick == null) it else it.rowClickable(onClick, onLongClick) }
             .let { if (pitch == null) it else it.height(px(pitch)) }
             // Inset at the start only: the list already ends at its scroll bar's lane.
             .padding(

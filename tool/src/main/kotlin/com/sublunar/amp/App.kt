@@ -629,6 +629,7 @@ object App {
                 settings, serverClient, downloads, scope,
                 metadataAllowed = ::metadataAllowed,
                 standInDir = java.io.File(context.filesDir, "stand-in"),
+                outputsDir = java.io.File(context.filesDir, "outputs"),
             )
 
             // The playlists cached last time, shown before anything is fetched.
@@ -1050,9 +1051,11 @@ object App {
         // The playing queue goes: its stream URLs are signed for the server
         // being left. The download queue stays, since each entry names its own
         // source: choosing a source is a browsing choice, not a download scope.
-        // A speaker stays chosen for the new queue when the new source has a
-        // server to give it an address; the phone's own files have none.
-        playback.stop(keepOutput = next.hasServer)
+        // A speaker stays chosen for the new queue when it can play the new
+        // source: one handed addresses needs a server to give them, and the
+        // phone's own files have none; one the phone sends the sound to plays
+        // anything.
+        playback.stop(keepOutput = next.hasServer || playback.active.value?.family?.needsServer == false)
         // A sync for the source being left has nothing to tell us, and its
         // failure would be reported against the new one. Its hold on that
         // source's downloads goes with it.

@@ -26,6 +26,7 @@ data/                  the app's own models, settings, the library, downloads, t
 playback/              this phone's own playback: the controller, and what it hands off
   output/              the slot every control talks to while the sound is elsewhere
     dlna/              DLNA speakers: discovery, the SOAP calls, the cast
+    airplay/           AirPlay 1 speakers: mDNS, RTSP/RTP, decoding and pacing the sound
 art/                   artwork fetching, decoding and caching; the cover sync
 ui/components/         the shared kit — rows, headers, scroll furniture
 ui/screens/            one file per screen, plus the tabbed shell
@@ -153,6 +154,23 @@ the lock they need) — offered by the Plex provider
 (`SourceProvider.outputFamilies`), so only a Plex source lists its players. The
 Output page lists `OutputFamilies` — the source's and the phone's — without
 naming any of them.
+
+AirPlay is the third, in `playback/output/airplay`, and the only one where the
+phone makes the sound: AirPlay 1 is a stream of audio, not an address handed
+over. The output reads each track as the phone's own player would
+(`OutputHost.phoneSource`: the file, or the loopback door's stream fetched once
+into `StreamFile`), decodes it (`AndroidPcm`: Android's software decoders, and
+`AlacDecoder` for Apple Lossless, which LightOS can't decode), brings anything
+that isn't 44.1 kHz 16-bit stereo to it (`Resampler`, `Dither`), and lays the
+queue end to end as 352-frame ALAC packets (`Feed`), so tracks join without a
+gap. `Streamer` sends them in real time beside a sync each second;
+`RaopSession` speaks RTSP and answers the speaker's time and resend requests.
+Speakers are found by legacy-unicast mDNS (`Mdns`), which needs no multicast
+lock, and only those that take plain AirPlay 1 are listed (`AirPlayReceiver`).
+A speaker that two families offer is one row, under the first in `Outputs` that
+can play the source that's on (`OutputFamilies.rows`): DLNA, where the speaker
+fetches the music itself, and AirPlay for what it can't fetch, the phone's own
+files.
 
 While an output has the sound, the phone's own player plays a **stand-in**
 (`playback/StandIn.kt`): one silent MP3, named and timed like the output's song

@@ -76,6 +76,10 @@
 
 ### Added
 
+- Play to AirPlay speakers, lossless at CD quality, including music stored on
+  the phone. A speaker that also takes DLNA is listed once. Hold another
+  AirPlay speaker to play on both at once, each with its own volume, and a
+  speaker's own knob and remote follow along in Amp.
 - Navidrome and other servers that support it now see each play, pause and
   seek, so their Now Playing stays right, casting included.
 - While casting to a speaker, your launcher and Bluetooth buttons control it,

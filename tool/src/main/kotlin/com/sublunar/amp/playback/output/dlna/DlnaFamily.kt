@@ -24,6 +24,9 @@ object DlnaFamily : OutputFamily {
 
     override val needsLan = true
 
+    // The renderer is handed the server's address.
+    override val needsServer = true
+
     override fun create(host: OutputHost): Output {
         // Speakers are reached outside NetworkGate's wall, so the link's rules
         // stand in front of DLNA here, before the output can reach anything.
@@ -38,4 +41,18 @@ object DlnaFamily : OutputFamily {
 class DlnaTarget(val renderer: DlnaRenderer) : OutputTarget {
     override val id: String get() = renderer.id
     override val name: String get() = renderer.name
+
+    // The host the renderer's own control endpoint is on.
+    override val address: String? get() = runCatching { java.net.URL(renderer.controlUrl).host }.getOrNull()
+
+    // Many makers end the device's UUID with its MAC address (a Denon's
+    // reads uuid:…-0005cdd62096); a random UUID's last twelve digits will
+    // simply never match another family's.
+    override val hardwareId: String? get() = macAtEnd(renderer.id)
+}
+
+/** The last twelve hex digits of a UDN, lower-cased, if it ends in twelve. */
+internal fun macAtEnd(udn: String): String? {
+    val tail = udn.trim().takeLast(12)
+    return tail.lowercase().takeIf { it.length == 12 && it.all { c -> c in '0'..'9' || c in 'a'..'f' } }
 }

@@ -111,6 +111,9 @@ minutes, where the spike held on indefinitely.
   and SOAP control written by hand. It only needs `java.net`, which the sandbox
   allows, so it ships in store builds. It used to sit in the SDK as a spike on
   the mistaken belief that a tool couldn't do this.
+- **AirPlay too:** `playback/output/airplay/` needs `java.net` and
+  `android.media` (MediaExtractor, MediaCodec), both allowed. mDNS goes out as
+  legacy-unicast queries, so it needs neither NsdManager nor a multicast lock.
 
 ### The media session while casting
 

@@ -1,13 +1,16 @@
 package com.sublunar.amp.playback
 
+import android.graphics.Bitmap
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import com.sublunar.amp.App
+import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.Connectivity
 import com.sublunar.amp.data.DownloadStore
@@ -22,14 +25,17 @@ import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.playback.output.ActiveOutput
 import com.sublunar.amp.playback.output.Disconnect
+import com.sublunar.amp.playback.output.FarEndPress
 import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputFamilies
 import com.sublunar.amp.playback.output.OutputFamily
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
+import com.sublunar.amp.playback.output.PhoneSource
 import com.sublunar.amp.playback.output.Outputs
 import com.sublunar.amp.playback.output.QueueEdit
 import com.sublunar.amp.playback.output.Refound
+import com.sublunar.amp.playback.output.isSameDeviceAs
 import com.sublunar.amp.playback.output.previousRestarts
 import com.thelightphone.sdk.audio.LightAudio
 import com.thelightphone.sdk.audio.LightAudioError
@@ -41,6 +47,7 @@ import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightPlayerSpec
 import java.io.File
 import kotlin.math.abs
+import java.io.ByteArrayOutputStream
 import kotlin.math.pow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -101,7 +108,16 @@ class PlaybackController(
     private val metadataAllowed: () -> Boolean,
     /** Where the stand-in keeps its silence — see [StandIn]. */
     private val standInDir: File,
+    /** Where outputs keep their working files, a folder each — see [OutputHost.workDir]. */
+    private val outputsDir: File,
 ) {
+    /**
+     * This process's own folders under [outputsDir]: whatever another left
+     * there (killed mid-cast, it never cleaned up) is cleared at start, and
+     * nothing of this one's can be cleared by mistake.
+     */
+    private val processTag = "p" + java.util.UUID.randomUUID().toString().take(8)
+
     // --- What the screens read -----------------------------------------------
 
     private val _queue = MutableStateFlow<List<Track>>(emptyList())
@@ -444,6 +460,14 @@ class PlaybackController(
         if (_active.value != null) return null
         val track = _queue.value.getOrNull(_index.value)?.takeIf { it.id == trackId } ?: return null
         return sources.playingAs(track, queuedSourceAt(_index.value))
+    }
+
+    init {
+        scope.launch(Dispatchers.IO) {
+            outputsDir.listFiles()?.forEach { output ->
+                output.listFiles()?.filter { it.name != processTag }?.forEach { it.deleteRecursively() }
+            }
+        }
     }
 
     init {
@@ -1203,9 +1227,10 @@ class PlaybackController(
         remote?.let { out ->
             _isPlaying.value = true
             // A resume carries on a stream the far end has open. Where nothing
-            // has played yet (the queue ran out there, or holds nothing), play
-            // is a start, and says so.
-            if (!hasPlayed) markStartingElsewhere()
+            // has played yet (the queue ran out there, or holds nothing), or
+            // the far end starts afresh after a pause, play is a start, and
+            // says so.
+            if (!hasPlayed || out.resumesAfresh) markStartingElsewhere()
             out.play()
             reports.timeline(TimelineState.PLAYING)
             return
@@ -2742,6 +2767,9 @@ class PlaybackController(
     /** Every [OutputTarget] [family] can play to right now. Does its own waiting off Main. */
     suspend fun find(family: OutputFamily): List<OutputTarget> = outputOf(family).find()
 
+    /** Whether [family] could play the source that's on — see [Output.canSteer]. */
+    fun canSteer(family: OutputFamily): Boolean = outputOf(family).canSteer()
+
     private fun outputOf(family: OutputFamily): Output = outputs.getOrPut(family.id) { family.create(host) }
 
     /**
@@ -2788,6 +2816,54 @@ class PlaybackController(
         next.connect(target, fromMs = _positionMs.value, play = play)
         reports.soundMoved()
         return true
+    }
+
+    /**
+     * Whether [target] of [family] can join what plays now, as a group. A cast
+     * of another kind (a DLNA one) can, where its speaker is also among
+     * [found] under [family]: the cast moves over to that, see [addToGroup].
+     */
+    fun canGroup(family: OutputFamily, target: OutputTarget, found: Map<String, List<OutputTarget>>): Boolean {
+        val a = _active.value ?: return false
+        if (a.family === family) return a.output.canGroup(target)
+        // A speaker listed under another kind (the Denon under DLNA) joins as itself under the group's.
+        if (a.family.groups) return twinOf(target, a.family, found)?.let { a.output.canGroup(it) } == true
+        if (!family.groups) return false
+        val twin = twinOf(a.target, family, found) ?: return false
+        return twin.id != target.id
+    }
+
+    /**
+     * Play on [target] as well as where the sound is. A cast of another kind
+     * first moves to the same speaker under [family], from where it had got
+     * to, so the two can play together.
+     */
+    fun addToGroup(family: OutputFamily, target: OutputTarget, found: Map<String, List<OutputTarget>>) {
+        val a = _active.value ?: return
+        if (a.family !== family && a.family.groups) {
+            twinOf(target, a.family, found)?.let { a.output.addToGroup(it) }
+            return
+        }
+        if (a.family !== family) {
+            val twin = twinOf(a.target, family, found) ?: return
+            if (!castTo(family, twin)) return
+        }
+        _active.value?.output?.addToGroup(target)
+    }
+
+    /** [speaker] as [family] found it. */
+    private fun twinOf(speaker: OutputTarget, family: OutputFamily, found: Map<String, List<OutputTarget>>): OutputTarget? =
+        found[family.id].orEmpty().firstOrNull { it.isSameDeviceAs(speaker) }
+
+    /** Stop playing on [target]; the others carry on. The last one taken out brings the sound back here. */
+    fun removeFromGroup(target: OutputTarget) {
+        val a = _active.value ?: return
+        if (a.group.value.size <= 1) playHere() else a.output.removeFromGroup(target)
+    }
+
+    /** One grouped speaker's own level. */
+    fun setMemberVolume(targetId: String, level: Float) {
+        _active.value?.output?.setMemberVolume(targetId, level)
     }
 
     /** Bring the sound back to this phone, from wherever the output had got to. */
@@ -3081,6 +3157,19 @@ class PlaybackController(
             _volume.value = level
         }
 
+        override fun pressedAtFarEnd(output: Output, press: FarEndPress) {
+            scope.launch(Dispatchers.Main.immediate) {
+                if (steering(output) == null) return@launch
+                when (press) {
+                    FarEndPress.PLAY -> if (!_isPlaying.value) togglePlayPause()
+                    FarEndPress.PAUSE -> if (_isPlaying.value) togglePlayPause()
+                    FarEndPress.PLAY_PAUSE -> togglePlayPause()
+                    FarEndPress.NEXT -> next()
+                    FarEndPress.PREVIOUS -> previous()
+                }
+            }
+        }
+
         override fun client(): MusicServer? = serverClient.value
 
         override fun rules(): LinkRules = App.rulesNow()
@@ -3103,6 +3192,45 @@ class PlaybackController(
             serverClient.value?.knownStream(track, format)
 
         override fun ownStreamSession(trackId: String): String = reports.streamSessionIdFor(trackId, decidedFirst = false)
+
+        // The player's own route, door and all: an output playing out of this
+        // phone fetches what the phone's player would, under the phone's
+        // listening session, so the server hears one listener as ever.
+        override fun phoneSource(track: Track, timeOffsetSeconds: Int): PhoneSource? =
+            when (val source = sources.source(track)) {
+                is LightAudioSource.FileSource -> PhoneSource.File(source.file)
+                is LightAudioSource.UrlSource -> {
+                    val url = if (timeOffsetSeconds > 0) sources.playerUrl(track, timeOffsetSeconds) else source.url
+                    if (url.isEmpty() || url == StreamProxy.UNAVAILABLE_URL) null else PhoneSource.Url(url, timeOffsetSeconds * 1000L)
+                }
+                else -> null
+            }
+
+        override fun seeksAtServer(track: Track): Boolean = needsServerSeek(track)
+
+        override suspend fun coverJpeg(track: Track, maxPx: Int): ByteArray? = withContext(Dispatchers.Default) {
+            if (App.hideArtwork.value) return@withContext null
+            val image = App.artwork.load(track.coverArtId, maxPx, ArtworkNeed.FOCUSED) ?: return@withContext null
+            val bitmap = image.asAndroidBitmap()
+            val scaled = if (bitmap.width > maxPx) {
+                Bitmap.createScaledBitmap(bitmap, maxPx, (bitmap.height.toLong() * maxPx / bitmap.width).toInt().coerceAtLeast(1), true)
+            } else {
+                bitmap
+            }
+            ByteArrayOutputStream().use { out ->
+                scaled.compress(Bitmap.CompressFormat.JPEG, COVER_JPEG_QUALITY, out)
+                out.toByteArray()
+            }
+        }
+
+        override fun gainFor(track: Track): Float {
+            if (!settings.replayGain.state.value) return 1f
+            return track.gainDb?.let { 10.0.pow(it / 20.0).toFloat().coerceAtMost(1f) } ?: 1f
+        }
+
+        override val volume: StateFlow<Float> get() = _volume
+
+        override fun workDir(output: String): File = File(File(outputsDir, output), processTag).apply { mkdirs() }
 
         override fun queueFinished(output: Output) {
             if (steering(output) == null) return
@@ -3241,6 +3369,9 @@ class PlaybackController(
         private const val VOLUME_KEY_STEP = 0.05f
 
         private const val FORGET_PAUSED_SPEAKER_MS = 10 * 60 * 1000L
+
+        /** A speaker's display needs no better: a cover is a few tens of KB at this. */
+        private const val COVER_JPEG_QUALITY = 85
 
         /** How long an output the link took away is kept: a walk out of range, not an afternoon out. */
         private const val LOST_OUTPUT_KEPT_MS = 10 * 60 * 1000L

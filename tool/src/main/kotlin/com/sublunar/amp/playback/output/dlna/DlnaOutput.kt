@@ -181,6 +181,10 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     /** Renderers on the network, after a few seconds of listening. None off Wi-Fi: see DlnaCast.allowsNetwork. */
     override suspend fun find(): List<OutputTarget> = DlnaCast.discover().map(::DlnaTarget)
 
+    // A renderer is handed the server's address, so with no server — the
+    // phone's own files — there's nothing to hand it.
+    override fun canSteer(): Boolean = host.client() != null
+
     /**
      * Move playback to the renderer: hand it the current track's stream URL
      * at the position we'd reached, and start polling it for progress.

@@ -23,8 +23,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.sublunar.amp.App
+import com.sublunar.amp.playback.output.GroupMember
+import com.sublunar.amp.playback.output.OutputFamily
 import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.VolumeControl
+import com.sublunar.amp.playback.output.isSameDeviceAs
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
@@ -39,13 +42,17 @@ import com.sublunar.amp.ui.components.listPadding
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
-import kotlin.math.roundToInt
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * Output and volume, reached from the player.
  *
- * The fader drives the phone's media volume, or the output's while the sound is
- * elsewhere. Speaker-vs-Bluetooth routing is LightOS's job (a tool has no access
+ * The fader at the top drives the phone's media volume, or the output's while
+ * the sound is elsewhere. With two speakers or more playing together (an
+ * AirPlay group: hold a speaker to add it, tap a ticked one to take it out)
+ * each has its own fader under its row, and the top one is the loudest's:
+ * moving it, or the rocker, scales them all. Speaker-vs-Bluetooth routing is LightOS's job (a tool has no access
  * to the audio-routing APIs), so that part of the list is informational. Below
  * it is everywhere the sound can be switched to: speakers on the network and the
  * active source's own players. The page names none of the kinds — see
@@ -70,17 +77,33 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         // from the new one's answer instead of holding the last one's for a frame.
         val control = active?.volumeControl
         val volumeControl = key(control) { control?.collectAsState()?.value }
+        val groupFlow = active?.group
+        val group: List<GroupMember> = key(groupFlow) { groupFlow?.collectAsState()?.value }.orEmpty()
         val families = remember { App.playback.outputFamilies() }
         var found by remember { mutableStateOf<Map<String, List<OutputTarget>>>(emptyMap()) }
+        // Families that have answered at least once since the page opened.
+        var answered by remember { mutableStateOf(emptySet<String>()) }
         var scanning by remember { mutableStateOf(true) }
 
         // Discovery is a few seconds of UDP waiting, so it runs once on open and
-        // again from the Scan row. A source's own players are one HTTP round
-        // trip, so they are asked first — see searchOrder.
+        // again from the Scan row. Every family listens at once, each shown as
+        // it answers, so one network's search doesn't wait behind another's.
         var scanToken by remember { mutableStateOf(0) }
         LaunchedEffect(scanToken, lanUsable) {
             scanning = true
-            for (family in families.searchOrder) found = found + (family.id to App.playback.find(family))
+            // A server that went quiet a while ago isn't asked again on its
+            // own: a search is a good moment, since what it finds depends on it.
+            if (App.source.value.hasServer && !App.rules.value.serverReachable) App.reachability.check(delayMs = 0L)
+            coroutineScope {
+                for (family in families.searchOrder) {
+                    launch {
+                        val targets = App.playback.find(family)
+                        found = found + (family.id to targets)
+                        // An answer given with the network out of reach is no answer.
+                        answered = if (lanUsable || !family.needsLan) answered + family.id else answered - family.id
+                    }
+                }
+            }
             scanning = false
         }
         val lanHidden = !lanUsable && families.listOrder.any { it.needsLan }
@@ -102,14 +125,11 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     AppText("Volume", pxSp(LightType.DETAIL_PX))
-                    AppText(
-                        if (faderLive) "${(volume * 100).roundToInt()}%" else active?.family?.volumeElsewhere.orEmpty(),
-                        pxSp(LightType.DETAIL_PX),
-                        dim = true,
-                    )
+                    // A fader with nothing to move says why, where its level isn't.
+                    if (!faderLive) AppText(active?.family?.volumeElsewhere.orEmpty(), pxSp(LightType.DETAIL_PX), dim = true)
                 }
                 Spacer(Modifier.height(px(26)))
-                VolumeFader(volume, enabled = faderLive)
+                VolumeFader(volume, enabled = faderLive) { App.playback.setVolume(it) }
             }
 
             Spacer(Modifier.height(px(20)))
@@ -127,35 +147,83 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 }
 
                 item { SectionLabel(if (scanning && searchable) "Network — searching…" else "Network") }
-                for (family in families.listOrder) {
-                    if (!lanUsable && family.needsLan) continue
-                    // What is playing now is listed at once, before any
-                    // search has answered, and once, whatever it finds.
-                    val playing = active?.takeIf { it.family === family }?.target
-                    val listed = found[family.id].orEmpty()
-                    val rows = if (playing != null && listed.none { it.id == playing.id }) listOf(playing) + listed else listed
-                    items(rows, key = { "${family.id}:${it.id}" }) { target ->
-                        val selected = active?.family === family && active?.target?.id == target.id
+                // One row per speaker, whatever has the sound listed at once
+                // and once — see OutputFamilies.rows. A family that can't
+                // play this source (DLNA with the phone's own files) gives
+                // its speakers' rows to one that can, or lists none.
+                // One that's handed the server's address needs the server
+                // reachable as well. Read here, so the rows follow it.
+                val serverUp = rules.serverReachable
+                val steerable = { family: OutputFamily ->
+                    (lanUsable || !family.needsLan) && (serverUp || !family.needsServer) && App.playback.canSteer(family)
+                }
+                // A network family's rows wait for the network families listed
+                // before it to answer, so a speaker both offer never appears
+                // under one and then jumps to the other's place under a finger.
+                val settled = found.filterKeys { id ->
+                    val before = families.listOrder.takeWhile { it.id != id }
+                    families.listOrder.none { it.id == id && it.needsLan } ||
+                        before.filter { it.needsLan && steerable(it) }.all { it.id in answered }
+                }
+                // A grouped speaker is listed whatever this search found.
+                val withGroup = active?.takeIf { group.isNotEmpty() }?.let { a ->
+                    val listed = settled[a.family.id].orEmpty()
+                    settled + (a.family.id to listed + group.map { it.target }.filter { m -> listed.none { it.id == m.id } })
+                } ?: settled
+                // A grouped speaker another kind also lists (the Denon under DLNA)
+                // shows as the group's, so it's ticked and gets its fader.
+                val groupFamily = active?.family
+                val inGroup = if (groupFamily == null || group.isEmpty()) {
+                    withGroup
+                } else {
+                    withGroup.mapValues { (id, targets) ->
+                        if (id == groupFamily.id) targets else targets.filter { t -> group.none { it.target.isSameDeviceAs(t) } }
+                    }
+                }
+                val rows = families.rows(inGroup, active, steerable).filter { (family, _) -> lanUsable || !family.needsLan }
+                // A row and its fader are one item, so a speaker leaving a group
+                // only changes what that item draws.
+                items(rows, key = { (family, target) -> "${family.id}:${target.id}" }) { (family, target) ->
+                    val member = group.firstOrNull { it.target.id == target.id }?.takeIf { active?.family === family }
+                    val selected = if (group.isNotEmpty()) member != null else active?.family === family && active?.target?.id == target.id
+                    Column {
                         OutputRow(
                             icon = AppIcons.Cast,
                             label = target.name,
                             selected = selected,
+                            onLongClick = if (!selected && App.playback.canGroup(family, target, found)) {
+                                { App.playback.addToGroup(family, target, found) }
+                            } else {
+                                null
+                            },
                         ) {
                             if (selected) {
-                                App.playback.playHere()
+                                if (group.isNotEmpty()) App.playback.removeFromGroup(target) else App.playback.playHere()
                             } else if (!App.playback.castTo(family, target)) {
                                 // Out of reach after all (the network went, or
                                 // nothing can steer it): the row goes, and
                                 // the search runs again.
-                                found = found + (family.id to listed.filter { it.id != target.id })
+                                found = found + (family.id to found[family.id].orEmpty().filter { it.id != target.id })
                                 scanToken++
                             }
                         }
+                        if (member != null && group.size > 1) MemberFader(member.level) { App.playback.setMemberVolume(target.id, it) }
                     }
                 }
+                val onlyUnplayable = rows.isEmpty() &&
+                    families.listOrder.any { !steerable(it) && found[it.id].orEmpty().isNotEmpty() }
                 if (lanHidden) {
                     item { OutputNote("Network speakers need Wi-Fi.") }
-                } else if (!scanning && active == null && found.values.all { it.isEmpty() }) {
+                } else if (!scanning && onlyUnplayable) {
+                    // Only a speaker that fetches for itself is ever left out: with
+                    // no server to send it to, or one it couldn't reach now.
+                    val why = if (App.source.value.hasServer) {
+                        "The speakers found can't reach your server right now."
+                    } else {
+                        "The speakers found can't play music stored on this phone."
+                    }
+                    item { OutputNote(why) }
+                } else if (!scanning && rows.isEmpty()) {
                     item { OutputNote("No network speakers found. They need to be on the same Wi-Fi.") }
                 }
                 if (!scanning && searchable) {
@@ -178,8 +246,16 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         }
     }
 
+    /** A grouped speaker's own fader, under its row. */
     @Composable
-    private fun VolumeFader(volume: Float, enabled: Boolean = true) {
+    private fun MemberFader(level: Float, onMove: (Float) -> Unit) {
+        Box(modifier = Modifier.padding(start = px(MENU_ROW_INSET_PX), end = px(80), bottom = px(28))) {
+            VolumeFader(level, onMove = onMove)
+        }
+    }
+
+    @Composable
+    private fun VolumeFader(volume: Float, enabled: Boolean = true, onMove: (Float) -> Unit) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -194,8 +270,8 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     // shouldn't move under the thumb either.
                     .horizontalScrub(
                         enabled,
-                        onMove = { App.playback.setVolume(it) },
-                        onEnd = { App.playback.setVolume(it) },
+                        onMove = onMove,
+                        onEnd = onMove,
                     ),
                 contentAlignment = Alignment.CenterStart,
             ) {
@@ -223,6 +299,7 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         label: String,
         selected: Boolean,
         enabled: Boolean = true,
+        onLongClick: (() -> Unit)? = null,
         onClick: (() -> Unit)? = null,
     ) {
         TextRow(
@@ -232,6 +309,7 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             },
             checked = selected,
             onClick = if (enabled) onClick else null,
+            onLongClick = if (enabled) onLongClick else null,
         )
     }
 }

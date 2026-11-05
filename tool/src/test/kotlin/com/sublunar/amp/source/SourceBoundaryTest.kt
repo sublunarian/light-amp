@@ -268,6 +268,7 @@ class SourceBoundaryTest {
         /** Fences outside source/, each with its own registry. */
         val EXTRA_FENCES: List<Fence> = listOf(
             Fence("dlna", "playback/output/dlna/", "$ROOT_PACKAGE.playback.output.dlna", OUTPUTS, "Family", isKind = false),
+            Fence("airplay", "playback/output/airplay/", "$ROOT_PACKAGE.playback.output.airplay", OUTPUTS, "Family", isKind = false),
         )
 
         /** Folders that may not name a package at all, each with why. */
@@ -276,6 +277,11 @@ class SourceBoundaryTest {
                 "playback/output/dlna/",
                 "$ROOT_PACKAGE.source",
                 "a speaker plays the address it is handed, whichever kind of source made it",
+            ),
+            Apart(
+                "playback/output/airplay/",
+                "$ROOT_PACKAGE.source",
+                "a speaker is sent what the phone plays, whichever kind of source it came from",
             ),
         )
 

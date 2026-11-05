@@ -49,6 +49,25 @@ interface Output {
     fun setVolume(level: Float)
 
     /**
+     * The speakers playing together, with their levels: empty while one
+     * plays alone (the target, at the fader's level). An output that can't
+     * group never has one.
+     */
+    val group: StateFlow<List<GroupMember>> get() = NO_GROUP
+
+    /** Whether [target] (one of this output's) can join what plays now. */
+    fun canGroup(target: OutputTarget): Boolean = false
+
+    /** Play on [target] as well, in step with the rest. */
+    fun addToGroup(target: OutputTarget) {}
+
+    /** Stop playing on [target]; the others carry on. */
+    fun removeFromGroup(target: OutputTarget) {}
+
+    /** One grouped speaker's own level, 0 to 1. */
+    fun setMemberVolume(targetId: String, level: Float) {}
+
+    /**
      * The phone's own level moved — the rocker, or the system's slider — and
      * the fader already shows it. From the handle's collector, off Main.
      */
@@ -74,6 +93,13 @@ interface Output {
 
     /** Whether there is anything to steer with right now — a client of the right kind, say. */
     fun canSteer(): Boolean = true
+
+    /**
+     * Whether a play after a pause starts afresh — the far end was told to
+     * drop what it held, and has to fill up again — rather than carrying on
+     * a stream it kept open. The controller shows it as starting.
+     */
+    val resumesAfresh: Boolean get() = false
 
     /**
      * Take the sound to [target], from [fromMs] into the queue's current
@@ -147,8 +173,17 @@ interface OutputFamily {
     /** Reached over the local network only: dropped when the link stops allowing that. */
     val needsLan: Boolean
 
+    /**
+     * Plays only what a server can hand it an address for, so a switch to a
+     * source with no server (the phone's own files) lets it go.
+     */
+    val needsServer: Boolean get() = false
+
     /** What the fader says in place of a level once the volume is [VolumeControl.NotOurs]. */
     val volumeElsewhere: String get() = ""
+
+    /** Whether its speakers can play together as a group — and so whether a cast elsewhere moves over to join one. */
+    val groups: Boolean get() = false
 
     fun create(host: OutputHost): Output
 }
@@ -157,6 +192,21 @@ interface OutputFamily {
 interface OutputTarget {
     val id: String
     val name: String
+
+    /**
+     * The device's IPv4 address on the local network, when the family knows
+     * it: with [hardwareId], how one speaker that two families both offer is
+     * told apart from two speakers — see [OutputFamilies.rows].
+     */
+    val address: String? get() = null
+
+    /**
+     * The device's hardware address, as twelve lower-case hex digits, when
+     * the family can read one off it. A family may only suspect it (DLNA
+     * reads it off the end of the device's id, where many makers put it):
+     * two that agree are one device, two that differ prove nothing.
+     */
+    val hardwareId: String? get() = null
 }
 
 /**
@@ -172,7 +222,22 @@ class ActiveOutput internal constructor(
     internal val output: Output,
 ) {
     val volumeControl: StateFlow<VolumeControl> get() = output.volumeControl
+
+    /** The speakers playing together, empty while one plays alone. */
+    val group: StateFlow<List<GroupMember>> get() = output.group
 }
+
+/** The same speaker, as two families found it: the same hardware, else the same address. */
+fun OutputTarget.isSameDeviceAs(other: OutputTarget): Boolean {
+    val a = hardwareId
+    val b = other.hardwareId
+    return if (a != null && b != null) a.equals(b, ignoreCase = true) else address != null && address == other.address
+}
+
+/** A speaker playing in a group, and its own level. */
+class GroupMember(val target: OutputTarget, val level: Float)
+
+private val NO_GROUP: StateFlow<List<GroupMember>> = kotlinx.coroutines.flow.MutableStateFlow(emptyList())
 
 /** Whether the fader can move the far end's volume. */
 enum class VolumeControl {
@@ -231,6 +296,13 @@ interface OutputHost {
     fun showShuffle(on: Boolean)
     fun showVolume(level: Float)
 
+    /**
+     * A button pressed at the far end that only [output] hears of — a
+     * speaker's own remote — taken as the same press made here, so the
+     * screens, the stand-in and the server all follow. From any thread.
+     */
+    fun pressedAtFarEnd(output: Output, press: FarEndPress)
+
     /** The active source's client, read fresh each time: one rebuilt for the same source is the one that answers. */
     fun client(): MusicServer?
 
@@ -261,6 +333,39 @@ interface OutputHost {
 
     /** The session id for a stream the far end fetches itself: one no timeline names. */
     fun ownStreamSession(trackId: String): String
+
+    // For an output that plays the music out of this phone — decoding it
+    // here and sending the sound — rather than handing the far end an address.
+
+    /**
+     * What the phone's own player would play [track] from right now: its
+     * file (a phone file, or a download the link doesn't pass over), or the
+     * loopback door's address for the stream, in the format this link asks
+     * for and [timeOffsetSeconds] into the track. Null when nothing can be
+     * read: no server, or the door shut.
+     *
+     * The door lets one fetch per track run at a time: a second for the same
+     * track ends the first.
+     */
+    fun phoneSource(track: Track, timeOffsetSeconds: Int = 0): PhoneSource?
+
+    /** Whether [track]'s stream can't be sought within, so a seek asks the server for the stream from there. */
+    fun seeksAtServer(track: Track): Boolean
+
+    /**
+     * [track]'s cover as a JPEG at most [maxPx] wide, or null: none, artwork
+     * hidden, or not to be fetched on this link.
+     */
+    suspend fun coverJpeg(track: Track, maxPx: Int): ByteArray?
+
+    /** The ReplayGain the phone would play [track] at: a factor of at most 1, and 1 with the setting off. */
+    fun gainFor(track: Track): Float
+
+    /** The fader's level, 0 to 1, as it stands. */
+    val volume: StateFlow<Float>
+
+    /** A folder for [output]'s working files (a family's id), made if missing. Nothing else writes there. */
+    fun workDir(output: String): java.io.File
 
     /**
      * [output]'s far end ran out of queue: back to the first track, paused, as
@@ -293,6 +398,16 @@ interface OutputHost {
     fun endedOnItsOwn(output: Output, target: OutputTarget)
 }
 
+/** Where an output that plays out of the phone reads a track — see [OutputHost.phoneSource]. */
+enum class FarEndPress { PLAY, PAUSE, PLAY_PAUSE, NEXT, PREVIOUS }
+
+sealed interface PhoneSource {
+    class File(val file: java.io.File) : PhoneSource
+
+    /** The loopback door's address, the stream starting [offsetMs] into the track. */
+    class Url(val url: String, val offsetMs: Long) : PhoneSource
+}
+
 /**
  * Everywhere the Output page can send the sound: the active source's own
  * families — a Plex server's players — and the phone's.
@@ -303,6 +418,60 @@ data class OutputFamilies(val ofSource: List<OutputFamily>, val ofPhone: List<Ou
 
     /** Shown in this order: the phone's own first, as they always were. */
     val listOrder: List<OutputFamily> get() = ofPhone + ofSource
+
+    /**
+     * The rows the Output page shows: what each family [found], in
+     * [listOrder], one row per device.
+     *
+     * A speaker that two families both offer — a receiver that takes DLNA
+     * and AirPlay — is listed once, under the family that comes first in
+     * [listOrder] among those that [steerable] says can play the source
+     * that's on. A family that can't is left out altogether rather than
+     * listed and failing. Whatever has the sound ([active]) is listed
+     * whatever was found, and wins over its twin.
+     *
+     * One device: the same [OutputTarget.hardwareId], or the same
+     * [OutputTarget.address] where that address has only one target in each
+     * family — a computer offering several AirPlay speakers at one address
+     * keeps them all.
+     */
+    fun rows(
+        found: Map<String, List<OutputTarget>>,
+        active: ActiveOutput?,
+        steerable: (OutputFamily) -> Boolean,
+    ): List<Pair<OutputFamily, OutputTarget>> {
+        val candidates = ArrayList<Pair<OutputFamily, OutputTarget>>()
+        for (family in listOrder) {
+            val playing = active?.takeIf { it.family === family }?.target
+            if (playing == null && !steerable(family)) continue
+            val listed = found[family.id].orEmpty()
+            if (playing != null && listed.none { it.id == playing.id }) candidates += family to playing
+            for (target in listed) candidates += family to target
+        }
+
+        val perAddress = candidates.mapNotNull { (f, t) -> t.address?.let { f.id to it } }.groupingBy { it }.eachCount()
+        fun alone(family: OutputFamily, target: OutputTarget) = perAddress[family.id to target.address] == 1
+        fun sameDevice(a: Pair<OutputFamily, OutputTarget>, b: Pair<OutputFamily, OutputTarget>): Boolean {
+            val (fa, ta) = a
+            val (fb, tb) = b
+            if (fa === fb) return false
+            if (ta.hardwareId != null && ta.hardwareId == tb.hardwareId) return true
+            return ta.address != null && ta.address == tb.address && alone(fa, ta) && alone(fb, tb)
+        }
+        fun isActive(row: Pair<OutputFamily, OutputTarget>) =
+            active != null && row.first === active.family && row.second.id == active.target.id
+
+        val kept = ArrayList<Pair<OutputFamily, OutputTarget>>()
+        for (row in candidates) {
+            if (isActive(row)) {
+                kept.removeAll { sameDevice(it, row) }
+                kept += row
+            } else if (kept.none { sameDevice(it, row) }) {
+                kept += row
+            }
+        }
+        return kept
+    }
 }
 
 /** How long a track has to have played before previous restarts it rather than going back — on every output. */
