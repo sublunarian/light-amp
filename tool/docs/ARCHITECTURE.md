@@ -153,7 +153,8 @@ the lock they need) — offered by the Plex provider
 (`SourceProvider.outputFamilies`), so only a Plex source lists its players. A
 player is never sent that token, which on a server the user owns opens the
 whole Plex account, but a transient one the server mints for each queue
-handed over (`mintPlayerKey`). The
+handed over, or for a player that won't say who it is without one
+(`mintPlayerKey`). The
 Output page lists `OutputFamilies` — the source's and the phone's — without
 naming any of them.
 

@@ -68,10 +68,6 @@ class PlexClient(
     /** Serialises requests aimed at a player — see the Companion calls. */
     internal val playerLock = Mutex()
 
-    /** The short-lived key the steered player was last handed, never [token] — see the Companion calls. */
-    @Volatile
-    internal var playerKey: String? = null
-
     override fun close() = http.close()
 
     // --- Requests ------------------------------------------------------------

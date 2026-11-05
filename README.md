@@ -84,9 +84,10 @@ without adb is waiting on Light
   then, stream and download in Opus or MP3 (MP3 on Plex), or convert the files
   to FLAC.
 - Casting to a DLNA speaker hands it your server login, and casting to a Plex
-  player hands it a key to your Plex server that lasts up to two days. Other
-  devices on that network can read both. Cast only on networks and to devices
-  you trust.
+  player hands it a key to your Plex server. Other devices on that network can
+  read both, so cast only on networks and to devices you trust. The Plex key
+  ends after two days or when the server restarts, and a cast still playing
+  then stops.
 
 Also waiting on Light:
 

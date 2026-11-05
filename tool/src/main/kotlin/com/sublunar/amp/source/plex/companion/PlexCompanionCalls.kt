@@ -255,7 +255,10 @@ suspend fun PlexClient.companionSubscribe(target: PlexPlayer, port: Int, command
 suspend fun PlexClient.companionUnsubscribe(target: PlexPlayer, commandId: Int): Boolean =
     playerCommand(target, "/player/timeline/unsubscribe", commandId, music = false)
 
-/** Start [queue] on [target] at [startId]/[offsetMs]. True when the player took it. */
+/**
+ * Start [queue] on [target] at [startId]/[offsetMs], handing it [key] (see
+ * [mintPlayerKey]). True when the player took it.
+ */
 suspend fun PlexClient.companionPlay(
     target: PlexPlayer,
     queue: PlexQueue,
@@ -263,14 +266,12 @@ suspend fun PlexClient.companionPlay(
     offsetMs: Long,
     commandId: Int,
     window: Int,
+    key: String,
 ): Boolean {
     val server = runCatching { URI(baseUrl) }.getOrElse {
         Log.i(TAG, "playMedia refused: ${it::class.simpleName}")
         return false
     }
-    // A new key with every queue handed over, as Plex's own apps do: a key
-    // lapses, and playMedia is the only way to give the player another.
-    val key = mintPlayerKey() ?: return false
     playerKey = key
     return playerCommand(
         target,
@@ -340,9 +341,13 @@ private suspend fun PlexClient.playerCommand(
     companionXml(path, typed + ("commandID" to commandId.toString()), target = target)
     true
 }.getOrElse {
-    Log.i(TAG, "${path.substringAfterLast('/')} refused: ${it::class.simpleName}")
+    Log.i(TAG, "${path.substringAfterLast('/')} refused: ${it.toLogged()}")
     false
 }
+
+/** A failure as the log tells it: the status that was answered, or else the kind of error, never its message. */
+private fun Throwable.toLogged(): String =
+    (this as? PlexException)?.status?.let { "HTTP $it" } ?: this::class.simpleName.orEmpty()
 
 /**
  * A Companion request: to the player itself when one is named, to the
@@ -390,17 +395,26 @@ internal fun PlexClient.companionToken(target: PlexPlayer?, key: String?): Strin
     if (target == null) token else key
 
 /**
+ * The key last handed to a player in a playMedia. Kept here, not on the
+ * client: a cast outlives the client, which is rebuilt whenever its source
+ * changes.
+ */
+@Volatile
+private var playerKey: String? = null
+
+/**
  * A key for a player, from the server, or null when the server won't give
  * one. It opens only this server, for at most 48 hours and never past a
- * restart of the server. Without one the cast fails, as it does in Plex's own
- * apps: the player is never given this client's token instead.
+ * restart of the server. A new one goes with every queue handed over, as Plex
+ * Web does, since playMedia is the only way to give a player another. Without
+ * one the cast fails, as it does in Plex Web: the player is never given this
+ * client's token instead.
  */
-private suspend fun PlexClient.mintPlayerKey(): String? {
+internal suspend fun PlexClient.mintPlayerKey(): String? {
     val body = runCatching {
         companionXml("/security/token", listOf("type" to "delegation", "scope" to "all"))
     }.getOrElse {
-        val why = (it as? PlexException)?.status?.let { status -> "HTTP $status" } ?: it::class.simpleName
-        Log.i(TAG, "the server gave no key for the player: $why")
+        Log.i(TAG, "the server gave no key for the player: ${it.toLogged()}")
         return null
     }
     return transientKeyIn(body).also {

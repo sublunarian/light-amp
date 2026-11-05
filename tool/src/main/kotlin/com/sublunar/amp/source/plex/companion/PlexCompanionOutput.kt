@@ -493,10 +493,13 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
             tracks[index].id,
             repeatAll = host.repeatMode.value == RepeatMode.QUEUE,
         ) ?: return
+        // No key, no cast, and nothing kept of this queue: the player is never
+        // handed this client's token instead.
+        val key = client.mintPlayerKey() ?: return
         playQueue = queue
         pushedIds = window.map { it.id }
         windowEnd = if (to >= tracks.size) -1 else to - 1
-        client.companionPlay(target, queue, tracks[index].id, positionMs, nextCommandId(), WINDOW)
+        client.companionPlay(target, queue, tracks[index].id, positionMs, nextCommandId(), WINDOW, key)
         log(
             "pushed ${window.size} of ${tracks.size} at idx=$index from ${positionMs}ms" +
                 if (windowEnd >= 0) ", window ends at $windowEnd" else "",
