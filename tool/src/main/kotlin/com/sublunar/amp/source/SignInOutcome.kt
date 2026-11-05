@@ -1,5 +1,6 @@
 package com.sublunar.amp.source
 
+import io.ktor.http.URLParserException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -74,6 +75,9 @@ fun unreachedReason(error: Throwable): String {
         chain.any { it is ConnectException || it is SocketTimeoutException } ->
             "Nothing answered at that address. Check the server is running and the " +
                 "port is right."
-        else -> error.message ?: "Couldn't connect."
+        chain.any { it is URLParserException } ->
+            "That address can't be read. Check it for typos, such as letters in the port."
+        // Never the query: a Subsonic URL carries the login there.
+        else -> error.message?.substringBefore('?') ?: "Couldn't connect."
     }
 }

@@ -227,12 +227,18 @@ class PlexLinkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
      * work from here.
      */
     private suspend fun prepare(server: PlexResource, accountToken: String): SignInOutcome {
+        // The account's token opens everything on the account, so only a server the user owns gets it.
+        val token = server.accessToken ?: accountToken.takeIf { server.owned }
+            ?: return SignInOutcome.Missed(
+                "Plex didn't hand over a token for ${server.name}. Try again.",
+                answered = false,
+            )
         val uri = PlexAccount.reachable(server, clientId)
             ?: return SignInOutcome.Missed("Couldn't reach ${server.name}.", answered = false)
         val outcome = inspectPlexServer(
             name = server.name,
             uri = uri,
-            token = server.accessToken ?: accountToken,
+            token = token,
             clientIdentifier = clientId,
             // An account already knows the server's id; only the typed-in path asks for it.
             machineIdentifier = server.clientIdentifier,

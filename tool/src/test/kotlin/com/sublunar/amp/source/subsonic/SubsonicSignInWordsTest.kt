@@ -1,5 +1,6 @@
 package com.sublunar.amp.source.subsonic
 
+import io.ktor.http.Url
 import java.io.IOException
 import java.net.UnknownHostException
 import kotlin.test.Test
@@ -101,5 +102,15 @@ class SubsonicSignInWordsTest {
             explain(UnknownHostException("music.example")),
         )
         assertEquals("Couldn't connect.", explain(null))
+    }
+
+    @Test
+    fun `an address that can't be read never shows the login`() {
+        val typo = runCatching { Url("http://nas:4533x/rest/ping.view?u=me&t=0123abcd&s=salt") }.exceptionOrNull()!!
+        assertEquals("That address can't be read. Check it for typos, such as letters in the port.", explain(typo))
+        assertEquals(
+            "Failed at http://nas:4533/rest/ping.view",
+            explain(IllegalStateException("Failed at http://nas:4533/rest/ping.view?u=me&t=0123abcd&s=salt")),
+        )
     }
 }

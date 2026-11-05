@@ -80,7 +80,8 @@ class ServerScreen(
         val name = user ?: config?.username.orEmpty()
         val storedLength = config?.password?.length ?: 0
         val passwordSet = newPass?.isNotEmpty() ?: (storedLength > 0)
-        val dots = "•".repeat((newPass?.length ?: storedLength).coerceIn(0, 24))
+        // A saved password's dots don't give away its length.
+        val dots = "•".repeat(newPass?.length?.coerceIn(0, 24) ?: 8)
 
         ListScreen(
             onBack = { goBack() },
