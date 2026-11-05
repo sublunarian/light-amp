@@ -75,7 +75,7 @@ class DownloadNamingTest {
     fun `a track id that is a path is refused before anything is written`() {
         val store = DownloadStore(tmp.root)
         val fetched = runBlocking { store.download("s", "http://127.0.0.1:9/x", "../../t", StreamFormat.MP3) }
-        assertIs<DownloadStore.Fetched.Failed>(fetched)
+        assertEquals("Server sent a track id that isn't a file name", assertIs<DownloadStore.Fetched.Failed>(fetched).why)
         assertEquals(listOf("downloads"), tmp.root.list()?.toList())
         assertEquals(emptyList(), downloads.list()?.toList())
     }
