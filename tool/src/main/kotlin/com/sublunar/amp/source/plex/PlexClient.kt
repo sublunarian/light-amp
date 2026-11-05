@@ -74,7 +74,14 @@ class PlexClient(
 
     /** [path] on [host] — the server unless a player is named — with [params] as its query. */
     private fun url(path: String, params: List<Pair<String, String>> = emptyList(), host: String = baseUrl): String =
-        serverUrl(host, path, params)
+        serverUrl(host, rooted(path), params)
+
+    /**
+     * Paths come from the server too (part keys, thumbs, lyric streams), and
+     * one without its leading slash runs into the host: `@other.host/x` would
+     * take the token there.
+     */
+    private fun rooted(path: String): String = if (path.startsWith("/")) path else "/$path"
 
     /**
      * A request with Plex's headers, its answer unread. The identity goes on
@@ -154,7 +161,7 @@ class PlexClient(
 
     /** [path], which may carry a query of its own, on the server with [params] and the token added. */
     private fun withToken(path: String, params: List<Pair<String, String>> = emptyList()): String =
-        baseUrl.trimEnd('/') + path + (if ('?' in path) "&" else "?") + queryOf(params + ("X-Plex-Token" to token))
+        baseUrl.trimEnd('/') + rooted(path) + (if ('?' in path) "&" else "?") + queryOf(params + ("X-Plex-Token" to token))
 
     override suspend fun ping() {
         // Sections is the cheapest call that proves both the address and the

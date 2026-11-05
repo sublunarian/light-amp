@@ -142,13 +142,16 @@ object LyricsRepository {
         }
 
     /** What [encodeStored] wrote. */
-    private fun parseStored(raw: String?): Lyrics? {
+    internal fun parseStored(raw: String?): Lyrics? {
         if (raw.isNullOrBlank()) return null
         val lines = raw.split('\n').mapNotNull { line ->
             val match = STORED_STAMP.find(line)
-            if (match != null) {
+            // An untimed line is stored as it came, so it can start with more
+            // digits in brackets than any time holds.
+            val at = match?.groupValues?.get(1)?.toLongOrNull()
+            if (match != null && at != null) {
                 val text = line.substring(match.range.last + 1).trim()
-                if (text.isEmpty()) null else LyricLine(match.groupValues[1].toLong(), text)
+                if (text.isEmpty()) null else LyricLine(at, text)
             } else {
                 line.trim().takeIf { it.isNotEmpty() }?.let { LyricLine(null, it) }
             }

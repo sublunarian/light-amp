@@ -37,8 +37,13 @@ object LocalPlaylists : PhonePlaylists {
 
     private fun idFor(file: File): String = ID_PREFIX + file.absolutePath
 
+    /** Only a file [list] could have offered: what this returns gets written, renamed and deleted. */
     private fun fileOf(id: String): File? =
-        if (id.startsWith(ID_PREFIX)) File(id.removePrefix(ID_PREFIX)) else null
+        if (id.startsWith(ID_PREFIX)) {
+            File(id.removePrefix(ID_PREFIX)).takeIf { it.parentFile == folder() && it.name.endsWith(EXTENSION, ignoreCase = true) }
+        } else {
+            null
+        }
 
     /**
      * A name safe to be a filename. The name *is* the filename, with no sidecar

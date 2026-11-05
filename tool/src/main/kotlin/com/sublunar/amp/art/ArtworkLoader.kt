@@ -517,16 +517,6 @@ class ArtworkLoader(
         }
     }
 
-    private fun calculateInSampleSize(width: Int, height: Int, target: Int): Int {
-        if (target <= 0 || width <= 0 || height <= 0) return 1
-        var sample = 1
-        val smallest = minOf(width, height)
-        while (smallest / (sample * 2) >= target) {
-            sample *= 2
-        }
-        return sample
-    }
-
     /**
      * The panel's own width, set by the first themed frame: the fetch size on any
      * panel, as [FETCH_PX] is on the LP3, which stands in until then.
@@ -577,5 +567,23 @@ class ArtworkLoader(
 
         /** Older than this, a half-written cover belongs to a process that is gone. */
         private const val STALE_PARTIAL_MS = 60L * 60 * 1000
+
+        /**
+         * The longest side a cover decodes to. Sized by its short side alone, a
+         * long, thin picture decodes past the 100 MB Android will draw, and the
+         * draw throws every time that cover is shown.
+         */
+        private const val MAX_DECODED_SIDE_PX = 4096
+
+        internal fun calculateInSampleSize(width: Int, height: Int, target: Int): Int {
+            if (target <= 0 || width <= 0 || height <= 0) return 1
+            var sample = 1
+            val smallest = minOf(width, height)
+            val largest = maxOf(width, height)
+            while (smallest / (sample * 2) >= target || largest / sample > MAX_DECODED_SIDE_PX) {
+                sample *= 2
+            }
+            return sample
+        }
     }
 }
