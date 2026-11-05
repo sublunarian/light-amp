@@ -1,6 +1,7 @@
 package com.sublunar.amp.source.plex.companion
 
 import android.util.Log
+import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.source.plex.PlexClient
 import com.sublunar.amp.source.plex.PlexException
 import com.sublunar.amp.source.plex.PlexResource
@@ -103,13 +104,13 @@ suspend fun PlexClient.createPlayQueue(trackIds: List<String>, startId: String, 
         Log.i(TAG, "no machine identifier — the server can't be named in a queue uri")
         return@runCatching null
     }
-    Log.i(TAG, "building a queue of ${trackIds.size} on $mid, starting at $startId")
+    Log.i(TAG, "building a queue of ${trackIds.size} on $mid, starting at ${startId.takeUnless(PhoneFiles::isPhoneFile) ?: "a phone file"}")
     // A queue is built out of this server's own rating keys. Ids from
     // another source name nothing here, and the server rejects the lot
     // with no hint which it was.
     val alien = trackIds.filterNot { it.all(Char::isDigit) }
     if (alien.isNotEmpty()) {
-        Log.i(TAG, "queue holds ${alien.size} track(s) that aren't Plex ids, e.g. ${alien.first()}")
+        Log.i(TAG, "queue holds ${alien.size} track(s) that aren't Plex ids, e.g. ${alien.first().takeUnless(PhoneFiles::isPhoneFile) ?: "a phone file"}")
         return@runCatching null
     }
     val body = companionXml(

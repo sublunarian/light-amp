@@ -200,7 +200,7 @@ internal class StandIn(
             val file = try {
                 Silence.fileFor(dir, length)
             } catch (e: Exception) {
-                Log.w(TAG, "no silence for ${track.id}: ${e::class.simpleName}")
+                Log.w(TAG, "no silence for ${track.id.takeUnless(PhoneFiles::isPhoneFile) ?: "a phone file"}: ${e::class.simpleName}")
                 return@launch
             }
             withContext(Dispatchers.Main.immediate) {
