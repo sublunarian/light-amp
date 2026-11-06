@@ -8,6 +8,8 @@
   log.
 - A Wi-Fi login page, like a hotel's or café's, no longer counts as your
   server answering.
+- A Wi-Fi signal that drops for a moment no longer switches the library to
+  what's downloaded and back.
 - Playlists open at once with their saved songs, offline too, and no longer
   sit on Loading… when the server can't be reached (#19, #27, thanks
   @wsturgiss).
@@ -49,6 +51,17 @@
 
 ### Changed
 
+- A fresh look for the library: bigger covers on album lists, five to a
+  screen, outline tab icons, rounded covers and tidier margins, with download
+  marks at the end of each row.
+- The simple layout's buttons read Search, HOME and Player as LightOS's own
+  do, and new installs start there, without artwork.
+- Each server only offers the qualities it really sends. FLAC is gone, and
+  Bandcamp has a single quality.
+- Covers load faster and use less data, stay within your Storage Limit, and
+  show on cellular in Low Data.
+- Settings is simpler, with Storage and Streams & Downloads on their own pages
+  and a new Downloads page showing what's queued and what takes the room.
 - Casting to Plex players is gone for now. It may come back, built again.
 - Replay Gain and the Playback settings page are gone for now. They come
   back once Light's SDK can set a player's volume.
@@ -81,6 +94,19 @@
   the phone. A speaker that also takes DLNA is listed once. Hold another
   AirPlay speaker to play on both at once, each with its own volume, and a
   speaker's own knob and remote follow along in Amp.
+- Artist pages group records into Albums, Singles & EPs, Live Albums and
+  more, with a tap on a heading to play or shuffle it, followed by the
+  artist's popular tracks.
+- Favorites and Downloads on the library page, each the same lists narrowed
+  to what you liked or what's on the phone.
+- Song Info in every song's menu, with its format and bitrate.
+- Songs list every credited artist, and Artists can sort by album artist,
+  artist or most played.
+- Tap a synced lyric to jump to it, and show lyrics in another script in
+  Latin letters.
+- Choose several libraries of a source at once.
+- A private log of what Amp did, kept on the phone and never sent anywhere,
+  that you can save from About to report a problem.
 - Navidrome and other servers that support it now see each play, pause and
   seek, so their Now Playing stays right, casting included.
 - While casting to a speaker, your launcher and Bluetooth buttons control it,
