@@ -171,7 +171,6 @@ class AppSettings(
      */
     private var launchSnapshot: Preferences? = runBlocking {
         keepEarlierDefaults()
-        dropRetiredKeys()
         dataStore.data.first()
     }
     private val loaded: Preferences get() = checkNotNull(launchSnapshot) { "settings read after construction" }
@@ -631,15 +630,6 @@ class AppSettings(
             if (p[SOURCES] == null) return@edit
             for ((key, change) in CHANGED_DEFAULTS) if (p[key] !in change.known) p[key] = change.was
         }
-    }
-
-    /** ONE-SHOT: what the removed Replay Gain setting and Test page trials left stored. Strip once installed. */
-    private suspend fun dropRetiredKeys() {
-        val retired = listOf(
-            "replayGain", "hideSongShortcuts", "narrowListMargin",
-            "headingRowLabels", "tallAlbumRows", "tallArtistRecords",
-        )
-        dataStore.edit { p -> retired.forEach { p.remove(booleanPreferencesKey("pref.$it")) } }
     }
 
     /** A fresh install's first source: today's defaults written down, so [keepEarlierDefaults] never mistakes it for an old one. */
