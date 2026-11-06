@@ -36,7 +36,7 @@ fun ListScreen(
     PlayerTheme {
         CompositionLocalProvider(
             LocalMenuHeading provides headingRows,
-            LocalMenuListType provides if (listRows) rowType(artless = true) else null,
+            LocalMenuListType provides if (listRows) ROW_TYPE else null,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 AppHeader(

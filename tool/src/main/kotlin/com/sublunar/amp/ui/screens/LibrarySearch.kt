@@ -56,7 +56,7 @@ import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import com.sublunar.amp.ui.components.ListScrollBar
 import com.sublunar.amp.ui.components.ROW_ACTION_ICON_PX
 import com.sublunar.amp.ui.components.ROW_GAP_PX
-import com.sublunar.amp.ui.components.rowLeadPx
+import com.sublunar.amp.ui.components.ROW_LEAD_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
@@ -284,7 +284,7 @@ private fun SearchHeader(
                 .appClickable(onClick = onEdit),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Spacer(Modifier.width(px(LIST_EDGE_PX + rowLeadPx())))
+            Spacer(Modifier.width(px(LIST_EDGE_PX + ROW_LEAD_PX)))
             AppIcon(AppIcons.Search, size = px(SEARCH_GLYPH_PX))
             Spacer(Modifier.width(px(ROW_GAP_PX)))
             QueryField(query, cursor, onPlaceCursor, Modifier.weight(1f))

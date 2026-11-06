@@ -270,16 +270,7 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
 
     // Release Type is offered only where the library knows release types; a
     // stored choice of it reads as the dates' order where it doesn't.
-    LibraryPage.ARTIST -> {
-        val albums by App.library.albums.collectAsState()
-        val order by App.settings.artistAlbumOrder.state.collectAsState()
-        val shown = if (order == ArtistAlbumOrder.RELEASE_TYPE && !knowsReleaseTypes(albums)) {
-            ArtistAlbumOrder.DATE_RELEASED
-        } else {
-            order
-        }
-        PageSetting(shown.label, open = { ArtistAlbumOrderScreen(it) })
-    }
+    LibraryPage.ARTIST -> PageSetting(artistOrderShown().label, open = { ArtistAlbumOrderScreen(it) })
     // Fixed orders, named as they actually are — see LibraryRepository.
     // Its own order, for the visit — see ArtistSongsVisit.
     LibraryPage.ARTIST_SONGS -> {

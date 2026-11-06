@@ -55,7 +55,6 @@ import com.sublunar.amp.ui.components.OverlayScrollBar
 import com.sublunar.amp.ui.components.ROW_ART_PX
 import com.sublunar.amp.ui.components.ROW_GAP_PX
 import com.sublunar.amp.ui.components.ROW_H_PX
-import com.sublunar.amp.ui.components.ROW_LEAD_PX
 import com.sublunar.amp.ui.components.RowSubtitle
 import com.sublunar.amp.ui.components.SelectionArtwork
 import com.sublunar.amp.ui.components.SelectionHeader
@@ -70,14 +69,15 @@ import com.sublunar.amp.ui.components.rememberDragReorderState
 import com.sublunar.amp.ui.components.rememberScrollTarget
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.components.rowClickable
-import com.sublunar.amp.ui.components.rowType
+import com.sublunar.amp.ui.components.ROW_TYPE
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightThemeTokens
 
 /** Where every other list's covers start: its edge and the download mark's slot. */
-private const val QUEUE_START_PX = LIST_EDGE_PX + ROW_LEAD_PX
+/** The queue's rows start 72px in, its own margin round the drag handles, not the library lists' 40. */
+private const val QUEUE_START_PX = 72
 
 /**
  * The rows' right margin, mirroring the covers': the grab bar's glyph ends
@@ -350,7 +350,7 @@ private fun RowScope.QueueRowContent(
         AppArtwork(track.coverArtId, size = px(ROW_ART_PX))
         Spacer(Modifier.width(px(ROW_GAP_PX)))
     }
-    val type = rowType(artless = artworkHidden)
+    val type = ROW_TYPE
     Column(Modifier.weight(1f)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (isCurrent) {

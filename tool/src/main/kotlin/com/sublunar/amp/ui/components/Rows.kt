@@ -121,8 +121,8 @@ fun SelectionArtwork(coverArtId: String?, selected: Boolean) {
 
 /**
  * A list row in the Light music app's proportions: title at [ROW_TITLE_PX], a dimmer
- * subtitle at [ROW_SUB_PX] under it, on the [ROW_H_PX] pitch. The download mark leads
- * the row, where Light puts it (at the far end it read as a control).
+ * subtitle at [ROW_SUB_PX] under it, on the [ROW_H_PX] pitch, the download mark
+ * at its end in grey.
  */
 @Composable
 fun TrackRow(
@@ -141,12 +141,17 @@ fun TrackRow(
     trailing: (@Composable () -> Unit)? = null,
     /** The source the cover belongs to, where it isn't the browsed one — see ArtworkLoader.load. */
     coverSource: String? = null,
-    /** TRIAL (Tall Album Rows): five to the page rather than six, the cover grown with the row. */
+    /** An album list's row: five to the page rather than six, the cover grown with the row. */
     tall: Boolean = false,
+    /** A rank before the cover (an artist's popular songs), centred in [numberColumn] — see [rememberNumberColumn]. */
+    number: Int? = null,
+    numberColumn: Dp = 0.dp,
+    /** More room before the row's content, past the list's margin. */
+    extraLeadPx: Int = 0,
 ) {
     val artworkHidden = App.hideListArtwork.collectAsState().value
     val oneLine = subtitle.isBlank() && artworkHidden && selected == null
-    val type = rowType(artless = artworkHidden)
+    val type = ROW_TYPE
     val big = tall && !artworkHidden
     Row(
         modifier = modifier
@@ -155,9 +160,24 @@ fun TrackRow(
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Beside a cover the mark keeps to the row's middle, as the cover does.
         val titleRisePx = if (subtitle.isNotBlank()) type.subLinePx / 2 else 0
-        DownloadMark(downloaded, onTitleLine = artworkHidden && selected == null, titleRisePx = titleRisePx)
+        Spacer(Modifier.width(px(ROW_LEAD_PX + extraLeadPx)))
+        if (number != null && selected == null) {
+            // Dim, and centred on the row as the cover is.
+            Box(Modifier.width(numberColumn), contentAlignment = Alignment.Center) {
+                AppText(
+                    number.toString(),
+                    pxSp(type.titlePx),
+                    lineHeight = pxSp(type.titleLinePx),
+                    role = type.titleRole,
+                    exact = true,
+                    dim = true,
+                    maxLines = 1,
+                    align = TextAlign.Center,
+                )
+            }
+            Spacer(Modifier.width(px(NUMBER_GAP_PX)))
+        }
         if (selected != null) {
             SelectionArtwork(coverArtId, selected)
             Spacer(Modifier.width(px(ROW_GAP_PX)))
@@ -175,50 +195,24 @@ fun TrackRow(
             RowTitle(title, type = type)
             if (subtitle.isNotBlank()) RowSubtitle(subtitle, type)
         }
-        EndDownloadMark(downloaded, titleRisePx)
+        DownloadMark(downloaded, titleRisePx)
         trailing?.invoke()
     }
 }
 
 /**
- * The leading slot every list row keeps, filled with the download mark when there
- * is one: it keeps every list's titles on one axis whether or not it is filled.
- * The row centres it. [onTitleLine] (lists without covers) moves it onto the
- * title instead: up by [titleRisePx], half of what sits under the title's line,
- * then down to the middle of the title's letters, which sit low in their line,
- * as the stock tools set it.
+ * The download mark at the row's end, on the title's line and in the SDK's grey,
+ * as an album page sets its tracks': at the row's start it pushed every list in
+ * from the margin. Up by [titleRisePx], half of what sits under the title's line,
+ * then down to the middle of the title's letters, which sit low in their line.
  */
 @Composable
-private fun DownloadMark(downloaded: Boolean, onTitleLine: Boolean = false, titleRisePx: Int = 0) {
-    val shiftPx = if (onTitleLine) MARK_INK_DROP_PX - titleRisePx else 0
-    // TRIAL (40px List Margin): the slot shrinks to the margin and the mark moves
-    // to the row's end — see [EndDownloadMark].
-    val narrow = narrowListMargin()
-    Box(modifier = Modifier.offset(y = px(shiftPx)).width(px(rowLeadPx()))) {
-        if (!narrow) DownloadGlyph(downloaded)
-    }
-}
-
-/**
- * TRIAL (40px List Margin): the download mark at the row's end, on the title's
- * line and in the SDK's grey, as an album page sets its tracks'.
- */
-@Composable
-private fun EndDownloadMark(downloaded: Boolean, titleRisePx: Int) {
-    val narrow = narrowListMargin()
+private fun DownloadMark(downloaded: Boolean, titleRisePx: Int) {
     val marks = !App.settings.hideDownloadIcons.state.collectAsState().value
-    if (!narrow || !downloaded || !marks) return
+    if (!downloaded || !marks) return
     Spacer(Modifier.width(px(ROW_GAP_PX)))
     DownloadGlyph(downloaded, Modifier.offset(y = px(MARK_INK_DROP_PX - titleRisePx)), grey = true)
 }
-
-/** TRIAL (40px List Margin): whether the library's lists start 40px from the screen's edge. */
-@Composable
-fun narrowListMargin(): Boolean = App.settings.narrowListMargin.state.collectAsState().value
-
-/** Where a list row's content starts inside the list: [ROW_LEAD_PX], or with 40px List Margin on, 40px from the screen's edge. */
-@Composable
-fun rowLeadPx(): Int = if (narrowListMargin()) NARROW_ROW_LEAD_PX else ROW_LEAD_PX
 
 /** The download mark itself, where [downloaded] and the marks aren't switched off. */
 @Composable
@@ -280,28 +274,13 @@ class RowType(
     val oneLinePx: Int,
 )
 
-private val ROW_TYPE = RowType(
+/** Every list's type and pitch, with covers or without. */
+val ROW_TYPE = RowType(
     ROW_TITLE_PX, ROW_TITLE_LINE_PX, TextRole.Fine,
     ROW_SUB_PX, ROW_SUB_LINE_PX, TextRole.Detail,
     ROW_H_PX, ROW_TEXT_H_PX,
 )
 
-/**
- * Without covers, the title a step up, to copy, in the room a cover took; the
- * line under it stays the list's own. On a pitch that fills the 920px between
- * the header and the tab bar with whole rows: six with a second line, seven of one.
- */
-private val ARTLESS_ROW_TYPE = RowType(
-    LightType.COPY_PX, LightType.COPY_LINE_PX, TextRole.Copy,
-    ROW_SUB_PX, ROW_SUB_LINE_PX, TextRole.Detail,
-    rowPx = 153,
-    oneLinePx = 131,
-)
-
-/** The list's type: with covers, the list's own; without, its title a step up. */
-fun rowType(artless: Boolean): RowType {
-    return if (artless) ARTLESS_ROW_TYPE else ROW_TYPE
-}
 
 /**
  * The list's type and pitch, in canvas pixels: a notch under Light's own Music list
@@ -331,18 +310,12 @@ const val ROW_SUB_LINE_PX = 60
 const val ROW_ART_PX = 128
 
 /**
- * TRIAL (Tall Album Rows): five rows in the 920px between the header and the bar
- * rather than six, the cover keeping its 12px from the row's edges.
+ * An album list's row: five in the 920px between the header and the bar rather
+ * than six, the cover keeping its 12px from the row's edges.
  */
 internal const val TALL_ROW_H_PX = 184
 private const val TALL_ROW_ART_PX = TALL_ROW_H_PX - (ROW_H_PX - ROW_ART_PX)
 const val ROW_GAP_PX = 32
-
-/**
- * The leading slot the download mark sits in: with [LIST_EDGE_PX] of list padding,
- * what follows starts 72px from the screen's edge, where Light's own list puts titles.
- */
-const val ROW_LEAD_PX = 51
 
 /** How far the middle of a title's letters sits below the middle of its line (measured against the stock Podcasts tool). */
 private const val MARK_INK_DROP_PX = 5
@@ -354,8 +327,8 @@ const val ROW_ACTION_H_PX = 102
 /** List padding, so a row's own left edge lines up with Light's music list. */
 const val LIST_EDGE_PX = 21
 
-/** TRIAL (40px List Margin): [ROW_LEAD_PX]'s place, 40px from the screen's edge. */
-private const val NARROW_ROW_LEAD_PX = 40 - LIST_EDGE_PX
+/** Where a list row's content starts inside the list: with [LIST_EDGE_PX], 40px from the screen's edge. */
+const val ROW_LEAD_PX = 40 - LIST_EDGE_PX
 
 /** An artist row: a track row's metrics, with the artist's picture where a server has one. */
 @Composable
@@ -375,7 +348,7 @@ fun ArtistRow(
     val wantsCovers = !App.hideArtistImages.collectAsState().value
     val local = !App.source.collectAsState().value.hasServer
     val covers = wantsCovers && !local
-    val type = rowType(artless = !covers)
+    val type = ROW_TYPE
     var nameLines by remember(name) { mutableStateOf(1) }
     Row(
         modifier = modifier
@@ -388,7 +361,7 @@ fun ArtistRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val titleRisePx = (nameLines - 1) * type.titleLinePx / 2
-        DownloadMark(downloaded, onTitleLine = !covers, titleRisePx = titleRisePx)
+        Spacer(Modifier.width(px(ROW_LEAD_PX)))
         if (covers) {
             // Round where an album is square, so the shape says what this is and a
             // face doesn't read as a sleeve that failed to load.
@@ -409,7 +382,7 @@ fun ArtistRow(
         ) {
             RowTitle(name, maxLines = ARTIST_NAME_LINES, type = type) { nameLines = it }
         }
-        EndDownloadMark(downloaded, titleRisePx)
+        DownloadMark(downloaded, titleRisePx)
     }
 }
 
@@ -426,13 +399,13 @@ fun PlayAllRow(
     headsList: Boolean = false,
     /** The list it heads is one line a row, so without artwork it takes that list's pitch. */
     oneLineList: Boolean = false,
-    /** TRIAL (Tall Album Rows): the list it heads has tall rows, so it takes their pitch and cover box. */
+    /** The list it heads has album rows, so it takes their pitch and cover box. */
     tallList: Boolean = false,
     onClick: () -> Unit,
 ) {
     // Read before branching (see DownloadMark).
     val artworkHidden = App.hideListArtwork.collectAsState().value
-    val type = rowType(artless = artworkHidden)
+    val type = ROW_TYPE
     val tall = tallList && headsList && !artworkHidden
     val heightPx = when {
         !headsList -> ROW_ACTION_H_PX
@@ -449,7 +422,7 @@ fun PlayAllRow(
     ) {
         // Starts where the covers start: a line of the list, not a row with an
         // empty sleeve.
-        Spacer(Modifier.width(px(rowLeadPx())))
+        Spacer(Modifier.width(px(ROW_LEAD_PX)))
         ActionButton(icon, label, inCoverBox = headsList && !artworkHidden, tall = tall)
     }
 }
@@ -458,62 +431,11 @@ fun PlayAllRow(
 @Composable
 fun ShuffleRow(
     label: String = "Shuffle",
-    /** TRIAL (Tall Album Rows): see [PlayAllRow]. */
+    /** See [PlayAllRow]. */
     tallList: Boolean = false,
     onClick: () -> Unit,
 ) {
     PlayAllRow(AppIcons.Shuffle, label, headsList = true, tallList = tallList, onClick = onClick)
-}
-
-/**
- * Two action buttons heading a list of covers, on a song row's axes: the left
- * sits as a song row would, its icon where the cover goes; the right repeats
- * that layout from the screen's middle, as if a cover started there.
- */
-@Composable
-fun SplitActionRow(
-    leftIcon: ImageVector,
-    leftLabel: String,
-    onLeft: () -> Unit,
-    /**
-     * The right-hand button, or null. The left one stays put either way, so a page
-     * whose second button arrives later (an artist's popular tracks) doesn't jump.
-     */
-    rightIcon: ImageVector? = null,
-    rightLabel: String = "",
-    onRight: (() -> Unit)? = null,
-    /** TRIAL (Tall Artist Records): the records under it have tall rows, so it takes their pitch and cover box. */
-    tallList: Boolean = false,
-) {
-    // Read before branching (see DownloadMark).
-    val inCoverBox = !App.hideListArtwork.collectAsState().value
-    val tall = tallList && inCoverBox
-    Row(
-        modifier = Modifier.fillMaxWidth().height(px(if (tall) TALL_ROW_H_PX else rowType(artless = !inCoverBox).rowPx)),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            modifier = Modifier
-                .width(px(CANVAS_W_PX / 2 - LIST_EDGE_PX))
-                .fillMaxHeight()
-                .appClickable(onClick = onLeft),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Spacer(Modifier.width(px(rowLeadPx())))
-            ActionButton(leftIcon, leftLabel, inCoverBox, tall = tall)
-        }
-        if (rightIcon != null && onRight != null) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .appClickable(onClick = onRight),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ActionButton(rightIcon, rightLabel, inCoverBox, tall = tall)
-            }
-        }
-    }
 }
 
 @Composable
@@ -527,7 +449,7 @@ private fun ActionButton(icon: ImageVector, label: String, inCoverBox: Boolean, 
     }
     Spacer(Modifier.width(px(ROW_GAP_PX)))
     // Not TextRole.Button: Bold at 0.15em shouts on a full-width row label.
-    RowTitle(label, type = rowType(artless = !inCoverBox))
+    RowTitle(label, type = ROW_TYPE)
 }
 
 /**
@@ -610,8 +532,8 @@ fun NumberedRow(
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // TRIAL (40px List Margin): the numbers start on the lists' margin too.
-        if (narrowListMargin()) Spacer(Modifier.width(px(NARROW_ROW_LEAD_PX)))
+        // The numbers start on the lists' margin too.
+        Spacer(Modifier.width(px(ROW_LEAD_PX)))
         if (selected != null) {
             // Select mode swaps the number gutter for the cover and check bubble.
             SelectionArtwork(coverArtId, selected)

@@ -36,7 +36,7 @@ import com.sublunar.amp.ui.components.CenteredNote
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.NumberedRow
 import com.sublunar.amp.ui.components.ROW_GAP_PX
-import com.sublunar.amp.ui.components.rowLeadPx
+import com.sublunar.amp.ui.components.ROW_LEAD_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.ScrollableList
@@ -182,7 +182,7 @@ class AlbumDetailScreen(
                                 maxLines = 1,
                                 exact = true,
                                 modifier = Modifier.padding(
-                                    start = px(rowLeadPx()),
+                                    start = px(ROW_LEAD_PX),
                                     top = px(TOTALS_TOP_PX),
                                     bottom = px(TOTALS_BOTTOM_PX),
                                 ),
@@ -249,7 +249,7 @@ class AlbumDetailScreen(
         ) {
             // The sleeve starts where every list's covers start, after the
             // leading slot; with none, the text does.
-            Spacer(Modifier.width(px(rowLeadPx())))
+            Spacer(Modifier.width(px(ROW_LEAD_PX)))
             if (!coverless) {
                 ArtworkTile(
                     cover.image,
@@ -313,10 +313,10 @@ class AlbumDetailScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = px(rowLeadPx()), bottom = px(cardGapPx())),
+                .padding(start = px(ROW_LEAD_PX), bottom = px(cardGapPx())),
             horizontalAlignment = if (centred) Alignment.CenterHorizontally else Alignment.Start,
         ) {
-            CardTitle(album.title, centred = centred, maxLines = Int.MAX_VALUE, onTitleBottom = onTitleBottom, large = true)
+            CardTitle(album.title, centred = centred, maxLines = Int.MAX_VALUE, onTitleBottom = onTitleBottom)
             Spacer(Modifier.height(px(TEXT_CARD_LINE_GAP_PX)))
             AppText(
                 album.artist,

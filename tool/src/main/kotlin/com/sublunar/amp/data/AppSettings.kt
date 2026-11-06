@@ -86,7 +86,7 @@ enum class ArtistSort(val credit: ArtistCredit) {
     MOST_PLAYED(ArtistCredit.ALBUM),
 }
 
-/** An artist's own records: by date (the default), by name, or grouped by [ReleaseType] where the library knows them. */
+/** An artist's own records: grouped by [ReleaseType] where the library knows them (the default; by date elsewhere), by date, or by name. */
 enum class ArtistAlbumOrder(val label: String) {
     DATE_RELEASED("Date Released"),
     NAME("Name"),
@@ -431,7 +431,7 @@ class AppSettings(
     val replayGain: Pref<Boolean> = bool("pref.replayGain", true)
 
     /** How an artist's page orders their records — see [ArtistAlbumOrder]. */
-    val artistAlbumOrder: Pref<ArtistAlbumOrder> = enum("pref.artistAlbumOrder", ArtistAlbumOrder.DATE_RELEASED)
+    val artistAlbumOrder: Pref<ArtistAlbumOrder> = enum("pref.artistAlbumOrder", ArtistAlbumOrder.RELEASE_TYPE)
 
     /** Whether to use the simplified or standard layout mode. */
     val layoutMode: Pref<LayoutMode> = enum(LAYOUT_MODE.name, LayoutMode.SIMPLIFIED)
@@ -475,21 +475,6 @@ class AppSettings(
      * because it is also what keeps every list's titles on one axis.
      */
     val hideDownloadIcons: Pref<Boolean> = bool("pref.hideDownloadIcons", false)
-
-    /** TRIAL: an artist's page without All Songs and Popular above the records. */
-    val hideSongShortcuts: Pref<Boolean> = bool("pref.hideSongShortcuts", false)
-
-    /** TRIAL: the library's lists 40px from the screen's edge, download marks at the rows' ends. */
-    val narrowListMargin: Pref<Boolean> = bool("pref.narrowListMargin", false)
-
-    /** TRIAL: an artist's release groups headed by a row half a record tall, the name at the titles' type. */
-    val headingRowLabels: Pref<Boolean> = bool("pref.headingRowLabels", false)
-
-    /** TRIAL: the Albums list five rows to the page, the covers grown with them. */
-    val tallAlbumRows: Pref<Boolean> = bool("pref.tallAlbumRows", false)
-
-    /** TRIAL: an artist's records five rows to the page, the covers grown with them. */
-    val tallArtistRecords: Pref<Boolean> = bool("pref.tallArtistRecords", false)
 
     /**
      * Covers beside list rows (library, search, playlists, queue). Off keeps them

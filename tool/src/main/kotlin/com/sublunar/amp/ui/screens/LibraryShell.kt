@@ -311,8 +311,6 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
     val letters = view.letters
     val reversed by App.settings.albumSortReversed.state.collectAsState()
     val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
-    // TRIAL (Tall Album Rows): five albums to the page.
-    val tallAlbumRows = App.settings.tallAlbumRows.state.collectAsState().value
     val notices = libraryNotices(sorted.isEmpty())
     val grid = App.albumGrid.collectAsState().value
     Column(Modifier.fillMaxSize()) {
@@ -346,7 +344,7 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
                 headerCount = 1 + notices.size,
                 reversed = reversed,
             ) {
-                item { RandomAlbumRow(rows, tall = tallAlbumRows) }
+                item { RandomAlbumRow(rows, tall = true) }
                 notices.forEach { notice -> item { notice() } }
                 items(sorted.size, key = { rows[it]?.id ?: it }) { i ->
                     val album = rows[i] ?: return@items
@@ -358,7 +356,7 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
                         downloaded = album.id in downloadedAlbums,
                         onClick = { openAlbum(album.id, Parent.Here) },
                         onLongClick = { go { AlbumActionsScreen(it, album.id) } },
-                        tall = tallAlbumRows,
+                        tall = true,
                     )
                 }
             }

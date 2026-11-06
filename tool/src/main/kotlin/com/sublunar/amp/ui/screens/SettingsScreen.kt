@@ -74,7 +74,6 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     item { TextRow(title = "Streams & Downloads") { go { StreamsDownloadsScreen(it) } } }
                 }
                 item { TextRow(title = "Playback") { go { PlaybackScreen(it) } } }
-                item { TextRow(title = "Test") { go { TestScreen(it) } } }
                 item { TextRow(title = "About") { go { AboutScreen(it) } } }
             }
         }
@@ -103,17 +102,61 @@ class PlaybackScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     }
 }
 
-/** Every cover in the app, and where else pictures go once there are any. */
-class ArtworkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
+/** How the app looks — every switch, none of them about any one source. */
+class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
+        val invert by App.settings.invertColors.state.collectAsState()
+        val syncedLyrics by App.settings.syncedLyrics.state.collectAsState()
+        val hideDownloadIcons by App.settings.hideDownloadIcons.state.collectAsState()
+        val sources by App.settings.sources.state.collectAsState()
         val artwork by App.settings.artwork.state.collectAsState()
         val listArtwork by App.settings.listArtwork.state.collectAsState()
         val hideArtistImages by App.settings.hideArtistImages.state.collectAsState()
+        val layoutMode by App.settings.layoutMode.state.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = "Artwork", headingRows = true) {
+        ListScreen(onBack = { goBack() }, title = "Appearance", headingRows = true) {
             ScrollableList {
+                // Only where something can be downloaded: the phone's own music
+                // is all on the phone, so it never wears the mark.
+                if (sources.any { it.supportsDownloads }) {
+                    item {
+                        // The marks go; the layout does not move with them — see
+                        // AppSettings.hideDownloadIcons.
+                        ToggleRow("Download Icons", !hideDownloadIcons) {
+                            App.scope.launch {
+                                App.settings.hideDownloadIcons.set(!hideDownloadIcons)
+                            }
+                        }
+                    }
+                }
+                item {
+                    ToggleRow("Synced Lyrics", syncedLyrics) {
+                        App.scope.launch { App.settings.syncedLyrics.set(!syncedLyrics) }
+                    }
+                }
+                item {
+                    ToggleRow("Invert Colors", invert) {
+                        App.scope.launch { App.settings.invertColors.set(!invert) }
+                    }
+                }
+                item {
+                    // On spreads the four tabs across the bar. Off, the default, is
+                    // the phone's own three buttons with the library as a page.
+                    val tabs = layoutMode == LayoutMode.STANDARD
+                    ToggleRow("Library Tabs Layout", tabs) {
+                        // Each layout's own front page, as at launch: the index
+                        // for the three buttons, the last tab for the tabs.
+                        LibraryNav.libraryIndex.value = tabs
+                        LibraryNav.indexFolder.value = null
+                        App.scope.launch {
+                            App.settings.layoutMode.set(
+                                if (tabs) LayoutMode.SIMPLIFIED else LayoutMode.STANDARD,
+                            )
+                        }
+                    }
+                }
                 item {
                     // Covers everywhere or none, which also stops the app
                     // fetching and decoding them.
@@ -137,108 +180,6 @@ class ArtworkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                                 App.settings.hideArtistImages.set(!hideArtistImages)
                             }
                         }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** How the app looks — every switch, none of them about any one source. */
-class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
-
-    @Composable
-    override fun Content() {
-        val invert by App.settings.invertColors.state.collectAsState()
-        val syncedLyrics by App.settings.syncedLyrics.state.collectAsState()
-        val hideDownloadIcons by App.settings.hideDownloadIcons.state.collectAsState()
-        val sources by App.settings.sources.state.collectAsState()
-        val layoutMode by App.settings.layoutMode.state.collectAsState()
-
-        ListScreen(onBack = { goBack() }, title = "Appearance", headingRows = true) {
-            ScrollableList {
-                item { TextRow(title = "Artwork") { go { ArtworkScreen(it) } } }
-                // Only where something can be downloaded: the phone's own music
-                // is all on the phone, so it never wears the mark.
-                if (sources.any { it.supportsDownloads }) {
-                    item {
-                        // The marks go; the layout does not move with them — see
-                        // AppSettings.hideDownloadIcons.
-                        ToggleRow("Download Icons", !hideDownloadIcons) {
-                            App.scope.launch {
-                                App.settings.hideDownloadIcons.set(!hideDownloadIcons)
-                            }
-                        }
-                    }
-                }
-                item {
-                    // On spreads the four tabs across the bar. Off, the default, is
-                    // the phone's own three buttons with the library as a page.
-                    val tabs = layoutMode == LayoutMode.STANDARD
-                    ToggleRow("Library Tabs", tabs) {
-                        // Each layout's own front page, as at launch: the index
-                        // for the three buttons, the last tab for the tabs.
-                        LibraryNav.libraryIndex.value = tabs
-                        LibraryNav.indexFolder.value = null
-                        App.scope.launch {
-                            App.settings.layoutMode.set(
-                                if (tabs) LayoutMode.SIMPLIFIED else LayoutMode.STANDARD,
-                            )
-                        }
-                    }
-                }
-                item {
-                    ToggleRow("Synced Lyrics", syncedLyrics) {
-                        App.scope.launch { App.settings.syncedLyrics.set(!syncedLyrics) }
-                    }
-                }
-                item {
-                    ToggleRow("Invert Colors", invert) {
-                        App.scope.launch { App.settings.invertColors.set(!invert) }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** Trials: looks being tried out, each to be kept or dropped. */
-class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
-
-    @Composable
-    override fun Content() {
-        val hideSongShortcuts by App.settings.hideSongShortcuts.state.collectAsState()
-        val tallAlbumRows by App.settings.tallAlbumRows.state.collectAsState()
-        val tallArtistRecords by App.settings.tallArtistRecords.state.collectAsState()
-        val headingRowLabels by App.settings.headingRowLabels.state.collectAsState()
-        val narrowListMargin by App.settings.narrowListMargin.state.collectAsState()
-
-        // Rows a step below the other settings pages', so a trial's whole name fits.
-        ListScreen(onBack = { goBack() }, title = "Test") {
-            ScrollableList {
-                item {
-                    ToggleRow("Hide Song Shortcuts", hideSongShortcuts) {
-                        App.scope.launch { App.settings.hideSongShortcuts.set(!hideSongShortcuts) }
-                    }
-                }
-                item {
-                    ToggleRow("Tall Album Rows", tallAlbumRows) {
-                        App.scope.launch { App.settings.tallAlbumRows.set(!tallAlbumRows) }
-                    }
-                }
-                item {
-                    ToggleRow("Tall Artist Records", tallArtistRecords) {
-                        App.scope.launch { App.settings.tallArtistRecords.set(!tallArtistRecords) }
-                    }
-                }
-                item {
-                    ToggleRow("Heading Row Labels", headingRowLabels) {
-                        App.scope.launch { App.settings.headingRowLabels.set(!headingRowLabels) }
-                    }
-                }
-                item {
-                    ToggleRow("40px List Margin", narrowListMargin) {
-                        App.scope.launch { App.settings.narrowListMargin.set(!narrowListMargin) }
                     }
                 }
             }

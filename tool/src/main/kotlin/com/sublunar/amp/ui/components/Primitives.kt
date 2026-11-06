@@ -80,7 +80,6 @@ object AppIcons {
     val DeleteOutline = Icons.Filled.DeleteOutline
     val ArrowUpward = Icons.Filled.ArrowUpward
     val ArrowDownward = Icons.Filled.ArrowDownward
-    val Whatshot = Icons.Filled.Whatshot
     val Cast = Icons.Filled.Cast
     val Refresh = Icons.Filled.Refresh
 

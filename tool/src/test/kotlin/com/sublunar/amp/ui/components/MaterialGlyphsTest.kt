@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Smartphone
-import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathNode
 import androidx.compose.ui.graphics.vector.VectorPath
@@ -157,7 +156,6 @@ class MaterialGlyphsTest {
             Material.Filled.Settings to Icons.Filled.Settings,
             Material.Filled.Shuffle to Icons.Filled.Shuffle,
             Material.Filled.Smartphone to Icons.Filled.Smartphone,
-            Material.Filled.Whatshot to Icons.Filled.Whatshot,
             Material.AutoMirrored.Filled.FormatListBulleted to Icons.AutoMirrored.Filled.FormatListBulleted,
             Material.AutoMirrored.Filled.QueueMusic to Icons.AutoMirrored.Filled.QueueMusic,
             Material.Outlined.OutlinedMusicNote to Icons.Outlined.MusicNote,

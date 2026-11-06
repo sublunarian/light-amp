@@ -40,6 +40,8 @@ fun AlbumGrid(
     state: LazyGridState,
     /** Full-width rows drawn before the album at each index: a grouped page's headings. */
     headings: Map<Int, @Composable () -> Unit> = emptyMap(),
+    /** Full-width rows after the last sleeve. */
+    footer: LazyGridScope.() -> Unit = {},
     header: LazyGridScope.() -> Unit,
 ) {
     // Read unconditionally: behind an `if` it stops following the state and the
@@ -79,6 +81,7 @@ fun AlbumGrid(
                     }
                 }
             }
+            footer()
         }
         OverlayScrollBar(target, scrolling = state.isScrollInProgress)
     }
