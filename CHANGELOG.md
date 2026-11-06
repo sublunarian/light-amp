@@ -72,7 +72,7 @@
 - Choosing a speaker while paused no longer starts playback, and switching
   source while casting keeps the speaker.
 - Contributions now come as issues, with pull requests by invitation.
-- Built on Light's SDK 0.2.2.
+- Built on Light's SDK 0.2.3.
 
 ### Added
 
@@ -94,8 +94,9 @@
   3,215, and unit tests from 276 to 593.
 - Each kind of source (Subsonic, Plex, Jellyfin, the phone) and of casting
   lives in its own part of the code, behind a shared interface for each.
-- Patches to Light's SDK went from 11 to 6, adding about 410 lines instead of
-  1,540: speaker casting and the Wi-Fi Only guard now live in Amp's own code.
+- Patches to Light's SDK went from 11 to 5, adding about 410 lines instead of
+  1,540: speaker casting, the Wi-Fi Only guard and the database fallback now
+  live in Amp's own code.
 - The compile errors that stop Light's store builder from building Amp went
   from 164 in September to 46.
 

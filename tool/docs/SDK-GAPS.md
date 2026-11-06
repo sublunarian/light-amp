@@ -2,14 +2,15 @@
 
 Amp ships today, but parts of it are built around the SDK because there is no
 supported route. Each item below is a workaround we would delete the day an API
-exists. Checked against SDK 0.2.2 (`92b8b86`, 23 Oct 2026), which is where the
+exists. Checked against SDK 0.2.3 (`8d3238c`, 30 Oct 2026), which is where the
 `light-sdk` submodule is pinned. 0.2.0 closed one gap, plain `http://` (see
 Data modes below), and 0.2.1 brought single-item queue edits; 0.2.2 only moved
-the Tool Manager library on. The rest stand.
+the Tool Manager library on, and 0.2.3 let a tool configure its Room database
+(Room migrations below). The rest stand.
 
 Built the way Light's store builder builds it (a pristine SDK, via
-`scripts/store-build-check.sh`), Amp stops at 46 compile errors on 0.2.2
-(checked 28 Oct; three of them follow from one missing `deviceVolume`), every
+`scripts/store-build-check.sh`), Amp stops at 46 compile errors on 0.2.3
+(checked 5 Nov; three of them follow from one missing `deviceVolume`), every
 one a call into our patches. It was 164 on 21 Sep. Most used first:
 `playWhenReady`, `repeatMode`, `replaceRange`, `playbackGain`,
 `deviceVolume`/`setSystemVolume`, `setMediaQueueAt`, `hasRuntimePermission`,
@@ -24,8 +25,10 @@ The gap that started the spikes is gone: Amp declares
 `LightAudioService`. The `LightMediaService` spike was deleted in full.
 What remains ours: two player defaults, `setDeviceVolumeControlEnabled` and
 `setHandleAudioBecomingNoisy`, set once in `SdkExoPlayer.kt` for both players
-since 0.2.1 (`audio-player.patch`). The session's `sessionActivity` was
-dropped on 20 Oct 2026: nothing on LightOS reads it. One
+since 0.2.1 (`audio-player.patch`). The session's `sessionActivity` patch was
+dropped on 20 Oct 2026; since 0.2.3 the SDK sets one itself, to the tool's
+launch intent, and marks the session as music, which LightOS reads to pick its
+now-playing layout. One
 behavioural trade accepted: the SDK stops a paused, unheld session after 15
 minutes, where the spike held on indefinitely.
 
@@ -343,25 +346,28 @@ what the workaround costs. **These are requests, not blockers.**
 ## Smaller additions
 
 Already written as patches; see [SDK-PATCHES.md](SDK-PATCHES.md), which is the
-authority. None of these is upstream as of 0.2.2 (`92b8b86`). The last column
+authority. None of these is upstream as of 0.2.3 (`8d3238c`). The last column
 says what we mean to do about each: some are worth asking Light for, and some
 Amp could stop needing on its own.
 
 **Plan (changed 2026-10-19):** light-sdk's CONTRIBUTING closes PRs without an
 issue Light has okayed, so each ask goes in as a small issue first, and a PR
-follows the green light. Nothing is filed yet; the issues below marked
-"drafted" are written and waiting to be posted.
+follows the green light. The asks went in on 23 Oct 2026: issues
+[#298](https://github.com/lightphone/light-sdk/issues/298),
+[#299](https://github.com/lightphone/light-sdk/issues/299) and
+[#300](https://github.com/lightphone/light-sdk/issues/300), and comments on
+#217 and #218.
 
 | Gap | Why | Next |
 |---|---|---|
-| Playback state, `playWhenReady` | `isPlaying` is false both when paused and while rebuffering, so a tool can't tell a pause from a wait, nor see a finished queue (Amp infers it from the position). Amp reads `playWhenReady` in nine places. | Ask: [#218](https://github.com/lightphone/light-sdk/issues/218) is open with Light's "PR welcome"; a comment proposing `playWhenReady` and a `LightPlaybackState` is drafted. |
-| `repeatMode` | Repeat off / all / one. Done in the tool it isn't gapless, and it stops once you leave a detached tool. | Ask, as an SDK enum (drafted). |
-| `setMediaQueueAt` | Restoring a queue mid-song: `seekTo` right after `setMediaQueue` lands at 0, because the duration isn't known yet. | Ask, as a start position on `setMediaQueue` (drafted). |
-| `playbackGain` | ReplayGain. There is no other way to set a player's volume. | Ask, shaped like `speed` (drafted). |
-| `deviceVolume`, `setSystemVolume` | The Output page's fader on This device. A tool can't reach `AudioManager`. | Ask (drafted); Light may see volume as LightOS's. |
-| `setHandleAudioBecomingNoisy(true)` | One line on the builder. Without it, unplugging headphones leaves music playing out of the speaker. Doing it by hand needs a `BroadcastReceiver`, which the sandbox blocks. | Ask, as a bug report (drafted). |
-| `replaceRange()` | One queue update instead of one per item; an empty range appends. Reordering by repeated `moveMediaItem` rebuilds the session queue per move, and a few hundred moves exhausts memory. | Ask for list versions on [#217](https://github.com/lightphone/light-sdk/issues/217), once we've timed a big shuffle on the phone. |
-| Room migrations | `buildDatabase` exposes no builder, so a tool cannot register a migration. We patched in `fallbackToDestructiveMigration`, which means every schema change wipes the user's cache and download index. | Nothing to ask: [#281](https://github.com/lightphone/light-sdk/pull/281) and [#285](https://github.com/lightphone/light-sdk/pull/285) both add a builder hook. Retire the patch when one merges. |
+| Playback state, `playWhenReady` | `isPlaying` is false both when paused and while rebuffering, so a tool can't tell a pause from a wait, nor see a finished queue (Amp infers it from the position). Amp reads `playWhenReady` in nine places. | Ask: [#218](https://github.com/lightphone/light-sdk/issues/218) is open with Light's "PR welcome"; a comment proposing `playWhenReady` and a `LightPlaybackState` is posted. |
+| `repeatMode` | Repeat off / all / one. Done in the tool it isn't gapless, and it stops once you leave a detached tool. | Asked in #298, as an SDK enum. |
+| `setMediaQueueAt` | Restoring a queue mid-song: `seekTo` right after `setMediaQueue` lands at 0, because the duration isn't known yet. | Asked in #298, as a start position on `setMediaQueue`. |
+| `playbackGain` | ReplayGain. There is no other way to set a player's volume. | Asked in #298, shaped like `speed`. |
+| `deviceVolume`, `setSystemVolume` | The Output page's fader on This device. A tool can't reach `AudioManager`. | Asked in #298; Light may see volume as LightOS's. |
+| `setHandleAudioBecomingNoisy(true)` | One line on the builder. Without it, unplugging headphones leaves music playing out of the speaker. Doing it by hand needs a `BroadcastReceiver`, which the sandbox blocks. | Reported as #300. |
+| `replaceRange()` | One queue update instead of one per item; an empty range appends. Reordering by repeated `moveMediaItem` rebuilds the session queue per move, and a few hundred moves exhausts memory. | Asked for list versions on [#217](https://github.com/lightphone/light-sdk/issues/217), with a 500-song shuffle timed on the phone. |
+| ~~Room migrations~~ — **closed in 0.2.3** | `buildDatabase` took no builder, so a tool could not register a migration. [#281](https://github.com/lightphone/light-sdk/pull/281) added a `configure` block; `App.kt` now sets `fallbackToDestructiveMigration` itself and the patch is gone. Every schema change still wipes the user's cache and download index. | Amp's own call: real migrations are possible now. |
 | `hasRuntimePermission` | LightOS answers music access from its policy, and can say Blocked to a phone that granted it. | Could drop: any audio file visible in `Music/Amp` proves access. |
 | `TextInputKeyboardCallback` | `LightEmbeddedLp3Keyboard` is public and usable on a tool's own screen, but the callback that turns keys into edits is `internal`. We copied ~60 lines of it, including surrogate-aware backspace, to put a keyboard under our search results. | Wait for Light's keyboard push (#45). |
 

@@ -119,13 +119,14 @@ already exposes and the SDK does not forward. That is also why they would surviv
 the detached-audio migration: upstream's detached player holds a `Player`, and
 both `ExoPlayer` and `MediaController` implement it. See SDK-GAPS.md.
 
-### 5. `buildDatabase` — `fallbackToDestructiveMigration`
+### 5. ~~`buildDatabase` — `fallbackToDestructiveMigration`~~ — moved into Amp 5 Nov 2026
 
 A tool can't reach Room except through this helper (`android.content.Context` is
-a blocked import), so it can't register migrations or a fallback. Without one,
-shipping any schema change crashes every existing install on launch. Recreating
-the tables is the right default: a tool's Room database is a rebuildable cache of
-server state, not the system of record.
+a blocked import). Without a fallback or a migration, shipping any schema change
+crashes every existing install on launch. SDK 0.2.3 (light-sdk #281) gave
+`buildDatabase` a `configure` block, so `App.kt` sets the fallback itself and a
+store build carries it too. Recreating the tables is still the default: a tool's
+Room database is a rebuildable cache of server state, not the system of record.
 
 ### 6. ~~Splash icon centring~~ — dropped 20 Oct 2026
 
@@ -186,7 +187,7 @@ The background-audio spike is gone: Amp adopted the SDK's official
 `detached-audio` capability. What replaced it in the patch set was
 `audio-service.patch`: a `sessionActivity` on the SDK's own service, so that
 tapping a media surface opens the tool. Dropped 20 Oct 2026, because nothing on
-LightOS reads it. (Its player's device-volume and becoming-noisy lines moved to
+LightOS read it; since 0.2.3 the SDK sets one itself, to the tool's launch intent. (Its player's device-volume and becoming-noisy lines moved to
 `SdkExoPlayer.kt` with 0.2.1.)
 
 ### 12. `transfer/LightTransferService.kt` + manifest

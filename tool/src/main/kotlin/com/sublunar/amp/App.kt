@@ -165,7 +165,11 @@ object App {
      */
     private fun databaseFor(source: MusicSource): LibraryDatabase = synchronized(databases) {
         databases.getOrPut(source.id) {
-            lightContext.buildDatabase(LibraryDatabase::class.java, libraryDatabaseName(source.id))
+            // A schema change rebuilds the tables, which the next sync refills,
+            // instead of crashing on launch.
+            lightContext.buildDatabase(LibraryDatabase::class.java, libraryDatabaseName(source.id)) {
+                fallbackToDestructiveMigration(dropAllTables = true)
+            }
         }
     }
 

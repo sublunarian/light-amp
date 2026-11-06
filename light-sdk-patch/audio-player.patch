@@ -1,20 +1,22 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
-index 0304e2a..4408196 100644
+index 9a90ed5..9120558 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
-@@ -2,9 +2,11 @@ package com.thelightphone.sdk.audio
+@@ -2,11 +2,13 @@ package com.thelightphone.sdk.audio
  
  import android.content.ComponentName
  import android.content.Context
 +import android.media.AudioManager
  import android.net.Uri
+ import android.os.Bundle
+ import android.util.Log
  import androidx.annotation.OptIn
  import androidx.media3.common.C
 +import androidx.media3.common.DeviceInfo
  import androidx.media3.common.MediaItem
  import androidx.media3.common.MediaMetadata
  import androidx.media3.common.PlaybackParameters
-@@ -16,6 +18,7 @@ import androidx.media3.common.util.Util
+@@ -18,6 +20,7 @@ import androidx.media3.common.util.Util
  import androidx.media3.session.MediaController
  import androidx.media3.session.SessionToken
  import java.io.File
@@ -22,7 +24,7 @@ index 0304e2a..4408196 100644
  import kotlinx.coroutines.CoroutineScope
  import kotlinx.coroutines.Dispatchers
  import kotlinx.coroutines.Job
-@@ -80,7 +83,21 @@ class LightAudioPlayer internal constructor(
+@@ -82,7 +85,21 @@ class LightAudioPlayer internal constructor(
      /** Connection and command-acceptance lifecycle of this player. */
      val availability: StateFlow<LightAudioPlayerAvailability> = commands.availability
  
@@ -44,7 +46,7 @@ index 0304e2a..4408196 100644
          when (spec.playback) {
              LightAudioPlayback.Attached ->
                  connectPlayer(buildSdkExoPlayer(context, spec.usage, spec.cache))
-@@ -94,6 +111,7 @@ class LightAudioPlayer internal constructor(
+@@ -96,6 +113,7 @@ class LightAudioPlayer internal constructor(
              return
          }
          player = connectedPlayer
@@ -52,7 +54,7 @@ index 0304e2a..4408196 100644
          connectedPlayer.addListener(object : Player.Listener {
              override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                  _currentMediaItemIndex.value = if (mediaItem == null) {
-@@ -131,6 +149,15 @@ class LightAudioPlayer internal constructor(
+@@ -133,6 +151,15 @@ class LightAudioPlayer internal constructor(
              override fun onPlayerErrorChanged(error: PlaybackException?) {
                  _error.value = error?.toLightAudioError(connectedPlayer)
              }
@@ -68,7 +70,7 @@ index 0304e2a..4408196 100644
          })
          val state = connectedPlayer.snapshotState()
          _currentMediaItemIndex.value = state.currentMediaItemIndex
-@@ -144,9 +171,31 @@ class LightAudioPlayer internal constructor(
+@@ -146,9 +173,31 @@ class LightAudioPlayer internal constructor(
          } else {
              stopPositionUpdates()
          }
@@ -100,7 +102,7 @@ index 0304e2a..4408196 100644
      private fun connectDetachedPlayer(context: Context, usage: LightAudioUsage) {
          val token = SessionToken(context, ComponentName(context, LightAudioService::class.java))
          val future = MediaController.Builder(context, token)
-@@ -220,6 +269,26 @@ class LightAudioPlayer internal constructor(
+@@ -222,6 +271,26 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -127,7 +129,7 @@ index 0304e2a..4408196 100644
      /**
       * Appends [item] to the queue.
       */
-@@ -293,6 +362,15 @@ class LightAudioPlayer internal constructor(
+@@ -295,6 +364,15 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -143,7 +145,7 @@ index 0304e2a..4408196 100644
      /**
       * Start or resume playback if audio focus is available. An idle player is
       * prepared first, and an ended one restarts its current item.
-@@ -318,6 +396,9 @@ class LightAudioPlayer internal constructor(
+@@ -320,6 +398,9 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -153,7 +155,7 @@ index 0304e2a..4408196 100644
      /** Seeks to [ms], clamped to the resolved duration. Unknown duration clamps to zero. */
      fun seekTo(ms: Long) {
          commands.dispatch { player ->
-@@ -347,6 +428,13 @@ class LightAudioPlayer internal constructor(
+@@ -349,6 +430,13 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -167,7 +169,7 @@ index 0304e2a..4408196 100644
      /** Waits for connection, returning `false` if this player is released first. */
      suspend fun awaitReady(): Boolean = awaitPlayerReady(availability)
  
-@@ -378,6 +466,8 @@ class LightAudioPlayer internal constructor(
+@@ -380,6 +468,8 @@ class LightAudioPlayer internal constructor(
                      updatePosition(it)
                      updateDuration(it)
                  }
@@ -177,11 +179,11 @@ index 0304e2a..4408196 100644
              }
          }
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt
-index a45f090..a1ad0e2 100644
+index a08836e..3ac2165 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/SdkExoPlayer.kt
-@@ -29,6 +29,10 @@ internal fun buildSdkExoPlayer(
-     cache: LightMediaCache?,
+@@ -37,6 +37,10 @@ internal fun buildSdkExoPlayer(
+     onUsageChanged: (LightAudioUsage) -> Unit = {},
  ): ExoPlayer {
      val builder = ExoPlayer.Builder(context)
 +        // SDK PATCH: device volume, readable through a detached controller.
