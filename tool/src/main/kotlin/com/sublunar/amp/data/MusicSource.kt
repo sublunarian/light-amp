@@ -157,6 +157,10 @@ data class MusicSource(
      */
     val features: ServerFeatures? = null,
 ) {
+    // A data class prints every field, the password and token among them, and
+    // this one rides inside others (PendingServer, a download's hold).
+    override fun toString(): String = "MusicSource($kind, $id)"
+
     /**
      * What this kind of source is and can do — see [SourceProvider].
      *

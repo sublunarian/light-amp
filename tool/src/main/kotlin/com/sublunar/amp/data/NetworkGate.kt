@@ -4,6 +4,10 @@ import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.engine.okhttp.OkHttpConfig
+import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.client.network.sockets.SocketTimeoutException
+import io.ktor.client.plugins.HttpRequestTimeoutException
+import io.ktor.client.plugins.HttpResponseValidator
 import io.ktor.client.plugins.api.createClientPlugin
 import java.io.IOException
 import java.net.InetAddress
@@ -12,6 +16,8 @@ import java.net.Socket
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.SocketFactory
 import okhttp3.ConnectionPool
 import okhttp3.Dns
@@ -89,10 +95,33 @@ object NetworkGate {
         recentAnswer = open
         recentAtMs = monotonicMs()
         if (!open) {
+            refused.incrementAndGet()
             slam()
             throw NetworkGateClosedException()
         }
     }
+
+    // --- What it did, for the line at each change of link --------------------
+
+    private val bytesIn = AtomicLong()
+    private val meteredBytesIn = AtomicLong()
+    private val refused = AtomicInteger()
+    private val shut = AtomicInteger()
+
+    /**
+     * What came in through the wall since the last call, how much of it while
+     * the link was metered, how many requests and reads it refused and how
+     * many sockets it shut; the count then starts again. A Wi-Fi Only leak
+     * shows here as bytes while metered.
+     *
+     * "While metered" is the phone's link at the moment of the read, not the
+     * socket's own: in a handover, bytes still arriving on the old link after
+     * the status flipped count as metered. A few KB at a change is that; a
+     * leak keeps growing.
+     */
+    fun tally(): String =
+        "${bytesIn.getAndSet(0) shr 10} KB in (${meteredBytesIn.getAndSet(0) shr 10} KB while metered), " +
+            "${refused.getAndSet(0)} refused, ${shut.getAndSet(0)} sockets shut"
 
     // --- The kill switch -----------------------------------------------------
 
@@ -136,6 +165,7 @@ object NetworkGate {
         val open = synchronized(sockets) { sockets.toList().also { sockets.clear() } }
         synchronized(meteredSockets) { meteredSockets.clear() }
         if (open.isNotEmpty()) lastSlamAtMs = monotonicMs()
+        shut.addAndGet(open.size)
         for (socket in open) runCatching { socket.close() }
         val all = synchronized(pools) { pools.toList() }
         for (p in all) runCatching { p.evictAll() }
@@ -152,6 +182,7 @@ object NetworkGate {
     fun slamMetered() {
         val open = synchronized(meteredSockets) { meteredSockets.toList().also { meteredSockets.clear() } }
         if (open.isNotEmpty()) lastSlamAtMs = monotonicMs()
+        shut.addAndGet(open.size)
         for (socket in open) runCatching { socket.close() }
     }
 
@@ -197,6 +228,7 @@ object NetworkGate {
                 config { wall(if (isolated) ownPool() else pool) }
             }
             install(gatePlugin)
+            withoutRequestInTimeouts()
         }
 
     private fun ownPool(): ConnectionPool =
@@ -226,6 +258,34 @@ object NetworkGate {
         socketFactory(gatedSockets)
         connectionPool(with)
         addNetworkInterceptor(onTheWire)
+    }
+
+    /**
+     * ktor's timeouts write the whole request into their message, and a
+     * Subsonic request carries the login in its query: any message read
+     * anywhere, a crash record's included, would hold it. The same failure,
+     * class, cause and frames, in words that name no request.
+     *
+     * Only what passes through the call: a timeout while reading a body
+     * streamed with prepareGet().execute { } comes from the engine's channel
+     * and keeps ktor's words. The cause kept is the system's own, which can
+     * name the server's and the phone's addresses but never the request.
+     */
+    internal fun HttpClientConfig<*>.withoutRequestInTimeouts() {
+        HttpResponseValidator {
+            handleResponseExceptionWithRequest { cause, _ -> cause.withoutRequest()?.let { throw it } }
+        }
+    }
+
+    private fun Throwable.withoutRequest(): Throwable? {
+        val same = when (this) {
+            is ConnectTimeoutException -> ConnectTimeoutException("Connect timeout has expired", cause)
+            is SocketTimeoutException -> SocketTimeoutException("Socket timeout has expired", cause)
+            is HttpRequestTimeoutException -> HttpRequestTimeoutException("(request left out)", null, cause)
+            else -> return null
+        }
+        same.stackTrace = stackTrace
+        return same
     }
 
     private val gatePlugin = createClientPlugin("NetworkGate") {
@@ -263,10 +323,16 @@ object NetworkGate {
             object : ForwardingSource(inner.source()) {
                 override fun read(sink: Buffer, byteCount: Long): Long {
                     if (!isOpenRecently()) {
+                        refused.incrementAndGet()
                         slam()
                         throw NetworkGateClosedException()
                     }
-                    return super.read(sink, byteCount)
+                    return super.read(sink, byteCount).also { n ->
+                        if (n > 0) {
+                            bytesIn.addAndGet(n)
+                            if (!Connectivity.isUnmetered()) meteredBytesIn.addAndGet(n)
+                        }
+                    }
                 }
             }.buffer()
         }

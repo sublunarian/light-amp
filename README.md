@@ -31,6 +31,11 @@ server.
 - Two looks, in Settings → Appearance. New installs start simple: the phone's
   own three buttons and no artwork. Turn on Library Tabs and Enable Artwork for
   tabs along the bottom and album covers.
+- A log of what Amp did, kept on the phone for up to two weeks (1 MB at most)
+  so a problem can be looked into later. It shows when you used Amp, your
+  servers' kinds and versions and how big your library is. It never holds
+  logins, server addresses, or song, album, artist or playlist names, and Amp
+  never sends it anywhere.
 
 ## Installing
 
@@ -109,7 +114,9 @@ Also waiting on Light:
   ([light-sdk#189](https://github.com/lightphone/light-sdk/issues/189)).
 
 [Open an issue](../../issues) for anything else, with the version from
-Settings → About.
+Settings → About. A copy of the log helps: on About, hold the version number
+and choose Save a Copy. It goes in Download/Amp, which a computer connected by
+USB can read. Read it before you attach it.
 
 ## Building
 

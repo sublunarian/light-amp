@@ -3,9 +3,15 @@ package com.sublunar.amp.data
 import com.sublunar.amp.data.db.AlbumEntity
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.toEntity
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
+import com.sublunar.amp.log.logRef
+import com.sublunar.amp.log.loggableWord
 import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.PhoneLibrary
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -167,6 +173,16 @@ class LibrarySync(
         _syncState.update { it.copy(syncing = false, phase = "") }
     }
 
+    /** The last reason a sync didn't run, so a launch held by the same rule says so once. */
+    private var notRunSaid: String? = null
+
+    /** [releaseSyncClaim], said: a sync that never started looks, otherwise, like one still to come. */
+    private fun notRun(why: String) {
+        if (why != notRunSaid) Log.i("AmpSync", "sync not run: $why")
+        notRunSaid = why
+        releaseSyncClaim()
+    }
+
     /**
      * Try the active source's other addresses for the same server, and keep one
      * that answers — see SourceProvider.relocate. Saving the source rebuilds the
@@ -181,7 +197,10 @@ class LibrarySync(
     private suspend fun repoint(): MusicServer? {
         val source = settings.activeSource.first() ?: return null
         val moved = source.provider.relocate(source) ?: return null
-        android.util.Log.i("AmpSync", "${source.kind.name.lowercase()} moved: ${hostOf(source.baseUrl)} -> ${hostOf(moved.baseUrl)}")
+        Log.i(
+            "AmpSync",
+            "${source.logRef} moved: ${routeOf(source.baseUrl, moved.connections)} → ${routeOf(moved.baseUrl, moved.connections)}",
+        )
         settings.saveSource(moved)
         return clientFor(moved)
     }
@@ -195,7 +214,7 @@ class LibrarySync(
         val now = settings.activeSource.first() ?: return null
         if (started == null || now.id != started.id) return null
         if (!clientClosed && now.baseUrl == started.baseUrl) return null
-        android.util.Log.i("AmpSync", "the source changed during the sync; trying again on its new client")
+        Log.i("AmpSync", "the source changed during the sync; trying again on its new client")
         return clientFor(now)
     }
 
@@ -215,20 +234,28 @@ class LibrarySync(
      */
     private suspend fun runSync(musicFolderId: String?, repointed: MusicServer? = null) {
         val source = settings.activeSource.first()
-        val dao = daos.value ?: return releaseSyncClaim()
+        val dao = daos.value ?: return notRun("no database")
         // The phone's own music has no server to ask; it is read off the disk.
         val phone = source?.phoneLibrary
         if (source != null && phone != null) {
             runLocalScan(dao, source.id, phone)
             return
         }
-        if (!metadataAllowed()) return releaseSyncClaim()
+        if (!metadataAllowed()) return notRun("the rules forbid talking to the server")
         // A build that changed how a track is read refills the cache once: the
         // incremental filter below sees only what the *server* changed — see
         // MusicSource.parserGeneration.
         val refillForParser =
             source != null && source.parserGeneration != TRACK_PARSER_GENERATION
-        val client = repointed ?: serverClient.value ?: return releaseSyncClaim()
+        val client = repointed ?: serverClient.value ?: return notRun("no client")
+        notRunSaid = null
+        val startedMs = monotonicMs()
+        Log.i(
+            "AmpSync",
+            "sync started${if (repointed != null) " again" else ""}: ${source?.logRef ?: "unknown"}, " +
+                (if (musicFolderId == null) "every library" else "one library") +
+                (if (refillForParser) ", parser refill" else ""),
+        )
         _syncState.update { it.copy(syncing = true, error = null, phase = "Connecting") }
         _syncingDao.value = dao
         // What the run wrote, so the re-read at its end covers that and no more.
@@ -261,7 +288,7 @@ class LibrarySync(
             _syncState.update { it.copy(phase = "") }
             val (serverAlbums, libraryOf) = fetchAlbums(client, folderIds, starred, cached)
             dao.upsertAlbums(serverAlbums.map { it.toEntity(libraryOf[it.id]) })
-            logReleaseTypes(source?.name ?: "the server", serverAlbums)
+            logReleaseTypes(source?.logRef ?: "the server", serverAlbums)
             if (serverAlbums.isNotEmpty()) wrote.albums = true
             pruneGone(dao, cached, serverAlbums, musicFolderId, hidden, wrote)
 
@@ -295,6 +322,12 @@ class LibrarySync(
 
             finishRun(dao, client, source, coversBefore, wrote)
             reportLostDownloads(dao, source?.id, downloadsBefore)
+            Log.i(
+                "AmpSync",
+                "sync done in ${monotonicMs() - startedMs} ms: ${serverAlbums.size} albums, " +
+                    "songs read for ${fetch.albums.size - unread} of ${fetch.albums.size}, " +
+                    "tracks ${if (wrote.tracks) "written" else "unchanged"}",
+            )
             onSyncSucceeded()
             rememberLibraries(source, folders)
         } catch (e: CancellationException) {
@@ -306,10 +339,18 @@ class LibrarySync(
                     return
                 }
             }
+            Log.i("AmpSync", "sync cancelled after ${monotonicMs() - startedMs} ms")
             _syncState.update { it.copy(syncing = false) }
             throw e
         } catch (e: Exception) {
-            android.util.Log.w("AmpSync", "sync failed: ${e::class.simpleName}")
+            // From the exception's own fields: a number read out of its message
+            // can be any part of the URL it names.
+            val refused = (e as? ServerException)?.let { it.refusedLogin || it.status == 401 || it.status == 403 } ?: false
+            Log.w(
+                "AmpSync",
+                "sync failed after ${monotonicMs() - startedMs} ms via ${routeOf(source?.baseUrl)}: " +
+                    "${e.logName()}, login refused $refused",
+            )
             // The address may simply have moved, under this run or away from
             // it. Only once, so a dead server can't loop.
             if (repointed == null) {
@@ -334,7 +375,7 @@ class LibrarySync(
     private suspend fun readStarred(client: MusicServer, folderIds: List<String?>): Starred? =
         runCatching { folderIds.map { client.getStarred(it) }.mergeStarred() }
             .noteOom("sync: favourites")
-            .onFailure { android.util.Log.w("AmpSync", "favourites unread, likes kept: ${it::class.simpleName}") }
+            .onFailure { Log.w("AmpSync", "favourites unread, likes kept: ${it.logName()}") }
             .getOrNull()
 
     /** The server's albums across [folderIds], and which folder each came from. */
@@ -349,9 +390,12 @@ class LibrarySync(
         // Each album keeps the folder it came from, written onto its row — see
         // AlbumEntity.libraryId. An album in two folders keeps the first.
         val fetched = folderIds
-            .flatMap { folder ->
+            .flatMapIndexed { i, folder ->
                 val list = client.getAllAlbums(folder)
-                android.util.Log.i("AmpSync", "folder=$folder returned ${list.size} albums")
+                Log.i(
+                    "AmpSync",
+                    "library ${i + 1} of ${folderIds.size}${if (folder == null) " (unscoped)" else ""} returned ${list.size} albums",
+                )
                 list.map { it to folder }
             }
             .distinctBy { (album, _) -> album.id }
@@ -376,7 +420,7 @@ class LibrarySync(
         wrote: SyncWrites,
     ) {
         if (serverAlbums.isEmpty()) {
-            android.util.Log.w("AmpSync", "returned no albums; keeping ${cached.size} cached")
+            Log.w("AmpSync", "returned no albums; keeping ${cached.size} cached")
             return
         }
         // Only within the library just fetched: one folder's answer says
@@ -399,7 +443,7 @@ class LibrarySync(
         // same empty-answer rule.
         val orphans = dao.orphanedTrackCount()
         if (orphans > 0) {
-            android.util.Log.w("AmpSync", "dropping $orphans track(s) belonging to no album here")
+            Log.w("AmpSync", "dropping $orphans track(s) belonging to no album here")
             dao.deleteOrphanedTracks()
             wrote.tracks = true
         }
@@ -419,7 +463,7 @@ class LibrarySync(
         if (check == null) return null
         return runCatching { client.songChangesSince(check.markFor(library), folderIds) }
             .noteOom("sync: song changes")
-            .onFailure { android.util.Log.w("AmpSync", "song changes: couldn't ask: ${it::class.simpleName}") }
+            .onFailure { Log.w("AmpSync", "song changes: couldn't ask: ${it.logName()}") }
             .getOrNull()
     }
 
@@ -427,7 +471,7 @@ class LibrarySync(
     private fun albumsPhase(done: Int, total: Int): String = if (total == 0) "" else "Albums $done/$total"
 
     private fun logSongFetch(fetch: SongFetch, albumCount: Int, refill: Boolean, changes: SongChanges?) {
-        android.util.Log.i(
+        Log.i(
             "AmpSync",
             if (refill) {
                 "parser refill: fetching songs for all $albumCount albums"
@@ -505,17 +549,13 @@ class LibrarySync(
             // What can be chosen for this server, every sync, so a check of the
             // phone's log can see what each server was found to convert to.
             val now = source.copy(features = learned ?: source.features)
-            android.util.Log.i(
-                "AmpSync",
-                "formats of ${source.name}: ${now.streamFormats.joinToString { it.id }}; " +
-                    "Wi-Fi ${now.wifiFormat.id}, cellular ${now.cellularFormat.id}, downloads ${now.downloadFormat.id}",
-            )
+            val formats = "${now.streamFormats.joinToString { it.id }}; " +
+                "Wi-Fi ${now.wifiFormat.id}, cellular ${now.cellularFormat.id}, downloads ${now.downloadFormat.id}"
+            if (loggedFormats.put(source.id, formats) != formats) Log.i("AmpSync", "formats of ${source.logRef}: $formats")
             // What the library is made of, so the lossless-only rule's reach can be read (see MusicSource.formatFor).
             runCatching { dao.codecCounts() }.onSuccess { counts ->
-                android.util.Log.i(
-                    "AmpQual",
-                    "files of ${source.name}: ${counts.joinToString { "${it.codec.ifBlank { "unknown" }} ${it.songs}" }}",
-                )
+                val files = counts.joinToString { "${loggableWord(it.codec)} ${it.songs}" }
+                if (loggedFiles.put(source.id, files) != files) Log.i("AmpQual", "files of ${source.logRef}: $files")
             }
             if (learned == null || learned == source.features) return@runCatching
             // Re-read the source, which may have been edited during a long sync:
@@ -524,7 +564,16 @@ class LibrarySync(
                 ?: return@runCatching
             settings.saveSource(current.copy(features = learned))
         }.noteOom("sync: server features")
+            .onFailure {
+                if (it !is CancellationException) {
+                    Log.w("AmpSync", "features of ${source.logRef} unread, what was known kept: ${it.logName()}")
+                }
+            }
     }
+
+    /** What each source's formats and files last read as in the log, by source id: said again only when they change. */
+    private val loggedFormats = ConcurrentHashMap<String, String>()
+    private val loggedFiles = ConcurrentHashMap<String, String>()
 
     /**
      * Rebuild the library from the files on this phone — wholesale: the
@@ -536,6 +585,7 @@ class LibrarySync(
         try {
             val access = phone.access()
             if (access != PhoneAccess.GRANTED) {
+                Log.i("AmpSync", "phone scan not run: music access $access")
                 _syncState.value = SyncState(
                     syncing = false,
                     // Blocked is not "not yet allowed": the prompt can't change a
@@ -547,6 +597,7 @@ class LibrarySync(
                 )
                 return
             }
+            val startedMs = monotonicMs()
             val scan = phone.scan { count ->
                 _syncState.update { it.copy(phase = "$count tracks") }
             }
@@ -564,11 +615,16 @@ class LibrarySync(
                 lastSyncedMs = finishedAt,
             )
             runCatching { settings.setLastSyncedMs(sourceId, finishedAt) }
+            Log.i(
+                "AmpSync",
+                "phone scan done in ${monotonicMs() - startedMs} ms: ${scan.tracks.size} tracks, ${scan.albums.size} albums",
+            )
             onSyncSucceeded()
         } catch (e: CancellationException) {
             _syncState.update { it.copy(syncing = false) }
             throw e
         } catch (e: Exception) {
+            Log.w("AmpSync", "phone scan failed: ${e.logName()}")
             _syncState.update { it.copy(syncing = false, error = e.message ?: "Couldn't read the music folder") }
         }
     }
@@ -614,10 +670,10 @@ class LibrarySync(
         val lost = before - after
         if (lost.isEmpty()) return
         if (lost.size > LOST_DOWNLOADS_ALWAYS_OK && lost.size * 4 > before.size) {
-            android.util.Log.w("AmpSync", "${lost.size} of ${before.size} downloads left the library; kept, too many to trust")
+            Log.w("AmpSync", "${lost.size} of ${before.size} downloads left the library; kept, too many to trust")
             return
         }
-        android.util.Log.i("AmpSync", "${lost.size} download(s) left the library; removing")
+        Log.i("AmpSync", "${lost.size} download(s) left the library; removing")
         runCatching { onDownloadsLeftLibrary(sourceId, lost) }
             .noteOom("sync: lost downloads")
             .onFailure { if (it is CancellationException) throw it }
@@ -647,6 +703,7 @@ class LibrarySync(
     ): Int = coroutineScope {
         val gate = Semaphore(SYNC_CONCURRENCY)
         val newsDone = AtomicInteger(0)
+        val firstFailure = AtomicReference<String?>(null)
         var unread = 0
         // Fetch concurrently, write in batches: a transaction per album would be
         // an invalidation of the tracks table, and a whole re-read, per album.
@@ -661,7 +718,8 @@ class LibrarySync(
                             client.getAlbumTracks(album.id)
                         } catch (e: CancellationException) {
                             throw e
-                        } catch (_: Exception) {
+                        } catch (e: Exception) {
+                            firstFailure.compareAndSet(null, e.logName())
                             null
                         }?.map { it.copy(liked = it.id in starredSongIds) }
                         if (album.id in news) {
@@ -703,6 +761,7 @@ class LibrarySync(
                 wrote.albums = true
             }
         }
+        if (unread > 0) Log.w("AmpSync", "songs unread for $unread of ${albums.size} albums, the first: ${firstFailure.get()}")
         unread
     }
 
@@ -728,7 +787,7 @@ class LibrarySync(
             else -> null
         }
         if (why != null) {
-            android.util.Log.i("AmpSync", "background sync skipped: $why")
+            Log.i("AmpSync", "background sync skipped: $why")
             return
         }
         sync()
@@ -766,7 +825,11 @@ class LibrarySync(
                 }.getOrNull() ?: 0L
                 val floor = if (bulkAllowed()) SYNC_MIN_INTERVAL_MS else SYNC_MIN_INTERVAL_METERED_MS
                 if (!force && syncedWithin(last, floor)) {
-                    android.util.Log.i("AmpSync", "launch sync skipped: last one ${(System.currentTimeMillis() - last) / 60_000} min ago")
+                    Log.i(
+                        "AmpSync",
+                        "launch sync skipped: last one ${(System.currentTimeMillis() - last) / 60_000} min ago, " +
+                            "within the ${floor / 60_000} min floor",
+                    )
                     _syncState.update { it.copy(syncing = false, phase = "", lastSyncedMs = last) }
                     // No sync to read the libraries, so they are asked for alone.
                     val source = settings.activeSource.first()
@@ -837,7 +900,10 @@ class LibrarySync(
         // shared with you on Plex: scanning is the owner's). A server with no
         // such call has refused nothing.
         scanRefused = outcome == ScanRequest.REFUSED
-        if (outcome != ScanRequest.STARTED) return
+        if (outcome != ScanRequest.STARTED) {
+            Log.i("AmpSync", "server scan: $outcome")
+            return
+        }
         var waited = 0L
         while (waited < SCAN_WAIT_MS) {
             delay(SCAN_POLL_MS)
@@ -845,13 +911,14 @@ class LibrarySync(
             val busy = runCatching { client?.serverScanning(folder) }.getOrDefault(false) == true
             if (!busy) break
         }
+        Log.i("AmpSync", "server scan: STARTED, waited $waited ms")
     }
 
     /** What each server or scan says its albums are — what decides whether Release Type is offered. */
     private fun logReleaseTypes(of: String, albums: List<Album>) {
         val counts = albums.groupingBy { it.releaseType }.eachCount().entries
             .sortedBy { it.key.ordinal }.joinToString { "${it.key.heading} ${it.value}" }
-        android.util.Log.i("AmpSync", "release types of $of: ${counts.ifEmpty { "none" }}")
+        Log.i("AmpSync", "release types of $of: ${counts.ifEmpty { "none" }}")
     }
 
     companion object {

@@ -1,10 +1,12 @@
 package com.sublunar.amp.data
 
-import android.util.Log
 import com.sublunar.amp.App
 import com.sublunar.amp.data.db.DownloadEntity
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.MAX_BOUND_IDS
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
+import com.sublunar.amp.log.logRef
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.transfer.LightTransferService
 import java.io.File
@@ -193,11 +195,17 @@ class Downloader(
 
     private fun refuse(source: MusicSource, status: Int) {
         _holds.update { it + (source.id to Hold.Refused(status, source)) }
+        Log.w("AmpDl", "held ${source.logRef}: downloads refused, HTTP $status")
     }
 
-    private fun park(source: MusicSource, error: String?) {
+    /** [error] is for the Downloads page; the log has the [status], where there was one. */
+    private fun park(source: MusicSource, error: String?, status: Int? = null) {
         _holds.update { it + (source.id to Hold.Parked(error, source)) }
-        Log.i("AmpDl", "parked ${source.name} after ${SourceBackOff.PARK_AFTER_FAILURES} failures")
+        Log.w(
+            "AmpDl",
+            "parked ${source.logRef} after ${SourceBackOff.PARK_AFTER_FAILURES} failures" +
+                (status?.let { ", the last HTTP $it" } ?: ""),
+        )
     }
 
     /** Clears the back-off either way; true when the source was parked. */
@@ -531,7 +539,7 @@ class Downloader(
     suspend fun reindexFromDisk() {
         settings.sources.first()
             .filter { it.supportsDownloads }
-            .forEach { source -> runCatching { reindexFromDisk(source) }.noteOom("reindex ${source.name}") }
+            .forEach { source -> runCatching { reindexFromDisk(source) }.noteOom("reindex ${source.logRef}") }
     }
 
     private suspend fun reindexFromDisk(source: MusicSource) {
@@ -587,12 +595,15 @@ class Downloader(
         if (ids.isEmpty()) return
         val wantSynced = settings.syncedLyrics.first()
         val tracks = dao.tracksByIds(ids).associateBy { it.id }
+        var found = 0
         for (id in ids) {
             val track = tracks[id] ?: continue
             val row = dao.download(id) ?: continue
             val words = runCatching { fetchLyrics(client, track, wantSynced) }.getOrNull()
+            if (!words.isNullOrBlank()) found++
             dao.upsertDownload(row.copy(lyrics = words.orEmpty()))
         }
+        Log.i("AmpDl", "lyrics refill: ${ids.size} downloads without words, words found for $found")
     }
 
     // --- Top-up --------------------------------------------------------------
@@ -649,8 +660,8 @@ class Downloader(
             // Nothing to download for the phone's own music: the files are here.
             if (!source.mayDownload || source.offlineMode == OfflineMode.MANUAL) continue
             runCatching { topUp(source) }
-                .noteOom("top-up ${source.name}")
-                .onFailure { Log.w("AmpDl", "top-up failed for ${source.name}: ${it::class.simpleName}") }
+                .noteOom("top-up ${source.logRef}")
+                .onFailure { Log.w("AmpDl", "top-up failed for ${source.logRef}: ${it.logName()}") }
         }
     }
 
@@ -672,7 +683,7 @@ class Downloader(
         // Starred on the server, whatever is on screen — not derived from
         // the artists list, which narrows with the offline view.
         val likedArtists = dao.likedArtistNames().toSet()
-        applyAutoMode(
+        val wanted = applyAutoMode(
             source = source,
             likedTrackIds = dao.likedKeptTrackIds(hidden, noneHidden),
             playlistTrackIds = playlistTrackIds.toList().chunked(MAX_BOUND_IDS)
@@ -686,7 +697,7 @@ class Downloader(
         // One line per source per pass: its cost, which goes on the playlists.
         Log.i(
             "AmpDl",
-            "top-up ${source.name} (${source.offlineMode}): " +
+            "top-up ${source.logRef} (${source.offlineMode}): $wanted wanted, " +
                 "${playlistTrackIds.size} in playlists, ${System.currentTimeMillis() - startedMs} ms",
         )
     }
@@ -741,7 +752,7 @@ class Downloader(
                     async {
                         gate.withPermit {
                             id to runCatching { client.getPlaylistTrackIds(id) }
-                                .noteOom("playlist $id of ${source.name}").getOrNull()
+                                .noteOom("playlist of ${source.logRef}").getOrNull()
                         }
                     }
                 }.awaitAll()
@@ -759,7 +770,7 @@ class Downloader(
      * Queue whatever [source]'s [OfflineMode] implies, by id — see
      * [QueuedDownload]. Safe to call repeatedly — already-downloaded tracks
      * are skipped, so this just tops up. [everyTrackId] is only asked for in
-     * Everything mode.
+     * Everything mode. Answers how many tracks the mode wants, downloaded or not.
      */
     private suspend fun applyAutoMode(
         source: MusicSource,
@@ -768,7 +779,7 @@ class Downloader(
         likedAlbumTrackIds: List<String>,
         likedArtistTrackIds: List<String>,
         everyTrackId: suspend () -> List<String>,
-    ) {
+    ): Int {
         // Order is priority: the queue drains front to back and the size limit cuts
         // it off wherever it runs out, so whatever matters most has to come first.
         val wanted = LinkedHashSet<String>().apply {
@@ -780,7 +791,7 @@ class Downloader(
         when (source.offlineMode) {
             OfflineMode.MANUAL -> {
                 autoWanted.remove(source.id)
-                return
+                return 0
             }
             OfflineMode.FAVORITES -> autoWanted[source.id] = wanted.toSet()
             // Everything, but favourites first so they are never the tracks that
@@ -791,6 +802,7 @@ class Downloader(
                 if (store.usedBytesEverywhere() < room()) wanted.addAll(everyTrackId())
         }
         queueUp(source, wanted.map { QueuedDownload(source.id, it) }, manual = false)
+        return wanted.size
     }
 
     // --- Worker --------------------------------------------------------------
@@ -825,6 +837,9 @@ class Downloader(
      * the server answering, so yes, and the transfer that follows meets the
      * refusal and says so.
      */
+    /** Each parked source's last ping answer, so a wake that changes nothing says nothing. Under [probing]. */
+    private val lastParkedPing = HashMap<String, Boolean?>()
+
     suspend fun wakeParked() {
         if (parkedIds().isEmpty() || !heavyDataAllowed()) return
         if (!probing.tryLock()) return
@@ -842,7 +857,13 @@ class Downloader(
                 // Asked again per server: the rule can close part-way.
                 if (!heavyDataAllowed()) continue
                 val ping = askServer(client)
-                Log.i("AmpDl", "parked ${source.name}: ping → ${ping.answered ?: "no verdict"} in ${ping.tookMs}ms (${ping.why})")
+                // Every return to the screen and every link change asks; said
+                // only when the answer differs from the last one.
+                val sameAsLast = lastParkedPing.containsKey(id) && lastParkedPing[id] == ping.answered
+                if (ping.answered == true) lastParkedPing.remove(id) else lastParkedPing[id] = ping.answered
+                if (!sameAsLast) {
+                    Log.i("AmpDl", "parked ${source.logRef}: ping → ${ping.answered ?: "no verdict"} in ${ping.tookMs}ms (${ping.why})")
+                }
                 if (ping.answered == true && unpark(id)) woke = true
             }
             if (woke) retry()
@@ -922,77 +943,130 @@ class Downloader(
         val wantSynced = settings.syncedLyrics.first()
         val used = UsedBytes()
         var completed = 0
-
-        while (true) {
-            // The pauses that hold everyone: the user's, and the data mode's.
-            // Checked between tracks, so a sync starting mid-file lets that file
-            // finish rather than abandoning the bytes already fetched.
-            //
-            // The worker ends on them and the entries stay queued, rather than
-            // waiting with the service up: a Wi-Fi rule can hold a queue all
-            // day, which spends the hours a day Android allows the service.
-            // Resuming starts it again (setUserPaused), and so does the rule
-            // moving (rulesMoved), which App hears from the link's callback, on
-            // the way back to the front, and from the half-hourly job.
-            if (heldForEveryone()) {
-                val waiting = lock.withLock { queue.size }
-                if (waiting == 0) break
-                // Time spent not trying is not time spent failing: a run of
-                // failures from before the wait must not park a server on the
-                // first one after it.
-                backOffs.clearAll()
-                showHeld(waiting)
-                service.settle()
-                return
-            }
-            // A transfer is the greediest thing on the link; a stream being
-            // started waits for nobody else — see App.yieldToPlayback.
-            yieldToPlayback()
-
-            // Read once a pass: the records as they stand now, not as they were
-            // when queued, so a token renewed or an address changed since is the
-            // one used, and a change frees what [heldUntilChanged] held.
-            val sources = settings.sources.first()
-            val blocked = heldUntilChanged(sources)
-            val (picked, held) = pick(blocked)
-            if (picked == null) {
-                // Only sources waiting on a quality change, a refusal, or a
-                // parked server are left. Nothing here can end that wait, so the
-                // worker ends instead — which lets the foreground service go —
-                // and the entries stay queued. Whatever ends the wait starts it
-                // again; see [retry]. The Downloads page says why.
-                if (held.isEmpty() || held.all { it in blocked }) break
-                // Something is queued, and every source it belongs to is held:
-                // on its server to answer again, or for its sync to finish.
-                _progress.value = _progress.value.copy(
-                    currentTitle = heldReason(held - blocked),
-                    currentSource = null,
-                )
-                delay(PAUSE_POLL_MS)
-                continue
-            }
-
-            when (fetch(picked, sources, used, completed, service, wantSynced)) {
-                Fetch.SAVED -> completed++
-                Fetch.NEXT -> Unit
-                Fetch.OVER_BUDGET -> {
-                    lock.withLock { queue.clear() }
-                    // A row saying a server isn't answering, or refused, would be
-                    // about entries that are no longer there.
-                    liftAll()
-                    _progress.value = _progress.value.copy(
-                        pending = 0,
-                        currentTitle = null,
-                        currentSource = null,
-                    )
+        val run = WorkerRun()
+        try {
+            while (true) {
+                // The pauses that hold everyone: the user's, and the data mode's.
+                // Checked between tracks, so a sync starting mid-file lets that file
+                // finish rather than abandoning the bytes already fetched.
+                //
+                // The worker ends on them and the entries stay queued, rather than
+                // waiting with the service up: a Wi-Fi rule can hold a queue all
+                // day, which spends the hours a day Android allows the service.
+                // Resuming starts it again (setUserPaused), and so does the rule
+                // moving (rulesMoved), which App hears from the link's callback, on
+                // the way back to the front, and from the half-hourly job.
+                if (heldForEveryone()) {
+                    val waiting = lock.withLock { queue.size }
+                    if (waiting == 0) break
+                    // Time spent not trying is not time spent failing: a run of
+                    // failures from before the wait must not park a server on the
+                    // first one after it.
+                    backOffs.clearAll()
+                    showHeld(waiting)
+                    run.end(if (userPaused) "paused" else waitingLabel().lowercase(), waiting)
                     service.settle()
                     return
                 }
-            }
-        }
+                // A transfer is the greediest thing on the link; a stream being
+                // started waits for nobody else — see App.yieldToPlayback.
+                yieldToPlayback()
 
-        _progress.value = DownloadProgress(completed = completed)
-        service.settle()
+                // Read once a pass: the records as they stand now, not as they were
+                // when queued, so a token renewed or an address changed since is the
+                // one used, and a change frees what [heldUntilChanged] held.
+                val sources = settings.sources.first()
+                val blocked = heldUntilChanged(sources)
+                val (picked, held) = pick(blocked)
+                if (picked == null) {
+                    // Only sources waiting on a quality change, a refusal, or a
+                    // parked server are left. Nothing here can end that wait, so the
+                    // worker ends instead — which lets the foreground service go —
+                    // and the entries stay queued. Whatever ends the wait starts it
+                    // again; see [retry]. The Downloads page says why.
+                    if (held.isEmpty() || held.all { it in blocked }) {
+                        if (held.isNotEmpty()) run.end("only held sources left", lock.withLock { queue.size })
+                        break
+                    }
+                    // Something is queued, and every source it belongs to is held:
+                    // on its server to answer again, or for its sync to finish.
+                    _progress.value = _progress.value.copy(
+                        currentTitle = heldReason(held - blocked),
+                        currentSource = null,
+                    )
+                    delay(PAUSE_POLL_MS)
+                    continue
+                }
+
+                when (fetch(picked, sources, used, completed, service, wantSynced, run)) {
+                    Fetch.SAVED -> completed++
+                    Fetch.NEXT -> Unit
+                    Fetch.OVER_BUDGET -> {
+                        lock.withLock { queue.clear() }
+                        // A row saying a server isn't answering, or refused, would be
+                        // about entries that are no longer there.
+                        liftAll()
+                        _progress.value = _progress.value.copy(
+                            pending = 0,
+                            currentTitle = null,
+                            currentSource = null,
+                        )
+                        run.end("over budget", 0)
+                        service.settle()
+                        return
+                    }
+                }
+            }
+
+            if (run.why == null) run.end("drained", 0)
+            _progress.value = DownloadProgress(completed = completed)
+            service.settle()
+        } catch (e: CancellationException) {
+            if (run.why == null) run.why = "cancelled"
+            throw e
+        } catch (e: Throwable) {
+            if (run.why == null) run.why = "failed: ${e.logName()}"
+            throw e
+        } finally {
+            logRun(run, completed)
+        }
+    }
+
+    /** What one worker run did, for the line it ends with — see [logRun]. */
+    private class WorkerRun {
+        /** Null until the run ends on its own: a cancelled one never says. */
+        var why: String? = null
+        var queued = 0
+        var failed = 0
+        var bytes = 0L
+        var transferMs = 0L
+        var keptAsIs = 0
+        var mp3Indexed = 0
+        var notMp3 = 0
+
+        fun end(why: String, queued: Int) {
+            this.why = why
+            this.queued = queued
+        }
+    }
+
+    /** How the last run ended, so a worker started and stopped again by the same hold says nothing new. */
+    @Volatile
+    private var lastRunEnd: String? = null
+
+    /** One line a run: how it ended, what it moved and how fast. Successes are counted here, not per track. */
+    private fun logRun(run: WorkerRun, saved: Int) {
+        val why = run.why ?: "ended"
+        if (saved == 0 && run.failed == 0 && why == lastRunEnd) return
+        lastRunEnd = why
+        val rate = if (run.transferMs > 0) ", ${run.bytes * 1000 / run.transferMs / 1024} KB/s" else ""
+        Log.i(
+            "AmpDl",
+            "worker ended ($why): saved $saved, failed ${run.failed}, ${run.queued} left; " +
+                "${run.bytes shr 20} MB in ${run.transferMs / 1000} s$rate; " +
+                "${run.keptAsIs} kept as they are, ${run.mp3Indexed} MP3s indexed" +
+                if (run.notMp3 > 0) ", ${run.notMp3} asked for as MP3 came as something else" else "",
+        )
     }
 
     /**
@@ -1043,6 +1117,7 @@ class Downloader(
         completed: Int,
         service: ServiceHold,
         wantSynced: Boolean,
+        run: WorkerRun,
     ): Fetch {
         val entry = picked.entry
         val source = sources.firstOrNull { it.id == entry.sourceId }
@@ -1078,6 +1153,7 @@ class Downloader(
             // the front of its own lane, and its source waits its turn like
             // one that isn't answering, so the others aren't held up by it.
             _progress.value = _progress.value.copy(error = "Not connected")
+            run.failed++
             if (settle(picked) { requeueFront(it) } && backOff(source.id)) park(source, "Not connected")
             return Fetch.NEXT
         }
@@ -1087,12 +1163,6 @@ class Downloader(
         // format shouldn't dictate what the others are fetched as.
         // A lossy file within the chosen quality is kept as it is (see MusicSource.formatFor).
         val format = source.formatFor(track, source.downloadFormat, download = true)
-        if (format != source.downloadFormat) {
-            android.util.Log.i(
-                "AmpQual",
-                "download: ${track.codec} ${track.bitRateKbps} kbps file kept as it is, within ${source.downloadFormat.id}",
-            )
-        }
         // Changed to a quality the server can't meet since this pass began:
         // back in the queue untouched, and the next pass leaves it there.
         if (!source.downloadFormatAvailable) {
@@ -1101,7 +1171,10 @@ class Downloader(
         }
 
         service.start()
-        return when (val fetched = store.download(source.id, client.downloadUrl(track, format), track.id, format, track.durationMs)) {
+        val startedMs = monotonicMs()
+        val fetched = store.download(source.id, client.downloadUrl(track, format), track.id, format, track.durationMs)
+        val tookMs = monotonicMs() - startedMs
+        return when (fetched) {
             is DownloadStore.Fetched.Saved -> {
                 // Disowned while it was transferring — its source's downloads
                 // were deleted, or the source itself was. Whatever landed goes.
@@ -1109,17 +1182,22 @@ class Downloader(
                     fetched.file.delete()
                     return Fetch.NEXT
                 }
-                keep(fetched.file, track, format, source, client, dao, wantSynced)
+                run.transferMs += tookMs
+                run.bytes += fetched.file.length()
+                if (format != source.downloadFormat) run.keptAsIs++
+                keep(fetched.file, track, format, source, client, dao, wantSynced, run)
                 used.add(fetched.file.length())
                 clearBackOff(source.id)
                 if (_progress.value.error != null) _progress.value = _progress.value.copy(error = null)
                 Fetch.SAVED
             }
             is DownloadStore.Fetched.Refused -> {
+                run.failed++
                 failed(picked, source, fetched.status, fetched.why)
                 Fetch.NEXT
             }
             is DownloadStore.Fetched.Failed -> {
+                run.failed++
                 failed(picked, source, status = null, fetched.why)
                 Fetch.NEXT
             }
@@ -1147,14 +1225,23 @@ class Downloader(
         client: MusicServer,
         dao: LibraryDao,
         wantSynced: Boolean,
+        run: WorkerRun,
     ) {
         // An mp3 that came down as a stream has no index, and every
         // player that opens it has to guess its length — see
         // Mp3VbrIndex. Written now, before anything records the size.
         if (format == StreamFormat.MP3) {
             runCatching { withContext(Dispatchers.IO) { Mp3VbrIndex.index(file) } }
-                .onSuccess { if (it is Mp3VbrIndex.Outcome.Written) Log.i("AmpMp3", "indexed ${file.name}: ${it.frames} frames") }
-                .onFailure { Log.w("AmpMp3", "couldn't index ${file.name}: ${it::class.simpleName}") }
+                .onSuccess { outcome ->
+                    when (outcome) {
+                        is Mp3VbrIndex.Outcome.Written -> run.mp3Indexed++
+                        Mp3VbrIndex.Outcome.AlreadyIndexed -> Unit
+                        // MP3 asked for, and not a readable one sent: another format, or a
+                        // broken file. Counted: a server that ignores the format does it every time.
+                        Mp3VbrIndex.Outcome.NotMpegAudio, Mp3VbrIndex.Outcome.Unparseable -> run.notMp3++
+                    }
+                }
+                .onFailure { Log.w("AmpMp3", "couldn't index a downloaded MP3: ${it.logName()}") }
         }
         // The sleeve is part of having the record offline — this
         // source's sleeve, from this source's server.
@@ -1193,7 +1280,7 @@ class Downloader(
         // source instead: see [Hold.Parked].
         if (!settle(picked) { fail(it) }) return
         _progress.value = _progress.value.copy(error = why)
-        if (backOff(source.id)) park(source, why)
+        if (backOff(source.id)) park(source, why, status)
     }
 
     /**

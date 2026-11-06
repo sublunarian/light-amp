@@ -1,6 +1,5 @@
 package com.sublunar.amp
 
-import android.util.Log
 import com.sublunar.amp.art.ArtworkLoader
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.art.CacheReserve
@@ -47,6 +46,9 @@ import com.sublunar.amp.data.sortName
 import com.sublunar.amp.data.sortPlaylists
 import com.sublunar.amp.data.sortSongs
 import com.sublunar.amp.data.titleKey
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logRef
+import com.sublunar.amp.log.loggableWord
 import com.sublunar.amp.playback.LateUnbindGuard
 import com.sublunar.amp.playback.PlaybackController
 import com.sublunar.amp.ui.components.NOTICE_MS
@@ -208,7 +210,7 @@ object App {
     suspend fun downloadFilesBySource(): Map<String, List<DownloadFile>> =
         settings.sources.first().associate { source ->
             source.id to runCatching { databaseFor(source).libraryDao().downloadFiles() }
-                .noteOom("download files of ${source.name}")
+                .noteOom("download files of ${source.logRef}")
                 .getOrDefault(emptyList())
         }
 
@@ -216,10 +218,10 @@ object App {
         settings.sources.first().mapNotNull { source ->
             val dao = databaseFor(source).libraryDao()
             val ids = runCatching { dao.downloadedIds() }
-                .noteOom("downloads of ${source.name}").getOrDefault(emptyList())
+                .noteOom("downloads of ${source.logRef}").getOrDefault(emptyList())
             if (ids.isEmpty()) return@mapNotNull null
             val tracks = runCatching { downloadedTracks(dao, ids) }
-                .noteOom("downloaded tracks of ${source.name}")
+                .noteOom("downloaded tracks of ${source.logRef}")
                 .getOrDefault(emptyList())
             if (tracks.isEmpty()) null else source to tracks
         }
@@ -297,7 +299,7 @@ object App {
         // Named before the tables go: the covers on disk can only be found
         // through the ids this database holds — see ArtworkLoader.drop.
         val covers = runCatching { db.libraryDao().allCoverArtIds() }
-            .noteOom("covers of ${source.name}").getOrDefault(emptyList())
+            .noteOom("covers of ${source.logRef}").getOrDefault(emptyList())
         // A full phone can refuse the deletes: the files below are what frees it.
         runCatching {
             db.libraryDao().apply {
@@ -436,6 +438,7 @@ object App {
             gateOpen = { NetworkGate.isOpen() },
             upstream = { proxyUpstream },
             log = { Log.i("AmpProxy", it) },
+            warn = { Log.w("AmpProxy", it) },
             // Less slack on a link that costs money: read-ahead spent on a
             // track that is then skipped is data spent on nothing.
             readAheadBytes = {
@@ -507,6 +510,13 @@ object App {
     private const val SYNC_JOB_KEY = "library-sync"
 
     fun boot(sealedActivity: SealedLightActivity, context: SealedLightContext) {
+        // Before anything else can log or crash: see Log. Once per process.
+        Log.attach(
+            context.filesDir,
+            header = "Amp ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) ${BuildConfig.BUILD_TYPE}, " +
+                "LightOS ${android.os.Build.DISPLAY}, Android ${android.os.Build.VERSION.RELEASE}, " +
+                "heap ${Runtime.getRuntime().maxMemory() shr 20} MB",
+        )
         // First, before anything below can make or release a player handle,
         // and outside the once-only block because it keeps its own flag — see
         // LateUnbindGuard for why it has to be a raw post from right here.
@@ -514,6 +524,7 @@ object App {
         if (!coreReady) {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             settings = AppSettings(context.dataStore, scope)
+            logSetup()
             lightContext = context
             Connectivity.bind(context, scope)
             // The wall goes up before anything exists to be built behind it:
@@ -590,7 +601,7 @@ object App {
                         runCatching { downloader.refillMissingLyrics() }
                     }
                     // And the covers of whatever the sync just brought in.
-                    covers.sync()
+                    covers.sync("sync done")
                 },
                 // A refused login is not the server being gone: marked unreachable,
                 // the library would narrow to downloads and hide a good cache.
@@ -680,8 +691,8 @@ object App {
                     .distinctUntilChanged()
                     .drop(1)
                     .collect {
-                        Log.i("AmpNet", "link changed → dropping every connection")
                         NetworkGate.slam()
+                        Log.i("AmpNet", "link changed → dropped every connection; on the link left: ${NetworkGate.tally()}")
                         // A reason to ask the server again: a LAN address stops
                         // answering on cellular, and starts again at home.
                         reachability.check()
@@ -794,6 +805,31 @@ object App {
     }
 
     /**
+     * The setup the lines after it ran under, once a launch, from what was
+     * stored: each source by kind, its server and qualities, then what decides
+     * what may move. No names, addresses or libraries — see tool/docs/LOGGING.md.
+     */
+    private fun logSetup() {
+        val sources = settings.sources.value
+        for (s in sources) {
+            Log.i(
+                "AmpLife",
+                "setup: source ${s.logRef}, server ${if (s.hasServer) loggableWord(s.features?.checkedVersion) else "none"}, " +
+                    "Wi-Fi ${s.wifiFormat.id}, cellular ${s.cellularFormat.id}, downloads ${s.downloadFormat.id}, " +
+                    "offline ${s.offlineMode}",
+            )
+        }
+        Log.i(
+            "AmpLife",
+            "setup: ${sources.size} sources, active ${settings.activeSource.value?.logRef ?: "none"}, " +
+                "mode ${settings.dataMode.value}, artwork ${settings.artwork.value}, " +
+                "list covers ${settings.listArtwork.value}, artist images ${!settings.hideArtistImages.value}, " +
+                "ReplayGain ${settings.replayGain.value}, storage limit ${settings.downloadLimit.value shr 20} MB, " +
+                "downloads paused ${settings.downloadsPaused.value}",
+        )
+    }
+
+    /**
      * One line per change of the rules: which inputs moved and what they now
      * allow. The first thing to read when something did the unexpected.
      */
@@ -818,7 +854,7 @@ object App {
         // The covers a sync on cellular couldn't fetch, or a run cut short. Its
         // own edge: Make it Hurt moves heavy bytes on cellular too, and the
         // cover sync is for free bytes whatever the mode.
-        if (now.maySyncCovers && !before.maySyncCovers) covers.sync()
+        if (now.maySyncCovers && !before.maySyncCovers) covers.sync("link free")
         // Being allowed to ask the server is a reason to ask: a *mode* change
         // isn't a network change, and a server last seen silent on a dying
         // Wi-Fi would stay "gone" on a cellular link that reaches it.
@@ -1116,7 +1152,7 @@ object App {
     private suspend fun browsedPlaylistTrackIds(): Set<String> {
         if (playlists.allPlaylists.value.isEmpty()) runCatching { playlists.refreshPlaylists() }
         runCatching { playlists.primePlaylistTrackIds(playlists.allPlaylists.value.map { it.id }) }
-            .noteOom("playlists of ${_source.value.name}")
+            .noteOom("playlists of ${_source.value.logRef}")
         return playlists.freshPlaylistTrackIds().values.flatten().toHashSet()
     }
 }

@@ -1,6 +1,6 @@
 package com.sublunar.amp.source.plex.companion
 
-import android.util.Log
+import com.sublunar.amp.log.Log
 import com.sublunar.amp.data.NetworkGate
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream

@@ -10,12 +10,16 @@ import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.md5Hex
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
+import com.sublunar.amp.source.FailureRuns
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.isSuccess
 import io.ktor.utils.io.readRemaining
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
@@ -77,6 +81,19 @@ class ArtworkLoader(
     private val memory = object : LruCache<String, ImageBitmap>(MEMORY_ENTRIES) {}
     private val gate = Semaphore(FETCH_CONCURRENCY)
 
+    /** Whether a focused cover has been refused since the rules last let one through: logged once, not per track. */
+    private val focusedRefused = AtomicBoolean(false)
+
+    /** The same, for focused covers that had no server to ask. */
+    private val focusedNoServer = AtomicBoolean(false)
+
+    /** Which run a cover failure belongs to: the lists', or one source's downloads (by the end of Amp's id). */
+    private fun coverRun(forDownloadOf: String?): String =
+        if (forDownloadOf == null) "list covers" else "download covers of …${forDownloadOf.takeLast(4)}"
+
+    /** A list's covers fail together, one per row: logged when they start failing and when they stop. */
+    private val browsingFailures = FailureRuns("AmpArt")
+
     /**
      * A cover already decoded at this size, without suspending, so a list draws
      * its covers on the *first* frame rather than a frame of placeholders later.
@@ -109,16 +126,24 @@ class ArtworkLoader(
         val small = bucket <= SMALL_PX
         return withContext(Dispatchers.IO) {
             val client = serverClient.value.takeIf { source == browsed }
-            val bytes = readUsable(source, coverArtId, small)
+            val onDisk = readUsable(source, coverArtId, small)
                 // A full copy downsamples to any small size.
                 ?: (if (small) readUsable(source, coverArtId, small = false) else null)
-                ?: fetch(client, coverArtId, need, small)?.also { writeDisk(source, coverArtId, small, it) }
+            val startedMs = System.currentTimeMillis()
+            val fetched = if (onDisk == null) fetch(client, coverArtId, need, small) else null
+            val fetchMs = System.currentTimeMillis() - startedMs
+            fetched?.let { writeDisk(source, coverArtId, small, it) }
+            val bytes = onDisk ?: fetched
             // Soft beats none: the small copy, when the full one can't be had.
             // Not kept in memory, so the full one is drawn once it can be fetched.
             val standIn = if (bytes == null && !small) readUsable(source, coverArtId, small = true) else null
             val picture = bytes ?: standIn ?: return@withContext null
-            val bitmap = decodeDownsampled(picture, bucket) ?: return@withContext null
-            val image = bitmap.asImageBitmap()
+            val bitmap = decodeDownsampled(picture, bucket)
+            // After the decode: a 200 can carry a page instead of a picture.
+            if (fetched != null && need == ArtworkNeed.FOCUSED && !PhoneFiles.isPhoneFile(coverArtId)) {
+                logFocusedCover(fetched, bitmap != null, fetchMs)
+            }
+            val image = (bitmap ?: return@withContext null).asImageBitmap()
             if (standIn == null) memory.put(memKey, image)
             image
         }
@@ -138,7 +163,7 @@ class ArtworkLoader(
         withContext(Dispatchers.IO) {
             // The full one: offline, the player shows it full width.
             if (isOnDisk(sourceId, coverArtId, small = false)) return@withContext
-            fetch(client, coverArtId, ArtworkNeed.BROWSING, small = false)
+            fetch(client, coverArtId, ArtworkNeed.BROWSING, small = false, forDownloadOf = sourceId)
                 ?.let { writeDisk(sourceId, coverArtId, small = false, it) }
         }
     }
@@ -156,7 +181,14 @@ class ArtworkLoader(
         return null
     }
 
-    private suspend fun fetch(client: MusicServer?, coverArtId: String, need: ArtworkNeed, small: Boolean): ByteArray? {
+    private suspend fun fetch(
+        client: MusicServer?,
+        coverArtId: String,
+        need: ArtworkNeed,
+        small: Boolean,
+        /** A download's sleeve, of this source: its failures are a run of their own, not the lists'. */
+        forDownloadOf: String? = null,
+    ): ByteArray? {
         // A local track's cover id is its own path: the sleeve is inside the
         // file, and there is no server to ask for it.
         PhoneFiles.fileOf(coverArtId)?.let { return embedded(it) }
@@ -164,10 +196,19 @@ class ArtworkLoader(
         // playing, but a listful is not. The rules say which may cost cellular.
         if (!fetchAllowed(need, small)) {
             // Only the focused cover is news; a list refused on cellular is the design.
-            if (need == ArtworkNeed.FOCUSED) android.util.Log.i("AmpArt", "focused cover not fetched: rules forbid it")
+            if (need == ArtworkNeed.FOCUSED && focusedRefused.compareAndSet(false, true)) {
+                Log.i("AmpArt", "focused covers not fetched from here on: rules forbid them")
+            }
             return null
         }
-        if (client == null) return null
+        if (need == ArtworkNeed.FOCUSED) focusedRefused.set(false)
+        if (client == null) {
+            if (need == ArtworkNeed.FOCUSED && focusedNoServer.compareAndSet(false, true)) {
+                Log.i("AmpArt", "focused covers not fetched: their source isn't the one browsed, or has no server")
+            }
+            return null
+        }
+        if (need == ArtworkNeed.FOCUSED) focusedNoServer.set(false)
         val sized = client.coverArtUrl(coverArtId, if (small) SMALL_PX else panelWidthPx)
         // The full-size URL is the fallback for the full cover only: an
         // original can be twenty megabytes, never worth it for a small one.
@@ -180,19 +221,32 @@ class ArtworkLoader(
             val first = download(sized)
             if (first is CoverFetch.Got || original == sized) first else download(original)
         }
-        val bytes = (answer as? CoverFetch.Got)?.bytes
-        if (need == ArtworkNeed.FOCUSED || bytes == null) {
-            val outcome = when (answer) {
-                is CoverFetch.Got -> "${answer.bytes.size / 1024} KB"
-                is CoverFetch.None -> "FAILED (${answer.why})"
-                is CoverFetch.Failed -> "FAILED (${answer.why})"
-            }
-            android.util.Log.i(
-                "AmpArt",
-                "${need.name.lowercase()} cover $outcome in ${System.currentTimeMillis() - startedMs} ms",
-            )
+        val failure = when (answer) {
+            is CoverFetch.Got -> null
+            is CoverFetch.None -> answer.why
+            is CoverFetch.Failed -> answer.why
         }
-        return bytes
+        when {
+            // One that came is logged once it is decoded — see [logFocusedCover].
+            need == ArtworkNeed.FOCUSED -> if (failure != null) {
+                Log.i("AmpArt", "focused cover FAILED ($failure) in ${System.currentTimeMillis() - startedMs} ms")
+            }
+            // A server without a row's picture is no news; one not answering is.
+            answer is CoverFetch.Failed -> browsingFailures.failed(coverRun(forDownloadOf), answer.why)
+            else -> browsingFailures.worked(coverRun(forDownloadOf))
+        }
+        return (answer as? CoverFetch.Got)?.bytes
+    }
+
+    /** What a fetched focused cover came to: drawn, or why not. */
+    private fun logFocusedCover(bytes: ByteArray, decoded: Boolean, fetchMs: Long) {
+        val size = "${bytes.size / 1024} KB"
+        val outcome = when {
+            decoded -> size
+            looksLikeImage(bytes) -> "undecodable ($size)"
+            else -> "not a picture ($size)"
+        }
+        Log.i("AmpArt", "focused cover $outcome in $fetchMs ms")
     }
 
     /**
@@ -227,7 +281,7 @@ class ArtworkLoader(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            CoverFetch.Failed("${e::class.simpleName}")
+            CoverFetch.Failed(e.logName())
         }
     }
 
@@ -291,7 +345,7 @@ class ArtworkLoader(
             .forEach { memory.remove(it) }
         knownMissing[sourceId]?.removeAll(coverArtIds.toSet())
         if (removed > 0) {
-            android.util.Log.i("AmpArt", "dropped $removed cover(s) the library no longer has, ${freed shr 10} KB")
+            Log.i("AmpArt", "dropped $removed cover(s) the library no longer has, ${freed shr 10} KB")
         }
     }
 
@@ -425,7 +479,7 @@ class ArtworkLoader(
             }
         }
         if (removed > 0) {
-            android.util.Log.i("AmpArt", "expired $removed cover(s) no library has, unused for a month: ${freed shr 20} MB")
+            Log.i("AmpArt", "expired $removed cover(s) no library has, unused for a month: ${freed shr 20} MB")
         }
     }
 
@@ -455,7 +509,7 @@ class ArtworkLoader(
                 removed++
             }
         }
-        android.util.Log.i(
+        Log.i(
             "AmpArt",
             "artwork cache trimmed: $removed files, ${before shr 20} MB -> ${total shr 20} MB",
         )

@@ -42,6 +42,10 @@ internal fun serverUrl(base: String, path: String, params: List<Pair<String, Str
     return base.trimEnd('/') + path + if (query.isEmpty()) "" else "?$query"
 }
 
+/** A request's path with its ids taken out, as a log line may name it: `/playlists/{id}/items`. */
+internal fun templatedPath(path: String): String =
+    path.substringBefore('?').split('/').joinToString("/") { part -> if (part.any(Char::isDigit)) "{id}" else part }
+
 /** [params] as a query string, each value percent-encoded. */
 internal fun queryOf(params: List<Pair<String, String>>): String =
     params.joinToString("&") { (key, value) -> "$key=${encoded(value)}" }

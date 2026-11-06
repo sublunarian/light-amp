@@ -4,6 +4,8 @@ import com.sublunar.amp.data.db.AlbumEntity
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.sublunar.amp.data.db.PlaylistTrackEntity
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
 import com.sublunar.amp.source.PhonePlaylists
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -215,7 +217,13 @@ class LibraryPlaylists(
             return
         }
         val d = daos.value
-        val fetched = if (!metadataAllowed()) null else runCatching { serverClient.value?.getPlaylists() }.getOrNull()
+        val fetched = if (!metadataAllowed()) {
+            null
+        } else {
+            runCatching { serverClient.value?.getPlaylists() }
+                .onFailure { if (it !is CancellationException) Log.w("AmpSync", "playlist list unread: ${it.logName()}") }
+                .getOrNull()
+        }
         if (fetched != null) {
             _playlists.value = fetched
             settings.setCachedPlaylists(sourceId, json.encodeToString(fetched))
@@ -354,14 +362,17 @@ class LibraryPlaylists(
         // asking again would wait out the connect timeout.
         if (library.offline.value) return null
         val client = serverClient.value ?: return null
+        val askedAtMs = monotonicMs()
         val tracks = try {
             client.getPlaylistTracks(id)
         } catch (e: CancellationException) {
             // The page closing goes on. Otherwise it is the client closed under the
             // request, its source having moved: a failure like any other.
             currentCoroutineContext().ensureActive()
+            Log.w("AmpSync", "playlist read cut off after ${monotonicMs() - askedAtMs} ms: its client closed")
             return null
         } catch (e: Exception) {
+            Log.w("AmpSync", "playlist read failed after ${monotonicMs() - askedAtMs} ms: ${e.logName()}")
             return null
         }
         return PlaylistView(tracks, complete = true)
@@ -421,7 +432,7 @@ class LibraryPlaylists(
         if (!metadataAllowed()) return
         val d = daos.value
         awaitPlaylistWrites()
-        val ids = runCatching { serverClient.value?.getPlaylistTrackIds(id) }.noteOom("playlist prime $id").getOrNull() ?: return
+        val ids = runCatching { serverClient.value?.getPlaylistTrackIds(id) }.noteOom("playlist prime").getOrNull() ?: return
         storeMembership(d, id, ids)
     }
 
@@ -518,7 +529,7 @@ class LibraryPlaylists(
             server = { it.renamePlaylist(id, name.trim()) },
         )
         refreshPlaylists()
-        said("renamePlaylist($id)", result)
+        said("renamePlaylist", result)
     }
 
     suspend fun deletePlaylist(id: String): WriteResult = playlistMutex.withLock {
@@ -529,7 +540,7 @@ class LibraryPlaylists(
         )
         if (result == WriteResult.Saved) dropMembership(d, id)
         refreshPlaylists()
-        said("deletePlaylist($id)", result)
+        said("deletePlaylist", result)
     }
 
     /**
@@ -544,7 +555,7 @@ class LibraryPlaylists(
             server = { it.addToPlaylist(id, listOf(trackId)) },
         )
         if (result == WriteResult.Saved) editMembership(d, id) { it + trackId }
-        said("addToPlaylist($id)", result)
+        said("addToPlaylist", result)
     }
 
     /**
@@ -555,7 +566,7 @@ class LibraryPlaylists(
     suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean = playlistMutex.withLock {
         val d = daos.value
         playlistEdit(
-            "removeFromPlaylistAt($id)",
+            "removeFromPlaylistAt",
             phone = { it.removeAt(id, at) },
             server = { it.removeFromPlaylistAt(id, at) },
         ).also { ok ->
@@ -568,7 +579,7 @@ class LibraryPlaylists(
     suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = playlistMutex.withLock {
         val d = daos.value
         playlistEdit(
-            "reorderPlaylist($id)",
+            "reorderPlaylist",
             phone = { it.reorder(id, orderedSongIds) },
             server = { it.reorderPlaylist(id, orderedSongIds) },
         ).also { ok ->
@@ -601,7 +612,7 @@ class LibraryPlaylists(
         val files = phonePlaylists()
         if (files != null) return phone(files)
         return runCatching { serverClient.value?.let { server(it) } ?: false }
-            .onFailure { android.util.Log.w("AmpSync", "$what failed: ${it::class.simpleName}") }
+            .onFailure { Log.w("AmpSync", "$what failed: ${it.logName()}") }
             .getOrDefault(false)
     }
 
@@ -623,7 +634,8 @@ class LibraryPlaylists(
             is WriteResult.Unreachable -> result.reason
             is WriteResult.Refused -> result.reason
         }
-        android.util.Log.w("AmpSync", "$what → $result")
+        // The kind of failure only: a reason can be the server's own words.
+        Log.w("AmpSync", "$what → ${result::class.simpleName}")
         tell("Couldn't save\n$reason")
         return result
     }

@@ -1,6 +1,5 @@
 package com.sublunar.amp.source.plex
 
-import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.header
@@ -9,6 +8,7 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpMethod
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -35,10 +35,16 @@ import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.serverClock
 import com.sublunar.amp.data.placementMoves
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
+import com.sublunar.amp.log.loggableWord
+import com.sublunar.amp.source.FailureRuns
 import com.sublunar.amp.source.ServerHttp
+import com.sublunar.amp.source.onRealFailure
 import com.sublunar.amp.source.queryOf
 import com.sublunar.amp.source.serverJson
 import com.sublunar.amp.source.serverUrl
+import com.sublunar.amp.source.templatedPath
 
 /**
  * A Plex Media Server's music library behind [MusicServer]. Browsing, artwork,
@@ -64,6 +70,10 @@ class PlexClient(
     private val identityHeaders: List<Pair<String, String>> = plexIdentity(product, clientIdentifier)
 
     private val http = ServerHttp()
+
+    /** The timeline goes every ten seconds, so a failure is logged when it starts and when it stops. */
+    private val sendFailures = FailureRuns(TAG)
+    private val lyricsFailures = FailureRuns("AmpLyrics")
 
     /** Serialises requests aimed at a player — see the Companion calls. */
     internal val playerLock = Mutex()
@@ -142,9 +152,9 @@ class PlexClient(
 
     /**
      * A request whose answer is only yes or no: says whether the server took
-     * it, and logs when it didn't, with the status it answered. [detail] says
-     * what the request was about, for a path that is the same for many —
-     * never the parameters, which can carry the token.
+     * it, and logs when such requests start failing, with the status, and when
+     * they stop. [detail] says what the request was about, never which item:
+     * no ids, and never the parameters, which can carry the token.
      */
     private suspend fun send(
         method: HttpMethod,
@@ -152,12 +162,16 @@ class PlexClient(
         params: List<Pair<String, String>> = emptyList(),
         via: HttpClient = http.bulk,
         detail: String? = null,
-    ): Boolean = runCatching { body(path, params, method, via = via) }
-        .onFailure { error ->
-            val why = (error as? PlexException)?.status?.let { "server answered $it" } ?: "${error::class.simpleName}"
-            Log.w(TAG, "${method.value} $path${detail?.let { " ($it)" }.orEmpty()} failed: $why")
-        }
-        .isSuccess
+    ): Boolean {
+        val endpoint = "${method.value} ${templatedPath(path)}"
+        return runCatching { body(path, params, method, via = via) }
+            .onSuccess { sendFailures.worked(endpoint) }
+            .onRealFailure { error ->
+                val why = (error as? PlexException)?.status?.let { "server answered $it" } ?: error.logName()
+                sendFailures.failed(endpoint, why + detail?.let { " ($it)" }.orEmpty())
+            }
+            .isSuccess
+    }
 
     /** [path], which may carry a query of its own, on the server with [params] and the token added. */
     private fun withToken(path: String, params: List<Pair<String, String>> = emptyList()): String =
@@ -268,7 +282,9 @@ class PlexClient(
      * song in the library, which on a large one the phone can't hold.
      */
     override suspend fun songChangesSince(mark: String?, libraries: List<String?>): SongChanges {
-        val now = serverClock(request("/identity")).epochSecond
+        val identity = request("/identity")
+        val now = serverClock(identity).epochSecond
+        logVersion(identity)
         val since = mark?.toLongOrNull() ?: return SongChanges.Nothing(now.toString())
         val sections = libraries.filterNotNull().ifEmpty { getMusicFolders().map { it.id } }
         val albumIds = mutableSetOf<String>()
@@ -285,6 +301,26 @@ class PlexClient(
             ) { page -> page.metadata.mapNotNullTo(albumIds) { it.parentRatingKey } }
         }
         return SongChanges.Albums(albumIds, now.toString())
+    }
+
+    /** What [logVersion] last said: a version is said once per client, "unknown" until one is read. */
+    @Volatile
+    private var versionSaid: String? = null
+
+    /** The server's version, once per client, from an /identity answer already asked for. */
+    private suspend fun logVersion(identity: HttpResponse) {
+        if (versionSaid != null && versionSaid != UNKNOWN_VERSION) return
+        val version = try {
+            decode(identity.bodyAsText()).container.version
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        val said = loggableWord(version)
+        if (said == versionSaid) return
+        versionSaid = said
+        Log.i("AmpSync", "server plex/$said")
     }
 
     override suspend fun serverScanning(musicFolderId: String?): Boolean = runCatching {
@@ -377,11 +413,11 @@ class PlexClient(
      */
     override suspend fun getSimilarSongs(songId: String): List<Track> {
         val own = runCatching { stationTracks(songId) }
-            .onFailure { Log.w(RADIO_TAG, "plex track station failed: ${it::class.simpleName}") }
+            .onRealFailure { Log.w(RADIO_TAG, "plex track station failed: ${it.logName()}") }
             .getOrDefault(StationAnswer())
         if (own.tracks.isNotEmpty()) return own.tracks.take(RADIO_LENGTH)
         val nearest = runCatching { nearestTracks(songId, RADIO_LENGTH) }
-            .onFailure { Log.w(RADIO_TAG, "plex nearest failed: ${it::class.simpleName}") }
+            .onRealFailure { Log.w(RADIO_TAG, "plex nearest failed: ${it.logName()}") }
             .getOrDefault(emptyList())
         if (nearest.isNotEmpty()) return nearest
         val artist = own.grandparentRatingKey ?: return emptyList()
@@ -392,7 +428,7 @@ class PlexClient(
         val merged = LinkedHashMap<String, Track>()
         for (ask in 1..STATION_ASKS) {
             val answer = runCatching { stationTracks(artist) }
-                .onFailure { Log.w(RADIO_TAG, "plex artist station failed: ${it::class.simpleName}") }
+                .onRealFailure { Log.w(RADIO_TAG, "plex artist station failed: ${it.logName()}") }
                 .getOrDefault(StationAnswer())
             val before = merged.size
             answer.tracks.forEach { merged.putIfAbsent(it.id, it) }
@@ -484,7 +520,6 @@ class PlexClient(
             "/music/:/transcode/universal/decision",
             transcodeParams(songId, format, 0, sessionId),
             via = http.quick,
-            detail = "song $songId",
         )
     }
 
@@ -623,7 +658,10 @@ class PlexClient(
      * the streams aren't in the album listing the library was built from.
      */
     override suspend fun getLyrics(songId: String): Lyrics? {
-        val streams = runCatching { fetch("/library/metadata/$songId") }.getOrNull()
+        val streams = runCatching { fetch("/library/metadata/$songId") }
+            .onSuccess { lyricsFailures.worked("plex song details") }
+            .onRealFailure { lyricsFailures.failed("plex song details", it.logName()) }
+            .getOrNull()
             ?.container?.metadata?.firstOrNull()
             ?.media?.flatMap { it.parts }?.flatMap { it.streams }
             .orEmpty()
@@ -631,7 +669,10 @@ class PlexClient(
             ?: return null
         // Any type: this serves the lyric file itself, which Plex answers 404
         // under `Accept: application/json`.
-        val raw = runCatching { body(key, accept = "*/*") }.getOrNull()
+        val raw = runCatching { body(key, accept = "*/*") }
+            .onSuccess { lyricsFailures.worked("plex lyrics file") }
+            .onRealFailure { lyricsFailures.failed("plex lyrics file", it.logName()) }
+            .getOrNull()
         if (raw.isNullOrBlank()) return null
         // Timestamps where the file has them; otherwise a plain sheet of lines.
         LyricsRepository.parseLrc(raw)?.let { return it }
@@ -709,7 +750,7 @@ class PlexClient(
         }
         // Checked, so a refusal is logged: a refused "stopped" leaves the
         // session on the dashboard, holding a stream, for minutes.
-        send(HttpMethod.Get, "/:/timeline", params, detail = "${state.plexValue} $songId under $sessionId")
+        send(HttpMethod.Get, "/:/timeline", params, detail = state.plexValue)
     }
 
     private val TimelineState.plexValue: String
@@ -800,7 +841,7 @@ class PlexClient(
         val wanted = at.map { (index, songId) ->
             // Not the song the caller saw there: the playlist has changed under it.
             entries.getOrNull(index)?.takeIf { it.first == songId }?.second ?: run {
-                Log.w(TAG, "removeFromPlaylistAt($id): position $index isn't the song expected; nothing removed")
+                Log.w(TAG, "removeFromPlaylistAt: position $index isn't the song expected; nothing removed")
                 return false
             }
         }
@@ -826,9 +867,9 @@ class PlexClient(
     override suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean {
         val entries = playlistEntries(id)
         if (entries.size != orderedSongIds.size) {
-            android.util.Log.w(
+            Log.w(
                 TAG,
-                "reorderPlaylist($id): wanted ${orderedSongIds.size} track(s) but the playlist has " +
+                "reorderPlaylist: wanted ${orderedSongIds.size} track(s) but the playlist has " +
                     "${entries.size}; refusing to touch it",
             )
             return false
@@ -841,9 +882,9 @@ class PlexClient(
         val orderedEntryIds = orderedSongIds.map { songId ->
             val queue = bySong[songId]
             if (queue.isNullOrEmpty()) {
-                android.util.Log.w(
+                Log.w(
                     TAG,
-                    "reorderPlaylist($id): wanted order references a track not in the playlist; refusing to touch it",
+                    "reorderPlaylist: wanted order references a track not in the playlist; refusing to touch it",
                 )
                 return false
             }
@@ -856,7 +897,7 @@ class PlexClient(
             if (localOrder.getOrNull(localOrder.indexOf(afterId) + 1) == entryId) return true
             val sent = send(HttpMethod.Put, "/playlists/$id/items/$entryId/move", listOf("after" to afterId.toString()))
             if (!sent) {
-                Log.w(TAG, "reorderPlaylist($id): move failed partway; playlist left partially reordered, nothing lost")
+                Log.w(TAG, "reorderPlaylist: move failed partway; playlist left partially reordered, nothing lost")
                 return false
             }
             localOrder.remove(entryId)
@@ -938,7 +979,7 @@ class PlexClient(
         rating?.let { (it / 2f).toInt().coerceIn(0, 5) } ?: 0
 
     companion object {
-        private const val TAG = "PlexClient"
+        private const val TAG = "AmpPlex"
 
         private const val JSON = "application/json"
 
@@ -1031,3 +1072,6 @@ class PlexException(message: String, status: Int? = null) : ServerException(mess
 
 /** The timestamp at the end of a Plex picture path — see PlexClient.coverIdVersioned. */
 private val PLEX_VERSIONED_COVER = Regex("""/(thumb|art)/\d+$""")
+
+/** What loggableWord makes of a version it can't read. */
+private const val UNKNOWN_VERSION = "unknown"

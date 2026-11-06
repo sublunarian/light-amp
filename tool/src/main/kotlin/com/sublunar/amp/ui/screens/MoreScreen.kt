@@ -36,6 +36,7 @@ import com.sublunar.amp.ui.components.LocalMenuHeading
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.largeMenuText
+import com.sublunar.amp.ui.components.rowClickable
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
@@ -375,8 +376,16 @@ class AboutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 verticalArrangement = Arrangement.spacedBy(px(26)),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                AppText("Amp", pxSp(LightType.HEADING_PX))
-                AppText("Version ${BuildConfig.VERSION_NAME}", pxSp(LightType.DETAIL_PX), dim = true)
+                // Held, the name or version opens the log: it is there for when a
+                // bug report asks for it, so it has no row of its own.
+                Column(
+                    modifier = Modifier.rowClickable(onClick = {}, onLongClick = { go { LogScreen(it) } }),
+                    verticalArrangement = Arrangement.spacedBy(px(26)),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    AppText("Amp", pxSp(LightType.HEADING_PX))
+                    AppText("Version ${BuildConfig.VERSION_NAME}", pxSp(LightType.DETAIL_PX), dim = true)
+                }
                 // Only when the loopback stream proxy failed, and why: nothing
                 // streams without it, and it can't be seen any other way without a cable.
                 val proxy by App.streamProxy.state.collectAsState()

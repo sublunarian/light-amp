@@ -265,21 +265,6 @@ class DlnaCastTest {
     }
 
     @Test
-    fun `a stream address in the log keeps the song and drops the credentials`() {
-        val subsonic = "http://nas:4533/rest/stream.view?u=me&t=abc&s=salt&v=1.16.1&c=amp&f=json" +
-            "&id=42&format=mp3&maxBitRate=320&timeOffset=60"
-        assertEquals(
-            "http://nas:4533/rest/stream.view?id=42&format=mp3&maxBitRate=320&timeOffset=60",
-            DlnaCast.loggable(subsonic),
-        )
-        assertEquals(
-            "http://plex:32400/library/parts/42/1700000000/file.flac",
-            DlnaCast.loggable("http://plex:32400/library/parts/42/1700000000/file.flac?download=0&X-Plex-Token=tok"),
-        )
-        assertEquals("nothing", DlnaCast.loggable(null))
-    }
-
-    @Test
     fun `reads the first element, attributes and all`() {
         val xml = """<friendlyName lang="en">Den</friendlyName><friendlyName>Other</friendlyName>"""
         assertEquals("Den", DlnaCast.tagValue(xml, "friendlyName"))

@@ -1,5 +1,10 @@
 package com.sublunar.amp.source.plex
 
+import com.sublunar.amp.data.NetworkGate
+import com.sublunar.amp.log.logName
+import com.sublunar.amp.source.FailureRuns
+import com.sublunar.amp.source.onRealFailure
+import com.sublunar.amp.source.serverJson
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -9,8 +14,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
-import com.sublunar.amp.data.NetworkGate
-import com.sublunar.amp.source.serverJson
 
 /**
  * Linking a Plex account, and finding the servers on it.
@@ -25,6 +28,9 @@ object PlexAccount {
     private const val PLEX_TV = "https://plex.tv"
 
     private val http = NetworkGate.httpClient { expectSuccess = false }
+
+    /** Asked again on every route check, so a failure is logged when it starts and when it stops. */
+    private val failures = FailureRuns("AmpPlex")
 
     /**
      * Ask for a code. Null when plex.tv can't be reached.
@@ -57,15 +63,27 @@ object PlexAccount {
         return null
     }
 
-    /** Every server on the account that provides a library. */
-    suspend fun resources(token: String, clientIdentifier: String): List<PlexResource> = runCatching {
-        val response = http.get("$PLEX_TV/api/v2/resources?includeHttps=1&includeRelay=1") {
-            plexHeaders(clientIdentifier)
-            header("X-Plex-Token", token)
-        }
-        serverJson.decodeFromString<List<PlexResource>>(response.bodyAsText())
-            .filter { it.provides.contains("server") }
-    }.getOrDefault(emptyList())
+    /**
+     * Every server on the account that provides a library. Empty when plex.tv
+     * can't be asked, too, which only the log tells apart from none.
+     */
+    suspend fun resources(token: String, clientIdentifier: String): List<PlexResource> {
+        var status: Int? = null
+        return runCatching {
+            val response = http.get("$PLEX_TV/api/v2/resources?includeHttps=1&includeRelay=1") {
+                plexHeaders(clientIdentifier)
+                header("X-Plex-Token", token)
+            }
+            status = response.status.value
+            serverJson.decodeFromString<List<PlexResource>>(response.bodyAsText())
+                .filter { it.provides.contains("server") }
+        }.onSuccess { failures.worked("plex.tv server list") }
+            .onRealFailure {
+                val answered = status?.let { code -> " after HTTP $code" }.orEmpty()
+                failures.failed("plex.tv server list", it.logName() + answered)
+            }
+            .getOrDefault(emptyList())
+    }
 
     /**
      * Every advertised address, best first: local, then direct, then relay.

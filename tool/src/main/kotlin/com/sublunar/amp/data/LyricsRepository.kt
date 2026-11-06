@@ -3,6 +3,8 @@ package com.sublunar.amp.data
 import com.sublunar.amp.App
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.LyricsEntity
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -106,27 +108,49 @@ object LyricsRepository {
 
     /** Ask the server, then lrclib, for what isn't on the phone. */
     private suspend fun lookUp(track: Track, client: MusicServer?, stored: Lyrics?): Outcome {
+        val startedMs = monotonicMs()
         val server = runCatching { client?.getLyrics(track.id) }
         val fromServer = server.getOrNull()
-        if (fromServer?.synced == true) return Outcome.Found(fromServer)
+        var lrclib: Result<Lyrics?>? = null
+        // One line a lookup: what each place said, and what came of it. Never the words.
+        fun said(outcome: Outcome): Outcome = outcome.also {
+            Log.i(
+                "AmpLyrics",
+                "lookup: server ${if (client == null) "no client" else heard(server)}, " +
+                    "lrclib ${lrclib?.let(::heard) ?: "not asked"} → ${outcomeName(it)} in ${monotonicMs() - startedMs} ms",
+            )
+        }
+        if (fromServer?.synced == true) return said(Outcome.Found(fromServer))
 
-        val lrclib = runCatching { fetchLrclib(track) }
-        val fromLrclib = lrclib.getOrNull()
-        if (fromLrclib?.synced == true) return Outcome.Found(fromLrclib)
+        val fromLrclib = runCatching { fetchLrclib(track) }.also { lrclib = it }.getOrNull()
+        if (fromLrclib?.synced == true) return said(Outcome.Found(fromLrclib))
 
         // Nothing timed anywhere: whatever plain text turned up, the server's first.
         val plain = fromServer ?: fromLrclib ?: stored
-        if (plain != null) return Outcome.Found(plain)
+        if (plain != null) return said(Outcome.Found(plain))
 
         // A lookup that threw (no network, server down) is not a "no lyrics".
-        val asked = server.isSuccess && lrclib.isSuccess
-        return if (asked) Outcome.None else Outcome.Unavailable
+        val asked = server.isSuccess && lrclib?.isSuccess == true
+        return said(if (asked) Outcome.None else Outcome.Unavailable)
+    }
+
+    private fun heard(answer: Result<Lyrics?>): String = answer.fold(
+        { it?.let { lyrics -> if (lyrics.synced) "synced" else "plain" } ?: "none" },
+        { "failed ${it.logName()}" },
+    )
+
+    private fun outcomeName(outcome: Outcome): String = when (outcome) {
+        is Outcome.Found -> if (outcome.lyrics.synced) "synced" else "plain"
+        Outcome.None -> "none"
+        Outcome.Unavailable -> "unavailable"
+        Outcome.NotFetched -> "not fetched"
     }
 
     /** Keep what a lookup settled on, so the song isn't asked about again. */
     private suspend fun keep(dao: LibraryDao?, trackId: String, found: Lyrics?) {
         dao ?: return
         runCatching { dao.upsertLyrics(LyricsEntity(trackId, found?.let(::encodeStored), System.currentTimeMillis())) }
+            .onFailure { Log.w("AmpLyrics", "lookup not kept: ${it.logName()}") }
     }
 
     /** How long a song found to have no lyrics is believed before asking again. */
