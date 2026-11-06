@@ -659,7 +659,6 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
                 val queue = host.queue.value
                 followingRow(rowOf(segment))?.let { next -> queue.getOrNull(next)?.let { next to it } }
             },
-            gainFor = host::gainFor,
             log = ::log,
             first = row to track,
             fromMs = ms,

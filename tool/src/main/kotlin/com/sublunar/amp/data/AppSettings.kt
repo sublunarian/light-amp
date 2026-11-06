@@ -171,6 +171,7 @@ class AppSettings(
      */
     private var launchSnapshot: Preferences? = runBlocking {
         keepEarlierDefaults()
+        dropRetiredKeys()
         dataStore.data.first()
     }
     private val loaded: Preferences get() = checkNotNull(launchSnapshot) { "settings read after construction" }
@@ -422,14 +423,6 @@ class AppSettings(
     /** Lyrics in another script shown in Latin letters, chosen at the end of such lyrics. */
     val latinLyrics: Pref<Boolean> = bool("pref.latinLyrics", false)
 
-    /**
-     * Even out the volume between tracks, from the loudness the server
-     * measured. On by default — with it off, a remaster can be 10 dB louder
-     * than the record before it. Attenuate-only, so it never adds clipping;
-     * a library with no measurements plays exactly as it does today.
-     */
-    val replayGain: Pref<Boolean> = bool("pref.replayGain", true)
-
     /** How an artist's page orders their records — see [ArtistAlbumOrder]. */
     val artistAlbumOrder: Pref<ArtistAlbumOrder> = enum("pref.artistAlbumOrder", ArtistAlbumOrder.RELEASE_TYPE)
 
@@ -638,6 +631,15 @@ class AppSettings(
             if (p[SOURCES] == null) return@edit
             for ((key, change) in CHANGED_DEFAULTS) if (p[key] !in change.known) p[key] = change.was
         }
+    }
+
+    /** ONE-SHOT: what the removed Replay Gain setting and Test page trials left stored. Strip once installed. */
+    private suspend fun dropRetiredKeys() {
+        val retired = listOf(
+            "replayGain", "hideSongShortcuts", "narrowListMargin",
+            "headingRowLabels", "tallAlbumRows", "tallArtistRecords",
+        )
+        dataStore.edit { p -> retired.forEach { p.remove(booleanPreferencesKey("pref.$it")) } }
     }
 
     /** A fresh install's first source: today's defaults written down, so [keepEarlierDefaults] never mistakes it for an old one. */

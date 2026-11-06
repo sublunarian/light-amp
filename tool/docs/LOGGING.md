@@ -54,7 +54,7 @@ Never:
 
 One line per change of state, not per row, per cover or per poll.
 
-- At start, the header: Amp version and build type, LightOS build, Android version, heap. Then the setup: each source's `logRef`, server software and version, qualities and offline mode; the active source, data mode, artwork, ReplayGain and storage limit.
+- At start, the header: Amp version and build type, LightOS build, Android version, heap. Then the setup: each source's `logRef`, server software and version, qualities and offline mode; the active source, data mode, artwork and storage limit.
 - Every long job logs its start, its end with counts and how it ended, and when it is skipped or cancelled: library sync, cover sync, the download worker, lyrics lookups, casts. A device test then leaves its result behind, success included.
 - Network: link changes, the rules they open, reachability and route changes by class, what the network gate refused or shut.
 - Playback: how a row started (file, download, stream and format) and how long it took when Buffering showed, a start that never made a sound, a stream replaced by its download, player errors by the SDK's media3 code name.

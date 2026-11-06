@@ -76,7 +76,6 @@ class SettingsKeysTest {
         settings.invertColors.set(true)
         settings.syncedLyrics.set(false)
         settings.latinLyrics.set(true)
-        settings.replayGain.set(false)
         settings.layoutMode.set(LayoutMode.SIMPLIFIED)
         settings.lastSection.set(LastSection.NOW_PLAYING)
         settings.lastTab.set("SONGS")
@@ -90,7 +89,6 @@ class SettingsKeysTest {
                 "pref.invertColors" to true,
                 "pref.karaokeLyrics" to false,
                 "pref.latinLyrics" to true,
-                "pref.replayGain" to false,
                 "pref.layoutMode" to "SIMPLIFIED",
                 "pref.lastSection" to "NOW_PLAYING",
                 "pref.lastTab" to "SONGS",

@@ -60,7 +60,6 @@ internal class Feed(
     private val open: (Track, Long) -> PcmSource,
     /** The row and track that follow the one at [Segment.row] — repeat and the end of the queue in mind — or null. */
     private val following: (Segment) -> Pair<Int, Track>?,
-    private val gainFor: (Track) -> Float,
     private val log: (String) -> Unit,
     private val first: Pair<Int, Track>,
     private val fromMs: Long,
@@ -142,8 +141,7 @@ internal class Feed(
                 }
                 var framesIn = 0L
                 try {
-                    val gain = gainFor(track)
-                    val exact = source.sampleRate == AIRPLAY_RATE && source.channels == 2 && gain >= 1f
+                    val exact = source.sampleRate == AIRPLAY_RATE && source.channels == 2
                     // A run of tracks at one rate goes through one resampler,
                     // so nothing at their joins is cut short.
                     if (stage != null && (exact || stage.inRate != source.sampleRate)) {
@@ -170,7 +168,7 @@ internal class Feed(
                             lay(block.shorts, block.frames)
                             continue
                         }
-                        // Everything else as stereo floats, gain applied.
+                        // Everything else as stereo floats.
                         val floats = if (block.isShort) {
                             val f = block.floats(block.frames * source.channels)
                             for (i in 0 until block.frames * source.channels) f[i] = block.shorts[i] / 32768f
@@ -182,7 +180,6 @@ internal class Feed(
                         while (at < block.frames) {
                             val n = minOf(BLOCK_FRAMES_MAX, block.frames - at)
                             toStereo(floats.sliceFrom(at * source.channels, n * source.channels), n, source.channels, source.order, stereo)
-                            if (gain < 1f) for (i in 0 until n * 2) stereo[i] *= gain
                             if (stage != null) {
                                 stage.push(stereo, n)
                                 pullInto(stage, dither)

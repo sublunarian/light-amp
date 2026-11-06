@@ -824,7 +824,7 @@ object App {
             "setup: ${sources.size} sources, active ${settings.activeSource.value?.logRef ?: "none"}, " +
                 "mode ${settings.dataMode.value}, artwork ${settings.artwork.value}, " +
                 "list covers ${settings.listArtwork.value}, artist images ${!settings.hideArtistImages.value}, " +
-                "ReplayGain ${settings.replayGain.value}, storage limit ${settings.downloadLimit.value shr 20} MB, " +
+                "storage limit ${settings.downloadLimit.value shr 20} MB, " +
                 "downloads paused ${settings.downloadsPaused.value}",
         )
     }

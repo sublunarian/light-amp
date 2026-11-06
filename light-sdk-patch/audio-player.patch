@@ -1,5 +1,5 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
-index 9a90ed5..9120558 100644
+index 9a90ed5..9ba567d 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/audio/LightAudioPlayer.kt
 @@ -2,11 +2,13 @@ package com.thelightphone.sdk.audio
@@ -24,7 +24,7 @@ index 9a90ed5..9120558 100644
  import kotlinx.coroutines.CoroutineScope
  import kotlinx.coroutines.Dispatchers
  import kotlinx.coroutines.Job
-@@ -82,7 +85,21 @@ class LightAudioPlayer internal constructor(
+@@ -82,7 +85,14 @@ class LightAudioPlayer internal constructor(
      /** Connection and command-acceptance lifecycle of this player. */
      val availability: StateFlow<LightAudioPlayerAvailability> = commands.availability
  
@@ -34,27 +34,12 @@ index 9a90ed5..9120558 100644
 +    private val _deviceVolume = MutableStateFlow(1f)
 +    val deviceVolume: StateFlow<Float> = _deviceVolume.asStateFlow()
 +
-+    /** SDK PATCH: a 0..1 gain on the player's own volume, for loudness normalisation. */
-+    var playbackGain: Float = 1f
-+        set(value) {
-+            field = value.coerceIn(0f, 1f)
-+            player?.volume = field
-+        }
-+
      init {
 +        updateDeviceVolume()
          when (spec.playback) {
              LightAudioPlayback.Attached ->
                  connectPlayer(buildSdkExoPlayer(context, spec.usage, spec.cache))
-@@ -96,6 +113,7 @@ class LightAudioPlayer internal constructor(
-             return
-         }
-         player = connectedPlayer
-+        connectedPlayer.volume = playbackGain
-         connectedPlayer.addListener(object : Player.Listener {
-             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                 _currentMediaItemIndex.value = if (mediaItem == null) {
-@@ -133,6 +151,15 @@ class LightAudioPlayer internal constructor(
+@@ -133,6 +143,15 @@ class LightAudioPlayer internal constructor(
              override fun onPlayerErrorChanged(error: PlaybackException?) {
                  _error.value = error?.toLightAudioError(connectedPlayer)
              }
@@ -70,7 +55,7 @@ index 9a90ed5..9120558 100644
          })
          val state = connectedPlayer.snapshotState()
          _currentMediaItemIndex.value = state.currentMediaItemIndex
-@@ -146,9 +173,31 @@ class LightAudioPlayer internal constructor(
+@@ -146,9 +165,31 @@ class LightAudioPlayer internal constructor(
          } else {
              stopPositionUpdates()
          }
@@ -102,7 +87,7 @@ index 9a90ed5..9120558 100644
      private fun connectDetachedPlayer(context: Context, usage: LightAudioUsage) {
          val token = SessionToken(context, ComponentName(context, LightAudioService::class.java))
          val future = MediaController.Builder(context, token)
-@@ -222,6 +271,26 @@ class LightAudioPlayer internal constructor(
+@@ -222,6 +263,26 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -129,7 +114,7 @@ index 9a90ed5..9120558 100644
      /**
       * Appends [item] to the queue.
       */
-@@ -295,6 +364,15 @@ class LightAudioPlayer internal constructor(
+@@ -295,6 +356,15 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -145,7 +130,7 @@ index 9a90ed5..9120558 100644
      /**
       * Start or resume playback if audio focus is available. An idle player is
       * prepared first, and an ended one restarts its current item.
-@@ -320,6 +398,9 @@ class LightAudioPlayer internal constructor(
+@@ -320,6 +390,9 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -155,7 +140,7 @@ index 9a90ed5..9120558 100644
      /** Seeks to [ms], clamped to the resolved duration. Unknown duration clamps to zero. */
      fun seekTo(ms: Long) {
          commands.dispatch { player ->
-@@ -349,6 +430,13 @@ class LightAudioPlayer internal constructor(
+@@ -349,6 +422,13 @@ class LightAudioPlayer internal constructor(
          }
      }
  
@@ -169,7 +154,7 @@ index 9a90ed5..9120558 100644
      /** Waits for connection, returning `false` if this player is released first. */
      suspend fun awaitReady(): Boolean = awaitPlayerReady(availability)
  
-@@ -380,6 +468,8 @@ class LightAudioPlayer internal constructor(
+@@ -380,6 +460,8 @@ class LightAudioPlayer internal constructor(
                      updatePosition(it)
                      updateDuration(it)
                  }

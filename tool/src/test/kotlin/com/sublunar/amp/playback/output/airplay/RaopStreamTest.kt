@@ -101,7 +101,6 @@ class RaopStreamTest {
             },
             // Repeat-one: the same row follows itself.
             following = { segment -> segment.row to track(segment.row) },
-            gainFor = { 1f },
             log = log,
             first = 0 to track(0),
             fromMs = 0,
@@ -131,7 +130,6 @@ class RaopStreamTest {
         fun feed(following: (Segment) -> Pair<Int, Track>?) = Feed(
             open = { t, _ -> pcmOf(tones[t.id.removePrefix("t").toInt()]) },
             following = following,
-            gainFor = { 1f },
             log = log,
             first = 0 to track(0),
             fromMs = 0,
@@ -286,7 +284,6 @@ class RaopStreamTest {
         val feed = Feed(
             open = { _, _ -> throw IOException("gone") },
             following = { null },
-            gainFor = { 1f },
             log = log,
             first = 0 to track(0),
             fromMs = 0,
@@ -333,7 +330,6 @@ class RaopStreamTest {
     private fun feedOf(tones: List<Tone>): Feed = Feed(
         open = { track, _ -> pcmOf(tones[track.id.removePrefix("t").toInt()]) },
         following = { segment -> (segment.row + 1).takeIf { it < tones.size }?.let { it to track(it) } },
-        gainFor = { 1f },
         log = log,
         first = 0 to track(0),
         fromMs = 0,

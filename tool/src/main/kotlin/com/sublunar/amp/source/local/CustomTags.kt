@@ -19,7 +19,7 @@ import java.io.RandomAccessFile
  * may sit at the end and is seeked to properly).
  *
  * The gain lands on [Track.gainDb] at scan time exactly as a server's does, so
- * playback treats a local file no differently from a Navidrome track.
+ * a local file is no different from a Navidrome track.
  */
 object CustomTags {
 

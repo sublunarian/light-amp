@@ -82,7 +82,6 @@ class GroupStreamTest {
     private fun feed(): Feed = Feed(
         open = { _, _ -> tone() },
         following = { null },
-        gainFor = { 1f },
         log = log,
         first = 0 to track(),
         fromMs = 0,
