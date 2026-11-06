@@ -154,6 +154,9 @@ class SettingsKeysTest {
         settings.removeSource("src-1")
         assertEquals(
             mapOf(
+                // A fresh install's first source settles the new looks — see AppSettings.CHANGED_DEFAULTS.
+                "pref.layoutMode" to "SIMPLIFIED",
+                "pref.artworkMode" to "NONE",
                 "pref.sources" to """[{"id":"src-2","kind":"SUBSONIC","name":"Home","baseUrl":"https://x.example"}]""",
                 "state.pendingActions" to "[]",
                 "state.lastSynced.src-2" to "5",

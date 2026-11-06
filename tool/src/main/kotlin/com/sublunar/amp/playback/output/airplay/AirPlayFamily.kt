@@ -1,6 +1,6 @@
 package com.sublunar.amp.playback.output.airplay
 
-import android.util.Log
+import com.sublunar.amp.log.Log
 import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputFamily
 import com.sublunar.amp.playback.output.OutputHost
