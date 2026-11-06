@@ -224,10 +224,14 @@ class AppSettings(
         return effectiveId
     }
 
+    /** Drop the source with [id] and what is stored only for it: a per-source key added below goes here too. */
     suspend fun removeSource(id: String) {
         dataStore.edit { p ->
             p.editSources { list -> list.filterNot { it.id == id } }
             if (p[ACTIVE_SOURCE] == id) p.remove(ACTIVE_SOURCE)
+            p.remove(cachedPlaylistsKey(id))
+            p.remove(lastSyncedKey(id))
+            p.remove(songCheckKey(id))
         }
     }
 

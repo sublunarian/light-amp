@@ -7,6 +7,7 @@ import io.ktor.client.engine.okhttp.OkHttpConfig
 import io.ktor.client.plugins.api.createClientPlugin
 import java.io.IOException
 import java.net.InetAddress
+import java.net.ProtocolException
 import java.net.Socket
 import java.util.Collections
 import java.util.WeakHashMap
@@ -204,7 +205,8 @@ object NetworkGate {
     /**
      * A plain OkHttp client behind the same wall, for transfers that stream
      * straight to disk — see DownloadStore. Redirects are followed, and each
-     * hop passes the network interceptor like any other attempt.
+     * hop passes the network interceptor like any other attempt, which refuses
+     * one from https:// down to http:// as ktor does for the API clients.
      */
     fun transferClient(connectTimeoutMs: Long, readTimeoutMs: Long): OkHttpClient =
         OkHttpClient.Builder()
@@ -234,6 +236,11 @@ object NetworkGate {
         // Live, not cached: a stale "open" here lets a whole request out.
         // Thrown before proceed(), which OkHttp does not retry.
         check()
+        // A downgraded hop would send the URL, and the token in it, in clear.
+        // Only transferClient's redirects get here: each ktor hop is a call of its own.
+        if (chain.call().request().url.isHttps && !chain.request().url.isHttps) {
+            throw ProtocolException("Refused a redirect from https:// to http://")
+        }
         val response = chain.proceed(chain.request())
         response.gated()
     }

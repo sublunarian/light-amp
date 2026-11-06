@@ -152,6 +152,15 @@ class PendingActionsStoredTest {
     }
 
     @Test
+    fun `a removed source's entries go, even one this build can't send, and no one else's`() = runBlocking {
+        val other = """{"kind":"SCROBBLE","id":"3","atMs":5,"sourceId":"b"}"""
+        val anyone = """{"kind":"STAR_SONG","id":"y","atMs":6}"""
+        val phone = Phone(PLAY_1, other, MOVED_TYPE, anyone, STAR_X)
+        phone.pending.forgetSource("a")
+        assertEquals("[$other,$anyone]", phone.stored)
+    }
+
+    @Test
     fun `text that isn't a list is no queue`() = runBlocking {
         val store = MemoryDataStore(preferencesOf(stringPreferencesKey(KEY) to "not json"))
         val pending = PendingActions(store.settings())

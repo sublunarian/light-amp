@@ -4,6 +4,9 @@ import android.os.StatFs
 import android.util.Log
 import java.io.BufferedOutputStream
 import java.io.File
+import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -101,6 +104,9 @@ class DownloadStore(private val filesDir: File) {
         durationMs: Long = 0,
     ): Fetched =
         withContext(Dispatchers.IO) {
+            // The id is the file's name, and one that is a path would put the
+            // server's bytes outside this source's folder.
+            if ('/' in trackId) return@withContext Fetched.Failed("Server sent a track id that isn't a file name")
             val target = fileFor(sourceId, trackId, format)
             target.parentFile?.mkdirs()
             val partial = File(target.parentFile, "${target.name}$PART_SUFFIX")
@@ -132,12 +138,15 @@ class DownloadStore(private val filesDir: File) {
                             Log.w(TAG, "download $trackId: $type, not audio, from ${response.request.url.encodedPath}")
                             return@withContext Fetched.Failed("Server sent $type instead of audio")
                         }
+                        // The body ends when the server says, so the phone's free
+                        // space mustn't be what ends it.
+                        val room = freeBytes().takeIf { it > 0 }?.minus(KEEP_FREE_BYTES) ?: Long.MAX_VALUE
                         response.body.byteStream().use { input ->
                             // 8 KiB (copyTo's default) into an unbuffered FileOutputStream
                             // is a write syscall every 8 KiB; on this hardware that costs
                             // more than the transfer does.
                             BufferedOutputStream(partial.outputStream(), BUFFER_BYTES).use { output ->
-                                input.copyTo(output, BUFFER_BYTES)
+                                copyAtMost(input, output, room, BUFFER_BYTES)
                             }
                         }
                     }
@@ -251,10 +260,29 @@ class DownloadStore(private val filesDir: File) {
         private const val READ_TIMEOUT_MS = 30_000
         private const val PART_SUFFIX = ".part"
 
+        /** Android's own low-storage line: StorageManager warns below the smaller of 5% and this. */
+        private const val KEEP_FREE_BYTES = 500L * 1024 * 1024
+
         // 64 GB is reachable on the LP3's 128 GB only by claiming more than half
         // of what's free; a quarter still stays behind for the rest of the phone.
         private const val FREE_SPACE_SHARE = 0.75
         private const val ABSOLUTE_CEILING = 64L * 1024 * 1024 * 1024
+    }
+}
+
+/**
+ * [input] into [output] to its end, throwing once more than [ceiling] bytes
+ * have come, before any of the excess is written.
+ */
+internal fun copyAtMost(input: InputStream, output: OutputStream, ceiling: Long, bufferBytes: Int) {
+    val buffer = ByteArray(bufferBytes)
+    var copied = 0L
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) return
+        copied += read
+        if (copied > ceiling) throw IOException("Not enough space on the phone")
+        output.write(buffer, 0, read)
     }
 }
 

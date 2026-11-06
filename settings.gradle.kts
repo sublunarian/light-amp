@@ -11,9 +11,11 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         // The LP3 keyboard, which the SDK pulls from JitPack; no credentials needed.
+        // Light's group only: anyone can publish to JitPack, so it is never a fallback.
         maven {
             name = "JitPack"
             url = uri("https://jitpack.io")
+            content { includeGroup("com.github.lightphone") }
         }
     }
     versionCatalogs {

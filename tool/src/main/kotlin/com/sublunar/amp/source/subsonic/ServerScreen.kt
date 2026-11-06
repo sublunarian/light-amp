@@ -80,7 +80,8 @@ class ServerScreen(
         val name = user ?: config?.username.orEmpty()
         val storedLength = config?.password?.length ?: 0
         val passwordSet = newPass?.isNotEmpty() ?: (storedLength > 0)
-        val dots = "•".repeat((newPass?.length ?: storedLength).coerceIn(0, 24))
+        // A saved password's dots don't give away its length.
+        val dots = "•".repeat(newPass?.length?.coerceIn(0, 24) ?: 8)
 
         ListScreen(
             onBack = { goBack() },
@@ -260,7 +261,10 @@ class ServerScreen(
         // A different address or account may mean a different library, so the
         // cached rows can't be trusted; the same server with a new password
         // can. The cache is the active source's: another source's is left alone.
-        val movedServer = editing.baseUrl != checked.baseUrl || editing.username != checked.username
+        // http:// becoming https:// on the same address is the same server (see securedBase).
+        val sameAddress = editing.baseUrl.substringAfter("://")
+            .equals(checked.baseUrl.substringAfter("://"), ignoreCase = true)
+        val movedServer = !sameAddress || editing.username != checked.username
         val reload = movedServer && App.source.value.id == editing.id
         if (reload) {
             App.playback.stop()

@@ -21,13 +21,14 @@ android {
      * the build still works — it falls back to the shared development key that
      * ships in Light's SDK, which is right for side-loading your own builds and
      * wrong for anything published, since everyone building a tool has it.
+     * When `keystore.properties` names a keystore that isn't there, the release
+     * build fails instead.
      */
     val releaseKeystore = Properties().apply {
         val file = rootProject.file("keystore.properties")
         if (file.exists()) file.inputStream().use { load(it) }
     }
-    val canSignRelease = releaseKeystore.getProperty("storeFile")
-        ?.let { File(it).exists() } == true
+    val canSignRelease = releaseKeystore.getProperty("storeFile") != null
 
     signingConfigs {
         create("lightsdkDev") {

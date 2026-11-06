@@ -88,6 +88,19 @@ class PendingActions(private val settings: AppSettings) {
     }
 
     /**
+     * A source taken out of Amp: what is queued for it goes, since no server
+     * will ever be sent it. One with no source is anyone's, and stays.
+     */
+    suspend fun forgetSource(sourceId: String) {
+        lock.withLock {
+            val queue = decode(settings.pendingActions())
+            val left = queue.filterNot { it.about?.sourceId == sourceId }
+            if (left.size == queue.size) return@withLock
+            settings.setPendingActions(encode(left))
+        }
+    }
+
+    /**
      * Send everything waiting for [sourceId], oldest first — see [replay] — and
      * return the reasons for what the server refused, for the caller to say.
      * Another source's entries are left where they are.

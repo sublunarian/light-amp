@@ -34,7 +34,7 @@ class ClientFactoryTest {
         kind = SourceKind.SUBSONIC,
         name = "Navidrome",
         baseUrl = "https://music.example.com",
-        username = "armin",
+        username = "kim",
         password = "pw",
     )
 
@@ -49,7 +49,7 @@ class ClientFactoryTest {
     fun `a Subsonic source connects with its own login`() {
         clientOf(subsonic) {
             assertEquals(
-                SubsonicConfig("https://music.example.com", "armin", "pw", null),
+                SubsonicConfig("https://music.example.com", "kim", "pw", null),
                 assertIs<SubsonicClient>(it).config,
             )
         }

@@ -10,9 +10,10 @@ import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.md5Hex
-import io.ktor.client.call.body
-import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.isSuccess
+import io.ktor.utils.io.readRemaining
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.io.readByteArray
 
 /**
  * What a cover is wanted for, which decides whether it may cost cellular data —
@@ -201,19 +203,26 @@ class ArtworkLoader(
     private suspend fun download(url: String?): CoverFetch {
         if (url == null) return CoverFetch.None("no url")
         return try {
-            val response = http.get(url)
-            val status = response.status.value
-            when {
-                response.status.isSuccess() -> {
-                    val bytes = response.body<ByteArray>()
-                    // Whether they are a picture is settled in [writeDisk]: Subsonic
-                    // says "not found" with a 200.
-                    if (bytes.isNotEmpty()) CoverFetch.Got(bytes) else CoverFetch.None("empty body")
+            http.prepareGet(url).execute { response ->
+                val status = response.status.value
+                when {
+                    response.status.isSuccess() -> {
+                        // Read up to a cap, not whole: OkHttp unpacks gzip, and a few
+                        // KB can unpack to more than the app's memory.
+                        val bytes = response.bodyAsChannel().readRemaining(MAX_COVER_BYTES + 1L).readByteArray()
+                        when {
+                            bytes.size > MAX_COVER_BYTES -> CoverFetch.None("too large")
+                            // Whether they are a picture is settled in [writeDisk]: Subsonic
+                            // says "not found" with a 200.
+                            bytes.isNotEmpty() -> CoverFetch.Got(bytes)
+                            else -> CoverFetch.None("empty body")
+                        }
+                    }
+                    // Refusals about *us* or about the moment, not about the cover.
+                    status == 401 || status == 403 || status == 408 || status == 429 || status >= 500 ->
+                        CoverFetch.Failed("HTTP $status")
+                    else -> CoverFetch.None("HTTP $status")
                 }
-                // Refusals about *us* or about the moment, not about the cover.
-                status == 401 || status == 403 || status == 408 || status == 429 || status >= 500 ->
-                    CoverFetch.Failed("HTTP $status")
-                else -> CoverFetch.None("HTTP $status")
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -517,16 +526,6 @@ class ArtworkLoader(
         }
     }
 
-    private fun calculateInSampleSize(width: Int, height: Int, target: Int): Int {
-        if (target <= 0 || width <= 0 || height <= 0) return 1
-        var sample = 1
-        val smallest = minOf(width, height)
-        while (smallest / (sample * 2) >= target) {
-            sample *= 2
-        }
-        return sample
-    }
-
     /**
      * The panel's own width, set by the first themed frame: the fetch size on any
      * panel, as [FETCH_PX] is on the LP3, which stands in until then.
@@ -577,5 +576,26 @@ class ArtworkLoader(
 
         /** Older than this, a half-written cover belongs to a process that is gone. */
         private const val STALE_PARTIAL_MS = 60L * 60 * 1000
+
+        /**
+         * The longest side a cover decodes to. Sized by its short side alone, a
+         * long, thin picture decodes past the 100 MB Android will draw, and the
+         * draw throws every time that cover is shown.
+         */
+        private const val MAX_DECODED_SIDE_PX = 4096
+
+        /** Above the ~20 MB originals some servers keep. */
+        private const val MAX_COVER_BYTES = 32 shl 20
+
+        internal fun calculateInSampleSize(width: Int, height: Int, target: Int): Int {
+            if (target <= 0 || width <= 0 || height <= 0) return 1
+            var sample = 1
+            val smallest = minOf(width, height)
+            val largest = maxOf(width, height)
+            while (smallest / (sample * 2) >= target || largest / sample > MAX_DECODED_SIDE_PX) {
+                sample *= 2
+            }
+            return sample
+        }
     }
 }
