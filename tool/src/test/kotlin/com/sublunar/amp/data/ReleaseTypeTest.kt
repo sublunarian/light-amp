@@ -1,11 +1,8 @@
 package com.sublunar.amp.data
 
 import com.sublunar.amp.ui.screens.recordGroups
-import com.sublunar.amp.ui.screens.knowsReleaseTypes
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 /** How an album's release types decide its group on an artist's page. */
 class ReleaseTypeTest {
@@ -50,11 +47,5 @@ class ReleaseTypeTest {
             ),
             recordGroups(albums).map { it.heading to it.albums.map { a -> a.id } },
         )
-    }
-
-    @Test
-    fun `release types are known only where something is more than an album`() {
-        assertFalse(knowsReleaseTypes(listOf(album("a", ReleaseType.ALBUM))))
-        assertTrue(knowsReleaseTypes(listOf(album("a", ReleaseType.ALBUM), album("e", ReleaseType.EP))))
     }
 }

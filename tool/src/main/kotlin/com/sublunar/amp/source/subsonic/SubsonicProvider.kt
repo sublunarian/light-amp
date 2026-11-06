@@ -61,6 +61,7 @@ object SubsonicProvider : SourceProvider {
         originalDownload = features.allows(ServerFeatures.DOWNLOAD),
         serverScan = features.allows(ServerFeatures.SCAN_STATUS),
         libraries = true,
+        releaseTypes = true,
     )
 
     // Built again whenever the record changes, its features with it, so a

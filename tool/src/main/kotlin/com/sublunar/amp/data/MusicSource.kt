@@ -361,6 +361,13 @@ data class MusicSource(
     val supportsDownloads: Boolean get() = capabilities.downloads
 
     /**
+     * Whether an artist's records can be grouped by release type: Subsonic
+     * servers, Plex and the phone's files say what each record is (a record
+     * that says nothing is an album); Jellyfin keeps no release types at all.
+     */
+    val supportsReleaseTypes: Boolean get() = capabilities.releaseTypes
+
+    /**
      * Whether the server won't let this account keep copies — see
      * ServerFeatures.KEEP_COPIES. Respected rather than routed round: Jellyfin
      * has a call that hands over the file without asking, and using it would

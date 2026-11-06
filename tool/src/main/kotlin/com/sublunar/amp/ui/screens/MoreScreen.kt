@@ -268,7 +268,7 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
         }
     }
 
-    // Release Type is offered only where the library knows release types; a
+    // Release Type is offered only where the source knows release types; a
     // stored choice of it reads as the dates' order where it doesn't.
     LibraryPage.ARTIST -> PageSetting(artistOrderShown().label, open = { ArtistAlbumOrderScreen(it) })
     // Fixed orders, named as they actually are — see LibraryRepository.

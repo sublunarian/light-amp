@@ -86,7 +86,7 @@ enum class ArtistSort(val credit: ArtistCredit) {
     MOST_PLAYED(ArtistCredit.ALBUM),
 }
 
-/** An artist's own records: grouped by [ReleaseType] where the library knows them (the default; by date elsewhere), by date, or by name. */
+/** An artist's own records: grouped by [ReleaseType] where the source knows them (the default; by date elsewhere), by date, or by name. */
 enum class ArtistAlbumOrder(val label: String) {
     DATE_RELEASED("Date Released"),
     NAME("Name"),

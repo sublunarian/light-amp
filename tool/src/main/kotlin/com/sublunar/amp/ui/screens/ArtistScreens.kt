@@ -122,13 +122,14 @@ class ArtistDetailScreen(
         val ordered = remember(artistAlbums, order) {
             if (order == ArtistAlbumOrder.NAME) artistAlbums.sortedBy { nameKey(it.title) } else artistAlbums
         }
-        // Grouped only where the library knows release types (see
-        // knowsReleaseTypes); otherwise the records keep their dates' order.
+        // Grouped only where the source knows release types (see
+        // MusicSource.supportsReleaseTypes); otherwise the records keep their dates' order.
         // Singles and EPs as one, the dates' order in each group.
         // Every group headed, one alone included, so the page is the same shape
         // before and after the popular tracks come.
-        val groups = remember(artistAlbums, albums, order) {
-            if (order == ArtistAlbumOrder.RELEASE_TYPE && knowsReleaseTypes(albums)) recordGroups(artistAlbums) else null
+        val typed = App.source.collectAsState().value.supportsReleaseTypes
+        val groups = remember(artistAlbums, typed, order) {
+            if (order == ArtistAlbumOrder.RELEASE_TYPE && typed) recordGroups(artistAlbums) else null
         }
         val shown = remember(groups, ordered) { groups?.flatMap { it.albums } ?: ordered }
         // Without covers, records under a heading sit a step in from it.
@@ -505,25 +506,22 @@ class GroupPlayScreen(
 @Composable
 internal fun artistOrderShown(): ArtistAlbumOrder {
     val order by App.settings.artistAlbumOrder.state.collectAsState()
-    val albums by App.library.albums.collectAsState()
-    return if (order == ArtistAlbumOrder.RELEASE_TYPE && !knowsReleaseTypes(albums)) {
+    val typed = App.source.collectAsState().value.supportsReleaseTypes
+    return if (order == ArtistAlbumOrder.RELEASE_TYPE && !typed) {
         ArtistAlbumOrder.DATE_RELEASED
     } else {
         order
     }
 }
 
-/** Whether any of [albums] is filed as other than an album: what makes grouping by release type mean anything. */
-internal fun knowsReleaseTypes(albums: List<Album>): Boolean = albums.any { it.releaseType != ReleaseType.ALBUM }
-
 /** An artist's page's order: by date, or grouped by release type. */
 class ArtistAlbumOrderScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val order = artistOrderShown()
-        val albums by App.library.albums.collectAsState()
-        // Release Type only where the library knows them — see knowsReleaseTypes.
-        val options = ArtistAlbumOrder.entries.filter { it != ArtistAlbumOrder.RELEASE_TYPE || knowsReleaseTypes(albums) }
+        // Release Type only where the source knows them — see MusicSource.supportsReleaseTypes.
+        val typed = App.source.collectAsState().value.supportsReleaseTypes
+        val options = ArtistAlbumOrder.entries.filter { it != ArtistAlbumOrder.RELEASE_TYPE || typed }
         ListScreen(onBack = { goBack() }, title = "Sort by", subtitle = "Records", headingRows = true) {
             ScrollableList {
                 items(options) { option ->

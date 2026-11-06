@@ -914,7 +914,7 @@ class LibrarySync(
         Log.i("AmpSync", "server scan: STARTED, waited $waited ms")
     }
 
-    /** What each server or scan says its albums are — what decides whether Release Type is offered. */
+    /** What each server or scan says its albums are: the evidence when an artist page groups wrongly. */
     private fun logReleaseTypes(of: String, albums: List<Album>) {
         val counts = albums.groupingBy { it.releaseType }.eachCount().entries
             .sortedBy { it.key.ordinal }.joinToString { "${it.key.heading} ${it.value}" }

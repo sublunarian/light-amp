@@ -207,8 +207,31 @@ class PlexClient(
 
     override suspend fun getAllAlbums(musicFolderId: String?): List<Album> =
         sectionIds(musicFolderId)
-            .flatMap { section -> pagedSection(section, ALBUM_TYPE).map { it.toAlbum() } }
+            .flatMap { section -> typedAlbums(section) }
             .distinctBy { it.id }
+
+    /**
+     * A section's albums, each with its type. Plex leaves Format and Subformat
+     * off a section's listing (it sends them only for one album at a time), so
+     * each type is asked for as a filter instead: a few small listings, not
+     * one request per album.
+     */
+    private suspend fun typedAlbums(section: String): List<Album> {
+        val albums = pagedSection(section, ALBUM_TYPE)
+        val answers = TYPE_FILTERS.mapNotNull { (field, type) ->
+            runCatching {
+                type to paged("/library/sections/$section/all", listOf("type" to ALBUM_TYPE, field to type)).map { it.ratingKey }
+            }.getOrElse {
+                if (it is CancellationException) throw it
+                Log.w("AmpSync", "plex $field=$type listing failed: ${it.logName()}")
+                null
+            }
+        }
+        val types = typesByAlbum(answers, albums.size) { type ->
+            Log.w("AmpSync", "plex ignored the $type filter, every album came back; left untyped")
+        }
+        return albums.map { it.toAlbum(types[it.ratingKey].orEmpty()) }
+    }
 
     /** Everything of one type in a section, following the pages to the end, in [TITLE_SORT] order. */
     private suspend fun pagedSection(section: String, type: String): List<PlexMetadata> =
@@ -918,7 +941,8 @@ class PlexClient(
 
     // --- Mapping -------------------------------------------------------------
 
-    private fun PlexMetadata.toAlbum(): Album = Album(
+    /** [extraTypes]: what the type filters said of it — see [typedAlbums]. */
+    private fun PlexMetadata.toAlbum(extraTypes: List<String> = emptyList()): Album = Album(
         id = ratingKey,
         title = title,
         artist = parentTitle ?: "Unknown Artist",
@@ -935,7 +959,7 @@ class PlexClient(
         lastPlayedMs = (lastViewedAt ?: 0L) * 1000L,
         rating = starsFrom(userRating),
         genre = genres.firstOrNull()?.tag.orEmpty(),
-        releaseType = ReleaseType.of((formats + subformats).map { it.tag }),
+        releaseType = ReleaseType.of((formats + subformats).map { it.tag } + extraTypes),
     )
 
     private fun PlexMetadata.toTrack(): Track = Track(
@@ -996,6 +1020,15 @@ class PlexClient(
 
         private const val ARTIST_TYPE = "8"
         private const val ALBUM_TYPE = "9"
+
+        /** The album types Amp groups by, as Plex files them: the primary Format, then the secondary Subformats. */
+        private val TYPE_FILTERS = listOf(
+            "album.format" to "EP",
+            "album.format" to "Single",
+            "album.subformat" to "Live",
+            "album.subformat" to "Soundtrack",
+            "album.subformat" to "Compilation",
+        )
         private const val TRACK_TYPE = "10"
 
         /** What Plexamp asks for when it shows Popular Tracks. */
@@ -1058,6 +1091,29 @@ class PlexClient(
 
 /** [status] is the HTTP status when the server gave one — see Reachability, which reads a 5xx as "not there". */
 class PlexException(message: String, status: Int? = null) : ServerException(message, status)
+
+/**
+ * Each album's types, from what each type filter answered ([answers]: the type
+ * and the albums it returned). A filter Plex doesn't know is ignored rather
+ * than refused, so an answer holding all [total] albums of a section says
+ * nothing and is dropped (told through [ignored]); a one-album section can't
+ * tell the two apart and keeps it.
+ */
+internal fun typesByAlbum(
+    answers: List<Pair<String, List<String>>>,
+    total: Int,
+    ignored: (type: String) -> Unit = {},
+): Map<String, List<String>> {
+    val types = mutableMapOf<String, MutableList<String>>()
+    for ((type, ids) in answers) {
+        if (total > 1 && ids.size >= total) {
+            ignored(type)
+            continue
+        }
+        ids.forEach { types.getOrPut(it) { mutableListOf() } += type }
+    }
+    return types
+}
 
 /** The timestamp at the end of a Plex picture path — see PlexClient.coverIdVersioned. */
 private val PLEX_VERSIONED_COVER = Regex("""/(thumb|art)/\d+$""")

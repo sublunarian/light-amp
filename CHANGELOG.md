@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Plex artist pages now group records by release type.
+- Release Type sorting shows on every source except Jellyfin, which
+  doesn't keep release types, even when an artist only has albums.
+
 ## 0.9.0
 
 ### Added

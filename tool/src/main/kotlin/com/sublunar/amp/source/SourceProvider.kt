@@ -114,4 +114,6 @@ data class SourceCapabilities(
     val originalDownload: Boolean,
     val serverScan: Boolean,
     val libraries: Boolean,
+    /** Whether its records say what kind they are (album, EP, live…) — see MusicSource.supportsReleaseTypes. */
+    val releaseTypes: Boolean,
 )

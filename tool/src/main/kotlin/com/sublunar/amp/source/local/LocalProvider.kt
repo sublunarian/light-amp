@@ -48,6 +48,7 @@ object LocalProvider : SourceProvider {
         originalDownload = true,
         serverScan = false,
         libraries = false,
+        releaseTypes = true,
     )
 
     /** There is no server behind the phone's own music at all. */
