@@ -22,6 +22,12 @@ data class CoverSyncResult(
     val fetchedBytes: Long,
     /** Why it stopped short, or null when it got to the end. */
     val stopped: String?,
+    /** Of the missing: the server has no such picture. */
+    val none: Int = 0,
+    /** Of the missing: the server answered with something that isn't a picture. */
+    val notPictures: Int = 0,
+    /** Of the missing: no usable answer, to be asked again another day. */
+    val failed: Int = 0,
 )
 
 /**
@@ -39,7 +45,7 @@ data class CoverSyncResult(
 class CoverSync(
     private val isOnDisk: (String) -> Boolean,
     private val fetch: suspend (String) -> CoverFetch,
-    /** Write it; false when the bytes are not a picture after all. */
+    /** Write it; false when the bytes are not a picture after all, or the write failed. */
     private val store: (String, ByteArray) -> Boolean,
     private val cacheBytes: () -> Long,
     /**
@@ -67,6 +73,9 @@ class CoverSync(
         var fetched = 0
         var fetchedBytes = 0L
         var stopped: String? = null
+        var none = 0
+        var notPictures = 0
+        var failed = 0
         if (missing.isEmpty()) return CoverSyncResult(ids.size, 0, 0, 0L, null)
 
         onProgress(0, missing.size)
@@ -82,6 +91,7 @@ class CoverSync(
                     failuresInARow = 0
                     if (!store(id, answer.bytes)) {
                         knownMissing += id
+                        notPictures++
                         continue
                     }
                     fetched++
@@ -101,8 +111,10 @@ class CoverSync(
                 is CoverFetch.None -> {
                     failuresInARow = 0
                     knownMissing += id
+                    none++
                 }
                 is CoverFetch.Failed -> {
+                    failed++
                     // A server that has stopped answering isn't asked for every cover left, a timeout each.
                     if (++failuresInARow >= MAX_FAILURES_IN_A_ROW) {
                         stopped = "server not answering (${answer.why})"
@@ -111,11 +123,11 @@ class CoverSync(
                 }
             }
         }
-        return CoverSyncResult(ids.size, missing.size, fetched, fetchedBytes, stopped)
+        return CoverSyncResult(ids.size, missing.size, fetched, fetchedBytes, stopped, none, notPictures, failed)
     }
 
     private companion object {
         const val MAX_FAILURES_IN_A_ROW = 5
-        const val PROGRESS_EVERY = 100
+        const val PROGRESS_EVERY = 500
     }
 }

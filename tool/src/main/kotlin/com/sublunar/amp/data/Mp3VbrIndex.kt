@@ -62,12 +62,18 @@ object Mp3VbrIndex {
         val walk = walk(data, first) ?: return Outcome.Unparseable
         val index = buildIndexFrame(first, walk)
         val out = File(file.parentFile, file.name + INDEXING_SUFFIX)
-        out.outputStream().buffered().use { o ->
-            // The ID3v2 tag, if there is one, verbatim; then the index; then
-            // every frame and whatever followed them, verbatim.
-            data.copyTo(o, 0, tagEnd)
-            o.write(index)
-            data.copyTo(o, first, data.size)
+        try {
+            out.outputStream().buffered().use { o ->
+                // The ID3v2 tag, if there is one, verbatim; then the index; then
+                // every frame and whatever followed them, verbatim.
+                data.copyTo(o, 0, tagEnd)
+                o.write(index)
+                data.copyTo(o, first, data.size)
+            }
+        } catch (e: Exception) {
+            // A full phone fails here, and a second copy of the song mustn't wait for the next start's sweep.
+            out.delete()
+            throw e
         }
         if (!out.renameTo(file)) {
             out.delete()

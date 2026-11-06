@@ -2,6 +2,7 @@ package com.sublunar.amp.data
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -63,5 +64,21 @@ class LyricsParseTest {
     @Test
     fun `plain text with no stamps is not synced lyrics`() {
         assertNull(LyricsRepository.parseLrc("Just some words\nAnd some more"))
+    }
+
+    @Test
+    fun `stored lyrics read back as they were kept`() {
+        val timed = Lyrics(listOf(LyricLine(12_340L, "First"), LyricLine(65_700L, "Second")), synced = true)
+        assertEquals(timed, LyricsRepository.parseStored(LyricsRepository.encodeStored(timed)))
+    }
+
+    @Test
+    fun `a stored plain line opening with more digits than a time holds stays plain text`() {
+        val parsed = LyricsRepository.parseStored("[99999999999999999999] text\nAnother line")!!
+        assertEquals(
+            listOf(LyricLine(null, "[99999999999999999999] text"), LyricLine(null, "Another line")),
+            parsed.lines,
+        )
+        assertFalse(parsed.synced)
     }
 }

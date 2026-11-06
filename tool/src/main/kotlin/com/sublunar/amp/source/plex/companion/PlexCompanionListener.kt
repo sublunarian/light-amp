@@ -1,11 +1,10 @@
 package com.sublunar.amp.source.plex.companion
 
+import com.sublunar.amp.log.Log
 import com.sublunar.amp.data.NetworkGate
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
-import java.net.Inet4Address
-import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicReference
@@ -24,20 +23,14 @@ import kotlinx.coroutines.launch
  * Polling stays the fallback in [PlexCompanionOutput], for a player that won't
  * subscribe or a network that won't route back here.
  */
-class PlexCompanionListener(private val onTimeline: (String) -> Unit) {
+class PlexCompanionListener(
+    /** The steered player's `http://host:port`: only pushes from that host are read. */
+    private val playerUrl: () -> String?,
+    private val onTimeline: (String) -> Unit,
+) {
 
     private val server = AtomicReference<ServerSocket?>(null)
     private var job: Job? = null
-
-    /** This phone's address on the LAN, for the player to answer at. */
-    fun localAddress(): String? = runCatching {
-        NetworkInterface.getNetworkInterfaces().toList()
-            .filter { it.isUp && !it.isLoopback }
-            .flatMap { it.inetAddresses.toList() }
-            .filterIsInstance<Inet4Address>()
-            .firstOrNull { !it.isLoopbackAddress }
-            ?.hostAddress
-    }.getOrNull()
 
     /** Open the port and start accepting. Idempotent; returns the port. */
     fun start(scope: CoroutineScope): Int? {
@@ -48,10 +41,18 @@ class PlexCompanionListener(private val onTimeline: (String) -> Unit) {
         val opened = runCatching { ServerSocket(0) }.getOrNull() ?: return null
         server.set(opened)
         job = scope.launch(Dispatchers.IO) {
+            var strangerLogged = false
             while (isActive && !opened.isClosed) {
                 val socket = runCatching { opened.accept() }.getOrNull() ?: break
+                // The port is open to every app on the phone and every device on
+                // the network: anyone but the steered player is hung up on unread.
+                val fromPlayer = pushedBy(playerUrl(), socket.inetAddress?.hostAddress)
+                if (!fromPlayer && !strangerLogged) {
+                    Log.i(PlexCompanionFamily.logTag, "a push not from the player — hung up on unread")
+                    strangerLogged = true
+                }
                 // Closed since the port was opened: hang up unread, unanswered.
-                if (NetworkGate.isOpen()) runCatching { serve(socket) }
+                if (fromPlayer && NetworkGate.isOpen()) runCatching { serve(socket) }
                 runCatching { socket.close() }
             }
             // Let go of a port nobody is answering on any more, so the next
@@ -92,6 +93,13 @@ class PlexCompanionListener(private val onTimeline: (String) -> Unit) {
         const val RESPONSE = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     }
 }
+
+/**
+ * Whether a connection from [peer] is the player at [directUrl] (`http://host:port`).
+ * A player at a hostname or an IPv6 address never matches, and is polled instead.
+ */
+internal fun pushedBy(directUrl: String?, peer: String?): Boolean =
+    peer != null && directUrl?.substringAfter("://")?.substringBeforeLast(':') == peer
 
 /**
  * One HTTP request off [input]: the head up to the blank line that ends it,

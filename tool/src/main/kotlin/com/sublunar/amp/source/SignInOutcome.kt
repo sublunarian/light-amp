@@ -1,5 +1,8 @@
 package com.sublunar.amp.source
 
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
+import io.ktor.http.URLParserException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -39,8 +42,16 @@ suspend fun firstAnsweringSpelling(
 ): SignInOutcome {
     val spellings = ServerAddress.candidates(typed)
     var best: SignInOutcome.Missed? = null
-    for (uri in spellings) {
-        when (val outcome = attempt(uri)) {
+    for ((index, uri) in spellings.withIndex()) {
+        val outcome = attempt(uri)
+        val came = when (outcome) {
+            is SignInOutcome.Found -> "found"
+            is SignInOutcome.Settled -> "answered, settled"
+            is SignInOutcome.Missed -> if (outcome.answered) "answered, missed" else "no answer"
+        }
+        // The scheme alone: the rest of the address is the user's.
+        Log.i(TAG, "sign-in: spelling ${index + 1} of ${spellings.size}, ${uri.substringBefore("://", "no scheme")}: $came")
+        when (outcome) {
             is SignInOutcome.Missed -> if (best == null || outcome.answered || !best.answered) best = outcome
             else -> return outcome
         }
@@ -58,6 +69,7 @@ fun Throwable.causes(): Sequence<Throwable> = generateSequence(this) { it.cause 
 
 /** Why nothing answered, in words that point at a fix. */
 fun unreachedReason(error: Throwable): String {
+    Log.i(TAG, "sign-in: no answer: ${error.logName()}")
     val chain = error.causes().toList()
     return when {
         chain.any { it is UnknownHostException } ->
@@ -74,6 +86,11 @@ fun unreachedReason(error: Throwable): String {
         chain.any { it is ConnectException || it is SocketTimeoutException } ->
             "Nothing answered at that address. Check the server is running and the " +
                 "port is right."
-        else -> error.message ?: "Couldn't connect."
+        chain.any { it is URLParserException } ->
+            "That address can't be read. Check it for typos, such as letters in the port."
+        // Never the query: a Subsonic URL carries the login there.
+        else -> error.message?.substringBefore('?') ?: "Couldn't connect."
     }
 }
+
+private const val TAG = "AmpSync"

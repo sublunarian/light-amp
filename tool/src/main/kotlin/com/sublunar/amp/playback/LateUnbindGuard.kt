@@ -2,7 +2,8 @@ package com.sublunar.amp.playback
 
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logFrames
 
 /**
  * Keeps the process alive through the one crash [isLateMediaUnbind]
@@ -47,6 +48,9 @@ object LateUnbindGuard {
     /** How many have been absorbed in this process. Main thread only, like everything here. */
     private var absorbed = 0
 
+    /** Down past the framework frames to media3's posted release runnable, which is what isLateMediaUnbind matches. */
+    private const val LOGGED_FRAMES = 10
+
     /** Main thread, once per process; later calls do nothing. */
     fun install() {
         if (installed) return
@@ -70,13 +74,10 @@ object LateUnbindGuard {
                 if (!isLateMediaUnbind(e)) throw e
                 absorbed++
                 // Each one counted, so a log shows how often it happens; the
-                // stack only the first time, enough to check it against the
-                // crash it stands in for.
-                Log.w(
-                    "AmpLife",
-                    "absorbed late media3 unbind #$absorbed: the activity that bound it is gone",
-                    if (absorbed == 1) e else null,
-                )
+                // frames only the first time, one a line, enough to check it
+                // against the crash it stands in for.
+                Log.w("AmpLife", "absorbed late media3 unbind #$absorbed: the activity that bound it is gone")
+                if (absorbed == 1) e.logFrames(LOGGED_FRAMES).forEach { Log.w("AmpLife", "  at $it") }
             }
         }
     }

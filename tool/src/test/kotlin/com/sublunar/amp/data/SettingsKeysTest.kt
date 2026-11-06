@@ -139,4 +139,31 @@ class SettingsKeysTest {
             store.all(),
         )
     }
+
+    @Test
+    fun `a removed source takes its own keys with it, and only its own`() = runBlocking {
+        settings.saveSource(MusicSource("src-1", SourceKind.LOCAL, "Local Music"))
+        settings.saveSource(MusicSource("src-2", SourceKind.SUBSONIC, "Home", baseUrl = "https://x.example"))
+        settings.setActiveSource("src-1")
+        settings.setPendingActions("[]")
+        for (id in listOf("src-1", "src-2")) {
+            settings.setLastSyncedMs(id, 5)
+            settings.setSongCheck(id, SongCheck(mark = "m"))
+            settings.setCachedPlaylists(id, "[]")
+        }
+        settings.removeSource("src-1")
+        assertEquals(
+            mapOf(
+                // A fresh install's first source settles the new looks — see AppSettings.CHANGED_DEFAULTS.
+                "pref.layoutMode" to "SIMPLIFIED",
+                "pref.artworkMode" to "NONE",
+                "pref.sources" to """[{"id":"src-2","kind":"SUBSONIC","name":"Home","baseUrl":"https://x.example"}]""",
+                "state.pendingActions" to "[]",
+                "state.lastSynced.src-2" to "5",
+                "state.songCheck.src-2" to """{"mark":"m"}""",
+                "state.playlists.src-2" to "[]",
+            ),
+            store.all(),
+        )
+    }
 }

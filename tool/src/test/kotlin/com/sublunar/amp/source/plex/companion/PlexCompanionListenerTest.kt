@@ -3,6 +3,8 @@ package com.sublunar.amp.source.plex.companion
 import java.io.ByteArrayInputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * A pushing player keeps its connection open for the answer, so the listener
@@ -36,5 +38,15 @@ class PlexCompanionListenerTest {
     fun `a body cut short is read as far as it goes`() {
         val head = "POST /:/timeline HTTP/1.1\r\nContent-Length: 500\r\n\r\n"
         assertEquals(head + timeline, read(head + timeline))
+    }
+
+    @Test
+    fun `only the steered player's own address may push`() {
+        assertTrue(pushedBy("http://192.168.1.5:32500", "192.168.1.5"))
+        // Another app on the phone, another device, or nobody being steered.
+        assertFalse(pushedBy("http://192.168.1.5:32500", "127.0.0.1"))
+        assertFalse(pushedBy("http://192.168.1.5:32500", "192.168.1.50"))
+        assertFalse(pushedBy(null, "192.168.1.5"))
+        assertFalse(pushedBy("http://192.168.1.5:32500", null))
     }
 }

@@ -1,6 +1,5 @@
 package com.sublunar.amp.playback
 
-import android.util.Log
 import com.sublunar.amp.App
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.PendingAction
@@ -8,8 +7,12 @@ import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.WriteResult
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
+import com.sublunar.amp.log.logRef
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -127,15 +130,33 @@ internal class ServerReports(
     /** Identity of the queue last handed to the server — see [pushQueue]. */
     private var lastSavedQueueKey: Int? = null
 
+    /**
+     * Per-process numbers for the session ids the server is told of, so a log
+     * line tells sessions apart without naming one. The last few are enough:
+     * a stop is for the session just before. Used only inside [sessions]'
+     * lock, where every report is decided.
+     */
+    private val sessionNumbers = object : LinkedHashMap<String, Int>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>?): Boolean =
+            size > KEPT_SESSION_NUMBERS
+    }
+    private var sessionsSeen = 0
+
+    /** The small talk whose last try failed, and how many in a row — see [talked]. */
+    private val failingTalk = ConcurrentHashMap<String, Int>()
+
     init {
         // Sends the timeline reports, in order — see [timelineOut].
         scope.launch {
             for (send in timelineOut) {
                 when (send) {
-                    is TimelineSend.Report -> runCatching {
-                        val r = send.report
-                        send.client.reportTimeline(r.sessionId, r.trackId, r.state, r.positionMs, r.durationMs)
-                    }
+                    is TimelineSend.Report -> talked(
+                        "timeline",
+                        runCatching {
+                            val r = send.report
+                            send.client.reportTimeline(r.sessionId, r.trackId, r.state, r.positionMs, r.durationMs)
+                        },
+                    )
                     is TimelineSend.Flush -> send.done.complete(Unit)
                 }
             }
@@ -304,9 +325,13 @@ internal class ServerReports(
         if (!metadataAllowed()) return false
         val client = serverClient.value ?: return false
         if (news) {
+            val known = sessionNumbers[report.sessionId]
+            val number = known ?: ++sessionsSeen
+            sessionNumbers[report.sessionId] = number
+            val song = if (queue.value.getOrNull(index.value)?.id == report.trackId) "idx=${index.value}" else "the song before"
             Log.i(
                 "AmpSession",
-                "${report.state.name.lowercase()} ${report.trackId} under ${report.sessionId}",
+                "${report.state.name.lowercase()} #$number${if (known == null) " (new)" else ""} on $song",
             )
         }
         return timelineOut.trySend(TimelineSend.Report(client, report)).isSuccess
@@ -383,7 +408,22 @@ internal class ServerReports(
         if (!metadataAllowed()) return
         announcedPlay = play
         val client = serverClient.value ?: return
-        scope.launch { runCatching { client.scrobble(track.id, submission = false) } }
+        scope.launch { talked("now-playing", runCatching { client.scrobble(track.id, submission = false) }) }
+    }
+
+    /**
+     * How a piece of small talk went, for the log: a run of failures is said
+     * when it starts and when it ends, as a heartbeat fails every ten seconds
+     * while it lasts.
+     */
+    private fun talked(kind: String, result: Result<*>) {
+        val e = result.exceptionOrNull()
+        if (e == null) {
+            failingTalk.remove(kind)?.let { Log.i("AmpSession", "$kind answers again, after $it failed") }
+            return
+        }
+        if (e is CancellationException) return
+        if (failingTalk.merge(kind, 1) { a, b -> a + b } == 1) Log.w("AmpSession", "$kind failed: ${e.logName()}")
     }
 
     /**
@@ -410,7 +450,8 @@ internal class ServerReports(
         val at = System.currentTimeMillis()
         val client = serverClient.value
         // The source the play was heard on, the only one it is ever sent to.
-        val source = App.source.value.id
+        val heardOn = App.source.value
+        val source = heardOn.id
         scope.launch {
             // Local first, so the library's order follows the listening whether
             // or not the server ever hears of it.
@@ -428,9 +469,9 @@ internal class ServerReports(
             // Not kept, as the server would refuse it every time. Said once per
             // source and run: a server that refuses one play tends to refuse
             // them all.
-            if (result is WriteResult.Refused) {
-                Log.w("AmpSync", "play of ${track.id} refused: ${result.reason}")
-                if (playRefusalSaid.add(source)) runCatching { App.tell("Couldn't save\n${result.reason}") }
+            if (result is WriteResult.Refused && playRefusalSaid.add(source)) {
+                Log.w("AmpSync", "plays refused by ${heardOn.logRef}: said once this run")
+                runCatching { App.tell("Couldn't save\n${result.reason}") }
             }
         }
     }
@@ -459,7 +500,7 @@ internal class ServerReports(
         val key = 31 * ids.hashCode() + currentId.hashCode()
         if (!force && key == lastSavedQueueKey) return
         lastSavedQueueKey = key
-        runCatching { client.savePlayQueue(ids, currentId, positionMs.value) }
+        talked("queue save", runCatching { client.savePlayQueue(ids, currentId, positionMs.value) })
     }
 
     private companion object {
@@ -477,6 +518,9 @@ internal class ServerReports(
          * off, and far enough ahead for another device to resume.
          */
         const val MAX_SERVER_QUEUE = 100
+
+        /** Session numbers kept for the log — see [sessionNumbers]. */
+        const val KEPT_SESSION_NUMBERS = 4
     }
 }
 

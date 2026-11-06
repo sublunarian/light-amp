@@ -1,15 +1,20 @@
 package com.sublunar.amp.data
 
 import android.os.StatFs
-import android.util.Log
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
 import java.io.BufferedOutputStream
 import java.io.File
+import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 
 /**
@@ -101,11 +106,15 @@ class DownloadStore(private val filesDir: File) {
         durationMs: Long = 0,
     ): Fetched =
         withContext(Dispatchers.IO) {
+            // The id is the file's name, and one that is a path would put the
+            // server's bytes outside this source's folder.
+            if ('/' in trackId) return@withContext Fetched.Failed("Server sent a track id that isn't a file name")
             val target = fileFor(sourceId, trackId, format)
             target.parentFile?.mkdirs()
             val partial = File(target.parentFile, "${target.name}$PART_SUFFIX")
+            val kind = endpointKind(url.toHttpUrlOrNull()?.encodedPath)
+            val startedMs = System.currentTimeMillis()
             try {
-                val startedMs = System.currentTimeMillis()
                 // Through the wall, like every other byte — see NetworkGate: it
                 // asks at the connect, the handshake, each redirect and retry,
                 // cuts the body when the rule closes, and can be slammed.
@@ -119,8 +128,7 @@ class DownloadStore(private val filesDir: File) {
                 try {
                     call.execute().use { response ->
                         if (!response.isSuccessful) {
-                            // The path only: the query can carry the token.
-                            Log.w(TAG, "download $trackId: HTTP ${response.code} for ${response.request.url.encodedPath}")
+                            Log.w(TAG, "download: HTTP ${response.code} for $kind")
                             return@withContext Fetched.Refused(response.code)
                         }
                         // A server can answer 200 with an error *document* — Subsonic
@@ -129,15 +137,18 @@ class DownloadStore(private val filesDir: File) {
                         // fetched again.
                         val type = response.body.contentType()
                         if (type != null && (type.type == "text" || isDocumentSubtype(type.subtype))) {
-                            Log.w(TAG, "download $trackId: $type, not audio, from ${response.request.url.encodedPath}")
+                            Log.w(TAG, "download: ${type.type}/${type.subtype}, not audio, from $kind")
                             return@withContext Fetched.Failed("Server sent $type instead of audio")
                         }
+                        // The body ends when the server says, so the phone's free
+                        // space mustn't be what ends it.
+                        val room = freeBytes().takeIf { it > 0 }?.minus(KEEP_FREE_BYTES) ?: Long.MAX_VALUE
                         response.body.byteStream().use { input ->
                             // 8 KiB (copyTo's default) into an unbuffered FileOutputStream
                             // is a write syscall every 8 KiB; on this hardware that costs
                             // more than the transfer does.
                             BufferedOutputStream(partial.outputStream(), BUFFER_BYTES).use { output ->
-                                input.copyTo(output, BUFFER_BYTES)
+                                copyAtMost(input, output, room, BUFFER_BYTES)
                             }
                         }
                     }
@@ -146,12 +157,8 @@ class DownloadStore(private val filesDir: File) {
                 }
                 // Cancelled while the last bytes arrived: not a download.
                 ensureActive()
-                val elapsedMs = System.currentTimeMillis() - startedMs
+                // A success is counted in the worker's line at its end — see Downloader.drain.
                 val bytes = partial.length()
-                if (elapsedMs > 0) {
-                    val kbPerSec = bytes * 1000 / elapsedMs / 1024
-                    Log.i(TAG, "downloaded $bytes bytes in ${elapsedMs}ms (${kbPerSec} KB/s) $trackId")
-                }
                 // A conversion that failed on the server can still answer 200
                 // with a few bytes, and kept, that is the song from then on: a
                 // file that never plays and is never fetched again. (From
@@ -159,7 +166,7 @@ class DownloadStore(private val filesDir: File) {
                 // short voice memo isn't mistaken for one.)
                 val plausible = maxOf(MIN_BYTES, durationMs / 1000 * MIN_BYTES_PER_SECOND)
                 if (bytes < plausible) {
-                    Log.w(TAG, "download $trackId: $bytes bytes for ${durationMs / 1000} s, discarded")
+                    Log.w(TAG, "download: $bytes bytes for ${durationMs / 1000} s from $kind, discarded")
                     partial.delete()
                     return@withContext Fetched.Failed(if (bytes == 0L) "Server sent an empty file" else "Server sent a broken file")
                 }
@@ -169,7 +176,11 @@ class DownloadStore(private val filesDir: File) {
                 }
                 Fetched.Saved(target)
             } catch (e: Exception) {
-                Log.w(TAG, "download failed after ${partial.length()} bytes for $trackId: ${e::class.simpleName}")
+                Log.w(
+                    TAG,
+                    "download from $kind failed after ${partial.length()} bytes, " +
+                        "${System.currentTimeMillis() - startedMs} ms: ${e.logName()}",
+                )
                 partial.delete()
                 // No `javaClass` here — the plugin sandbox forbids reflection.
                 Fetched.Failed(e.message ?: "Download failed")
@@ -245,16 +256,35 @@ class DownloadStore(private val filesDir: File) {
          */
         private const val MIN_BYTES_PER_SECOND = 1024L
 
-        private const val TAG = "Downloads"
+        private const val TAG = "AmpDl"
         private const val BUFFER_BYTES = 64 * 1024
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 30_000
         private const val PART_SUFFIX = ".part"
 
+        /** Android's own low-storage line: StorageManager warns below the smaller of 5% and this. */
+        private const val KEEP_FREE_BYTES = 500L * 1024 * 1024
+
         // 64 GB is reachable on the LP3's 128 GB only by claiming more than half
         // of what's free; a quarter still stays behind for the rest of the phone.
         private const val FREE_SPACE_SHARE = 0.75
         private const val ABSOLUTE_CEILING = 64L * 1024 * 1024 * 1024
+    }
+}
+
+/**
+ * [input] into [output] to its end, throwing once more than [ceiling] bytes
+ * have come, before any of the excess is written.
+ */
+internal fun copyAtMost(input: InputStream, output: OutputStream, ceiling: Long, bufferBytes: Int) {
+    val buffer = ByteArray(bufferBytes)
+    var copied = 0L
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) return
+        copied += read
+        if (copied > ceiling) throw IOException("Not enough space on the phone")
+        output.write(buffer, 0, read)
     }
 }
 

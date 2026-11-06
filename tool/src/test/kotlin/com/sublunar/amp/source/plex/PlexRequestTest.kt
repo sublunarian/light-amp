@@ -84,4 +84,13 @@ class PlexRequestTest {
     fun `the original file is left to be found out`() {
         assertNull(client.knownStream(track(), StreamFormat.RAW))
     }
+
+    @Test
+    fun `a path from the server without its leading slash stays on the server`() {
+        assertEquals(
+            "http://plex.example:32400/@other.example/x?download=0&X-Plex-Token=tok",
+            client.streamUrl(track(streamPath = "@other.example/x"), StreamFormat.RAW),
+        )
+        assertEquals("http://plex.example:32400/@other.example/t?X-Plex-Token=tok", client.coverArtUrl("@other.example/t"))
+    }
 }

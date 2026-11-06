@@ -1,9 +1,10 @@
 package com.sublunar.amp.playback
 
 import android.os.SystemClock
-import android.util.Log
 import androidx.media3.common.Player
 import com.sublunar.amp.data.Track
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
 import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioSource
 import java.io.File
@@ -199,7 +200,7 @@ internal class StandIn(
             val file = try {
                 Silence.fileFor(dir, length)
             } catch (e: Exception) {
-                Log.w(TAG, "no silence for ${track.id}: ${e::class.simpleName}")
+                Log.w(TAG, "no silence of ${length / 1000} s: ${e.logName()}")
                 return@launch
             }
             withContext(Dispatchers.Main.immediate) {
@@ -214,7 +215,7 @@ internal class StandIn(
                 p.repeatMode = Player.REPEAT_MODE_OFF
                 p.setMediaQueueAt(listOf(track.toAudioItem(LightAudioSource.FileSource(file))), 0, at)
                 if (outputPlaying) p.play() else p.pause()
-                Log.i(TAG, "standing in for ${track.id} at=$at playing=$outputPlaying")
+                Log.i(TAG, "standing in for idx=${index.value} at=$at playing=$outputPlaying")
                 // Only now: until the new item was in, the player could still
                 // reopen the old file.
                 scope.launch(Dispatchers.IO) { if (gen == generation) Silence.prune(dir, keep = file) }

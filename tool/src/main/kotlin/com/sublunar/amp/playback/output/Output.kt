@@ -274,6 +274,9 @@ interface OutputHost {
     val repeatMode: StateFlow<RepeatMode>
     val shuffle: StateFlow<Boolean>
 
+    /** Which queue of this process [queue] is: the N in the q#N log lines tell queues apart by. */
+    val queueBuild: Int
+
     /** The target [output] steers, or null once it has been let go: what every loop and late check asks. */
     fun steering(output: Output): OutputTarget?
 

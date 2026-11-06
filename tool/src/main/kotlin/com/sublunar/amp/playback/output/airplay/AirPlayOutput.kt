@@ -2,10 +2,10 @@ package com.sublunar.amp.playback.output.airplay
 
 import android.media.MediaExtractor
 import android.media.MediaFormat
-import android.util.Log
 import com.sublunar.amp.BuildConfig
 import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.Track
+import com.sublunar.amp.log.Log
 import com.sublunar.amp.playback.output.Disconnect
 import com.sublunar.amp.playback.output.FarEndPress
 import com.sublunar.amp.playback.output.GroupMember

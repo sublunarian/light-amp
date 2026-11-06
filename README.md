@@ -20,7 +20,10 @@ server.
 - Offline downloads, by album, playlist, track, or everything you've liked.
 - Data Mode: choose what happens off Wi-Fi. By default Amp streams on cellular
   and leaves downloads for Wi-Fi. Nothing is silently downgraded.
-- Synced lyrics.
+- Synced lyrics. When your server has no timed lyrics for a song, which is
+  most songs, Amp looks it up on lrclib.net by title, artist, album and
+  length. It does this when you show a song's lyrics and, with Synced Lyrics
+  on, for every song it downloads.
 - Song radio, on servers that have it.
 - Play counts, ratings, likes and playlist edits sync back to the server.
 - Cast to a DLNA speaker or receiver, or from Plex to another Plex player (it
@@ -28,6 +31,11 @@ server.
 - Two looks, in Settings → Appearance. New installs start simple: the phone's
   own three buttons and no artwork. Turn on Library Tabs and Enable Artwork for
   tabs along the bottom and album covers.
+- A log of what Amp did, kept on the phone for up to two weeks (1 MB at most)
+  so a problem can be looked into later. It shows when you used Amp, your
+  servers' kinds and versions and how big your library is. It never holds
+  logins, server addresses, or song, album, artist or playlist names, and Amp
+  never sends it anywhere.
 
 ## Installing
 
@@ -85,6 +93,11 @@ without adb is waiting on Light
   ([light-sdk#192](https://github.com/lightphone/light-sdk/issues/192)). Until
   then, stream and download in Opus or MP3 (MP3 on Plex), or convert the files
   to FLAC.
+- Casting to a DLNA speaker hands it your server login, and casting to a Plex
+  player hands it a key to your Plex server. Other devices on that network can
+  read both, so cast only on networks and to devices you trust. The Plex key
+  ends after two days or when the server restarts, and a cast still playing
+  then stops.
 
 Also waiting on Light:
 
@@ -101,7 +114,9 @@ Also waiting on Light:
   ([light-sdk#189](https://github.com/lightphone/light-sdk/issues/189)).
 
 [Open an issue](../../issues) for anything else, with the version from
-Settings → About.
+Settings → About. A copy of the log helps: on About, hold the version number
+and choose Save a Copy. It goes in Download/Amp, which a computer connected by
+USB can read. Read it before you attach it.
 
 ## Building
 

@@ -55,8 +55,8 @@ class JellyfinRequestTest {
     fun `the authorization header survives any player name`() {
         // A curly apostrophe can't go in a header at all, and a quote or a comma
         // ends its field early; the server percent-decodes every value.
-        val header = JellyfinClient.authorization("Armin\u2019s \"Amp\", x+y", "tok", "amp-1")
-        assertTrue("Client=\"Armin%E2%80%99s %22Amp%22%2C x%2By\"" in header, header)
+        val header = JellyfinClient.authorization("Kim\u2019s \"Amp\", x+y", "tok", "amp-1")
+        assertTrue("Client=\"Kim%E2%80%99s %22Amp%22%2C x%2By\"" in header, header)
         assertTrue("Device=\"Light Phone III\"" in header, header)
         assertTrue("DeviceId=\"amp-1\"" in header, header)
         assertTrue(header.all { it in ' '..'~' }, header)

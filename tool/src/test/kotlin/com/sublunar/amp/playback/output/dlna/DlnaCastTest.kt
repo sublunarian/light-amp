@@ -1,5 +1,9 @@
 package com.sublunar.amp.playback.output.dlna
 
+import java.io.OutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -139,6 +143,12 @@ class DlnaCastTest {
     }
 
     @Test
+    fun `didl metadata escapes the mime type a server sent`() {
+        val didl = DlnaCast.didlMetadata("http://host/a", "t", "a", "b", 1_000, mimeType = "audio/x\" foo=\"1")
+        assertTrue("http-get:*:audio/x&quot; foo=&quot;1:*" in didl, "mime type not escaped: $didl")
+    }
+
+    @Test
     fun `finds the RenderingControl endpoint separately from AVTransport`() {
         assertEquals(
             "/MediaRenderer/RenderingControl/Control",
@@ -255,17 +265,81 @@ class DlnaCastTest {
     }
 
     @Test
-    fun `a stream address in the log keeps the song and drops the credentials`() {
-        val subsonic = "http://nas:4533/rest/stream.view?u=me&t=abc&s=salt&v=1.16.1&c=amp&f=json" +
-            "&id=42&format=mp3&maxBitRate=320&timeOffset=60"
-        assertEquals(
-            "http://nas:4533/rest/stream.view?id=42&format=mp3&maxBitRate=320&timeOffset=60",
-            DlnaCast.loggable(subsonic),
+    fun `reads the first element, attributes and all`() {
+        val xml = """<friendlyName lang="en">Den</friendlyName><friendlyName>Other</friendlyName>"""
+        assertEquals("Den", DlnaCast.tagValue(xml, "friendlyName"))
+    }
+
+    @Test
+    fun `a document of openers that never close is read in no time`() {
+        // Read as one pattern, each unclosed opener costs a rescan to the end: tens of seconds a document.
+        val started = System.currentTimeMillis()
+        assertNull(DlnaCast.tagValue("<friendlyName>".repeat(20_000), "friendlyName"))
+        assertNull(DlnaCast.tagValue("<friendlyName".repeat(20_000), "friendlyName"))
+        assertNull(DlnaCast.controlUrlFor("<service>".repeat(30_000), "AVTransport"))
+        assertTrue(System.currentTimeMillis() - started < 5_000, "parsing went quadratic")
+    }
+
+    @Test
+    fun `a body is read whole, and not at all once it outgrows any real answer`() {
+        assertEquals("<root/>", DlnaCast.readCapped("<root/>".byteInputStream()))
+        assertNull(DlnaCast.readCapped(ByteArray(300 * 1024).inputStream()))
+    }
+
+    @Test
+    fun `a location that isn't http is skipped`() {
+        // Any device on the network picks the LOCATION: a file: one must never reach the HTTP cast.
+        val allowed = DlnaCast.allowsNetwork
+        DlnaCast.allowsNetwork = { true }
+        try {
+            assertNull(DlnaCast.httpGet("file:///etc/hosts"))
+            assertNull(DlnaCast.httpGet("jar:file:/x.jar!/y"))
+        } finally {
+            DlnaCast.allowsNetwork = allowed
+        }
+    }
+
+    @Test
+    fun `a description is fetched whole, and a header that never ends is given up on`() {
+        val allowed = DlnaCast.allowsNetwork
+        DlnaCast.allowsNetwork = { true }
+        try {
+            val whole = serveOnce { it.write("HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\n<root/>".toByteArray()) }
+            assertEquals("<root/>", DlnaCast.httpGet(whole))
+            val endless = serveOnce { out ->
+                out.write("HTTP/1.1 200 OK\r\nX-Pad: ".toByteArray())
+                val pad = ByteArray(8192) { 'a'.code.toByte() }
+                while (true) out.write(pad)
+            }
+            assertNull(DlnaCast.httpGet(endless))
+        } finally {
+            DlnaCast.allowsNetwork = allowed
+        }
+    }
+
+    @Test
+    fun `a speaker answering twice is one row, and its UDN from another host a row of its own`() {
+        fun at(id: String, host: String) = DlnaRenderer(id, "Den", "http://$host:8080/ctl", null, null)
+        val rows = DlnaCast.distinctRenderers(
+            listOf(at("uuid:a", "10.0.0.5"), at("uuid:a", "10.0.0.5"), at("uuid:a", "10.0.0.9"), at("uuid:a@10.0.0.9", "10.0.0.7")),
         )
-        assertEquals(
-            "http://plex:32400/library/parts/42/1700000000/file.flac",
-            DlnaCast.loggable("http://plex:32400/library/parts/42/1700000000/file.flac?download=0&X-Plex-Token=tok"),
-        )
-        assertEquals("nothing", DlnaCast.loggable(null))
+        assertEquals(listOf("uuid:a" to "10.0.0.5", "uuid:a@10.0.0.9" to "10.0.0.9"), rows.map { it.id to java.net.URL(it.controlUrl).host })
+    }
+
+    /** One connection on loopback, answered with whatever [respond] writes once the request is in; its address. */
+    private fun serveOnce(respond: (OutputStream) -> Unit): String {
+        val server = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
+        thread(isDaemon = true) {
+            server.use {
+                runCatching {
+                    it.accept().use { socket ->
+                        val request = socket.getInputStream().bufferedReader()
+                        while (request.readLine()?.isNotEmpty() == true) Unit
+                        respond(socket.getOutputStream())
+                    }
+                }
+            }
+        }
+        return "http://127.0.0.1:${server.localPort}/description.xml"
     }
 }

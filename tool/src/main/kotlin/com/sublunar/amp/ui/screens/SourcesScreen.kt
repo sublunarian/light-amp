@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.sublunar.amp.App
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.SyncState
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logRef
 import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
@@ -137,10 +139,9 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val source = sources.firstOrNull { it.id == picked.sourceId } ?: return
         val active = App.settings.activeSource.value
         if (active?.id == source.id && source.selectedLibraries == picked.libraries) return
-        android.util.Log.i(
+        Log.i(
             "AmpSync",
-            "library choice: ${source.name}, " +
-                (picked.libraries?.let { ids -> source.libraries.filter { it.id in ids }.joinToString { it.name } } ?: "all libraries"),
+            "library choice: ${source.logRef}, ${picked.libraries?.size ?: "all"} of ${source.libraries.size} libraries",
         )
         // The results on screen were the old source's, and the switch drops them.
         LibraryNav.closeSearch()

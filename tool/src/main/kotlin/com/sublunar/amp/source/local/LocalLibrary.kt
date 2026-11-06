@@ -1,6 +1,8 @@
 package com.sublunar.amp.source.local
 
 import android.media.MediaMetadataRetriever
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
 import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.PhoneLibrary
 import com.sublunar.amp.source.PhonePlaylists
@@ -9,7 +11,6 @@ import com.thelightphone.sdk.checkPermission
 import com.thelightphone.sdk.hasRuntimePermission
 import com.thelightphone.sdk.shared.LightServiceMethod
 import com.thelightphone.sdk.shared.asKotlinResult
-import android.util.Log
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -110,22 +111,24 @@ object LocalLibrary : PhoneLibrary {
      * between files: a few thousand tracks is a few thousand retriever opens.
      */
     override suspend fun scan(onProgress: (Int) -> Unit): PhoneScan = withContext(Dispatchers.IO) {
+        val startedMs = System.currentTimeMillis()
         ensureFolder()
         val roots = roots()
         val files = mutableListOf<File>()
         roots.forEach { root -> collect(root, 0, files) }
         // "No songs" has two causes, a folder the app can't read and a folder
         // with nothing in it, and they look the same from the library screen.
-        Log.i(TAG, "Scanned ${roots.joinToString { it.path }}: ${files.size} files")
+        Log.i(TAG, "scan: ${roots.size} music folder(s), ${files.size} audio files")
 
         val retriever = MediaMetadataRetriever()
         val tracks = mutableListOf<Track>()
         val modifiedMs = mutableMapOf<String, Long>()
         val releaseTypes = mutableMapOf<String, ReleaseType>()
+        val unreadable = mutableMapOf<String, Int>()
         try {
             files.forEachIndexed { index, file ->
                 coroutineContext.ensureActive()
-                readTrack(retriever, file)?.let { (track, releaseType) ->
+                readTrack(retriever, file, unreadable)?.let { (track, releaseType) ->
                     tracks += track
                     modifiedMs[track.id] = file.lastModified()
                     releaseTypes[track.id] = releaseType
@@ -135,7 +138,13 @@ object LocalLibrary : PhoneLibrary {
         } finally {
             runCatching { retriever.release() }
         }
-        PhoneScan(tracks, albumsFrom(tracks, modifiedMs, releaseTypes))
+        val albums = albumsFrom(tracks, modifiedMs, releaseTypes)
+        Log.i(
+            TAG,
+            "scan done: ${tracks.size} tracks, ${albums.size} albums in ${System.currentTimeMillis() - startedMs} ms" +
+                if (unreadable.isEmpty()) "" else "; unreadable: " + unreadable.entries.joinToString { "${it.value} ${it.key}" },
+        )
+        PhoneScan(tracks, albums)
     }
 
     private fun collect(dir: File, depth: Int, into: MutableList<File>) {
@@ -151,8 +160,16 @@ object LocalLibrary : PhoneLibrary {
         }
     }
 
-    /** The file's track, with the release type its tags give its album. */
-    private fun readTrack(retriever: MediaMetadataRetriever, file: File): Pair<Track, ReleaseType>? = runCatching {
+    /**
+     * The file's track, with the release type its tags give its album. A file
+     * that can't be read is counted in [unreadable] by its kind and failure:
+     * its name is a song's.
+     */
+    private fun readTrack(
+        retriever: MediaMetadataRetriever,
+        file: File,
+        unreadable: MutableMap<String, Int>,
+    ): Pair<Track, ReleaseType>? = runCatching {
         retriever.setDataSource(file.absolutePath)
         fun tag(key: Int): String = retriever.extractMetadata(key)?.trim().orEmpty()
         // A file with no tags at all is still music: the name is what the Light
@@ -193,7 +210,7 @@ object LocalLibrary : PhoneLibrary {
             gainDb = CustomTags.gainDb(custom),
         ) to releaseType
     }.getOrElse {
-        Log.w(TAG, "Unreadable audio file: ${file.name}")
+        unreadable.merge("${file.extension.lowercase()} (${it.logName()})", 1, Int::plus)
         null
     }
 
@@ -234,5 +251,5 @@ object LocalLibrary : PhoneLibrary {
 
     private const val UNKNOWN_ARTIST = "Unknown Artist"
     private const val PROGRESS_EVERY = 25
-    private const val TAG = "LocalLibrary"
+    private const val TAG = "AmpLocal"
 }

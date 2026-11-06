@@ -151,7 +151,11 @@ own container (`formatChoiceKey`). Plex Companion is the other, in
 `source/plex/companion` — discovery, the listener, the cast and its calls
 (`PlexCompanionCalls.kt`, extensions on `PlexClient`, which holds the token and
 the lock they need) — offered by the Plex provider
-(`SourceProvider.outputFamilies`), so only a Plex source lists its players. The
+(`SourceProvider.outputFamilies`), so only a Plex source lists its players. A
+player is never sent that token, which on a server the user owns opens the
+whole Plex account, but a transient one the server mints for each queue
+handed over, or for a player that won't say who it is without one
+(`mintPlayerKey`). The
 Output page lists `OutputFamilies` — the source's and the phone's — without
 naming any of them.
 
@@ -263,7 +267,8 @@ through the gated client, deciding per request under the rules in force at that
 moment. That is why a network or data-mode change never needs the player's
 queue edited. Plain HTTP, which the SDK's `cleartext-http` capability permits
 in every build. It proves itself at start by fetching from itself; if that
-fails, `wrap()` returns the server's own URL and the About page says why.
+fails, `wrap()` hands out an address that fails at once (`UNAVAILABLE_URL`),
+never the server's own, and the About page says why.
 Anything that hands the player a URL must go through `App.streamProxy.wrap()`,
 which `TrackSources.playerUrl` does for every stream.
 Between server and player sits a bounded read-ahead pipe fed by its own thread;

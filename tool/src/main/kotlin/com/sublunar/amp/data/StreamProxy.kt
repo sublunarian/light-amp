@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.log.logName
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -62,6 +63,8 @@ class StreamProxy(
     private val gateOpen: () -> Boolean,
     private val upstream: () -> OkHttpClient,
     private val log: (String) -> Unit,
+    /** For failures, which the log keeps however busy it is. */
+    private val warn: (String) -> Unit = log,
     /**
      * How many bytes to hold between the server and the player — see [Pipe].
      * Asked once per stream; a metered link gets less, because what is read
@@ -152,12 +155,12 @@ class StreamProxy(
                 scope.launch(Dispatchers.IO) { acceptLoop(scope, socket) }
                 selfTest(socket.localPort)
                 _state.value = State.On(socket.localPort)
-                log("proxy on, port ${socket.localPort}")
+                log("proxy on")
             } catch (e: Exception) {
                 runCatching { server?.close() }
                 server = null
                 _state.value = State.Off(e.message ?: e.toString())
-                log("proxy off: ${e::class.simpleName}")
+                warn("proxy off: ${e.logName()}")
             }
         }
     }
@@ -197,7 +200,7 @@ class StreamProxy(
                     runCatching { socket.close() }
                     server = null
                     _state.value = State.Off("accept failed: ${e.message}")
-                    log("proxy off: accept failed: ${e::class.simpleName}")
+                    warn("proxy off: accept failed: ${e.logName()}")
                 }
                 break
             }
@@ -275,23 +278,28 @@ class StreamProxy(
         // Then whatever the server wants settled for this stream — see wrap.
         // Bounded, and the stream is asked for whatever the answer: a server
         // that won't settle may still serve, and silence is the worse failure.
+        var prepared = "none"
         if (!headOnly) {
             target.prepare?.let { prepare ->
-                runCatching { runBlocking { withTimeoutOrNull(PREPARE_TIMEOUT_MS) { prepare() } } }
+                prepared = runCatching { runBlocking { withTimeoutOrNull(PREPARE_TIMEOUT_MS) { prepare() } } }
+                    .fold({ if (it == null) "timed out" else "ok" }, { "failed" })
             }
         }
         val firstCall = request(url, range)
+        val kind = endpointKind(firstCall.request().url.encodedPath)
+        val askedAtMs = monotonicMs()
         val first: Response = try {
             firstCall.execute()
         } catch (e: IOException) {
             // Dropping the connection is the answer — see above — but the
             // player only ever learns "network error", so the cause is said here.
-            log("upstream unreachable for ${firstCall.request().url.encodedPath}: ${e::class.simpleName}")
+            log("upstream unreachable for $kind after ${monotonicMs() - askedAtMs} ms: ${e.logName()}")
             remember(group, headOnly, Outcome.Unreachable)
             throw e
         }
+        val answeredMs = monotonicMs() - askedAtMs
         if (!first.isSuccessful) {
-            log("upstream ${first.code} for ${first.request.url.encodedPath}")
+            log("upstream ${first.code} for $kind in $answeredMs ms")
             remember(group, headOnly, Outcome.Answered(first.code, lengthKnown = false))
         }
         // The player only ever asks for the body; a HEAD, or a server's "no",
@@ -322,9 +330,10 @@ class StreamProxy(
             // A plain thread that lets an exception escape takes the whole
             // process with it. run() catches everything; this is the net under
             // the net.
-            setUncaughtExceptionHandler { _, e -> log("feeder died: ${e::class.simpleName}") }
+            setUncaughtExceptionHandler { _, e -> warn("feeder died: ${e.logName()}") }
             start()
         }
+        var end = "hung up"
         try {
             // A write failing is the player hanging up — a skip, a seek, a
             // stop — and the finally below lets go of the server.
@@ -334,16 +343,25 @@ class StreamProxy(
                 output.write(chunk)
                 if (length < 0) output.write(CRLF)
             }
-            if (pipe.failed) throw IOException("upstream lost")
+            if (pipe.failed) {
+                end = if (feeder.cancelled) "retired" else "lost"
+                throw IOException("upstream lost")
+            }
             // A clean end. Without the last chunk the player reads an unknown-
             // length stream that simply stopped as an error, which a broken one
             // relies on.
             if (length < 0) output.write(LAST_CHUNK)
             output.flush()
+            end = "clean"
         } finally {
             feeder.cancel()
             if (group != null) live.remove(group, feeder)
             feeding.join(FEEDER_JOIN_MS)
+            log(
+                "stream $kind ${first.code} answered in $answeredMs ms (prepare $prepared), " +
+                    "${if (length >= 0) "sized" else "chunked"}${if (range != null) ", ranged" else ""}: " +
+                    "$end after ${(monotonicMs() - askedAtMs) / 1000} s, pickups ${feeder.pickups}",
+            )
         }
     }
 
@@ -371,7 +389,9 @@ class StreamProxy(
         private val first: Response,
         private val pipe: Pipe,
     ) : Runnable {
-        @Volatile private var cancelled = false
+        /** Set by [cancel]: the player went, or a newer request for the track retired this one. */
+        @Volatile var cancelled = false
+            private set
         @Volatile private var call: Call = firstCall
         @Volatile private var thread: Thread? = null
 
@@ -387,7 +407,8 @@ class StreamProxy(
         // re-download where Last-Modified would have resumed.
         private val validator = first.header("ETag")?.takeUnless { it.startsWith("W/") } ?: first.header("Last-Modified")
 
-        private var pickups = 0
+        @Volatile var pickups = 0
+            private set
         private val headOfStream = ByteArrayOutputStream()
         private val tailOfStream = TailRing(OVERLAP_BYTES)
 
@@ -432,7 +453,7 @@ class StreamProxy(
                 // wait for room in the pipe — and that is the end of the job,
                 // not an error.
             } catch (e: Throwable) {
-                if (!cancelled) log("upstream failed: ${e::class.simpleName}")
+                if (!cancelled) warn("upstream failed: ${e.logName()}")
             } finally {
                 runCatching { response.close() }
                 pipe.end(clean)
@@ -495,7 +516,7 @@ class StreamProxy(
                     return null
                 } catch (e: IOException) {
                     if (cancelled) return null
-                    log("upstream broke at $at, pickup #$pickups failed: ${e::class.simpleName}")
+                    log("upstream broke at $at, pickup #$pickups failed: ${e.logName()}")
                     runCatching { response.close() }
                 }
             }

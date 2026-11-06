@@ -1,13 +1,15 @@
 package com.sublunar.amp.source.local
 
-import android.util.Log
-import com.sublunar.amp.source.PhonePlaylists
-import java.io.File
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.isReorderOf
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
+import com.sublunar.amp.source.PhonePlaylists
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Playlists for the phone's own music, kept as `.m3u8` files in
@@ -31,14 +33,22 @@ object LocalPlaylists : PhonePlaylists {
 
     private val UNSAFE_IN_NAME = Regex("""[/\\:*?"<>|]""")
 
-    private const val TAG = "LocalPlaylists"
+    private const val TAG = "AmpLocal"
+
+    /** Files that couldn't be read, so one is logged once rather than at every listing. Never logged themselves. */
+    private val unreadable = ConcurrentHashMap.newKeySet<String>()
 
     private fun folder(): File = File(LocalLibrary.MUSIC_DIR, "Playlists")
 
     private fun idFor(file: File): String = ID_PREFIX + file.absolutePath
 
+    /** Only a file [list] could have offered: what this returns gets written, renamed and deleted. */
     private fun fileOf(id: String): File? =
-        if (id.startsWith(ID_PREFIX)) File(id.removePrefix(ID_PREFIX)) else null
+        if (id.startsWith(ID_PREFIX)) {
+            File(id.removePrefix(ID_PREFIX)).takeIf { it.parentFile == folder() && it.name.endsWith(EXTENSION, ignoreCase = true) }
+        } else {
+            null
+        }
 
     /**
      * A name safe to be a filename. The name *is* the filename, with no sidecar
@@ -76,7 +86,7 @@ object LocalPlaylists : PhonePlaylists {
         withContext(Dispatchers.IO) {
             val dir = folder()
             if (!dir.isDirectory && !dir.mkdirs()) {
-                Log.w(TAG, "couldn't create ${dir.absolutePath}")
+                Log.w(TAG, "couldn't create the playlists folder")
                 return@withContext null
             }
             // A name already in use gets a suffix rather than silently replacing
@@ -103,14 +113,14 @@ object LocalPlaylists : PhonePlaylists {
         val target = File(file.parentFile, fileNameFor(name))
         if (target.name == file.name) return@withContext true
         if (!target.name.equals(file.name, ignoreCase = true) && target.exists()) return@withContext false
-        file.renameTo(target).also { if (!it) Log.w(TAG, "couldn't rename ${file.name}") }
+        file.renameTo(target).also { if (!it) Log.w(TAG, "couldn't rename a playlist file") }
     }
 
     /** Whether the playlist is gone, counting one another app or adb already removed. */
     override suspend fun delete(id: String): Boolean = withContext(Dispatchers.IO) {
         val file = fileOf(id) ?: return@withContext false
         if (!file.exists()) return@withContext true
-        file.delete().also { if (!it) Log.w(TAG, "couldn't delete ${file.name}") }
+        file.delete().also { if (!it) Log.w(TAG, "couldn't delete a playlist file") }
     }
 
     /** Whether the song reached the file. */
@@ -158,8 +168,10 @@ object LocalPlaylists : PhonePlaylists {
                     .getOrElse { entry.normalize().absolutePath }
                 PhoneFiles.ID_PREFIX + path
             }
+    }.onSuccess {
+        if (unreadable.remove(file.path)) Log.i(TAG, "a playlist file is readable again")
     }.getOrElse {
-        Log.w(TAG, "couldn't read ${file.name}: ${it::class.simpleName}")
+        if (unreadable.add(file.path)) Log.w(TAG, "couldn't read a playlist file: ${it.logName()}")
         emptyList()
     }
 
@@ -169,7 +181,7 @@ object LocalPlaylists : PhonePlaylists {
         file.writeText((listOf("#EXTM3U") + body).joinToString("\n", postfix = "\n"))
         true
     }.getOrElse {
-        Log.w(TAG, "couldn't write ${file.name}: ${it::class.simpleName}")
+        Log.w(TAG, "couldn't write a playlist file: ${it.logName()}")
         false
     }
 }

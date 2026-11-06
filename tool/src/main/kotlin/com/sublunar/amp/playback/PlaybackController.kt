@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.os.SystemClock
-import android.util.Log
 import android.view.KeyEvent
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.media3.common.PlaybackException
@@ -18,11 +17,14 @@ import com.sublunar.amp.data.KnownStream
 import com.sublunar.amp.data.LinkRules
 import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.NetworkGate
+import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.RepeatMode
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.TimelineState
 import com.sublunar.amp.data.Track
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
 import com.sublunar.amp.playback.output.ActiveOutput
 import com.sublunar.amp.playback.output.Disconnect
 import com.sublunar.amp.playback.output.FarEndPress
@@ -49,6 +51,7 @@ import java.io.File
 import kotlin.math.abs
 import java.io.ByteArrayOutputStream
 import kotlin.math.pow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -293,6 +296,10 @@ class PlaybackController(
 
     /** The decision [withStreamDecision] is still waiting on, or 0 — see [release]. */
     private var awaitedDecision = 0
+
+    /** Queues made so far in this process — see [queueBuilt]. Read off Main by an output's log lines. */
+    @Volatile
+    private var queueBuilds = 0
 
     // --- Seek state ----------------------------------------------------------
 
@@ -574,6 +581,14 @@ class PlaybackController(
                 if (on) {
                     val elapsed = SystemClock.elapsedRealtime() - bufferingSinceMs
                     delay(BUFFERING_LIMIT_MS - elapsed)
+                    // Measured, not the limit: a second start over a first still
+                    // buffering moves the start without restarting this wait.
+                    val waitedS = (SystemClock.elapsedRealtime() - bufferingSinceMs) / 1000
+                    Log.i(
+                        "AmpNet",
+                        "no sound $waitedS s after start at q#$queueBuilds idx=${_index.value} " +
+                            "(${startedFrom()}, door ${if (App.streamProxy.isOn) "up" else "down"}) — Buffering… dropped",
+                    )
                     _buffering.value = false
                 }
             }
@@ -623,7 +638,8 @@ class PlaybackController(
         scope.launch(onMain) {
             App.library.downloadFiles.collect { rows ->
                 sources.downloadsChanged(rows)
-                reresolveQueue()
+                // Quiet: each download that lands moves its own row.
+                reresolveQueue(quiet = true)
             }
         }
         // A snapshot every few seconds survives a kill without writing to
@@ -753,7 +769,7 @@ class PlaybackController(
             p.error.value?.let {
                 Log.i(
                     "AmpNet",
-                    "connected onto a player error ${it.diagnostic} at idx=${it.itemIndex} — left as it is",
+                    "connected onto a player error ${it.diagnostic} at idx=${window.rowAt(it.itemIndex)} — left as it is",
                 )
             }
             // A service that stopped itself after its idle limit comes back
@@ -933,13 +949,16 @@ class PlaybackController(
                 if (idx < 0) return@combine null
                 // The restart copy is the song in the slot before it.
                 val slot = if (restartCopyAt in 0..idx) idx - 1 else idx
-                val db = if (on) q.getOrNull(w.rowAt(slot))?.gainDb else null
-                db?.let { 10.0.pow(it / 20.0).toFloat().coerceAtMost(1f) } ?: 1f
-            }.filterNotNull().distinctUntilChanged().collect { factor ->
+                val row = w.rowAt(slot)
+                val db = if (on) q.getOrNull(row)?.gainDb else null
+                // The track's gain and row ride along for the log; only the factor decides.
+                Triple(db?.let { 10.0.pow(it / 20.0).toFloat().coerceAtMost(1f) } ?: 1f, db, row)
+            }.filterNotNull().distinctUntilChanged { a, b -> a.first == b.first }.collect { (factor, db, row) ->
                 // A replaced handle's number mustn't be carried onto the next.
                 if (player !== p) return@collect
                 p.playbackGain = factor
                 appliedGain = factor
+                Log.i("AmpQual", "gain ${db?.let { "$it dB" } ?: "none"} → ×$factor at q#$queueBuilds idx=$row")
             }
         }
         scope.launch(onMain) {
@@ -1125,7 +1144,10 @@ class PlaybackController(
      * write has since replaced.
      */
     suspend fun restoreState(library: () -> List<Track>) {
-        if (player == null || _queue.value.isNotEmpty()) return
+        if (player == null || _queue.value.isNotEmpty()) {
+            Log.i("AmpLife", "restore: skipped, ${if (player == null) "no player" else "a queue is already playing"}")
+            return
+        }
         // The downloads first, as far as the file map here: decided before
         // that is built from the database's answer, a downloaded track would
         // be queued as a stream, which offline never plays. Bounded, so a
@@ -1139,20 +1161,35 @@ class PlaybackController(
         withTimeoutOrNull(PROXY_READY_TIMEOUT_MS) {
             App.streamProxy.state.first { it !is StreamProxy.State.Starting }
         }
-        val saved = settings.savedQueue()
+        val onPhone = settings.savedQueue()
+        val saved = onPhone
             // Nothing saved here (a fresh install, a cleared cache): the server
             // may hold what this account last played elsewhere. Never asked
             // over a queue this phone has.
-            ?: serverClient.value?.let { runCatching { it.getPlayQueue() }.getOrNull() }
-            ?: return
+            ?: serverClient.value?.let { client ->
+                runCatching { client.getPlayQueue() }
+                    .onFailure { e ->
+                        if (e !is CancellationException) Log.w("AmpLife", "restore: server queue failed: ${e.logName()}")
+                    }
+                    .getOrNull()
+            }
+        if (saved == null) {
+            Log.i("AmpLife", "restore: nothing saved")
+            return
+        }
         val byId = library().associateBy { it.id }
         val tracks = saved.trackIds.mapNotNull { byId[it] }
-        if (tracks.isEmpty()) return
+        val from = if (onPhone != null) "phone" else "server"
+        if (tracks.isEmpty()) {
+            Log.i("AmpLife", "restore: none of ${saved.trackIds.size} saved on the $from is in the library")
+            return
+        }
         val index = tracks.indexOfFirst { it.id == saved.currentId }.takeIf { it >= 0 } ?: 0
 
         val position = saved.positionMs
         withContext(Dispatchers.Main.immediate) {
             val p = player ?: return@withContext
+            queueBuilt(tracks.size, "restored from the $from, ${saved.trackIds.size} saved, idx=$index at=$position")
             _queue.value = tracks
             preShuffleOrder = null
             // The track the user left on: if it can't be had now it waits here
@@ -1201,10 +1238,10 @@ class PlaybackController(
             // The tapped one first. The list as it was is the order to go back
             // to when shuffle is switched off; set after setQueue, which clears
             // the last queue's.
-            setQueue(shuffledFrom(tracks.size, start).map { tracks[it] }, 0)
+            setQueue(shuffledFrom(tracks.size, start).map { tracks[it] }, 0, how = "shuffled")
             preShuffleOrder = tracks.toList()
         } else {
-            setQueue(tracks.toList(), start)
+            setQueue(tracks.toList(), start, how = "in order, from idx=$start")
         }
     }
 
@@ -1481,6 +1518,13 @@ class PlaybackController(
 
     /** Sound is coming out: the start is over, whatever asked for it. */
     private fun heardSound() {
+        if (_buffering.value) {
+            Log.i(
+                "AmpNet",
+                "sound after ${SystemClock.elapsedRealtime() - bufferingSinceMs} ms at q#$queueBuilds idx=${_index.value} " +
+                    "(${startedFrom()})",
+            )
+        }
         hasPlayed = true
         // The pick has been honoured: from here on, whatever happens to this
         // track happened to playback, not to a request — see blockedAtCurrent.
@@ -1517,7 +1561,49 @@ class PlaybackController(
     /** Mark a start at [index]: buffering only if that row is a stream. */
     private fun markStarting(index: Int) {
         _buffering.value = queuedSourceAt(index) is LightAudioSource.UrlSource
-        if (_buffering.value) bufferingSinceMs = SystemClock.elapsedRealtime()
+        if (_buffering.value) {
+            bufferingSinceMs = SystemClock.elapsedRealtime()
+            _queue.value.getOrNull(index)?.let { sources.noteQuality(it, index) }
+        }
+    }
+
+    /**
+     * Where the row now starting plays from, for the start lines: the phone's
+     * own file, its download, a stream in its format, or an output, and the
+     * link it goes over.
+     */
+    private fun startedFrom(): String {
+        val link = linkNow()
+        _active.value?.let { return "${it.family.id}, $link" }
+        val track = _queue.value.getOrNull(_index.value) ?: return link
+        val from = when {
+            // No format: the playing row keeps the address it was built with
+            // when the link changes, and what it would be built in now can differ.
+            queuedSourceAt(_index.value) is LightAudioSource.UrlSource -> "stream"
+            PhoneFiles.isPhoneFile(track.id) -> "file"
+            else -> "download"
+        }
+        return "$from, $link"
+    }
+
+    /** The link as the log names it: Wi-Fi or cellular, metered or not, and the data mode. */
+    private fun linkNow(): String {
+        val rules = App.rules.value
+        val link = when {
+            !rules.connected -> "offline"
+            rules.wifi -> if (rules.unmetered) "wifi" else "wifi metered"
+            else -> if (rules.unmetered) "cellular unmetered" else "cellular"
+        }
+        return "$link ${rules.mode.name.lowercase()}"
+    }
+
+    /**
+     * A queue made from a list: counted, so a start or a push can say which
+     * queue it belongs to (q#N), and said with [how] it was made.
+     */
+    private fun queueBuilt(rows: Int, how: String) {
+        queueBuilds++
+        Log.i("AmpNet", "queue q#$queueBuilds: $rows rows ($how)")
     }
 
     /**
@@ -1586,15 +1672,28 @@ class PlaybackController(
         // stream itself (see TrackSources.playerUrl) this is asked twice, harmlessly.
         val format = sources.effectiveFormat(track)
         val sid = reports.streamSessionIdFor(track.id, sources.decidesAtDoor(client, track, format))
+        val at = _index.value
         scope.launch {
-            withTimeoutOrNull(STREAM_DECISION_TIMEOUT_MS) {
+            val askedAt = SystemClock.elapsedRealtime()
+            val decided = withTimeoutOrNull(STREAM_DECISION_TIMEOUT_MS) {
                 client.prepareStream(track.id, format, sid)
+            }
+            val tookMs = SystemClock.elapsedRealtime() - askedAt
+            val how = when {
+                decided == null -> "timed out"
+                decided == false -> "refused"
+                tookMs > SLOW_DECISION_MS -> "slow"
+                else -> null
             }
             withContext(Dispatchers.Main.immediate) {
                 if (awaitedDecision == generation) awaitedDecision = 0
                 // Overtaken while the server decided (a pause, a stop, another
                 // track, the handle released), which outranks this press.
-                if (generation == decisionGeneration) start()
+                val current = generation == decisionGeneration
+                how?.let {
+                    Log.i("AmpNet", "stream decision $it in $tookMs ms at idx=$at — ${if (current) "started" else "dropped, overtaken"}")
+                }
+                if (current) start()
             }
         }
     }
@@ -1661,7 +1760,7 @@ class PlaybackController(
         Log.i(
             "AmpNet",
             "player error ${error.diagnostic}${status?.let { " (HTTP $it)" }.orEmpty()} " +
-                "at idx=${_index.value} (${if (fromFile) "file" else "stream"})",
+                "at idx=${_index.value} (${startedFrom()})",
         )
         val failure = playFailure(
             fromFile = fromFile,
@@ -1923,6 +2022,11 @@ class PlaybackController(
         // Once per track, so a file that won't decode can't spin here.
         if (!sources.firstRetryOf(track.id)) return
         sources.preferDownload(track.id)
+        Log.i(
+            "AmpNet",
+            "stream died at idx=${_index.value} → its download at $resumeAt " +
+                "(server ${if (serverAnswered) "answered" else "silent"})",
+        )
         // Only a server that never answered pins everything to local files,
         // and only until it is asked and answers.
         if (!serverAnswered) {
@@ -2208,10 +2312,11 @@ class PlaybackController(
 
     // --- Building the player's queue -----------------------------------------
 
-    /** Make [tracks] the queue and start it at [startIndex], here or wherever the sound is. */
-    private fun setQueue(tracks: List<Track>, startIndex: Int) {
+    /** Make [tracks] the queue and start it at [startIndex], here or wherever the sound is. [how] is for the log. */
+    private fun setQueue(tracks: List<Track>, startIndex: Int, how: String) {
         val p = player ?: return
         settleRestartCopy()
+        queueBuilt(tracks.size, how)
         _queue.value = tracks
         // The order shuffle would go back to is the last queue's, not this one's.
         preShuffleOrder = null
@@ -2321,7 +2426,7 @@ class PlaybackController(
      * stream whose file is on the phone moves to the file at the same spot, only cued if
      * paused, since leaving the house is not a press of play. A parked one is left to [cueIfParked].
      */
-    private fun reresolveQueue(includeCurrent: Boolean = false) {
+    private fun reresolveQueue(includeCurrent: Boolean = false, quiet: Boolean = false) {
         val p = player ?: return
         if (!playerSpeaks) return
         // Not until the handle has connected: before then there is no knowing
@@ -2352,6 +2457,15 @@ class PlaybackController(
             rebuildQueueAt(p, tracks, _index.value, at)
             playOrCue(p, _index.value, wanted)
             return
+        }
+        if (!quiet) {
+            val moved = memo.indices.filter { memo[it] != held.getOrNull(it) }
+            val toFiles = moved.count { memo[it] is LightAudioSource.FileSource }
+            Log.i(
+                "AmpNet",
+                "re-resolved ${moved.size} rows: $toFiles to files, ${moved.size - toFiles} to streams " +
+                    "(${linkNow()}, door ${if (App.streamProxy.isOn) "up" else "down"})",
+            )
         }
         queuedSources = memo
         // The tail first, so the head's positions still hold. A memo out of
@@ -2809,6 +2923,11 @@ class PlaybackController(
         waitBeforeCast = _waitingFor.value?.let { it to _index.value }
         _waitingFor.value = null
         _active.value = ActiveOutput(family, target, next)
+        Log.i(
+            family.logTag,
+            "cast begins on ${family.id}: q#$queueBuilds idx=${_index.value} at=${_positionMs.value} " +
+                if (play) "playing" else "paused",
+        )
         standIn.start(player)
         // A start, where there is something to start: a speaker chosen with
         // nothing queued waits for the queue, and one chosen paused for a play.
@@ -2892,7 +3011,7 @@ class PlaybackController(
         if (a.family !in Outputs.phone) return
         val pausedFor = SystemClock.elapsedRealtime() - since
         if (pausedFor < FORGET_PAUSED_SPEAKER_MS) return
-        Log.i(a.family.logTag, "paused ${pausedFor / 60_000} min on ${a.target.name} → back to the phone")
+        Log.i(a.family.logTag, "paused ${pausedFor / 60_000} min on ${a.family.id} → back to the phone")
         playHere()
     }
 
@@ -2919,6 +3038,7 @@ class PlaybackController(
         // steering on the way out: the requeue collector would arm one more
         // track on a renderer being stopped.
         if (!_active.compareAndSet(a, null)) return
+        Log.i(a.family.logTag, "cast ends (${why.name}) at q#$queueBuilds idx=${_index.value} at=$at")
         a.output.disconnect(a.target, why)
         if (why == Disconnect.Stopped || why == Disconnect.Leaving) return
         // Kept, to be taken back when the link is — see rejoinLost.
@@ -3032,14 +3152,13 @@ class PlaybackController(
         if (rejoinJob?.isActive == true) return
         val out = gone.active.output
         val tag = gone.active.family.logTag
-        val name = gone.active.target.name
         if (SystemClock.elapsedRealtime() - gone.atMs > LOST_OUTPUT_KEPT_MS) {
-            Log.i(tag, "Wi-Fi back, but $name went too long ago — left")
+            Log.i(tag, "Wi-Fi back, but the ${gone.active.family.id} output went too long ago — left")
             lost = null
             return
         }
         rejoinJob = scope.launch {
-            Log.i(tag, "Wi-Fi back — looking for $name")
+            Log.i(tag, "Wi-Fi back — looking for the ${gone.active.family.id} output")
             // Bounded. A link that goes again meanwhile cancels this and keeps
             // the memory for the next time it comes back.
             val found = withTimeoutOrNull(REJOIN_SEARCH_MS) { out.findAgain(gone.active.target) }
@@ -3047,8 +3166,8 @@ class PlaybackController(
                 if (lost !== gone) return@withContext
                 lost = null
                 when {
-                    found == null -> Log.i(tag, "$name not found, or playing something else — left")
-                    movedOn(gone) -> Log.i(tag, "moved on here since — $name stopped, not taken back")
+                    found == null -> Log.i(tag, "not found, or playing something else — left")
+                    movedOn(gone) -> Log.i(tag, "moved on here since — not taken back")
                     else -> rejoin(gone, found)
                 }
             }
@@ -3073,7 +3192,7 @@ class PlaybackController(
         val out = gone.active.output
         Log.i(
             gone.active.family.logTag,
-            "took ${found.target.name} back, paused " +
+            "took it back, paused " +
                 if (found.index >= 0) "at idx=${found.index} ${found.positionMs}" else "where the phone was",
         )
         settleRestartCopy()
@@ -3105,6 +3224,7 @@ class PlaybackController(
         override val durationMs: StateFlow<Long> get() = _durationMs
         override val repeatMode: StateFlow<RepeatMode> get() = _repeatMode
         override val shuffle: StateFlow<Boolean> get() = _shuffle
+        override val queueBuild: Int get() = queueBuilds
 
         override fun steering(output: Output): OutputTarget? =
             _active.value?.takeIf { it.output === output }?.target
@@ -3325,6 +3445,9 @@ class PlaybackController(
 
         /** How long Plex gets to settle a transcode decision; short, as it sits between the tap and the sound. */
         private const val STREAM_DECISION_TIMEOUT_MS = 2_000L
+
+        /** A decision slower than this is logged even when it came back yes. */
+        private const val SLOW_DECISION_MS = 1_000L
 
         /** How near the end still counts as having reached it. */
         private const val QUEUE_END_SLACK_MS = 1_000L

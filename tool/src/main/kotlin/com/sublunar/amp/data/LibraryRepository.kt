@@ -8,7 +8,10 @@ import com.sublunar.amp.data.db.LikedArtistEntity
 import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.sublunar.amp.data.db.TopSongEntity
 import com.sublunar.amp.data.db.toAlbum
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
@@ -205,7 +208,7 @@ class LibraryRepository(
             daos.filterNotNull().collect { d ->
                 val orphans = runCatching { d.orphanedTrackCount() }.noteOom("orphan count").getOrDefault(0)
                 if (orphans > 0) {
-                    android.util.Log.w("AmpSync", "dropping $orphans orphaned track(s) on open")
+                    Log.w("AmpSync", "dropping $orphans orphaned track(s) on open")
                     runCatching { d.deleteOrphanedTracks() }.noteOom("orphan sweep")
                 }
             }
@@ -302,9 +305,9 @@ class LibraryRepository(
     private fun logView(view: LibraryView, shown: Int, of: Int) {
         if (view == loggedView || of == 0) return
         loggedView = view
-        android.util.Log.i(
+        Log.i(
             "AmpSync",
-            "library view: ${view.selected?.joinToString(prefix = "libraries ") ?: "all libraries"} show $shown of $of albums",
+            "library view: ${view.selected?.let { "${it.size} libraries" } ?: "all libraries"} show $shown of $of albums",
         )
     }
 
@@ -566,7 +569,16 @@ class LibraryRepository(
         val cached = pinned.tracksForAlbum(albumId)
         if (cached.isNotEmpty()) return narrowedToDownloads(cached).sortedWith(TRACK_ORDER)
         if (client == null) return emptyList()
-        val fresh = client.getAlbumTracks(albumId)
+        val fresh = try {
+            client.getAlbumTracks(albumId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Album pages call this from an effect, where a throw ends Amp and
+            // prints the request's URL, login and all, into the crash record.
+            Log.w("AmpSync", "album tracks: server read failed: ${e.logName()}")
+            return emptyList()
+        }
         if (daos.value === pinned) pinned.upsertTracks(fresh)
         return narrowedToDownloads(fresh).sortedWith(TRACK_ORDER)
     }
@@ -743,7 +755,7 @@ class LibraryRepository(
         return likeWrites.withLock {
             val result = pending.attempt(action, client) { name -> client?.let { artistIdFor(name, it) } }
             if (client != null && result != WriteResult.Saved) {
-                android.util.Log.w("AmpSync", "${action.kind} ${action.id} → $result")
+                Log.w("AmpSync", "${action.kind} → ${result::class.simpleName}")
             }
             if (result is WriteResult.Refused && taps[key] == tap) {
                 undo()
@@ -853,7 +865,7 @@ class LibraryRepository(
      * Send everything that happened while the server couldn't be told — through
      * [reachableClient], so a queue held back by the mode isn't sent the moment
      * this is called. Only this source's entries: the queue holds every source's.
-     * Refusals are said once, however many; the log has the rest.
+     * Refusals are said once, however many; the log has how many, and of what kind.
      */
     suspend fun flushPending() {
         val client = reachableClient() ?: return
@@ -862,7 +874,6 @@ class LibraryRepository(
         val refused = likeWrites.withLock {
             pending.flush(client, source) { name -> artistIdFor(name, client) }
         }
-        refused.forEach { android.util.Log.w("AmpSync", "offline write refused: $it") }
         refused.firstOrNull()?.let { tell("Couldn't save something done offline\n$it") }
     }
 

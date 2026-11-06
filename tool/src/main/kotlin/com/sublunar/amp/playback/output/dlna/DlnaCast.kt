@@ -1,7 +1,12 @@
 package com.sublunar.amp.playback.output.dlna
 
 import com.sublunar.amp.data.Track
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
+import com.sublunar.amp.log.loggableWord
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.HttpURLConnection
@@ -9,8 +14,11 @@ import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 /** A media renderer as [DlnaCast.discover] described it. */
 data class DlnaRenderer(
@@ -38,7 +46,8 @@ data class DlnaPosition(
 /**
  * Just enough of a UPnP AV control point to push a stream at a renderer: SSDP
  * discovery, then SOAP calls against the device's AVTransport service. SSDP is
- * raw UDP and SOAP is plain HTTP, so `java.net` covers all of it.
+ * raw UDP and SOAP is plain HTTP, so `java.net` covers all of it but the
+ * description fetch (see [describer]).
  */
 object DlnaCast {
 
@@ -75,19 +84,28 @@ object DlnaCast {
     private const val DISCOVERY_MS = 3_000L
     private const val RECEIVE_SLICE_MS = 400
 
+    /** Far above any real description or SOAP answer, which run to a few KB. */
+    private const val MAX_BODY_BYTES = 256 * 1024
+
+    /** How long a body may take in all: the read timeout is per read, and a drip of bytes never trips it. */
+    private const val BODY_DEADLINE_MS = 10_000L
+
+    /** Devices one search describes, one after another: more is a flood, not a home's speakers. */
+    private const val MAX_LOCATIONS = 32
+
     /** The tag a failed call is logged under: the cast's own. */
     private const val LOG_TAG = "AmpCast"
+
+    /** Failures in a row before their end is worth a line — see [noteSuccess]. */
+    private const val RUN_WORTH_SAYING = 3
 
     /** More escaping than any renderer has been seen to add. */
     private const val UNESCAPE_ROUNDS = 3
 
-    /** The parts of a stream address a log line keeps: which song, in what, from where. */
-    private val LOGGED_PARAMS = listOf("id", "format", "maxBitRate", "timeOffset", "path")
-
     private val SERVICE_BLOCK = Regex("<service>.*?</service>", RegexOption.DOT_MATCHES_ALL)
 
-    /** [tagValue]'s pattern for each tag, compiled once: a cast's poll reads four tags a second. */
-    private val TAG_PATTERNS = ConcurrentHashMap<String, Regex>()
+    /** [tagValue]'s opener and closer for each tag, compiled once: a cast's poll reads four tags a second. */
+    private val TAG_PATTERNS = ConcurrentHashMap<String, Pair<Regex, Regex>>()
 
     // --- Discovery -----------------------------------------------------------
 
@@ -127,14 +145,29 @@ object DlnaCast {
                         continue
                     }
                     headerValue(String(packet.data, 0, packet.length), "LOCATION")
+                        ?.takeIf { locations.size < MAX_LOCATIONS }
                         ?.let { locations.add(it) }
                 }
             }
         } catch (_: IOException) {
             return@withContext emptyList()
         }
-        locations.mapNotNull { describe(it) }
+        distinctRenderers(locations.mapNotNull { describe(it) })
     }
+
+    /**
+     * One row per UDN and host, under ids that never repeat: the list is keyed
+     * by id. The same UDN from another host keeps a row of its own, so a device
+     * copying a speaker's UDN can't stand in for it unseen.
+     */
+    internal fun distinctRenderers(found: List<DlnaRenderer>): List<DlnaRenderer> {
+        val ids = HashSet<String>()
+        return found.distinctBy { it.id to hostOf(it.controlUrl) }
+            .map { if (ids.add(it.id)) it else it.copy(id = "${it.id}@${hostOf(it.controlUrl)}") }
+            .distinctBy { it.id }
+    }
+
+    private fun hostOf(url: String): String? = runCatching { URL(url).host }.getOrNull()
 
     /** Fetch and parse a device description document. */
     private fun describe(location: String): DlnaRenderer? {
@@ -157,7 +190,9 @@ object DlnaCast {
 
     /** The controlURL of the service block whose serviceType contains [service]. */
     internal fun controlUrlFor(xml: String, service: String): String? =
-        SERVICE_BLOCK.findAll(xml)
+        // Only up to the last closer: from each opener past it the search would
+        // rescan to the end, minutes on a document of nothing but openers.
+        SERVICE_BLOCK.findAll(xml.substringBeforeLast("</service>", "") + "</service>")
             .map { it.value }
             .firstOrNull { it.contains(service, ignoreCase = true) }
             ?.let { tagValue(it, "controlURL") }
@@ -444,7 +479,7 @@ object DlnaCast {
         """.trimIndent()
 
         try {
-            val connection = (URL(controlUrl).openConnection() as HttpURLConnection).apply {
+            val connection = (URL(controlUrl).openConnection() as? HttpURLConnection ?: return@withContext null).apply {
                 requestMethod = "POST"
                 connectTimeout = HTTP_TIMEOUT_MS
                 readTimeout = HTTP_TIMEOUT_MS
@@ -456,45 +491,61 @@ object DlnaCast {
             val status = connection.responseCode
             val ok = status in 200..299
             val body = (if (ok) connection.inputStream else connection.errorStream)
-                ?.use { it.readBytes().decodeToString() }
+                ?.use(::readCapped)
             connection.disconnect()
             // A failed call is logged with the renderer's own reason, where it gave one.
             if (ok) {
-                failing.remove("$action $controlUrl")
+                noteSuccess(action, controlUrl)
             } else {
                 noteFailure(action, controlUrl, "HTTP $status${upnpError(body)?.let { ", $it" }.orEmpty()}")
             }
-            if (ok) body.orEmpty() else null
+            if (ok) body else null
         } catch (e: IOException) {
-            noteFailure(action, controlUrl, "${e::class.simpleName}")
+            noteFailure(action, controlUrl, e.logName())
             null
-        } catch (e: IllegalStateException) {
-            noteFailure(action, controlUrl, "${e::class.simpleName}")
+        } catch (e: RuntimeException) {
+            noteFailure(action, controlUrl, e.logName())
             null
         }
     }
 
     /**
-     * The calls whose last try failed, by action and renderer. A renderer gone
-     * from the network fails its poll every second, too often to log each.
+     * The calls whose last try failed, by action and renderer, and how many
+     * times in a row. A renderer gone from the network fails its poll every
+     * second, too often to log each.
      */
-    private val failing = ConcurrentHashMap.newKeySet<String>()
+    private val failing = ConcurrentHashMap<String, Int>()
 
     /** Log [action]'s failure once, until it next succeeds. */
     private fun noteFailure(action: String, controlUrl: String, why: String) {
-        if (failing.add("$action $controlUrl")) android.util.Log.i(LOG_TAG, "$action failed: $why")
+        if (failing.merge("$action $controlUrl", 1) { a, b -> a + b } == 1) Log.i(LOG_TAG, "$action failed: $why")
+    }
+
+    /**
+     * [action] answers again: the end of a run of failures, said only after a
+     * real run. The position and state polls run every second, and a single
+     * miss on weak Wi-Fi would otherwise cost two lines.
+     */
+    private fun noteSuccess(action: String, controlUrl: String) {
+        failing.remove("$action $controlUrl")?.takeIf { it >= RUN_WORTH_SAYING }
+            ?.let { Log.i(LOG_TAG, "$action answers again, after $it failed") }
     }
 
     /**
      * The UPnP error in a SOAP fault, as "UPnP 701 Transition not available",
      * or null where the body carries none. The code is the reason: 701 is a
      * state that can't take the action, 714 a format refused, 402 arguments
-     * it didn't like.
+     * it didn't like. Both are the renderer's own text, which can echo back
+     * the stream address it was sent, so only plain words get through.
      */
     internal fun upnpError(body: String?): String? {
         val code = body?.let { tagValue(it, "errorCode") }?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         val description = tagValue(body, "errorDescription")?.trim().orEmpty()
-        return if (description.isEmpty()) "UPnP $code" else "UPnP $code $description"
+        return if (description.isEmpty()) {
+            "UPnP ${loggableWord(code)}"
+        } else {
+            "UPnP ${loggableWord(code)} ${loggableWord(description)}"
+        }
     }
 
     /**
@@ -518,32 +569,39 @@ object DlnaCast {
     }
 
     /**
-     * [uri] for a log line: where it points and which song, never the
-     * credentials riding in its query — a Subsonic token, a Plex one.
+     * For descriptions: one deadline over the whole exchange, and a cap on the
+     * headers. HttpURLConnection has a per-read timeout only, so a status line
+     * sent a byte at a time holds the search for ever, and one with no end runs
+     * the app out of memory.
      */
-    internal fun loggable(uri: String?): String {
-        if (uri == null) return "nothing"
-        val form = uriForm(uri)
-        val kept = form.substringAfter('?', "").split('&')
-            .filter { param -> LOGGED_PARAMS.any { param.startsWith("$it=") } }
-        val path = form.substringBefore('?')
-        return if (kept.isEmpty()) path else path + "?" + kept.joinToString("&")
+    private val describer by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(HTTP_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(HTTP_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            .callTimeout(BODY_DEADLINE_MS, TimeUnit.MILLISECONDS)
+            .build()
     }
 
-    private fun httpGet(url: String): String? = if (!allowsNetwork()) null else try {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = HTTP_TIMEOUT_MS
-            readTimeout = HTTP_TIMEOUT_MS
+    /** [url]'s body, or null. Never throws: a LOCATION is whatever any device on the LAN sends. */
+    internal fun httpGet(url: String): String? = if (!allowsNetwork()) null else try {
+        describer.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            if (response.isSuccessful) response.body.byteStream().use(::readCapped) else null
         }
-        val body = if (connection.responseCode in 200..299) {
-            connection.inputStream.use { it.readBytes().decodeToString() }
-        } else {
-            null
-        }
-        connection.disconnect()
-        body
-    } catch (_: IOException) {
+    } catch (_: Exception) {
         null
+    }
+
+    /** [stream] read whole, or null once it outgrows any real answer or drags past [BODY_DEADLINE_MS]. */
+    internal fun readCapped(stream: InputStream): String? {
+        val out = ByteArrayOutputStream()
+        val chunk = ByteArray(8192)
+        val deadline = System.currentTimeMillis() + BODY_DEADLINE_MS
+        while (true) {
+            val n = stream.read(chunk)
+            if (n < 0) return out.toByteArray().decodeToString()
+            out.write(chunk, 0, n)
+            if (out.size() > MAX_BODY_BYTES || System.currentTimeMillis() > deadline) return null
+        }
     }
 
     // --- Parsing helpers -----------------------------------------------------
@@ -560,14 +618,18 @@ object DlnaCast {
      * First value of an XML element, ignoring namespace prefixes. Regex rather
      * than a parser: the documents are small and only a few leaf values are read.
      */
-    internal fun tagValue(xml: String, tag: String): String? =
-        tagPattern(tag).find(xml)
-            ?.groupValues
-            ?.get(1)
-            ?.let(::unescape)
+    internal fun tagValue(xml: String, tag: String): String? {
+        val (opener, closer) = tagPatterns(tag)
+        val open = opener.find(xml) ?: return null
+        val close = closer.find(xml, open.range.last + 1) ?: return null
+        return unescape(xml.substring(open.range.last + 1, close.range.first))
+    }
 
-    private fun tagPattern(tag: String): Regex = TAG_PATTERNS.getOrPut(tag) {
-        Regex("<(?:[A-Za-z0-9_.-]+:)?$tag[^>]*>(.*?)</(?:[A-Za-z0-9_.-]+:)?$tag>", RegexOption.DOT_MATCHES_ALL)
+    // Opener and closer are found apart, and an opener ends at the next `<`: as one
+    // `<tag>(.*?)</tag>` the search rescans to the end from every opener a document
+    // repeats unclosed, minutes on a hostile one.
+    private fun tagPatterns(tag: String): Pair<Regex, Regex> = TAG_PATTERNS.getOrPut(tag) {
+        Regex("<(?:[A-Za-z0-9_.-]+:)?$tag[^<>]*>") to Regex("</(?:[A-Za-z0-9_.-]+:)?$tag>")
     }
 
     private fun escape(value: String): String = value
@@ -599,7 +661,7 @@ object DlnaCast {
         append("<upnp:artist>").append(escape(artist)).append("</upnp:artist>")
         append("<upnp:album>").append(escape(album)).append("</upnp:album>")
         append("<upnp:class>object.item.audioItem.musicTrack</upnp:class>")
-        append("""<res protocolInfo="http-get:*:$mimeType:*" """)
+        append("""<res protocolInfo="http-get:*:${escape(mimeType)}:*" """)
         append("""duration="${formatClock(durationMs)}">""")
         append(escape(url))
         append("</res>")

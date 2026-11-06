@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Check a release build's R8 mapping for the two names the late-unbind guard
-# can't do without.
+# can't do without, and that no temporary log line is left in the code.
 #
 #   scripts/release-mapping-check.sh             the last local release build
 #   scripts/release-mapping-check.sh MAPPING     any other mapping.txt
@@ -39,6 +39,15 @@ case "${1:-}" in
     -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 [[ $# -le 1 ]] || { echo "usage: $0 [mapping.txt]" >&2; exit 2; }
+
+# Lines tagged AmpTmp are instrumentation for one device test (see
+# tool/docs/LOGGING.md) and never ship.
+if LEFT=$(grep -rn --include='*.kt' '"AmpTmp' "$ROOT/tool/src/main" | grep -Ev ':[0-9]+:[[:space:]]*(\*|//)'); then
+    echo "!! temporary log lines are still in the code:" >&2
+    echo "$LEFT" >&2
+    exit 1
+fi
+echo "== code: no temporary log lines"
 
 MAPPING="${1:-$ROOT/tool/build/outputs/mapping/release/mapping.txt}"
 [[ -f "$MAPPING" ]] || {
