@@ -19,9 +19,15 @@ import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.isReorderOf
 import com.sublunar.amp.data.placementMoves
 import com.sublunar.amp.data.serverClock
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
+import com.sublunar.amp.log.loggableWord
+import com.sublunar.amp.source.FailureRuns
 import com.sublunar.amp.source.ServerHttp
+import com.sublunar.amp.source.onRealFailure
 import com.sublunar.amp.source.serverJson
 import com.sublunar.amp.source.serverUrl
+import com.sublunar.amp.source.templatedPath
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -76,6 +82,10 @@ class JellyfinClient(
 ) : MusicServer {
 
     private val http = ServerHttp()
+
+    /** The progress report goes every ten seconds, so a failure is logged when it starts and when it stops. */
+    private val sendFailures = FailureRuns("AmpSync")
+    private val lyricsFailures = FailureRuns("AmpLyrics")
 
     override fun close() = http.close()
 
@@ -158,13 +168,22 @@ class JellyfinClient(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
         payload: JsonObject? = null,
-    ): Boolean = runCatching { write(method, path, params, payload) }.isSuccess
+    ): Boolean {
+        val endpoint = "jellyfin ${method.value} ${templatedPath(path)}"
+        return runCatching { write(method, path, params, payload) }
+            .onSuccess { sendFailures.worked(endpoint) }
+            .onRealFailure { sendFailures.failed(endpoint, it.logName()) }
+            .isSuccess
+    }
 
     @Volatile private var version: String? = null
 
     /** The server's version, read once per client. A read that fails throws, and is tried again next time. */
     private suspend fun serverVersion(): String =
-        version ?: fetch<JellyfinPublicInfo>("/System/Info/Public").version.also { version = it }
+        version ?: fetch<JellyfinPublicInfo>("/System/Info/Public").version.also {
+            version = it
+            Log.i("AmpSync", "server jellyfin/${loggableWord(it)}")
+        }
 
     /**
      * Whether this server has the per-user routes that take the user as a
@@ -342,7 +361,7 @@ class JellyfinClient(
             "/Items/$songId/InstantMix",
             listOf("userId" to userId, "Fields" to FIELDS, "Limit" to RADIO_LENGTH.toString()),
         ).items.filter { it.type == TRACK_TYPE }.map { it.toTrack() }
-    }.onFailure { android.util.Log.w("AmpRadio", "jellyfin instant mix failed: ${it::class.simpleName}") }
+    }.onRealFailure { Log.w("AmpRadio", "jellyfin instant mix failed: ${it.logName()}") }
         .getOrDefault(emptyList())
 
     /**
@@ -501,7 +520,13 @@ class JellyfinClient(
      */
     override suspend fun getLyrics(songId: String): Lyrics? = runCatching {
         fetch<JellyfinLyrics>("/Audio/$songId/Lyrics").toLyrics()
-    }.getOrNull()
+    }.onSuccess { lyricsFailures.worked("jellyfin lyrics") }
+        .onRealFailure {
+            // A 404 is a song with no words, on every version: the server answered.
+            if ((it as? ServerException)?.status == 404) lyricsFailures.worked("jellyfin lyrics")
+            else lyricsFailures.failed("jellyfin lyrics", it.logName())
+        }
+        .getOrNull()
 
     // --- Writing back --------------------------------------------------------
 

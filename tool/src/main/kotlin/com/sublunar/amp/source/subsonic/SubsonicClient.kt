@@ -24,7 +24,12 @@ import com.sublunar.amp.data.UNREACHABLE
 import com.sublunar.amp.data.WriteResult
 import com.sublunar.amp.data.isReorderOf
 import com.sublunar.amp.data.md5Hex
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
+import com.sublunar.amp.log.loggableWord
+import com.sublunar.amp.source.FailureRuns
 import com.sublunar.amp.source.ServerHttp
+import com.sublunar.amp.source.onRealFailure
 import com.sublunar.amp.source.queryOf
 import com.sublunar.amp.source.serverJson
 import io.ktor.client.HttpClient
@@ -43,6 +48,7 @@ import io.ktor.http.isSuccess
 import io.ktor.http.parameters
 import io.ktor.utils.io.jvm.javaio.toInputStream
 import kotlin.random.Random
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -63,6 +69,9 @@ data class SubsonicConfig(
     /** Sent as `c=`; null keeps the app's default ("amp"). */
     val clientName: String? = null,
 ) {
+    // A data class prints every field; this one holds the password.
+    override fun toString(): String = "SubsonicConfig"
+
     companion object {
         /** A typed address without a trailing `/rest`, which is where the API sits rather than the server. */
         fun withoutRest(raw: String): String =
@@ -188,6 +197,10 @@ class SubsonicClient(
 ) : MusicServer {
 
     private val http = ServerHttp()
+
+    /** Asked once a sync or once a song, so a failure is logged when it starts and when it stops. */
+    private val syncFailures = FailureRuns("AmpSync")
+    private val lyricsFailures = FailureRuns("AmpLyrics")
 
     private val authQuery: String = run {
         val salt = randomSalt()
@@ -425,7 +438,10 @@ class SubsonicClient(
         val asked = known != null &&
             known.checkedVersion == tag &&
             known.generation == ServerFeatures.GENERATION
-        if (asked && known!!.missing.isEmpty()) return known.copy(bitrates = serverBitrates(known.missing, sampleTrackId))
+        if (asked && known!!.missing.isEmpty()) {
+            Log.i("AmpSync", "features of ${loggableWord(tag)}: unchanged, missing nothing")
+            return known.copy(bitrates = serverBitrates(known.missing, sampleTrackId))
+        }
 
         val questions = if (asked) known!!.missing else ServerFeatures.ALL
         val missing = mutableListOf<String>()
@@ -442,9 +458,9 @@ class SubsonicClient(
                 true -> Unit
             }
         }
-        android.util.Log.i(
+        Log.i(
             "AmpSync",
-            "features of $tag (${if (asked) "re-checked" else "asked"}): " +
+            "features of ${loggableWord(tag)} (${if (asked) "re-checked" else "asked"}): " +
                 "missing ${missing.ifEmpty { listOf("nothing") }}" +
                 if (unanswered) ", some still unanswered (no song yet, or no clear reply)" else "",
         )
@@ -474,7 +490,7 @@ class SubsonicClient(
                 bps?.let { format.id to it / 1000 }
             }
             .toMap()
-        android.util.Log.i("AmpSync", "server bitrates: ${found.ifEmpty { mapOf("none" to 0) }}")
+        Log.i("AmpSync", "server bitrates: ${found.ifEmpty { mapOf("none" to 0) }}")
         return found
     }
 
@@ -746,7 +762,10 @@ class SubsonicClient(
      * is still moving) is the same as not knowing.
      */
     override suspend fun songChangesSince(mark: String?, libraries: List<String?>): SongChanges {
-        val status = runCatching { request("getScanStatus").scanStatus }.getOrNull()
+        val status = runCatching { request("getScanStatus").scanStatus }
+            .onSuccess { syncFailures.worked("scan status") }
+            .onRealFailure { syncFailures.failed("scan status", it.logName()) }
+            .getOrNull()
         val lastScan = status?.lastScan?.takeIf { it.isNotBlank() && !status.scanning }
             ?: return SongChanges.Unknown(mark = null)
         return if (lastScan == mark) SongChanges.Nothing(lastScan) else SongChanges.Unknown(lastScan)
@@ -767,7 +786,8 @@ class SubsonicClient(
         return try {
             val body = request("getTopSongs", listOf("artist" to artistName))
             body.topSongs?.song.orEmpty().map { it.toTrack() }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e !is CancellationException) Log.w("AmpRadio", "subsonic top songs failed: ${e.logName()}")
             emptyList()
         }
     }
@@ -782,7 +802,8 @@ class SubsonicClient(
         return try {
             val body = request("getSimilarSongs", listOf("id" to songId, "count" to RADIO_LENGTH.toString()))
             body.similarSongs?.song.orEmpty().map { it.toTrack() }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e !is CancellationException) Log.w("AmpRadio", "subsonic similar songs failed: ${e.logName()}")
             emptyList()
         }
     }
@@ -790,6 +811,7 @@ class SubsonicClient(
     override suspend fun getLyrics(songId: String): Lyrics? {
         return try {
             val body = request("getLyricsBySongId", listOf("id" to songId))
+            lyricsFailures.worked("subsonic lyrics")
             val structured = body.lyricsList?.structuredLyrics.orEmpty()
 
             val synced = structured.firstOrNull { entry ->
@@ -801,7 +823,8 @@ class SubsonicClient(
                 unsynced(plain.line.map { it.value })?.let { return it }
             }
             body.lyrics?.value?.let { unsynced(it.split("\n")) }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e !is CancellationException) lyricsFailures.failed("subsonic lyrics", e.logName())
             null
         }
     }
@@ -990,7 +1013,7 @@ class SubsonicClient(
     private suspend fun holdsHiddenSongs(id: String, shown: Int): Boolean {
         val stored = request("getPlaylists").playlists?.playlist.orEmpty().firstOrNull { it.id == id }?.songCount
         val hidden = stored != null && stored > shown
-        if (hidden) android.util.Log.w("AmpSync", "playlist $id holds ${stored!! - shown} song(s) the server doesn't list; not editing it")
+        if (hidden) Log.w("AmpSync", "a playlist holds ${stored!! - shown} song(s) the server doesn't list; not editing it")
         return hidden
     }
 

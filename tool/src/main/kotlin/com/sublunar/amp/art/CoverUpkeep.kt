@@ -1,6 +1,5 @@
 package com.sublunar.amp.art
 
-import android.util.Log
 import com.sublunar.amp.data.AppSettings
 import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.LibraryView
@@ -9,6 +8,8 @@ import com.sublunar.amp.data.MusicServer
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.noteOom
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logRef
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
@@ -48,22 +49,25 @@ class CoverUpkeep(
      *
      * One run at a time, replaced rather than queued: a second trigger is the
      * same library, whose fetched covers are on disk, or a different one.
+     * [trigger] says what set it off, for the log.
      */
-    fun sync() {
+    fun sync(trigger: String? = null) {
+        val why = trigger?.let { " ($it)" }.orEmpty()
         synchronized(this) {
+            if (running?.isActive == true) Log.i("AmpArt", "cover sync: the run in flight is replaced by a new one$why")
             running?.cancel()
             running = scope.launch {
                 // Read from the store, not the held state: "off" has to mean
                 // not one, even just after it was switched.
-                if (settings.artwork.first() == ArtworkMode.NONE) return@launch
-                val source = settings.activeSource.first() ?: return@launch
-                val client = clientFor(source) ?: return@launch
+                if (settings.artwork.first() == ArtworkMode.NONE) return@launch skipped("artwork off$why")
+                val source = settings.activeSource.first() ?: return@launch skipped("no source$why")
+                val client = clientFor(source) ?: return@launch skipped("${source.logRef} has no client$why")
                 // The chosen library, as the lists show it — see LibraryView —
                 // newest first: those are the covers a run cut short is most
                 // likely to be asked for.
                 val view = LibraryView(source.selectedLibraries, source.hiddenLibraries)
                 val albums = runCatching { daoFor(source).allAlbumsSnapshot() }
-                    .noteOom("cover sync of ${source.name}")
+                    .noteOom("cover sync of ${source.logRef}")
                     .getOrDefault(emptyList())
                     .filter { view.showsAlbum(it.libraryId) }
                     .sortedByDescending { it.createdMs }
@@ -73,11 +77,11 @@ class CoverUpkeep(
                     emptyList()
                 } else {
                     runCatching { daoFor(source).artistImages() }
-                        .noteOom("artist pictures of ${source.name}")
+                        .noteOom("artist pictures of ${source.logRef}")
                         .getOrDefault(emptyList())
                         .map { it.imageId }
                 }
-                if (albums.isEmpty() && artists.isEmpty()) return@launch
+                if (albums.isEmpty() && artists.isEmpty()) return@launch skipped("${source.logRef} has nothing to show$why")
                 // A picture whose id never changes when the picture does (an
                 // artist's, any cover on most Subsonic servers) can't be told
                 // stale from here, so once a month on a free link those are
@@ -87,10 +91,11 @@ class CoverUpkeep(
                     val unversioned = (albums + artists).filterNot(client::coverIdVersioned)
                     artwork.drop(source.id, unversioned)
                     artwork.markRefreshed(source.id)
-                    Log.i("AmpArt", "cover refresh: ${source.name}: ${unversioned.size} pictures whose ids never change, fetched afresh")
+                    Log.i("AmpArt", "cover refresh: ${source.logRef}: ${unversioned.size} pictures whose ids never change, fetched afresh")
                 }
                 // A sync may have changed how many albums there are.
                 reserve.recount()
+                Log.i("AmpArt", "cover sync: ${source.logRef} started$why: ${albums.size} covers, ${artists.size} artist pictures")
                 val startedMs = System.currentTimeMillis()
                 val (small, full) = artwork.syncCovers(
                     sourceId = source.id,
@@ -103,8 +108,8 @@ class CoverUpkeep(
                         if (missing > 0) {
                             Log.i(
                                 "AmpArt",
-                                if (fetched == 0) "cover sync: ${source.name}: $size: $missing missing, fetching"
-                                else "cover sync: ${source.name}: $size: $fetched of $missing so far",
+                                if (fetched == 0) "cover sync: ${source.logRef}: $size: $missing missing, fetching"
+                                else "cover sync: ${source.logRef}: $size: $fetched of $missing so far",
                             )
                         }
                     },
@@ -115,18 +120,26 @@ class CoverUpkeep(
                         rulesNow().maySyncCovers && browsedSourceId() == source.id
                     },
                 )
-                for ((size, result) in listOf("small" to small, "full" to full)) {
-                    if (result.missing == 0) continue
-                    Log.i(
-                        "AmpArt",
-                        "cover sync: ${source.name}: $size: ${result.fetched} of ${result.missing} missing fetched " +
-                            "(${result.wanted} in the library), ${result.fetchedBytes shr 10} KB in " +
-                            "${(System.currentTimeMillis() - startedMs) / 1000} s" +
-                            (result.stopped?.let { " — stopped: $it" } ?: ""),
-                    )
-                }
+                Log.i(
+                    "AmpArt",
+                    "cover sync: ${source.logRef} done in ${(System.currentTimeMillis() - startedMs) / 1000} s: " +
+                        "${small.summary("small")}; ${full.summary("full")}",
+                )
             }
         }
+    }
+
+    private fun skipped(why: String) = Log.i("AmpArt", "cover sync skipped: $why")
+
+    /** One pass of a run, for its end line: what was fetched, why the rest wasn't, and why it stopped. */
+    private fun CoverSyncResult.summary(size: String): String {
+        val unfetched = listOf(none to "none on the server", notPictures to "not kept (not a picture, or not written)", failed to "failed")
+            .filter { (count, _) -> count > 0 }
+            .joinToString(", ") { (count, what) -> "$count $what" }
+        return "$size $fetched of $missing missing fetched ($wanted wanted)" +
+            (if (unfetched.isEmpty()) "" else ", $unfetched") +
+            ", ${fetchedBytes shr 10} KB" +
+            (stopped?.let { ", stopped: $it" } ?: "")
     }
 
     /**
@@ -139,16 +152,16 @@ class CoverUpkeep(
     suspend fun atLaunch() {
         settings.sources.first().forEach { source ->
             runCatching { daoFor(source).collapseTrackCovers() }
-                .noteOom("cover collapse of ${source.name}")
-                .onSuccess { if (it > 0) Log.i("AmpArt", "${source.name}: $it tracks now share their album's cover") }
+                .noteOom("cover collapse of ${source.logRef}")
+                .onSuccess { if (it > 0) Log.i("AmpArt", "${source.logRef}: $it tracks now share their album's cover") }
             // Lyrics of songs the library no longer has, like their covers.
-            runCatching { daoFor(source).pruneLyrics() }.noteOom("lyrics of ${source.name}")
+            runCatching { daoFor(source).pruneLyrics() }.noteOom("lyrics of ${source.logRef}")
         }
         claimedFiles()?.let { artwork.expireUnclaimed(it) }
         reserve.recount()
         artwork.trimToBudget(protectedFiles(), reserve.now())
         logCache()
-        sync()
+        sync("launch")
     }
 
     /**
@@ -163,10 +176,10 @@ class CoverUpkeep(
                 val dao = daoFor(source)
                 val refreshed = artwork.lastRefreshedMs(source.id)
                     ?.let { "${(System.currentTimeMillis() - it) / DAY_MS} days ago" } ?: "never"
-                "${source.name}: ${dao.albumCount()} albums, ${dao.artistImageCount()} artist pictures, " +
+                "${source.logRef}: ${dao.albumCount()} albums, ${dao.artistImageCount()} artist pictures, " +
                     "lyrics kept for ${dao.lyricsCount()} songs (${dao.lyricsFoundCount()} with words), " +
                     "pictures refreshed $refreshed"
-            }.noteOom("cache summary of ${source.name}").onSuccess { Log.i("AmpArt", "cache: $it") }
+            }.noteOom("cache summary of ${source.logRef}").onSuccess { Log.i("AmpArt", "cache: $it") }
         }
     }
 
@@ -177,7 +190,7 @@ class CoverUpkeep(
     private suspend fun protectedFiles(): Set<String> =
         settings.sources.first().flatMap { source ->
             runCatching { daoFor(source).downloadedCoverArtIds() }
-                .noteOom("protected covers of ${source.name}")
+                .noteOom("protected covers of ${source.logRef}")
                 .getOrDefault(emptyList())
                 .flatMap { artwork.fileNamesFor(source.id, it) }
         }.toSet()
@@ -192,7 +205,7 @@ class CoverUpkeep(
         val claimed = HashSet<String>()
         for (source in settings.sources.first()) {
             val ids = runCatching { daoFor(source).allCoverArtIds() }
-                .noteOom("claimed covers of ${source.name}").getOrNull() ?: return null
+                .noteOom("claimed covers of ${source.logRef}").getOrNull() ?: return null
             ids.flatMapTo(claimed) { artwork.fileNamesFor(source.id, it) }
         }
         return claimed

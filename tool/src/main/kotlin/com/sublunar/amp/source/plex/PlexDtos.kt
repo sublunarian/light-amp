@@ -24,6 +24,8 @@ data class PlexContainer(
     /** How many there are altogether, when the server pages the result. */
     val totalSize: Int? = null,
     @SerialName("machineIdentifier") val machineIdentifier: String? = null,
+    /** The server's software version, on an /identity answer. */
+    val version: String? = null,
     @SerialName("Directory") val directories: List<PlexDirectory> = emptyList(),
     @SerialName("Metadata") val metadata: List<PlexMetadata> = emptyList(),
 )

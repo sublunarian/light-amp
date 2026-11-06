@@ -1,6 +1,6 @@
 package com.sublunar.amp.data
 
-import java.net.URI
+import com.sublunar.amp.log.Log
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
@@ -21,7 +21,7 @@ class SourceRoute(
     /** Whether a LAN address could answer at all: off Wi-Fi, probing one is a wait for nothing. */
     private val onLan: () -> Boolean,
     private val nowMs: () -> Long = System::currentTimeMillis,
-    private val log: (String) -> Unit = { android.util.Log.i("AmpNet", "route: $it") },
+    private val log: (String) -> Unit = { Log.i("AmpNet", "route: $it") },
 ) {
     private val busy = Mutex()
     private var askedDirectoryMs: Long? = null
@@ -44,7 +44,9 @@ class SourceRoute(
         if (baseUrl != current.baseUrl || ordered != current.connections) {
             save(current.id, current.baseUrl, baseUrl, ordered)
         }
-        if (found != null && found != current.baseUrl) log("moved ${hostOf(current.baseUrl)} → ${hostOf(found)}")
+        if (found != null && found != current.baseUrl) {
+            log("moved ${routeOf(current.baseUrl, ordered)} → ${routeOf(found, ordered)}")
+        }
         found != null
     }
 
@@ -61,7 +63,7 @@ class SourceRoute(
         // the LAN address answers at all it answers well inside it.
         val found = firstAnswering(better, current, true) ?: return false
         save(current.id, current.baseUrl, found, current.connections)
-        log("moved back ${hostOf(current.baseUrl)} → ${hostOf(found)}")
+        log("moved back ${routeOf(current.baseUrl, current.connections)} → ${routeOf(found, current.connections)}")
         true
     }
 
@@ -87,6 +89,3 @@ class SourceRoute(
         const val DIRECTORY_EVERY_MS = 60_000L
     }
 }
-
-/** A server address as the log names it: the host alone, never the whole URL. */
-internal fun hostOf(url: String?): String = url?.let { runCatching { URI(it).host }.getOrNull() } ?: "?"

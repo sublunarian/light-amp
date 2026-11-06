@@ -1,6 +1,9 @@
 package com.sublunar.amp.playback.output.dlna
 
 import com.sublunar.amp.data.Track
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
+import com.sublunar.amp.log.loggableWord
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -93,11 +96,11 @@ object DlnaCast {
     /** The tag a failed call is logged under: the cast's own. */
     private const val LOG_TAG = "AmpCast"
 
+    /** Failures in a row before their end is worth a line — see [noteSuccess]. */
+    private const val RUN_WORTH_SAYING = 3
+
     /** More escaping than any renderer has been seen to add. */
     private const val UNESCAPE_ROUNDS = 3
-
-    /** The parts of a stream address a log line keeps: which song, in what, from where. */
-    private val LOGGED_PARAMS = listOf("id", "format", "maxBitRate", "timeOffset", "path")
 
     private val SERVICE_BLOCK = Regex("<service>.*?</service>", RegexOption.DOT_MATCHES_ALL)
 
@@ -492,41 +495,57 @@ object DlnaCast {
             connection.disconnect()
             // A failed call is logged with the renderer's own reason, where it gave one.
             if (ok) {
-                failing.remove("$action $controlUrl")
+                noteSuccess(action, controlUrl)
             } else {
                 noteFailure(action, controlUrl, "HTTP $status${upnpError(body)?.let { ", $it" }.orEmpty()}")
             }
             if (ok) body else null
         } catch (e: IOException) {
-            noteFailure(action, controlUrl, "${e::class.simpleName}")
+            noteFailure(action, controlUrl, e.logName())
             null
         } catch (e: RuntimeException) {
-            noteFailure(action, controlUrl, "${e::class.simpleName}")
+            noteFailure(action, controlUrl, e.logName())
             null
         }
     }
 
     /**
-     * The calls whose last try failed, by action and renderer. A renderer gone
-     * from the network fails its poll every second, too often to log each.
+     * The calls whose last try failed, by action and renderer, and how many
+     * times in a row. A renderer gone from the network fails its poll every
+     * second, too often to log each.
      */
-    private val failing = ConcurrentHashMap.newKeySet<String>()
+    private val failing = ConcurrentHashMap<String, Int>()
 
     /** Log [action]'s failure once, until it next succeeds. */
     private fun noteFailure(action: String, controlUrl: String, why: String) {
-        if (failing.add("$action $controlUrl")) android.util.Log.i(LOG_TAG, "$action failed: $why")
+        if (failing.merge("$action $controlUrl", 1) { a, b -> a + b } == 1) Log.i(LOG_TAG, "$action failed: $why")
+    }
+
+    /**
+     * [action] answers again: the end of a run of failures, said only after a
+     * real run. The position and state polls run every second, and a single
+     * miss on weak Wi-Fi would otherwise cost two lines.
+     */
+    private fun noteSuccess(action: String, controlUrl: String) {
+        failing.remove("$action $controlUrl")?.takeIf { it >= RUN_WORTH_SAYING }
+            ?.let { Log.i(LOG_TAG, "$action answers again, after $it failed") }
     }
 
     /**
      * The UPnP error in a SOAP fault, as "UPnP 701 Transition not available",
      * or null where the body carries none. The code is the reason: 701 is a
      * state that can't take the action, 714 a format refused, 402 arguments
-     * it didn't like.
+     * it didn't like. Both are the renderer's own text, which can echo back
+     * the stream address it was sent, so only plain words get through.
      */
     internal fun upnpError(body: String?): String? {
         val code = body?.let { tagValue(it, "errorCode") }?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         val description = tagValue(body, "errorDescription")?.trim().orEmpty()
-        return if (description.isEmpty()) "UPnP $code" else "UPnP $code $description"
+        return if (description.isEmpty()) {
+            "UPnP ${loggableWord(code)}"
+        } else {
+            "UPnP ${loggableWord(code)} ${loggableWord(description)}"
+        }
     }
 
     /**
@@ -547,19 +566,6 @@ object DlnaCast {
             form = undone
         }
         return form
-    }
-
-    /**
-     * [uri] for a log line: where it points and which song, never the
-     * credentials riding in its query — a Subsonic token, a Plex one.
-     */
-    internal fun loggable(uri: String?): String {
-        if (uri == null) return "nothing"
-        val form = uriForm(uri)
-        val kept = form.substringAfter('?', "").split('&')
-            .filter { param -> LOGGED_PARAMS.any { param.startsWith("$it=") } }
-        val path = form.substringBefore('?')
-        return if (kept.isEmpty()) path else path + "?" + kept.joinToString("&")
     }
 
     /**

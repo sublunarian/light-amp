@@ -1,6 +1,7 @@
 package com.sublunar.amp.data
 
-import android.util.Log
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.logName
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -64,7 +65,7 @@ class Reachability(
             delay(delayMs)
             var attempt = 0
             while (true) {
-                val verdict = verify(reroute = attempt == 0)
+                val verdict = verify(reroute = attempt == 0, retry = attempt > 0)
                 // Null: the rules forbid asking (Wi-Fi Only on cellular, or no
                 // link). Not an answer about the server — leave what is known
                 // alone; the next network change asks again.
@@ -77,11 +78,15 @@ class Reachability(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        log("moving back failed: ${e::class.simpleName}")
+                        log("moving back failed: ${e.logName()}")
                     }
                     return@launch
                 }
-                val wait = RETRY_MS.getOrNull(attempt++) ?: return@launch
+                val wait = RETRY_MS.getOrNull(attempt++)
+                if (wait == null) {
+                    log("no answer to $attempt pings; asking again on the next change")
+                    return@launch
+                }
                 delay(wait)
             }
         }
@@ -93,8 +98,9 @@ class Reachability(
      *
      * [reroute]: a miss also tries the server's other addresses. Once per [check],
      * not on its retries, so waiting out a server that is off stays a plain ping.
+     * [retry]: one of those retries, whose miss the log already has.
      */
-    suspend fun verify(reroute: Boolean = false): Boolean? = pinging.withLock {
+    suspend fun verify(reroute: Boolean = false, retry: Boolean = false): Boolean? = pinging.withLock {
         if (!mayAsk()) {
             // The rules forbid asking — Wi-Fi Only on cellular, or no link. A
             // verdict reached on an earlier link says nothing about the next
@@ -106,7 +112,7 @@ class Reachability(
         }
         val server = client() ?: return null
         val ping = askServer(server)
-        log("ping → ${ping.answered ?: "no verdict"} in ${ping.tookMs}ms (${ping.why})")
+        if (!retry || ping.answered != false) log("ping → ${ping.answered ?: "no verdict"} in ${ping.tookMs}ms (${ping.why})")
         // Published before any rerouting, a miss too: playback acts on the first one.
         ping.answered?.let { _reachable.value = it }
         if (ping.answered != false || !reroute || route == null) return ping.answered
@@ -117,7 +123,7 @@ class Reachability(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log("rerouting failed: ${e::class.simpleName}")
+            log("rerouting failed: ${e.logName()}")
             false
         }
         if (answered) _reachable.value = true
@@ -159,12 +165,12 @@ internal suspend fun askServer(server: MusicServer): Ping {
         // No route, no name, no TLS, no reply: nobody there — unless the
         // wall shut every socket while this was out, which is our doing
         // and not the server's.
-        why = "${e::class.simpleName}"
+        why = e.logName()
         if (NetworkGate.slammedSince(askedAtMs)) null.also { why = "our own slam" } else false
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        why = "${e::class.simpleName}"
+        why = e.logName()
         answeredBy(e)
     }
     return Ping(answered, why, monotonicMs() - askedAtMs)

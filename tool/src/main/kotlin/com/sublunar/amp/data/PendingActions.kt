@@ -1,5 +1,6 @@
 package com.sublunar.amp.data
 
+import com.sublunar.amp.log.Log
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.EncodeDefault
@@ -115,8 +116,22 @@ class PendingActions(private val settings: AppSettings) {
             if (queue.isEmpty()) return@withLock emptyList()
             // One this build can't read is nobody's here: it waits for the build that can.
             val mine = { e: Entry -> e.action != null && (e.action.sourceId == null || e.action.sourceId == sourceId) }
-            val run = replay(queue, mine) { send(it.action!!, client, artistId) }
+            val refusedKinds = mutableSetOf<PendingAction.Kind>()
+            val run = replay(queue, mine) { entry ->
+                val action = entry.action!!
+                send(action, client, artistId).also { if (it is WriteResult.Refused) refusedKinds += action.kind }
+            }
             settings.setPendingActions(encode(run.left))
+            val ours = queue.count(mine)
+            if (ours > 0) {
+                val unsent = run.left.count(mine)
+                val kinds = if (refusedKinds.isEmpty()) "" else " (${refusedKinds.joinToString()})"
+                Log.i(
+                    "AmpSync",
+                    "pending: ${ours - unsent - run.refused.size} sent, ${run.refused.size} refused$kinds, " +
+                        "$unsent left for later, ${queue.count { it.action == null }} this build can't read",
+                )
+            }
             run.refused
         }
 
@@ -178,7 +193,12 @@ class PendingActions(private val settings: AppSettings) {
         Entry(json.encodeToJsonElement(PendingAction.serializer(), action), action)
 
     private fun decode(raw: String): List<Entry> {
-        val stored = runCatching { json.parseToJsonElement(raw) }.getOrNull() as? JsonArray ?: return emptyList()
+        val stored = runCatching { json.parseToJsonElement(raw) }.getOrNull() as? JsonArray
+        if (stored == null) {
+            // Never the exception: its message quotes what was stored.
+            if (raw.isNotBlank()) Log.w("AmpSync", "pending: the stored queue can't be read, so it reads as empty")
+            return emptyList()
+        }
         return stored.map { Entry(it, read(it)) }
     }
 

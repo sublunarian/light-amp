@@ -4,11 +4,14 @@ import com.sublunar.amp.App
 import com.sublunar.amp.data.DownloadStore
 import com.sublunar.amp.data.LinkRules
 import com.sublunar.amp.data.MusicServer
+import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.db.DownloadFile
 import com.sublunar.amp.data.qualityRank
+import com.sublunar.amp.log.Log
+import com.sublunar.amp.log.loggableWord
 import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightMediaMetadata
@@ -43,6 +46,12 @@ internal class TrackSources(
      * even where the stream is better, until the server answers again.
      */
     var forceOffline = false
+        set(value) {
+            if (value != field) {
+                Log.i("AmpNet", if (value) "offline latch on: downloads only, until the server answers" else "offline latch off")
+            }
+            field = value
+        }
 
     /** The track fallBackOffline last picked up, so it tries each one once — see [firstRetryOf]. */
     private var retriedTrackId: String? = null
@@ -119,20 +128,28 @@ internal class TrackSources(
      */
     fun effectiveFormat(track: Track): StreamFormat {
         val source = App.source.value
-        val chosen = if (App.rules.value.unmetered) source.wifiFormat else source.cellularFormat
-        return source.formatFor(track, chosen).also { format ->
-            // Once a song, so a check of the log shows the rule at work.
-            if (format != chosen && keptAsIs.add(track.id)) {
-                android.util.Log.i(
-                    "AmpQual",
-                    "stream: ${track.codec} ${track.bitRateKbps} kbps file played as it is, within ${chosen.id}",
-                )
-            }
-        }
+        return source.formatFor(track, chosenFormat(source))
     }
 
-    /** Songs the log has already said are played as they are — see [effectiveFormat]. */
-    private val keptAsIs = mutableSetOf<String>()
+    /** The format [source] is set to for this link, before [MusicSource.formatFor] looks at the file. */
+    private fun chosenFormat(source: MusicSource): StreamFormat =
+        if (App.rules.value.unmetered) source.wifiFormat else source.cellularFormat
+
+    /**
+     * Says so when the stream of [track], starting at queue row [index], is its
+     * file as it is, so a check of the log shows the rule at work. Asked for
+     * the row being started only: [effectiveFormat] is asked for a whole
+     * window of rows at once.
+     */
+    fun noteQuality(track: Track, index: Int) {
+        val source = App.source.value
+        val chosen = chosenFormat(source)
+        if (source.formatFor(track, chosen) == chosen) return
+        Log.i(
+            "AmpQual",
+            "idx=$index streams its ${loggableWord(track.codec)} ${track.bitRateKbps} kbps file as it is, within ${chosen.id}",
+        )
+    }
 
     /** Whether the door will ask the server's decision for this stream right before fetching it — see [playerUrl]. */
     fun decidesAtDoor(client: MusicServer, track: Track, format: StreamFormat): Boolean =

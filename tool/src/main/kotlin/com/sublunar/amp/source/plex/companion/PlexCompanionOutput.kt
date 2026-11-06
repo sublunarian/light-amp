@@ -1,8 +1,8 @@
 package com.sublunar.amp.source.plex.companion
 
-import android.util.Log
 import com.sublunar.amp.data.Connectivity
 import com.sublunar.amp.data.RepeatMode
+import com.sublunar.amp.log.Log
 import com.sublunar.amp.playback.output.Disconnect
 import com.sublunar.amp.playback.output.Output
 import com.sublunar.amp.playback.output.OutputHost
@@ -56,6 +56,10 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
     private var job: Job? = null
     private var playQueue: PlexQueue? = null
     private var pushedIds: List<String> = emptyList()
+
+    /** The last track the player played that the queue doesn't hold, so it is logged once and not per report. */
+    @Volatile
+    private var strayKey: String? = null
 
     /** Companion wants a fresh command id per request, per controller; commands go out from several coroutines at once. */
     private val commandIds = AtomicInteger()
@@ -122,7 +126,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         val onNetwork = if (Connectivity.isOnWifi()) PlexGdm.findPlayers() else emptyList()
         val seen = listed.map { it.id }.toMutableSet()
         val extra = onNetwork.filter { seen.add(it.id) }
-        log("gdm found ${onNetwork.map { it.name }}, new here ${extra.map { it.name }}")
+        log("gdm found ${onNetwork.size}, ${extra.size} not listed")
         return (listed + extra).map(::PlexCompanionTarget)
     }
 
@@ -151,7 +155,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
             // an address is not an identity: a moved lease would hand this queue
             // to whatever answers there now. Ask it who it is first.
             if (!player.identityKnown && !client.playerIsWhoWeThink(player)) {
-                log("${player.name} isn't who plex.tv said — not casting")
+                log("player isn't who plex.tv said — not casting")
                 host.dropped(this@PlexCompanionOutput, target)
                 return@launch
             }
@@ -408,8 +412,15 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
             // The player moved on its own (its remote, or a track ended): follow it.
             val idx = host.queue.value.indexOfFirst { it.id == rk }
             if (idx >= 0) {
+                strayKey = null
                 host.showIndex(idx)
                 log("player moved to idx=$idx")
+            } else if (rk != strayKey) {
+                strayKey = rk
+                log(
+                    "player on a track outside the queue (${host.queue.value.size} queued, ${pushedIds.size} pushed; " +
+                        "${if (rk in pushedIds) "pushed earlier" else "not pushed by Amp"})",
+                )
             }
         }
     }
@@ -496,10 +507,11 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         playQueue = queue
         pushedIds = window.map { it.id }
         windowEnd = if (to >= tracks.size) -1 else to - 1
-        client.companionPlay(target, queue, tracks[index].id, positionMs, nextCommandId(), WINDOW)
+        val accepted = client.companionPlay(target, queue, tracks[index].id, positionMs, nextCommandId(), WINDOW)
         log(
             "pushed ${window.size} of ${tracks.size} at idx=$index from ${positionMs}ms" +
-                if (windowEnd >= 0) ", window ends at $windowEnd" else "",
+                (if (windowEnd >= 0) ", window ends at $windowEnd" else "") +
+                ", playMedia accepted=${if (accepted) "yes" else "no"}",
         )
     }
 
@@ -518,7 +530,7 @@ internal class PlexCompanionOutput(private val host: OutputHost) : Output {
         pushedStopped = false
         subscribed = client.companionSubscribe(target, port, nextCommandId())
         log(
-            if (subscribed) "subscribed; ${target.name} pushes to port $port"
+            if (subscribed) "subscribed; the player pushes its timeline"
             else "subscribe declined — polling",
         )
     }
