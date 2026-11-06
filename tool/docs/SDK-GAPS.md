@@ -12,7 +12,7 @@ Built the way Light's store builder builds it (a pristine SDK, via
 `scripts/store-build-check.sh`), Amp stops at 46 compile errors on 0.2.3
 (checked 5 Nov; three of them follow from one missing `deviceVolume`), every
 one a call into our patches. It was 164 on 21 Sep. Most used first:
-`playWhenReady`, `repeatMode`, `replaceRange`, `playbackGain`,
+`playWhenReady`, `repeatMode`, `replaceRange`,
 `deviceVolume`/`setSystemVolume`, `setMediaQueueAt`, `hasRuntimePermission`,
 the transfer service and `LightDisplayColor`.
 
@@ -217,7 +217,7 @@ minutes, where the spike held on indefinitely.
   gets that far once the store build compiles. The other half:
   `PlaybackController.attach` replaces a handle still held when a new activity
   boots — releases it and makes the new one in the same main-thread turn,
-  with no back-out teardown, so playback, the queue, the gain and any cast
+  with no back-out teardown, so playback, the queue and any cast
   carry on (`AmpLife: new activity: handle moved over`). Around it: a pending
   start plays whatever handle is current when the server answers, an old
   screen's back-out can't release a newer activity's handle, and the deferred
@@ -260,16 +260,14 @@ minutes, where the spike held on indefinitely.
   in the player-handle paragraph of `ARCHITECTURE.md`. The kept re-reads,
   and `reresolveQueue`'s dropped edits, give a new activity taking the player
   over as a reason; without the handover it is a back-out releasing the
-  handle in between. Keep the rest
-  either way: `@Volatile player`, the current-handle reads, the gain seed with
-  the gain collector's `idx < 0` skip, the `replayGain` collector inside
-  `coreReady`, the handle collectors waiting for the connection, the landing
-  at connect, `reresolveQueue` putting its memo back, and `handleLost` each
-  fix something a plain reopen after a back-out gets wrong too (a handle read
-  across threads or after its release, a jump to full level, one more
-  collector per activity, the 0:00 flash, 0:00 on a service that moved on, a
-  re-resolution lost to a back-out, a crash after a failed connection), and
-  the `bind`/`attachHandle` split is where that wait lives.
+  handle in between. Keep the rest either way: `@Volatile player`, the
+  current-handle reads, the handle collectors waiting for the connection, the
+  landing at connect, `reresolveQueue` putting its memo back, and
+  `handleLost` each fix something a plain reopen after a back-out gets wrong
+  too (a handle read across threads or after its release, the 0:00 flash,
+  0:00 on a service that moved on, a re-resolution lost to a back-out, a
+  crash after a failed connection), and the `bind`/`attachHandle` split is
+  where that wait lives.
 
 ### Copy and paste in text entry — light-sdk#45, in progress at Light
 
@@ -363,7 +361,7 @@ follows the green light. The asks went in on 23 Oct 2026: issues
 | Playback state, `playWhenReady` | `isPlaying` is false both when paused and while rebuffering, so a tool can't tell a pause from a wait, nor see a finished queue (Amp infers it from the position). Amp reads `playWhenReady` in nine places. | Ask: [#218](https://github.com/lightphone/light-sdk/issues/218) is open with Light's "PR welcome"; a comment proposing `playWhenReady` and a `LightPlaybackState` is posted. |
 | `repeatMode` | Repeat off / all / one. Done in the tool it isn't gapless, and it stops once you leave a detached tool. | Asked in #298, as an SDK enum. |
 | `setMediaQueueAt` | Restoring a queue mid-song: `seekTo` right after `setMediaQueue` lands at 0, because the duration isn't known yet. | Asked in #298, as a start position on `setMediaQueue`. |
-| `playbackGain` | ReplayGain. There is no other way to set a player's volume. | Asked in #298, shaped like `speed`. |
+| `playbackGain` | ReplayGain, which Amp has taken out until this exists: there is no other way to set a player's volume. | Asked in #298, shaped like `speed`. |
 | `deviceVolume`, `setSystemVolume` | The Output page's fader on This device. A tool can't reach `AudioManager`. | Asked in #298; Light may see volume as LightOS's. |
 | `setHandleAudioBecomingNoisy(true)` | One line on the builder. Without it, unplugging headphones leaves music playing out of the speaker. Doing it by hand needs a `BroadcastReceiver`, which the sandbox blocks. | Reported as #300. |
 | `replaceRange()` | One queue update instead of one per item; an empty range appends. Reordering by repeated `moveMediaItem` rebuilds the session queue per move, and a few hundred moves exhausts memory. | Asked for list versions on [#217](https://github.com/lightphone/light-sdk/issues/217), with a 500-song shuffle timed on the phone. |

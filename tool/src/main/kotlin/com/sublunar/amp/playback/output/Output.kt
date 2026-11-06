@@ -364,9 +364,6 @@ interface OutputHost {
      */
     suspend fun coverJpeg(track: Track, maxPx: Int): ByteArray?
 
-    /** The ReplayGain the phone would play [track] at: a factor of at most 1, and 1 with the setting off. */
-    fun gainFor(track: Track): Float
-
     /** The fader's level, 0 to 1, as it stands. */
     val volume: StateFlow<Float>
 

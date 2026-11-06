@@ -97,14 +97,7 @@ class DownloadStore(private val filesDir: File) {
      * temporary file first so an interrupted download can never be mistaken for
      * a complete one.
      */
-    suspend fun download(
-        sourceId: String,
-        url: String,
-        trackId: String,
-        format: StreamFormat,
-        /** The song's length, which sets how small a real copy of it can be — see [MIN_BYTES_PER_SECOND]. */
-        durationMs: Long = 0,
-    ): Fetched =
+    suspend fun download(sourceId: String, url: String, trackId: String, format: StreamFormat): Fetched =
         withContext(Dispatchers.IO) {
             // The id is the file's name, and one that is a path would put the
             // server's bytes outside this source's folder.
@@ -157,23 +150,18 @@ class DownloadStore(private val filesDir: File) {
                 }
                 // Cancelled while the last bytes arrived: not a download.
                 ensureActive()
-                // A success is counted in the worker's line at its end — see Downloader.drain.
-                val bytes = partial.length()
-                // A conversion that failed on the server can still answer 200
-                // with a few bytes, and kept, that is the song from then on: a
-                // file that never plays and is never fetched again. (From
-                // Garado's fork of Amp, scaled here by the song's length so a
-                // short voice memo isn't mistaken for one.)
-                val plausible = maxOf(MIN_BYTES, durationMs / 1000 * MIN_BYTES_PER_SECOND)
-                if (bytes < plausible) {
-                    Log.w(TAG, "download: $bytes bytes for ${durationMs / 1000} s from $kind, discarded")
+                // Only an empty answer is refused. Size says nothing more: Opus
+                // and FLAC make a silent song a few kilobytes a minute.
+                if (partial.length() == 0L) {
+                    Log.w(TAG, "download: empty file from $kind")
                     partial.delete()
-                    return@withContext Fetched.Failed(if (bytes == 0L) "Server sent an empty file" else "Server sent a broken file")
+                    return@withContext Fetched.Failed("Server sent an empty file")
                 }
                 if (!partial.renameTo(target)) {
                     partial.delete()
                     return@withContext Fetched.Failed("Couldn't save ${target.name}")
                 }
+                // A success is counted in the worker's line at its end — see Downloader.drain.
                 Fetched.Saved(target)
             } catch (e: Exception) {
                 Log.w(
@@ -247,15 +235,6 @@ class DownloadStore(private val filesDir: File) {
     }
 
     companion object {
-        /** Below this a download is no song at all, however short. */
-        private const val MIN_BYTES = 2048L
-
-        /**
-         * 8 kbps, a third of the lowest bitrate anything is encoded at (a 24 kbps
-         * voice memo): a real copy is always bigger than its length at this.
-         */
-        private const val MIN_BYTES_PER_SECOND = 1024L
-
         private const val TAG = "AmpDl"
         private const val BUFFER_BYTES = 64 * 1024
         private const val CONNECT_TIMEOUT_MS = 15_000

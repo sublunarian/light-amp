@@ -50,7 +50,6 @@ import com.thelightphone.sdk.audio.LightPlayerSpec
 import java.io.File
 import kotlin.math.abs
 import java.io.ByteArrayOutputStream
-import kotlin.math.pow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,7 +64,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -212,14 +210,6 @@ class PlaybackController(
     private var handleOwner: LightAudio? = null
 
     /**
-     * The ReplayGain factor last given to the service, seeded onto each new
-     * handle. A handle starts at unity and hands its gain to the service when
-     * it connects, so without the seed a reopen on an attenuated track jumped
-     * to full level.
-     */
-    private var appliedGain = 1f
-
-    /**
      * The collectors [attachHandle] started on one handle's flows, and its wait
      * to connect. A released handle's flows just stop, so these are cancelled
      * with the handle — in [release], [handOver] and [handleLost] — rather than
@@ -264,16 +254,8 @@ class PlaybackController(
      * nears an edge ([keepWindowAround]) and rebuilt around a jump outside it.
      * Describes the player only while [queuePlayer] holds the queue: the
      * stand-in replaces it, and the sound coming back rebuilds it.
-     *
-     * Observable for the ReplayGain follower: a rebuild often leaves the
-     * player on the same position, so only the window says the row changed.
      */
-    private val windowState = MutableStateFlow(QueueWindow.EMPTY)
-    private var window: QueueWindow
-        get() = windowState.value
-        set(value) {
-            windowState.value = value
-        }
+    private var window = QueueWindow.EMPTY
 
     /**
      * The source each item in the player was last built from, one per
@@ -708,7 +690,6 @@ class PlaybackController(
             handleOwner = null
             throw e
         }
-        p.playbackGain = appliedGain
         player = p
         handleOwner = audio
         attachHandle(p, carried, carriedIndex, carriedPositionMs)
@@ -934,31 +915,6 @@ class PlaybackController(
                     fromFile && known > 0L -> known
                     else -> reported
                 }
-            }
-        }
-        // ReplayGain, while the setting is on: the playing track's gain becomes
-        // the player's volume, attenuate-only (clamped at unity), so nothing is boosted into
-        // clipping. While casting the stand-in is item 0 and its silence gets
-        // the gain of the window's first track, which is harmless.
-        //
-        // No index is no answer. A handle that hasn't connected, or an empty
-        // player, reads -1, and unity for it would overwrite the gain the
-        // handle was seeded with.
-        scope.launch(onMain) {
-            combine(p.currentMediaItemIndex, windowState, _queue, settings.replayGain.state) { idx, w, q, on ->
-                if (idx < 0) return@combine null
-                // The restart copy is the song in the slot before it.
-                val slot = if (restartCopyAt in 0..idx) idx - 1 else idx
-                val row = w.rowAt(slot)
-                val db = if (on) q.getOrNull(row)?.gainDb else null
-                // The track's gain and row ride along for the log; only the factor decides.
-                Triple(db?.let { 10.0.pow(it / 20.0).toFloat().coerceAtMost(1f) } ?: 1f, db, row)
-            }.filterNotNull().distinctUntilChanged { a, b -> a.first == b.first }.collect { (factor, db, row) ->
-                // A replaced handle's number mustn't be carried onto the next.
-                if (player !== p) return@collect
-                p.playbackGain = factor
-                appliedGain = factor
-                Log.i("AmpQual", "gain ${db?.let { "$it dB" } ?: "none"} → ×$factor at q#$queueBuilds idx=$row")
             }
         }
         scope.launch(onMain) {
@@ -3341,11 +3297,6 @@ class PlaybackController(
                 scaled.compress(Bitmap.CompressFormat.JPEG, COVER_JPEG_QUALITY, out)
                 out.toByteArray()
             }
-        }
-
-        override fun gainFor(track: Track): Float {
-            if (!settings.replayGain.state.value) return 1f
-            return track.gainDb?.let { 10.0.pow(it / 20.0).toFloat().coerceAtMost(1f) } ?: 1f
         }
 
         override val volume: StateFlow<Float> get() = _volume

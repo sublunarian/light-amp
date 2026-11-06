@@ -29,7 +29,9 @@ data class Track(
     val streamPath: String = "",
     /**
      * Loudness-normalisation gain in dB, when the server knows one (ReplayGain
-     * track gain, or Jellyfin's own LUFS measurement). Null plays untouched.
+     * track gain, or Jellyfin's own LUFS measurement). Stored but not applied:
+     * the SDK has no way to set a player's volume yet (light-sdk#298), and
+     * kept, ReplayGain can come back without every song being read again.
      */
     val gainDb: Float? = null,
     /**

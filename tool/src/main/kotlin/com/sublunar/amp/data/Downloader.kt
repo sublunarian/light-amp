@@ -1172,7 +1172,7 @@ class Downloader(
 
         service.start()
         val startedMs = monotonicMs()
-        val fetched = store.download(source.id, client.downloadUrl(track, format), track.id, format, track.durationMs)
+        val fetched = store.download(source.id, client.downloadUrl(track, format), track.id, format)
         val tookMs = monotonicMs() - startedMs
         return when (fetched) {
             is DownloadStore.Fetched.Saved -> {

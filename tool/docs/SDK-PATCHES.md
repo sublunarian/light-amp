@@ -54,11 +54,12 @@ git -C light-sdk branch -r | tr -d ' ' \
 ```
 
 Last counted 2026-10-20 against 0.2.1 (`3a6b204`): eight members on
-`LightAudioPlayer`, none of them on any upstream branch. Seven are left
+`LightAudioPlayer`, none of them on any upstream branch. Six are left
 (`replaceRange`, `setMediaQueueAt`, `repeatMode`, `playWhenReady`,
-`playbackGain`, `deviceVolume`, `setSystemVolume`): `addItems` went on
+`deviceVolume`, `setSystemVolume`): `addItems` went on
 23 Oct 2026, as `replaceRange` over the empty range at the end appends in the
-same single queue update. 0.2.1's own queue
+same single queue update, and `playbackGain` on 6 Nov 2026 with ReplayGain,
+which waits for the SDK to set a player's volume (#298). 0.2.1's own queue
 edits replaced four that the August count had (`addItemAt`, `removeItem`,
 `moveItem`, `seekToIndex`), and three more went the same day
 (`onPlaybackError`, `isCurrentItemSeekable`, `onItemRepeated`): Amp gets what
@@ -110,7 +111,6 @@ restore it, and be driven by the phone's own controls.
 |---|---|
 | `setMediaQueueAt(items, index, positionMs)` | Restoring a saved queue mid-track. The position has to go in at prepare time: `seekTo` clamps to a duration that isn't known yet, so it lands on 0. |
 | `deviceVolume`, `setSystemVolume` | The Output page's fader on This device, and matching the phone's level to a speaker's when a cast starts. A tool can't reach `AudioManager` itself. |
-| `playbackGain` | ReplayGain: tracks play at an even loudness. Shaped like the SDK's own `speed`; on by default in Amp. |
 | `repeatMode` | Repeat off / all / one. |
 | `playWhenReady` | The caller's intent, distinct from `isPlaying`, which is false mid-rebuffer — a seek issued in that window read "paused" and never resumed. |
 

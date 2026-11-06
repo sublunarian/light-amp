@@ -73,31 +73,8 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 if (hasServers) {
                     item { TextRow(title = "Streams & Downloads") { go { StreamsDownloadsScreen(it) } } }
                 }
-                item { TextRow(title = "Playback") { go { PlaybackScreen(it) } } }
                 item { TextRow(title = "Test") { go { TestScreen(it) } } }
                 item { TextRow(title = "About") { go { AboutScreen(it) } } }
-            }
-        }
-    }
-}
-
-/** How the audio itself is treated on the way out — levels, not sources. */
-class PlaybackScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
-
-    @Composable
-    override fun Content() {
-        val replayGain by App.settings.replayGain.state.collectAsState()
-
-        ListScreen(onBack = { goBack() }, title = "Playback", headingRows = true) {
-            ScrollableList {
-                item {
-                    // From the loudness the server measured. Only ever turns a
-                    // track down, so it cannot clip. A library with no
-                    // measurements plays untouched.
-                    ToggleRow("Replay Gain", replayGain) {
-                        App.scope.launch { App.settings.replayGain.set(!replayGain) }
-                    }
-                }
             }
         }
     }
@@ -207,7 +184,6 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
-        val hideSongShortcuts by App.settings.hideSongShortcuts.state.collectAsState()
         val tallAlbumRows by App.settings.tallAlbumRows.state.collectAsState()
         val tallArtistRecords by App.settings.tallArtistRecords.state.collectAsState()
         val headingRowLabels by App.settings.headingRowLabels.state.collectAsState()
@@ -216,11 +192,6 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         // Rows a step below the other settings pages', so a trial's whole name fits.
         ListScreen(onBack = { goBack() }, title = "Test") {
             ScrollableList {
-                item {
-                    ToggleRow("Hide Song Shortcuts", hideSongShortcuts) {
-                        App.scope.launch { App.settings.hideSongShortcuts.set(!hideSongShortcuts) }
-                    }
-                }
                 item {
                     ToggleRow("Tall Album Rows", tallAlbumRows) {
                         App.scope.launch { App.settings.tallAlbumRows.set(!tallAlbumRows) }

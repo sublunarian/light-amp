@@ -333,7 +333,7 @@ that takes the process and the playing service with it — so a deferred block
 reads `player` again on Main rather than using the `p` it captured. If its work
 is for the service and the state has already been changed to match, it goes to
 whatever handle is there (`player ?: return`). It drops with `player !== p`
-only when the work belongs to the handle it checked: its connection, its gain,
+only when the work belongs to the handle it checked: its connection,
 a missed seek's reload (`verifyNativeSeek`, `serverSeek`), the stream-died
 retry in `fallBackOffline`. `reresolveQueue` drops its edits the same way, but
 puts its memo back to what the service holds and asks again, so the next

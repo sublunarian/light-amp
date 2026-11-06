@@ -106,9 +106,6 @@ class ArtistDetailScreen(
         }
 
         val grid = App.artistAlbumGrid.collectAsState().value
-        // TRIAL (Hide Song Shortcuts): the records alone, without All Songs and Popular.
-        val shortcuts = !App.settings.hideSongShortcuts.state.collectAsState().value
-        val headerCount = if (shortcuts) 1 else 0
         // TRIAL (Tall Artist Records): five records to the page.
         val tallRecords = App.settings.tallArtistRecords.state.collectAsState().value
         val order by App.settings.artistAlbumOrder.state.collectAsState()
@@ -144,7 +141,7 @@ class ArtistDetailScreen(
                         val start = at
                         at += group.albums.size
                         start to @Composable {
-                            ReleaseGroupLabel(group.heading.orEmpty(), first = start == 0, underHeader = !shortcuts, tall = false)
+                            ReleaseGroupLabel(group.heading.orEmpty(), first = start == 0, tall = false)
                         }
                     }
                 }
@@ -155,23 +152,21 @@ class ArtistDetailScreen(
                     onLongPress = { album -> go { AlbumActionsScreen(it, album.id, onArtistPage = name) } },
                     // One anchor per artist, and one header item: the song shortcuts,
                     // spanning the row so they read as a header over the records.
-                    state = rememberGridAnchor("artist-albums:$name/grid", headerCount = headerCount),
+                    state = rememberGridAnchor("artist-albums:$name/grid", headerCount = 1),
                 ) {
-                    if (shortcuts) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            SongShortcuts(hasPopular, tall = false)
-                        }
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        SongShortcuts(hasPopular, tall = false)
                     }
                 }
                 return@LibrarySubPage
             }
             LibraryList(
                 anchor = "artist-albums:$name",
-                headerCount = headerCount,
+                headerCount = 1,
             ) {
                 // A discography: liking is on the artist's long-press, shuffling on
                 // the song lists.
-                if (shortcuts) item { SongShortcuts(hasPopular, tall = tallRecords) }
+                item { SongShortcuts(hasPopular, tall = tallRecords) }
                 val sections = groups ?: listOf(RecordGroup(null, ordered))
                 sections.forEach { group ->
                     if (group.heading != null) {
@@ -179,7 +174,6 @@ class ArtistDetailScreen(
                             ReleaseGroupLabel(
                                 group.heading,
                                 first = group == sections.first(),
-                                underHeader = !shortcuts,
                                 tall = tallRecords,
                             )
                         }
@@ -447,8 +441,6 @@ private val RECORD_GROUPS = listOf(
 private fun ReleaseGroupLabel(
     text: String,
     first: Boolean,
-    /** TRIAL (Hide Song Shortcuts): the first label straight under the header, with Weather's row padding. */
-    underHeader: Boolean = false,
     /** TRIAL (Tall Artist Records): the records' rows are the tall ones. */
     tall: Boolean = false,
 ) {
@@ -482,13 +474,7 @@ private fun ReleaseGroupLabel(
         maxLines = 1,
         modifier = Modifier.padding(
             start = px(rowLeadPx()),
-            top = px(
-                when {
-                    first && underHeader -> GROUP_LABEL_UNDER_HEADER_PX
-                    first -> GROUP_LABEL_FIRST_TOP_PX
-                    else -> GROUP_LABEL_TOP_PX
-                },
-            ),
+            top = px(if (first) GROUP_LABEL_FIRST_TOP_PX else GROUP_LABEL_TOP_PX),
         ),
     )
 }
@@ -499,7 +485,6 @@ private const val GROUP_LABEL_TOP_PX = 48
  * words, so the first label sits as far down as the ones between groups.
  */
 private const val GROUP_LABEL_FIRST_TOP_PX = 0
-private const val GROUP_LABEL_UNDER_HEADER_PX = 30
 
 
 /** Whether any of [albums] is filed as other than an album: what makes grouping by release type mean anything. */

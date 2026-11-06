@@ -50,6 +50,8 @@
 ### Changed
 
 - Casting to Plex players is gone for now. It may come back, built again.
+- Replay Gain and the Playback settings page are gone for now. They come
+  back once Light's SDK can set a player's volume.
 - Amp's license is now PolyForm Noncommercial 1.0.0: free for anything but
   commercial use. Light's SDK stays MIT, as do Amp 0.8.2 and earlier.
 - Playing your whole library plays all of it, not only the 500 songs around

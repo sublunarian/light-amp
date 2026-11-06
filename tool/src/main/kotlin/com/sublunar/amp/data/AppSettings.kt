@@ -171,6 +171,7 @@ class AppSettings(
      */
     private var launchSnapshot: Preferences? = runBlocking {
         keepEarlierDefaults()
+        dropRetiredKeys()
         dataStore.data.first()
     }
     private val loaded: Preferences get() = checkNotNull(launchSnapshot) { "settings read after construction" }
@@ -422,14 +423,6 @@ class AppSettings(
     /** Lyrics in another script shown in Latin letters, chosen at the end of such lyrics. */
     val latinLyrics: Pref<Boolean> = bool("pref.latinLyrics", false)
 
-    /**
-     * Even out the volume between tracks, from the loudness the server
-     * measured. On by default — with it off, a remaster can be 10 dB louder
-     * than the record before it. Attenuate-only, so it never adds clipping;
-     * a library with no measurements plays exactly as it does today.
-     */
-    val replayGain: Pref<Boolean> = bool("pref.replayGain", true)
-
     /** How an artist's page orders their records — see [ArtistAlbumOrder]. */
     val artistAlbumOrder: Pref<ArtistAlbumOrder> = enum("pref.artistAlbumOrder", ArtistAlbumOrder.DATE_RELEASED)
 
@@ -475,9 +468,6 @@ class AppSettings(
      * because it is also what keeps every list's titles on one axis.
      */
     val hideDownloadIcons: Pref<Boolean> = bool("pref.hideDownloadIcons", false)
-
-    /** TRIAL: an artist's page without All Songs and Popular above the records. */
-    val hideSongShortcuts: Pref<Boolean> = bool("pref.hideSongShortcuts", false)
 
     /** TRIAL: the library's lists 40px from the screen's edge, download marks at the rows' ends. */
     val narrowListMargin: Pref<Boolean> = bool("pref.narrowListMargin", false)
@@ -652,6 +642,14 @@ class AppSettings(
         dataStore.edit { p ->
             if (p[SOURCES] == null) return@edit
             for ((key, change) in CHANGED_DEFAULTS) if (p[key] !in change.known) p[key] = change.was
+        }
+    }
+
+    /** ONE-SHOT: what the removed Replay Gain and Hide Song Shortcuts settings left stored. Strip once installed. */
+    private suspend fun dropRetiredKeys() {
+        dataStore.edit { p ->
+            p.remove(booleanPreferencesKey("pref.replayGain"))
+            p.remove(booleanPreferencesKey("pref.hideSongShortcuts"))
         }
     }
 
