@@ -16,7 +16,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
+import com.sublunar.amp.ui.DISABLED_ALPHA
 import com.sublunar.amp.ui.LocalDimTextAlpha
+import com.sublunar.amp.ui.LocalGreyText
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.ui.LightProgressBar
 import com.thelightphone.sdk.ui.LightThemeTokens
@@ -73,6 +75,7 @@ object AppIcons {
     val VolumeDown = Icons.AutoMirrored.Filled.VolumeDown
     val Bluetooth = Icons.Filled.Bluetooth
     val Smartphone = Icons.Filled.Smartphone
+    val Speaker = Icons.Filled.Speaker
     val Dns = Icons.Filled.Dns
     val DeleteOutline = Icons.Filled.DeleteOutline
     val ArrowUpward = Icons.Filled.ArrowUpward
@@ -82,7 +85,6 @@ object AppIcons {
     val Refresh = Icons.Filled.Refresh
 
     /** Light marks a downloaded row with the same arrow it downloads with. */
-    val Downloaded = Icons.Filled.Download
     val CloudOff = Icons.Filled.CloudOff
 }
 
@@ -223,12 +225,22 @@ fun AppText(
     exact: Boolean = false,
     /** How the text came out (its line count), for a neighbour that makes room. */
     onTextLayout: (TextLayoutResult) -> Unit = {},
+    /** Drawn faded as unavailable: see [DISABLED_ALPHA]. Takes the place of [dim]. */
+    disabled: Boolean = false,
+    /** A line height kept even where the text otherwise takes an SDK style whole (not [exact]). */
+    lineHeightOverride: TextUnit = TextUnit.Unspecified,
 ) {
     val style = appTextStyle(size, lineHeight, role, weight, align, exact)
+        .let { if (lineHeightOverride != TextUnit.Unspecified) it.copy(lineHeight = lineHeightOverride) else it }
+    val greyColour = dim && !disabled && LocalGreyText.current
     Text(
         text = text,
-        modifier = if (dim) modifier.alpha(LocalDimTextAlpha.current) else modifier,
-        color = color,
+        modifier = when {
+            disabled -> modifier.alpha(DISABLED_ALPHA)
+            dim && !greyColour -> modifier.alpha(LocalDimTextAlpha.current)
+            else -> modifier
+        },
+        color = if (greyColour) LightThemeTokens.colors.contentSecondary else color,
         style = style,
         maxLines = maxLines,
         overflow = overflow,

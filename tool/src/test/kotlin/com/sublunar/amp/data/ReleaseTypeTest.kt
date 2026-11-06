@@ -1,6 +1,6 @@
 package com.sublunar.amp.data
 
-import com.sublunar.amp.ui.screens.groupByReleaseType
+import com.sublunar.amp.ui.screens.recordGroups
 import com.sublunar.amp.ui.screens.knowsReleaseTypes
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -36,20 +36,19 @@ class ReleaseTypeTest {
     )
 
     @Test
-    fun `groups follow the page's order, each keeping the order it came in`() {
+    fun `groups follow the page's order, Singles and EPs as one, each keeping the order it came in`() {
         val albums = listOf(
             album("s1", ReleaseType.SINGLE), album("a1", ReleaseType.ALBUM), album("l1", ReleaseType.LIVE),
             album("s2", ReleaseType.SINGLE), album("e1", ReleaseType.EP), album("st", ReleaseType.SOUNDTRACK),
         )
         assertEquals(
             listOf(
-                ReleaseType.ALBUM to listOf("a1"),
-                ReleaseType.EP to listOf("e1"),
-                ReleaseType.SINGLE to listOf("s1", "s2"),
-                ReleaseType.SOUNDTRACK to listOf("st"),
-                ReleaseType.LIVE to listOf("l1"),
+                "Albums" to listOf("a1"),
+                "Singles & EPs" to listOf("s1", "s2", "e1"),
+                "Soundtracks" to listOf("st"),
+                "Live Albums" to listOf("l1"),
             ),
-            groupByReleaseType(albums).map { (type, list) -> type to list.map { it.id } },
+            recordGroups(albums).map { it.heading to it.albums.map { a -> a.id } },
         )
     }
 

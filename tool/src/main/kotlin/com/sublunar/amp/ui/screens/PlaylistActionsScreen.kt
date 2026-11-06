@@ -13,7 +13,6 @@ import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.CenteredNote
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
-import com.sublunar.amp.ui.components.largeMenuText
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
 
@@ -52,8 +51,7 @@ class PlaylistActionsScreen(
             onBack = { goBack() },
             title = playlistName,
             subtitle = kind,
-            headingRows = largeMenuText(),
-            rightAction = settingsCorner(fromHeader = fromDetail),
+            headingRows = true,
         ) {
             // Nothing until the songs are known: the rows that need them would
             // otherwise arrive late and push the rest down under a finger

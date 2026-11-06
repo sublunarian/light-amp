@@ -56,7 +56,7 @@ import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import com.sublunar.amp.ui.components.ListScrollBar
 import com.sublunar.amp.ui.components.ROW_ACTION_ICON_PX
 import com.sublunar.amp.ui.components.ROW_GAP_PX
-import com.sublunar.amp.ui.components.ROW_LEAD_PX
+import com.sublunar.amp.ui.components.rowLeadPx
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
@@ -227,8 +227,7 @@ internal fun SimpleLightScreen<*>.SearchView() {
                                     // A song found is a search finished: back out of
                                     // the player lands on the library, not the results.
                                     LibraryNav.closeSearch()
-                                    App.playback.playQueue(listOf(track), 0)
-                                    go { NowPlayingScreen(it) }
+                                    playFromRow(listOf(track), 0)
                                 },
                                 onLongClick = { openTrackActions(track.id, null) },
                             )
@@ -285,7 +284,7 @@ private fun SearchHeader(
                 .appClickable(onClick = onEdit),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Spacer(Modifier.width(px(SEARCH_AXIS_PX)))
+            Spacer(Modifier.width(px(LIST_EDGE_PX + rowLeadPx())))
             AppIcon(AppIcons.Search, size = px(SEARCH_GLYPH_PX))
             Spacer(Modifier.width(px(ROW_GAP_PX)))
             QueryField(query, cursor, onPlaceCursor, Modifier.weight(1f))
@@ -387,7 +386,6 @@ private fun QueryField(
 private const val CURSOR_WIDTH_PX = 6
 
 /** Where the search glyph sits: the list's edge plus a row's lead. */
-private const val SEARCH_AXIS_PX = LIST_EDGE_PX + ROW_LEAD_PX
 
 /** The search header's type and glyph, in the rows' sizes so it matches the rows beneath. */
 private const val SEARCH_TEXT_PX = ROW_TITLE_PX

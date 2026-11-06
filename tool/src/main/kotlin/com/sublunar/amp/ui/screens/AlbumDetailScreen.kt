@@ -1,11 +1,11 @@
 package com.sublunar.amp.ui.screens
 
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -19,47 +19,40 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.Track
-import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.components.AppHeader
-import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppText
-import com.sublunar.amp.ui.components.appTextStyle
 import com.sublunar.amp.ui.components.ArtworkTile
 import com.sublunar.amp.ui.components.CenteredNote
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.NumberedRow
 import com.sublunar.amp.ui.components.ROW_GAP_PX
-import com.sublunar.amp.ui.components.ROW_LEAD_PX
+import com.sublunar.amp.ui.components.rowLeadPx
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.TextRole
-import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.formatRunTime
 import com.sublunar.amp.ui.components.formatTime
+import com.sublunar.amp.ui.components.numberedRowTopPx
 import com.sublunar.amp.ui.components.rememberArtworkLoad
 import com.sublunar.amp.ui.components.rememberListAnchor
+import com.sublunar.amp.ui.components.rememberNumberColumn
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.components.rowClickable
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
-import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 class AlbumDetailScreen(
     sealed: SealedLightActivity,
@@ -75,6 +68,8 @@ class AlbumDetailScreen(
         val album = remember(albums, albumId) { albums.firstOrNull { it.id == albumId } }
         val current by App.playback.currentTrack.collectAsState()
         val artworkHidden by App.hideArtwork.collectAsState()
+        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
+        val downloadsOnly by LibraryNav.downloadsOnly.collectAsState()
 
         var tracks by remember(albumId) { mutableStateOf<List<Track>?>(null) }
         LaunchedEffect(albumId) {
@@ -121,14 +116,16 @@ class AlbumDetailScreen(
                         AppIcons.MoreVert,
                         onLongClick = { go { SettingsScreen(it) } },
                     ) {
-                        go { AlbumActionsScreen(it, albumId, fromDetail = true) }
+                        go { AlbumActionsScreen(it, albumId) }
                     },
-                    fitTitle = true,
                     titleShown = headerTitleShown,
                 )
             }
 
-            val list = tracks
+            // Reached from Downloads: what is on the phone, numbered as on the record.
+            val list = remember(tracks, downloadsOnly, downloadedIds) {
+                if (downloadsOnly) tracks?.filter { it.id in downloadedIds } else tracks
+            }
             if (list == null) {
                 CenteredNote("Loading…")
             } else {
@@ -139,31 +136,34 @@ class AlbumDetailScreen(
                 val varied = remember(list) {
                     list.map { it.artist.trim().lowercase() }.distinct().size > 1
                 }
+                val numbers = remember(list) { list.mapIndexed { i, t -> t.trackNumber ?: (i + 1) } }
+                val numberColumn = rememberNumberColumn(numbers)
                 ScrollableList(state = listState) {
                     if (card != null) {
                         item {
                             if (artworkHidden) {
-                                TextCard(card, list) { cardTitleBottomPx = it }
+                                TextCard(card) { cardTitleBottomPx = it }
                             } else {
-                                AlbumCard(card, list) { cardTitleBottomPx = it }
+                                AlbumCard(card) { cardTitleBottomPx = it }
                             }
                         }
                     }
                     itemsIndexed(list, key = { _, t -> t.id }) { index, track ->
                         NumberedRow(
-                            number = track.trackNumber ?: (index + 1),
+                            number = numbers[index],
                             title = track.title,
                             subtitle = if (varied) track.artist else "",
                             detail = formatTime(track.durationMs),
                             current = current?.id == track.id,
                             selected = if (selection.active) track.id in selection.selected else null,
                             coverArtId = track.coverArtId,
+                            numberColumn = numberColumn,
+                            downloaded = track.id in downloadedIds,
                             onClick = {
                                 if (selection.active) {
                                     selection.toggle(track.id)
                                 } else {
-                                    App.playback.playQueue(list, index)
-                                    go { NowPlayingScreen(it) }
+                                    playFromRow(list, index)
                                 }
                             },
                             onLongClick = {
@@ -171,84 +171,85 @@ class AlbumDetailScreen(
                             },
                         )
                     }
+                    // The song count and running time close the list; the card keeps the year.
+                    if (list.isNotEmpty() && !selection.active) {
+                        item {
+                            AppText(
+                                albumTotals(album, list),
+                                pxSp(CARD_SUB_PX),
+                                lineHeight = pxSp(CARD_SUB_LINE_PX),
+                                dim = true,
+                                maxLines = 1,
+                                exact = true,
+                                modifier = Modifier.padding(
+                                    start = px(rowLeadPx()),
+                                    top = px(TOTALS_TOP_PX),
+                                    bottom = px(TOTALS_BOTTOM_PX),
+                                ),
+                            )
+                        }
+                    }
                 }
             }
         }
     }
 
     /**
-     * The album's name, whole over [maxLines]: a name too long for them steps
-     * down a pixel at a time, its line with it, as far as [minPx], and is cut off
-     * only past that. Its bottom edge is where the header takes over; [onLines]
-     * reports how many lines it took.
+     * The album's name over [maxLines], cut off past them: at the header's size
+     * beside a cover, a step up from it with artwork off ([large]), where the
+     * name has the page's top to itself. Its bottom edge is where the header
+     * takes over; [onLines] reports how many lines it took.
      */
     @Composable
     private fun CardTitle(
         title: String,
-        fullPx: Int,
-        fullLinePx: Int,
-        minPx: Int,
-        role: TextRole,
+        centred: Boolean,
         maxLines: Int,
         onTitleBottom: (Int) -> Unit,
-        onLines: (Int) -> Unit,
+        large: Boolean = false,
+        onLines: (Int) -> Unit = {},
     ) {
-        BoxWithConstraints {
-            val room = constraints.maxWidth
-            val sizes = (fullPx downTo minPx).toList()
-            val lineFor = { size: Int -> (size * fullLinePx.toFloat() / fullPx).roundToInt() }
-            val styles = sizes.map { appTextStyle(pxSp(it), pxSp(lineFor(it)), role, exact = true) }
-            val measurer = rememberTextMeasurer()
-            val step = remember(title, room, maxLines, styles) {
-                styles.indexOfFirst { style ->
-                    !measurer.measure(
-                        AnnotatedString(title),
-                        style = style,
-                        maxLines = maxLines,
-                        constraints = Constraints(maxWidth = room),
-                    ).hasVisualOverflow
-                }
-            }
-            val size = if (step < 0) sizes.last() else sizes[step]
-            AppText(
-                title,
-                pxSp(size),
-                lineHeight = pxSp(lineFor(size)),
-                role = role,
-                maxLines = maxLines,
-                exact = true,
-                modifier = Modifier.onGloballyPositioned { onTitleBottom(it.boundsInParent().bottom.toInt()) },
-                onTextLayout = { onLines(it.lineCount) },
-            )
-        }
+        AppText(
+            title,
+            pxSp(if (large) LightType.COPY_PX else ROW_TITLE_PX),
+            lineHeight = pxSp(if (large) LightType.COPY_LINE_PX else ROW_TITLE_LINE_PX),
+            role = if (large) TextRole.Copy else TextRole.Fine,
+            maxLines = maxLines,
+            align = if (centred) TextAlign.Center else null,
+            exact = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { onTitleBottom(it.boundsInParent().bottom.toInt()) },
+            onTextLayout = { onLines(it.lineCount) },
+        )
     }
 
     /**
-     * The record at the head of its track list: cover, what it is, and play,
-     * shuffle, like and rating as bare icons on the cover's bottom edge. The
-     * cover's height, unless the text runs long enough to meet the buttons: then
-     * the card grows rather than the two overlapping. A record with no cover has
-     * its text take the cover's place, set out the same. With artwork turned off, [TextCard] instead.
+     * The record at the head of its track list: cover and what it is. At least
+     * the cover's height, taller only for a title and credit that run past it. A
+     * record with no cover has its text, centred, take the cover's place. With
+     * artwork turned off, [TextCard] instead. Play, shuffle, like and rating are
+     * in its ⋮ menu.
      */
     @Composable
-    private fun AlbumCard(album: Album, tracks: List<Track>, onTitleBottom: (Int) -> Unit) {
+    private fun AlbumCard(album: Album, onTitleBottom: (Int) -> Unit) {
         // Loaded here rather than in the tile, so a record with no cover can go
         // without the empty square.
         val cardArtPx = with(LocalDensity.current) { px(CARD_ART_PX).roundToPx() }
         val cover = rememberArtworkLoad(album.coverArtId, cardArtPx, ArtworkNeed.FOCUSED)
         val coverless = cover.settled && cover.image == null
-        // The title has first claim on the room: a title over more than one
-        // line leaves the artist one.
+        val centred = coverless
+        // The title has first claim on the room: a title on its last line
+        // leaves the artist one.
         var titleLines by remember(album.id) { mutableStateOf(1) }
-        val buttonsGapPx = with(LocalDensity.current) { px(CARD_BUTTONS_MIN_GAP_PX).roundToPx() }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = px(CARD_GAP_PX)),
+                .padding(bottom = px(cardGapPx())),
         ) {
             // The sleeve starts where every list's covers start, after the
             // leading slot; with none, the text does.
-            Spacer(Modifier.width(px(ROW_LEAD_PX)))
+            Spacer(Modifier.width(px(rowLeadPx())))
             if (!coverless) {
                 ArtworkTile(
                     cover.image,
@@ -263,182 +264,126 @@ class AlbumDetailScreen(
                 )
                 Spacer(Modifier.width(px(ROW_GAP_PX)))
             }
-            Layout(
-                modifier = Modifier.weight(1f),
-                content = {
-                    Column {
-                        CardTitle(
-                            album.title,
-                            fullPx = ROW_TITLE_PX,
-                            fullLinePx = ROW_TITLE_LINE_PX,
-                            // No smaller than the credit under it.
-                            minPx = CARD_SUB_PX,
-                            role = TextRole.Fine,
-                            maxLines = CARD_TITLE_LINES,
-                            onTitleBottom = onTitleBottom,
-                        ) { titleLines = it }
-                        // The credit, then the facts. The credit's lines sit closer than
-                        // the facts sit below it, so a wrapped name reads as one name.
-                        AppText(
-                            album.artist,
-                            pxSp(CARD_SUB_PX),
-                            lineHeight = pxSp(CARD_SUB_LINE_PX),
-                            dim = true,
-                            maxLines = if (titleLines > 1) 1 else CARD_ARTIST_LINES,
-                            exact = true,
-                        )
-                        Spacer(Modifier.height(px(CARD_FACTS_GAP_PX)))
-                        AppText(
-                            albumFacts(album, tracks),
-                            pxSp(CARD_SUB_PX),
-                            lineHeight = pxSp(CARD_SUB_LINE_PX),
-                            dim = true,
-                            maxLines = 1,
-                            exact = true,
-                        )
-                    }
-                    CardButtons(album, tracks)
-                },
-            ) { measurables, constraints ->
-                val loose = constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity)
-                val text = measurables[0].measure(loose)
-                val buttons = measurables[1].measure(loose)
-                val height = maxOf(cardArtPx, text.height + buttonsGapPx + buttons.height)
-                layout(constraints.maxWidth, height) {
-                    text.place(0, 0)
-                    buttons.place(0, height - buttons.height)
+            Column(
+                modifier = Modifier.weight(1f).heightIn(min = px(CARD_ART_PX)),
+                horizontalAlignment = if (centred) Alignment.CenterHorizontally else Alignment.Start,
+            ) {
+                CardTitle(
+                    album.title,
+                    centred = centred,
+                    maxLines = CARD_TITLE_LINES,
+                    onTitleBottom = onTitleBottom,
+                ) { titleLines = it }
+                Spacer(Modifier.height(px(CARD_LINE_GAP_PX)))
+                AppText(
+                    album.artist,
+                    pxSp(CARD_SUB_PX),
+                    lineHeight = pxSp(CARD_SUB_LINE_PX),
+                    role = TextRole.Copy,
+                    dim = true,
+                    align = if (centred) TextAlign.Center else null,
+                    maxLines = if (titleLines >= CARD_TITLE_LINES) 1 else CARD_ARTIST_LINES,
+                    exact = true,
+                )
+                val year = album.year?.toString().orEmpty()
+                if (year.isNotEmpty()) {
+                    Spacer(Modifier.height(px(CARD_LINE_GAP_PX)))
+                    AppText(
+                        year,
+                        pxSp(CARD_SUB_PX),
+                        lineHeight = pxSp(CARD_SUB_LINE_PX),
+                        dim = true,
+                        align = if (centred) TextAlign.Center else null,
+                        maxLines = 1,
+                        exact = true,
+                    )
                 }
             }
         }
     }
 
     /**
-     * The card with artwork turned off: no cover's height to keep to, so the
-     * title and credit wrap as far as they need, with the buttons on their own
-     * line under the facts.
+     * The card with artwork turned off, centred: no cover's height to keep to, so
+     * the title and credit wrap as far as they need, the credit a step up from
+     * the one beside a cover, as the title is.
      */
     @Composable
-    private fun TextCard(album: Album, tracks: List<Track>, onTitleBottom: (Int) -> Unit) {
+    private fun TextCard(album: Album, onTitleBottom: (Int) -> Unit) {
+        val centred = true
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = px(ROW_LEAD_PX), bottom = px(CARD_GAP_PX)),
+                .padding(start = px(rowLeadPx()), bottom = px(cardGapPx())),
+            horizontalAlignment = if (centred) Alignment.CenterHorizontally else Alignment.Start,
         ) {
-            AppText(
-                album.title,
-                pxSp(ROW_TITLE_PX),
-                lineHeight = pxSp(ROW_TITLE_LINE_PX),
-                role = TextRole.Fine,
-                exact = true,
-                modifier = Modifier.onGloballyPositioned { onTitleBottom(it.boundsInParent().bottom.toInt()) },
-            )
+            CardTitle(album.title, centred = centred, maxLines = Int.MAX_VALUE, onTitleBottom = onTitleBottom, large = true)
+            Spacer(Modifier.height(px(TEXT_CARD_LINE_GAP_PX)))
             AppText(
                 album.artist,
-                pxSp(CARD_SUB_PX),
-                lineHeight = pxSp(CARD_SUB_LINE_PX),
+                pxSp(LightType.FINE_PX),
+                lineHeight = pxSp(LightType.FINE_LINE_PX),
+                role = TextRole.Fine,
                 dim = true,
+                align = if (centred) TextAlign.Center else null,
                 exact = true,
             )
-            Spacer(Modifier.height(px(CARD_FACTS_GAP_PX)))
-            AppText(
-                albumFacts(album, tracks),
-                pxSp(CARD_SUB_PX),
-                lineHeight = pxSp(CARD_SUB_LINE_PX),
-                dim = true,
-                maxLines = 1,
-                exact = true,
-            )
-            Spacer(Modifier.height(px(CARD_BUTTONS_TOP_PX)))
-            CardButtons(album, tracks)
-        }
-    }
-
-    /** Play and shuffle, then the album's like and rating where the source keeps them. */
-    @Composable
-    private fun CardButtons(album: Album, tracks: List<Track>) {
-        val source by App.source.collectAsState()
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            AppIcon(
-                AppIcons.PlayArrow,
-                size = px(CARD_ICON_PX),
-                modifier = Modifier.appClickable { playAlbum(tracks) },
-            )
-            Spacer(Modifier.width(px(CARD_ICON_GAP_PX)))
-            AppIcon(
-                AppIcons.Shuffle,
-                size = px(CARD_ICON_PX),
-                modifier = Modifier.appClickable { shuffleAlbum(tracks) },
-            )
-            if (source.supportsLikes) {
-                Spacer(Modifier.width(px(CARD_ICON_GAP_PX)))
-                AppIcon(
-                    if (album.liked) AppIcons.Favorite else AppIcons.FavoriteBorder,
-                    size = px(CARD_ICON_PX),
-                    modifier = Modifier.appClickable {
-                        App.scope.launch { App.library.setAlbumLiked(album, !album.liked) }
-                    },
-                )
-            }
-            if (source.supportsRatings) {
-                Spacer(Modifier.width(px(CARD_ICON_GAP_PX)))
-                AppIcon(
-                    if (album.rating > 0) AppIcons.Star else AppIcons.StarBorder,
-                    size = px(CARD_ICON_PX),
-                    modifier = Modifier.appClickable {
-                        go { RatingScreen(it, album.id, album.title, album.rating, isAlbum = true) }
-                    },
+            val year = album.year?.toString().orEmpty()
+            if (year.isNotEmpty()) {
+                Spacer(Modifier.height(px(TEXT_CARD_LINE_GAP_PX)))
+                AppText(
+                    year,
+                    pxSp(CARD_SUB_PX),
+                    lineHeight = pxSp(CARD_SUB_LINE_PX),
+                    dim = true,
+                    align = if (centred) TextAlign.Center else null,
+                    maxLines = 1,
+                    exact = true,
                 )
             }
         }
     }
 
-    private fun playAlbum(tracks: List<Track>) {
-        if (tracks.isEmpty()) return
-        App.playback.playQueue(tracks, 0)
-        go { NowPlayingScreen(it) }
-    }
+    /** Under the card, so its bottom edge sits [CARD_TO_TRACK_TEXT_PX] above the first track's lines. */
+    private fun cardGapPx(): Int = CARD_TO_TRACK_TEXT_PX - numberedRowTopPx()
 
-    private fun shuffleAlbum(tracks: List<Track>) {
-        App.playback.playQueue(shuffled(tracks), 0)
-        go { NowPlayingScreen(it) }
-    }
-
-    /** Year · N songs · total running time, skipping whatever isn't known. */
-    private fun albumFacts(album: Album, tracks: List<Track>): String {
-        val songs = if (tracks.isNotEmpty()) tracks.size else album.songCount
-        val lengthMs = if (tracks.isNotEmpty()) tracks.sumOf { it.durationMs } else album.durationMs
+    /** N songs · total running time, skipping a length that isn't known. */
+    private fun albumTotals(album: Album?, tracks: List<Track>): String {
+        val songs = if (tracks.isNotEmpty() || album == null) tracks.size else album.songCount
+        val lengthMs = if (tracks.isNotEmpty() || album == null) tracks.sumOf { it.durationMs } else album.durationMs
         return listOfNotNull(
-            album.year?.toString(),
             "$songs ${if (songs == 1) "song" else "songs"}",
             formatRunTime(lengthMs).takeIf { lengthMs > 0 },
         ).joinToString(" · ")
     }
 }
 
+/** The song count and running time's line, under the last track. */
+private const val TOTALS_TOP_PX = 32
+private const val TOTALS_BOTTOM_PX = 48
+
 /** The record's own block at the head of its list. */
-private const val CARD_ART_PX = 300
-private const val CARD_GAP_PX = 24
+private const val CARD_ART_PX = 320
 
-/** The SDK's own icon size (LightIcon's default, two of the LP3's 40px grid units), spaced a glyph apart. */
-private const val CARD_ICON_PX = 80
-private const val CARD_ICON_GAP_PX = 80
 
-/** With artwork off, the buttons' line sits this far under the facts. */
-private const val CARD_BUTTONS_TOP_PX = 32
+/** From the card's bottom edge (the cover, or text that runs past it) to the first track's lines. */
+private const val CARD_TO_TRACK_TEXT_PX = 60
 
-/** Beside the cover, the least room between the facts and the buttons before the card grows. */
-private const val CARD_BUTTONS_MIN_GAP_PX = 24
-
-/** The credit wraps this far beside a one-line title before it's cut off; one line beside a longer one. */
+/**
+ * Beside a cover, the title wraps this far and the credit this far before each
+ * is cut off, the credit to one line under a title that takes all of its. With
+ * artwork off, neither is cut off.
+ */
+private const val CARD_TITLE_LINES = 3
 private const val CARD_ARTIST_LINES = 2
 
-/** The title takes up to two lines, shrinking to fit them before it is cut off. */
-private const val CARD_TITLE_LINES = 2
-
-/** The card's credit and facts: the SDK's detail size on its natural line. */
+/** The card's credit and year: the SDK's detail size on its natural line. */
 private const val CARD_SUB_PX = LightType.DETAIL_PX
 private const val CARD_SUB_LINE_PX = 50
 
-/** Extra air above the facts, so a wrapped credit's lines sit closer than the facts do. */
-private const val CARD_FACTS_GAP_PX = 10
+/**
+ * The same air between title, credit and year: the leading of the title's own
+ * SDK type (its line less its size), fine's beside a cover and copy's with artwork off.
+ */
+private const val CARD_LINE_GAP_PX = LightType.FINE_LINE_PX - LightType.FINE_PX
+private const val TEXT_CARD_LINE_GAP_PX = LightType.COPY_LINE_PX - LightType.COPY_PX
 

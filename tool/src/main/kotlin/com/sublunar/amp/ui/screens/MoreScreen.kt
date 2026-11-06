@@ -35,7 +35,6 @@ import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.LocalMenuHeading
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.TextRow
-import com.sublunar.amp.ui.components.largeMenuText
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
@@ -71,7 +70,11 @@ class MoreScreen(
         // other home.
         val genre = genreSettingOf(page)
         // The phone's own music is all on the phone already: nothing to narrow to.
-        val downloadedTab = downloadedFilterTab(page).takeIf { App.source.collectAsState().value.supportsDownloads }
+        // Under Simplified, Downloads on the index is the downloaded lists'
+        // home, as Favorites is the liked lists'.
+        val downloadedTab = downloadedFilterTab(page)
+            .takeIf { App.source.collectAsState().value.supportsDownloads }
+            .takeUnless { simplified }
         val downloaded = downloadedOnly(downloadedTab)
         // An artist's songs carry their own, for the one visit — see ArtistSongsVisit.
         val visit = ArtistSongsVisit.view.collectAsState().value.takeIf { page == LibraryPage.ARTIST_SONGS }
@@ -89,7 +92,7 @@ class MoreScreen(
                     // The three buttons keep Settings on the library page alone.
                     rightAction = if (simplified) null else HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
                 )
-                CompositionLocalProvider(LocalMenuHeading provides largeMenuText()) {
+                CompositionLocalProvider(LocalMenuHeading provides true) {
                     ScrollableList {
                         // Always there with the tabs, even with one source and one
                         // library: the page it opens is also where Sync Now lives.
@@ -416,4 +419,4 @@ class AboutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 private const val BMC_QR_ASSET = "about/buymeacoffee-qr.png"
 
 /** The sort direction's arrow: about the picker pages' tick, and a multiple of 3 to stay sharp on the LP3. */
-private const val SORT_ARROW_PX = 60
+internal const val SORT_ARROW_PX = 60

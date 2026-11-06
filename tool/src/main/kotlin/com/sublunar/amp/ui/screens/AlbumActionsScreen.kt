@@ -13,7 +13,6 @@ import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.CenteredNote
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.TextRow
-import com.sublunar.amp.ui.components.largeMenuText
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
 
@@ -21,8 +20,6 @@ import kotlinx.coroutines.launch
 class AlbumActionsScreen(
     sealed: SealedLightActivity,
     private val albumId: String,
-    /** Opened from the album page's own ⋮ rather than by holding a row. */
-    private val fromDetail: Boolean = false,
     /** The artist page this was opened on: no Go to Artist where it would go there. */
     private val onArtistPage: String? = null,
 ) : AmpScreen<Unit>(sealed) {
@@ -41,9 +38,7 @@ class AlbumActionsScreen(
         ListScreen(
             onBack = { goBack() },
             title = album?.title ?: "Album",
-            subtitle = album?.artist,
-            headingRows = largeMenuText(),
-            rightAction = settingsCorner(fromHeader = fromDetail),
+            headingRows = true,
         ) {
             // Nothing until the songs are known, as on a playlist's menu: rows
             // that need them would arrive late and push the rest down.

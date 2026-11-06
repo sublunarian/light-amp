@@ -29,6 +29,7 @@ import com.sublunar.amp.playback.output.OutputTarget
 import com.sublunar.amp.playback.output.VolumeControl
 import com.sublunar.amp.playback.output.isSameDeviceAs
 import com.sublunar.amp.ui.LightType
+import com.sublunar.amp.ui.DISABLED_ALPHA
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppProgressBar
@@ -118,7 +119,7 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             Column(
                 modifier = Modifier
                     .padding(horizontal = px(80), vertical = px(32))
-                    .alpha(if (faderLive) 1f else 0.35f),
+                    .alpha(if (faderLive) 1f else DISABLED_ALPHA),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -188,7 +189,13 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     val selected = if (group.isNotEmpty()) member != null else active?.family === family && active?.target?.id == target.id
                     Column {
                         OutputRow(
-                            icon = AppIcons.Cast,
+                            // One row stands for a device both families offer (the Denon
+                            // under DLNA), so any listing of it that knows it's a speaker counts.
+                            icon = if (target.isSpeaker || found.values.any { list -> list.any { it.isSpeaker && it.isSameDeviceAs(target) } }) {
+                                AppIcons.Speaker
+                            } else {
+                                AppIcons.Cast
+                            },
                             label = target.name,
                             selected = selected,
                             onLongClick = if (!selected && App.playback.canGroup(family, target, found)) {
@@ -305,7 +312,7 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         TextRow(
             title = label,
             leading = {
-                AppIcon(icon, size = px(56), modifier = if (selected) Modifier else Modifier.alpha(0.5f))
+                AppIcon(icon, size = px(56), modifier = if (enabled) Modifier else Modifier.alpha(DISABLED_ALPHA))
             },
             checked = selected,
             onClick = if (enabled) onClick else null,

@@ -69,7 +69,7 @@ private class DownloadedAlbum(
 )
 
 /**
- * TRIAL (New Downloads Page): what the library pages can't say about downloads.
+ * What the library pages can't say about downloads.
  * Not a list of every song — the tabs' Downloaded filter already browses what is
  * offline — but whether it's working, what is coming, and what takes the room:
  * the queue by album, with Download First and Cancel, then the downloaded albums

@@ -34,6 +34,7 @@ class AlbumViewScreen(
             onBack = { goBack() },
             title = "View",
             subtitle = if (forArtist) "An artist's albums" else "All albums",
+            headingRows = true,
         ) {
             Column(modifier = Modifier.fillMaxSize().padding(listPadding())) {
                 TextRow(title = "List", checked = !grid) { choose(false) }

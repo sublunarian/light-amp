@@ -13,7 +13,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.sublunar.amp.App
 import com.sublunar.amp.data.LayoutMode
@@ -123,16 +122,16 @@ private fun TextBarButton(text: String, onClick: () -> Unit) {
     ) { LightText(text, variant = LightTextVariant.Button, maxLines = 1) }
 }
 
-/** Standard layout: the four tabs across the bar, then the player. */
+/**
+ * Standard layout: the four tabs across the bar, then the player. Every glyph an
+ * outline that never fills: the tab you are on white, the rest the SDK's grey.
+ */
 @Composable
 private fun StandardNavbar(
     current: LibraryTab?,
     onSelect: (LibraryTab) -> Unit,
     onNowPlaying: () -> Unit,
 ) {
-    // TRIAL (Outline Tab Icons): every tab an outline, white, the one you are
-    // on filled in.
-    val outlines = App.settings.outlineTabIcons.state.collectAsState().value
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -141,43 +140,33 @@ private fun StandardNavbar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         NavIcon(
-            if (outlines) TabGlyphs.Playlist else AppIcons.QueueMusic,
-            AppIcons.QueueMusic,
+            TabGlyphs.Playlist,
             current == LibraryTab.PLAYLISTS,
-            outlines,
-            scale = PLAYLISTS_SCALE,
-            lift = PLAYLISTS_LIFT_PX,
+            scale = tabGlyphScale(LibraryTab.PLAYLISTS),
+            lift = tabGlyphLiftPx(LibraryTab.PLAYLISTS),
         ) { onSelect(LibraryTab.PLAYLISTS) }
-        // LightOS's own microphone either way; only Outline Tab Icons fills it in.
+        // LightOS's own microphone.
         NavIcon(
             TabGlyphs.Microphone,
-            if (outlines) TabGlyphs.MicrophoneFilled else TabGlyphs.Microphone,
             current == LibraryTab.ARTISTS,
-            outlines,
-            scale = navScale(LIGHT_MIC_DRAWN_PX, ARTISTS_TARGET_PX),
+            scale = tabGlyphScale(LibraryTab.ARTISTS),
         ) { onSelect(LibraryTab.ARTISTS) }
         NavIcon(
             AppIcons.AlbumStack,
-            if (outlines) TabGlyphs.AlbumStackFilled else AppIcons.AlbumStack,
             current == LibraryTab.ALBUMS,
-            outlines,
-            scale = navScale(ALBUMS_DRAWN_PX, TALL_TARGET_PX),
+            scale = tabGlyphScale(LibraryTab.ALBUMS),
         ) { onSelect(LibraryTab.ALBUMS) }
         NavIcon(
-            if (outlines) AppIcons.MusicNoteOutline else AppIcons.MusicNote,
-            AppIcons.MusicNote,
+            AppIcons.MusicNoteOutline,
             current == LibraryTab.SONGS,
-            outlines,
-            scale = navScale(SONGS_DRAWN_PX, TALL_TARGET_PX),
+            scale = tabGlyphScale(LibraryTab.SONGS),
         ) { onSelect(LibraryTab.SONGS) }
         // The player after the four ways of looking at the library: the one
         // thing here you arrive at rather than browse to. Never lit, since it
         // hides this bar.
         NavIcon(
             AppIcons.Waveform,
-            AppIcons.Waveform,
             active = false,
-            outlines,
             scale = NOW_PLAYING_SCALE,
         ) { onNowPlaying() }
     }
@@ -185,35 +174,26 @@ private fun StandardNavbar(
 
 @Composable
 private fun NavIcon(
-    /** The tab's glyph; [filled] while it is the one you are on. */
-    outline: ImageVector,
-    filled: ImageVector,
+    icon: ImageVector,
+    /** The tab you are on: white, where the rest are the SDK's grey. */
     active: Boolean,
-    /**
-     * Outline Tab Icons: every glyph full white, the chosen one filled. Off,
-     * the tab you are on is the bright one and the rest step back.
-     */
-    outlines: Boolean,
     /** Trims a glyph that draws larger than the rest at the same box size. */
     scale: Float = 1f,
     /** Nudges the glyph up inside its box. */
     lift: Int = 0,
-    /** The square it is drawn in and tapped on. */
-    box: Int = NAV_BOX_PX,
     onClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier
-            .size(px(box))
+            .size(px(NAV_BOX_PX))
             .appClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         AppIcon(
-            icon = if (active) filled else outline,
+            icon = icon,
             size = px(NAV_ICON_PX) * scale,
-            tint = LightThemeTokens.colors.content,
-            modifier = (if (active || outlines) Modifier else Modifier.alpha(NAV_DIM_ALPHA))
-                .offset(y = -px(lift)),
+            tint = if (active) LightThemeTokens.colors.content else LightThemeTokens.colors.contentSecondary,
+            modifier = Modifier.offset(y = -px(lift)),
         )
     }
 }
@@ -226,10 +206,7 @@ private const val BOTTOM_BAR_PX = 160
 private const val NAV_BOX_PX = 144
 
 /** The glyph box every bar icon is scaled from. */
-private const val NAV_ICON_PX = 114
-
-/** Matches the player's secondary row: the app's one "present but not chosen". */
-private const val NAV_DIM_ALPHA = 0.45f
+internal const val NAV_ICON_PX = 114
 
 /**
  * Bringing the tab glyphs closer to one height.
@@ -261,6 +238,32 @@ private const val TALL_TARGET_PX = 72
 private const val ARTISTS_TARGET_PX = 75
 
 private fun navScale(drawnPx: Int, targetPx: Int): Float = targetPx.toFloat() / drawnPx
+
+/** A tab glyph's trim inside a [NAV_ICON_PX] box, so the bar and the home list match. */
+internal fun tabGlyphScale(tab: LibraryTab): Float = when (tab) {
+    LibraryTab.PLAYLISTS -> PLAYLISTS_SCALE
+    LibraryTab.ARTISTS -> navScale(LIGHT_MIC_DRAWN_PX, ARTISTS_TARGET_PX)
+    LibraryTab.ALBUMS -> navScale(ALBUMS_DRAWN_PX, TALL_TARGET_PX)
+    LibraryTab.SONGS -> navScale(SONGS_DRAWN_PX, TALL_TARGET_PX)
+}
+
+/** How far a tab glyph rises inside a [NAV_ICON_PX] box. */
+internal fun tabGlyphLiftPx(tab: LibraryTab): Int = if (tab == LibraryTab.PLAYLISTS) PLAYLISTS_LIFT_PX else 0
+
+/**
+ * The home list's heart, which has no tab: 18.35 of its 24 units tall, so 87 of a
+ * [NAV_ICON_PX] box, brought to the playlist glyph's height (66 under its 0.94),
+ * since both are wide shapes.
+ */
+private const val HEART_DRAWN_PX = 87
+private const val WIDE_TARGET_PX = 62
+internal val LIKED_GLYPH_SCALE = navScale(HEART_DRAWN_PX, WIDE_TARGET_PX)
+
+/**
+ * Light's download arrow, its bar included: 49 units tall to 40 wide, so it fills
+ * a [NAV_ICON_PX] square's height, brought to the tall tab glyphs' height.
+ */
+internal val DOWNLOADS_GLYPH_SCALE = navScale(NAV_ICON_PX, TALL_TARGET_PX)
 
 /**
  * How far the outer edge of a glyph sits from the screen's edge, for the bars

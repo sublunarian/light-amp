@@ -1,19 +1,19 @@
 package com.sublunar.amp.ui.screens
 
 import com.sublunar.amp.data.ArtistCredit
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import com.sublunar.amp.App
 import com.sublunar.amp.data.LastSection
 import com.sublunar.amp.data.Track
-import com.sublunar.amp.ui.components.AppIcons
-import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.ScrollAnchors
 import com.sublunar.amp.ui.components.SelectionState
 import com.sublunar.amp.ui.components.Selections
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -59,10 +59,32 @@ object LibraryNav {
      */
     val libraryIndex = MutableStateFlow(false)
 
-    /** Show the index, leaving whatever was showing. */
+    /**
+     * The index page the lists were chosen from, Favorites or Downloads, null
+     * for the home list. A list's back arrow returns to it; HOME leaves it.
+     */
+    val indexFolder = MutableStateFlow<IndexFolder?>(null)
+
+    /**
+     * Whether the pages open now show only what is downloaded: everything reached
+     * from Downloads, until HOME or its back arrow leaves it. Search is the whole
+     * library, so its results aren't.
+     */
+    val downloadsOnly: StateFlow<Boolean> by lazy {
+        combine(indexFolder, searchActive) { folder, search -> folder == IndexFolder.DOWNLOADS && !search }
+            .stateIn(App.scope, SharingStarted.Eagerly, false)
+    }
+
+    /** Show the index, leaving whatever was showing: the page the list was chosen from, Downloads included. */
     fun openLibraryIndex() {
         closeSearch()
         libraryIndex.value = true
+    }
+
+    /** HOME from a page pushed over the library: the home list itself, out of Favorites or Downloads. */
+    fun openHome() {
+        openLibraryIndex()
+        indexFolder.value = null
     }
 
     /**
@@ -78,6 +100,7 @@ object LibraryNav {
             return
         }
         libraryIndex.value = true
+        indexFolder.value = null
     }
 
     fun setQuery(query: String) {
@@ -129,6 +152,12 @@ object LibraryNav {
     }
 }
 
+/** A page of the home list's: the lists, narrowed to what you liked or downloaded. */
+enum class IndexFolder(val title: String) {
+    FAVORITES("Favorites"),
+    DOWNLOADS("Downloads"),
+}
+
 /**
  * Which library page More was opened over, so it can show that list's view, sort
  * and filter. The page's header corner names it.
@@ -161,17 +190,6 @@ enum class LibraryPage {
  */
 fun SimpleLightScreen<*>.go(factory: (SealedLightActivity) -> SimpleLightScreen<Unit>) {
     navigateTo(factory)
-}
-
-/**
- * TRIAL (Settings in Page Menus): the gear in the corner of a menu opened from a
- * page's own ⋮, as More has it, so Settings is two taps from every page. Null
- * with the switch off, and for a menu opened by holding a row.
- */
-@Composable
-fun SimpleLightScreen<*>.settingsCorner(fromHeader: Boolean): HeaderAction? {
-    val on = App.settings.settingsInPageMenus.state.collectAsState().value
-    return if (on && fromHeader) HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } } else null
 }
 
 /**
@@ -291,6 +309,15 @@ sealed interface Parent {
  * above it, all in this turn, so only the shell gets drawn. It stops at the
  * shell, because a back from there closes Amp.
  */
+/**
+ * A song's row tapped: [tracks] start playing from [index] and the player opens.
+ * The song already playing just opens the player, rather than starting over.
+ */
+fun SimpleLightScreen<*>.playFromRow(tracks: List<Track>, index: Int) {
+    if (App.playback.currentTrack.value?.id != tracks.getOrNull(index)?.id) App.playback.playQueue(tracks, index)
+    go { NowPlayingScreen(it) }
+}
+
 fun SimpleLightScreen<*>.backToRoot() {
     var popped = 0
     while (!BootScreen.isShowing && popped < MAX_UNWIND) {

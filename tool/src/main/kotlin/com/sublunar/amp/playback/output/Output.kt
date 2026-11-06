@@ -207,6 +207,9 @@ interface OutputTarget {
      * two that agree are one device, two that differ prove nothing.
      */
     val hardwareId: String? get() = null
+
+    /** Known to be a speaker rather than a screen or an app, from what the device says of itself. */
+    val isSpeaker: Boolean get() = false
 }
 
 /**

@@ -883,6 +883,11 @@ object App {
         }.stateIn(scope, SharingStarted.Eagerly, DownloadedOwners())
     }
 
+    /** Albums with at least one song downloaded: what the Downloaded filters keep. */
+    val albumsWithDownloads: StateFlow<Set<String>> by lazy {
+        downloadedOwners.map { it.albums }.stateIn(scope, SharingStarted.Eagerly, emptySet())
+    }
+
     val sortedSongs: StateFlow<SortedView<Track>> by lazy {
         // Folded into one flow, as sortedAlbums' order is: combine takes five at most.
         val order = combine(settings.songSort.state, settings.songSortReversed.state, ::Pair)

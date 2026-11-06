@@ -7,7 +7,6 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,10 +40,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.style.TextOverflow
 import com.sublunar.amp.App
 import com.sublunar.amp.art.ArtworkNeed
@@ -59,7 +55,6 @@ import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppProgressBar
 import com.sublunar.amp.ui.components.AppText
-import com.sublunar.amp.ui.components.appTextStyle
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.TitleCard
@@ -327,7 +322,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             Modifier
                 .align(Alignment.TopStart)
                 .fillMaxSize()
-                .padding(bottom = px(PANEL_END_PX))
+                .padding(bottom = px(COVER_PANEL_END_PX))
                 .padding(horizontal = px(INSET_PX))
         }
 
@@ -339,6 +334,8 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         // The cover square inside the panel: cropping a sleeve to the panel's
         // shape would be worse than the margins. Long-pressing it opens the cover
         // full-screen, as on the album page, and the same press comes back.
+        // Rounded either way, the full-width cover too.
+        val corners = RoundedCornerShape(px(PLAYER_COVER_CORNER_PX))
         Box(
             modifier = panel.slowLongPress(onClick = onTap, onLongPress = onLongPress),
             contentAlignment = Alignment.Center,
@@ -350,9 +347,9 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 // Filling rather than squaring off the height: the same on the
                 // LP3, and only this one holds where the area isn't square.
                 modifier = if (fullBleed) {
-                    Modifier.fillMaxSize()
+                    Modifier.fillMaxSize().clip(corners)
                 } else {
-                    Modifier.fillMaxHeight().aspectRatio(1f)
+                    Modifier.fillMaxHeight().aspectRatio(1f).clip(corners)
                 },
             )
         }
@@ -393,33 +390,24 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         }
     }
 
-    /** The song at Heading where it fits on one line; a longer one a step down, on two. */
+    /**
+     * The song at Heading, over two lines where it needs them and cut off past
+     * them, never resized to fit. Its two lines sit as close as the block's
+     * other lines do: see HERO_TITLE_WRAP_LINE_PX.
+     */
     @Composable
     private fun HeroTitle(text: String) {
         if (text.isBlank()) return
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val room = constraints.maxWidth
-            val heading = appTextStyle(
-                pxSp(HERO_TITLE_PX),
-                pxSp(HERO_TITLE_LINE_PX),
-                TextRole.Subheading,
-                align = TextAlign.Center,
-            )
-            val measurer = rememberTextMeasurer()
-            val oneLine = remember(text, room, heading) {
-                !measurer.measure(
-                    AnnotatedString(text),
-                    style = heading,
-                    maxLines = 1,
-                    constraints = Constraints(maxWidth = room),
-                ).hasVisualOverflow
-            }
-            if (oneLine) {
-                HeroLine(text, HERO_TITLE_PX, HERO_TITLE_LINE_PX, dim = false)
-            } else {
-                HeroLine(text, HERO_LONG_TITLE_PX, HERO_LONG_TITLE_LINE_PX, dim = false, maxLines = 2)
-            }
-        }
+        AppText(
+            text,
+            pxSp(HERO_TITLE_PX),
+            lineHeight = pxSp(HERO_TITLE_LINE_PX),
+            role = TextRole.Subheading,
+            maxLines = HERO_TITLE_LINES,
+            align = TextAlign.Center,
+            lineHeightOverride = pxSp(HERO_TITLE_WRAP_LINE_PX),
+            modifier = Modifier.fillMaxWidth().padding(vertical = px(HERO_TITLE_PAD_PX)),
+        )
     }
 
     @Composable
@@ -707,8 +695,20 @@ private const val TIME_PX = 38
 /** The block that stands in for the cover when artwork is off: see HeroTitle. */
 private const val HERO_TITLE_PX = LightType.HEADING_PX
 private const val HERO_TITLE_LINE_PX = LightType.HEADING_LINE_PX
-private const val HERO_LONG_TITLE_PX = LightType.COPY_PX
-private const val HERO_LONG_TITLE_LINE_PX = LightType.COPY_LINE_PX
+private const val HERO_TITLE_LINES = 2
+
+/** The player's cover's corner, small or full-width. */
+private const val PLAYER_COVER_CORNER_PX = 24
+
+
+/**
+ * The SDK's Subheading line is 106px on the LP3, which left 50px between a
+ * wrapped title's lines against about 30 between the block's other lines. The
+ * title's line is set to 86 instead, and the 10px that takes from above and below
+ * it is padded back, so it sits from the artist and album as before.
+ */
+private const val HERO_TITLE_WRAP_LINE_PX = 86
+private const val HERO_TITLE_PAD_PX = 10
 private const val HERO_SIDE_PX = LightType.FINE_PX
 private const val HERO_SIDE_LINE_PX = LightType.FINE_LINE_PX
 
@@ -718,6 +718,13 @@ private const val HERO_SIDE_LINE_PX = LightType.FINE_LINE_PX
  * starts 400px up, by a little.
  */
 private const val PANEL_END_PX = 420
+
+/**
+ * The cover's panel ends higher than the controls need, leaving the seek line
+ * more air: the 1080px stage less 440 leaves the cover that fills it 640px on the
+ * LP3, sixteen grid units, and it still scales with the panel on any other.
+ */
+private const val COVER_PANEL_END_PX = 440
 
 /** Depths above the bottom of the screen. */
 private const val BAR_UP_PX = 360

@@ -103,21 +103,16 @@ class PlaybackScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     }
 }
 
-/** How the app looks — every switch, none of them about any one source. */
-class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
+/** Every cover in the app, and where else pictures go once there are any. */
+class ArtworkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
-        val invert by App.settings.invertColors.state.collectAsState()
-        val syncedLyrics by App.settings.syncedLyrics.state.collectAsState()
-        val hideArtistImages by App.settings.hideArtistImages.state.collectAsState()
-        val hideDownloadIcons by App.settings.hideDownloadIcons.state.collectAsState()
-        val sources by App.settings.sources.state.collectAsState()
         val artwork by App.settings.artwork.state.collectAsState()
         val listArtwork by App.settings.listArtwork.state.collectAsState()
-        val layoutMode by App.settings.layoutMode.state.collectAsState()
+        val hideArtistImages by App.settings.hideArtistImages.state.collectAsState()
 
-        ListScreen(onBack = { goBack() }, title = "Appearance", headingRows = true) {
+        ListScreen(onBack = { goBack() }, title = "Artwork", headingRows = true) {
             ScrollableList {
                 item {
                     // Covers everywhere or none, which also stops the app
@@ -144,6 +139,25 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** How the app looks — every switch, none of them about any one source. */
+class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
+
+    @Composable
+    override fun Content() {
+        val invert by App.settings.invertColors.state.collectAsState()
+        val syncedLyrics by App.settings.syncedLyrics.state.collectAsState()
+        val hideDownloadIcons by App.settings.hideDownloadIcons.state.collectAsState()
+        val sources by App.settings.sources.state.collectAsState()
+        val layoutMode by App.settings.layoutMode.state.collectAsState()
+
+        ListScreen(onBack = { goBack() }, title = "Appearance", headingRows = true) {
+            ScrollableList {
+                item { TextRow(title = "Artwork") { go { ArtworkScreen(it) } } }
                 // Only where something can be downloaded: the phone's own music
                 // is all on the phone, so it never wears the mark.
                 if (sources.any { it.supportsDownloads }) {
@@ -165,6 +179,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         // Each layout's own front page, as at launch: the index
                         // for the three buttons, the last tab for the tabs.
                         LibraryNav.libraryIndex.value = tabs
+                        LibraryNav.indexFolder.value = null
                         App.scope.launch {
                             App.settings.layoutMode.set(
                                 if (tabs) LayoutMode.SIMPLIFIED else LayoutMode.STANDARD,
@@ -192,31 +207,38 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
-        val outlineTabIcons by App.settings.outlineTabIcons.state.collectAsState()
-        val largeMenus by App.settings.largeMenuText.state.collectAsState()
-        val settingsInMenus by App.settings.settingsInPageMenus.state.collectAsState()
-        val newDownloads by App.settings.newDownloadsPage.state.collectAsState()
+        val hideSongShortcuts by App.settings.hideSongShortcuts.state.collectAsState()
+        val tallAlbumRows by App.settings.tallAlbumRows.state.collectAsState()
+        val tallArtistRecords by App.settings.tallArtistRecords.state.collectAsState()
+        val headingRowLabels by App.settings.headingRowLabels.state.collectAsState()
+        val narrowListMargin by App.settings.narrowListMargin.state.collectAsState()
 
+        // Rows a step below the other settings pages', so a trial's whole name fits.
         ListScreen(onBack = { goBack() }, title = "Test") {
             ScrollableList {
                 item {
-                    ToggleRow("Outline Tab Icons", outlineTabIcons) {
-                        App.scope.launch { App.settings.outlineTabIcons.set(!outlineTabIcons) }
+                    ToggleRow("Hide Song Shortcuts", hideSongShortcuts) {
+                        App.scope.launch { App.settings.hideSongShortcuts.set(!hideSongShortcuts) }
                     }
                 }
                 item {
-                    ToggleRow("Large Menu Text", largeMenus) {
-                        App.scope.launch { App.settings.largeMenuText.set(!largeMenus) }
+                    ToggleRow("Tall Album Rows", tallAlbumRows) {
+                        App.scope.launch { App.settings.tallAlbumRows.set(!tallAlbumRows) }
                     }
                 }
                 item {
-                    ToggleRow("Settings in Page Menus", settingsInMenus) {
-                        App.scope.launch { App.settings.settingsInPageMenus.set(!settingsInMenus) }
+                    ToggleRow("Tall Artist Records", tallArtistRecords) {
+                        App.scope.launch { App.settings.tallArtistRecords.set(!tallArtistRecords) }
                     }
                 }
                 item {
-                    ToggleRow("New Downloads Page", newDownloads) {
-                        App.scope.launch { App.settings.newDownloadsPage.set(!newDownloads) }
+                    ToggleRow("Heading Row Labels", headingRowLabels) {
+                        App.scope.launch { App.settings.headingRowLabels.set(!headingRowLabels) }
+                    }
+                }
+                item {
+                    ToggleRow("40px List Margin", narrowListMargin) {
+                        App.scope.launch { App.settings.narrowListMargin.set(!narrowListMargin) }
                     }
                 }
             }
@@ -236,7 +258,6 @@ class StreamsDownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(seal
     @Composable
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
-        val newDownloadsPage by App.settings.newDownloadsPage.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Streams & Downloads", headingRows = true) {
             ScrollableList {
@@ -253,10 +274,7 @@ class StreamsDownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(seal
                         }
                     }
                 }
-                // TRIAL (New Downloads Page): one level up from Storage.
-                if (newDownloadsPage) {
-                    item { TextRow(title = "Downloads") { go { DownloadsOverviewScreen(it) } } }
-                }
+                item { TextRow(title = "Downloads") { go { DownloadsOverviewScreen(it) } } }
                 item { TextRow(title = "Storage") { go { StorageScreen(it) } } }
             }
         }
@@ -283,7 +301,6 @@ class StorageScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     override fun Content() {
         val limit by App.settings.downloadLimit.state.collectAsState()
         val reserve by App.cacheReserve.bytes.collectAsState()
-        val newDownloadsPage by App.settings.newDownloadsPage.state.collectAsState()
         // Again each time the page comes back to the top: the pages it leads to move the numbers.
         LaunchedEffect(Unit) { measure() }
 
@@ -300,9 +317,6 @@ class StorageScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     )
                 }
                 item { TextRow(title = "Storage Limit") { go { SizeLimitScreen(it) } } }
-                if (!newDownloadsPage) {
-                    item { TextRow(title = "Downloads") { go { DownloadsScreen(it) } } }
-                }
                 // Every server's audio, or one server's when there are several
                 // — see ClearDownloadsScreen.
                 item {

@@ -20,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -117,11 +118,12 @@ fun AlphabetIndex(
                         size = pxSp(LETTER_PX),
                         lineHeight = pxSp(SLOT_PX),
                         align = TextAlign.Center,
-                        dim = letter !in firstIndex,
                         exact = true,
                         overflow = TextOverflow.Visible,
                         // Measured at its own height and centred on the slot.
-                        modifier = Modifier.wrapContentHeight(unbounded = true),
+                        modifier = Modifier
+                            .wrapContentHeight(unbounded = true)
+                            .alpha(if (letter in firstIndex) 1f else EMPTY_LETTER_ALPHA),
                     )
                 }
             }
@@ -196,3 +198,9 @@ private const val MARKER_H_PX = 3
 private const val LETTER_PX = 28
 private const val SLOT_PX = 34
 
+/**
+ * A letter with nothing under it: between [DISABLED_ALPHA] and the SDK's grey,
+ * about #808080 over black, since a full strip of the fainter grey read as too
+ * dim to make out.
+ */
+private const val EMPTY_LETTER_ALPHA = 0.5f

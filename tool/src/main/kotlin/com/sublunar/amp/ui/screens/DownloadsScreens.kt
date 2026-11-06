@@ -1,43 +1,25 @@
 package com.sublunar.amp.ui.screens
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.DataMode
 import com.sublunar.amp.data.Downloader
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.OfflineMode
-import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.formatBytes
-import com.sublunar.amp.data.formatGb
-import com.sublunar.amp.data.sortSongs
-import com.sublunar.amp.ui.PlayerTheme
-import com.sublunar.amp.ui.components.AppHeader
-import com.sublunar.amp.ui.components.AppIcon
-import com.sublunar.amp.ui.components.AppIcons
-import com.sublunar.amp.ui.components.EmptyState
-import com.sublunar.amp.ui.components.LibraryList
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TextRow
-import com.sublunar.amp.ui.components.TrackRow
-import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 fun offlineModeLabel(mode: OfflineMode): String = when (mode) {
     OfflineMode.MANUAL -> "Manual"
@@ -64,127 +46,6 @@ private fun dataModeDetail(mode: DataMode): String = when (mode) {
     DataMode.MAKE_IT_HURT -> "No limits. Amp uses cellular data for everything when there's no Wi-Fi"
     DataMode.LOW_DATA -> "Uses cellular data for music, lyrics and the artwork you look at. Downloads wait for Wi-Fi"
     DataMode.WIFI_ONLY -> "Never uses cellular data"
-}
-
-/** Everything the phone holds, from every source, in the song lists' order. */
-class DownloadsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
-    @Composable
-    override fun Content() {
-        // Every source's downloads (App.downloadsBySource), read again each time a
-        // download lands. Keyed on the downloader's count of completed transfers
-        // rather than observing every source, so the other sources' databases are
-        // opened for a moment, not held open while the page is up. The active
-        // source's set is watched too, for a download removed from a library page.
-        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
-        val progress by App.downloader.progress.collectAsState()
-        var bySource by remember { mutableStateOf<List<Pair<MusicSource, List<Track>>>>(emptyList()) }
-        val sort by App.settings.songSort.state.collectAsState()
-        val reversed by App.settings.songSortReversed.state.collectAsState()
-        val sorted = remember(bySource, sort, reversed) {
-            bySource.map { (source, list) -> source to sortSongs(list, sort, reversed) }
-        }
-        val total = remember(sorted) { sorted.sumOf { it.second.size } }
-        val named = sorted.size > 1
-        // Bytes across every source, as the budget counts them, read with the lists
-        // so the figure and the songs it counts agree.
-        var bytes by remember { mutableStateOf(0L) }
-        LaunchedEffect(downloadedIds, progress.completed) {
-            // Both touch the disk, so off the frame. A change mid-read restarts it.
-            val read = withContext(Dispatchers.IO) {
-                App.downloadsBySource() to App.downloads.usedBytesEverywhere()
-            }
-            bySource = read.first
-            bytes = read.second
-        }
-        val limit by App.settings.downloadLimit.state.collectAsState()
-        val reserve by App.cacheReserve.bytes.collectAsState()
-        val paused by App.settings.downloadsPaused.state.collectAsState()
-        val sources by App.settings.sources.state.collectAsState()
-        // The running download names its server only when there are several.
-        val severalServers = sources.count { it.supportsDownloads } > 1
-        // Why nothing is arriving, read from the settings and the downloader: servers
-        // that can't serve the chosen quality (their downloads wait rather than come
-        // down as something else), or that refused the last download or stopped
-        // answering (Downloader.Hold).
-        val unmet = sources.filter { it.supportsDownloads && !it.downloadFormatAvailable }
-        val holds by App.downloader.holds.collectAsState()
-        val refused = sources.filter { holds[it.id] is Downloader.Hold.Refused && it !in unmet }
-        val parked = sources.filter { holds[it.id] is Downloader.Hold.Parked && it !in unmet }
-
-        // No tab bar and no menu: a page about storage, reached from Settings.
-        PlayerTheme {
-            Column(modifier = Modifier.fillMaxSize()) {
-                AppHeader(
-                    onBack = { goBack() },
-                    title = "Downloads",
-                    fitTitle = true,
-                )
-                val nothingToShow = total == 0 && !progress.active && bytes == 0L &&
-                    unmet.isEmpty() && refused.isEmpty() && parked.isEmpty()
-                if (nothingToShow) {
-                    // Says how, not just that.
-                    EmptyState("Nothing downloaded yet.\nHold a song, album or artist and choose Download.")
-                    return@Column
-                }
-                LibraryList(anchor = "downloaded-songs") {
-                    downloadProblems(this@DownloadsScreen, unmet, refused, parked, holds)
-                    if (progress.active || paused) {
-                        item {
-                            // Separate from pause: this throws away a queue that can
-                            // take an hour to rebuild.
-                            TextRow(
-                                title = "Cancel Downloads",
-                                subtitle = "Clears what's still queued",
-                                onClick = { App.downloader.cancelAll() },
-                                trailing = { AppIcon(AppIcons.Close, size = px(61)) },
-                            )
-                        }
-                        item {
-                            // Held, and why the last try failed.
-                            val heldError = progress.error.takeIf { progress.currentSource == null }
-                            TextRow(
-                                // The track, not a position in a batch the size limit
-                                // stops long before its end.
-                                title = progress.currentTitle ?: "Downloading",
-                                subtitle = when {
-                                    paused -> "Paused"
-                                    heldError != null -> heldError
-                                    severalServers && progress.currentSource != null ->
-                                        "Downloading · ${progress.currentSource}"
-                                    else -> "Downloading"
-                                },
-                                onClick = { App.downloader.setUserPaused(!paused) },
-                                trailing = {
-                                    AppIcon(
-                                        if (paused) AppIcons.PlayArrow else AppIcons.Pause,
-                                        size = px(61),
-                                    )
-                                },
-                            )
-                        }
-                    }
-                    item {
-                        SectionLabel("$total tracks · ${formatGb(bytes)} / ${formatGb(limit - reserve)}")
-                    }
-                    // A list to read, not to play from: a track from a source that
-                    // isn't the current one would resolve through the wrong server.
-                    sorted.forEach { (source, list) ->
-                        if (named) item(key = "src-${source.id}") { SectionLabel(source.name) }
-                        items(list, key = { "${source.id}-${it.id}" }) { track ->
-                            TrackRow(
-                                title = track.title,
-                                subtitle = track.artist,
-                                coverArtId = track.coverArtId,
-                                downloaded = true,
-                                onClick = {},
-                                coverSource = source.id,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 /** A row per server whose downloads are stuck, saying why and, where it can, what to do. */

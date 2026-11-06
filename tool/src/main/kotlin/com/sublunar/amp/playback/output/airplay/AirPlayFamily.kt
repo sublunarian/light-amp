@@ -77,4 +77,6 @@ class AirPlayTarget internal constructor(internal val receiver: AirPlayReceiver)
 
     // The hex before the @ in its name, which every speaker seen makes its MAC.
     override val hardwareId: String? get() = receiver.deviceId.takeIf { it.length == 12 }
+
+    override val isSpeaker: Boolean get() = receiver.isSpeaker
 }

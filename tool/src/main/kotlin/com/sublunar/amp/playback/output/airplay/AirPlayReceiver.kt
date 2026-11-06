@@ -26,6 +26,19 @@ data class AirPlayReceiver(
     /** Whether it takes the start of MFi authentication, which some speakers want before a stream (et=4). */
     val takesAuthSetup: Boolean get() = "4" in values("et")
 
+    /**
+     * A speaker rather than a screen, as far as its announcement says: Apple's
+     * own by model (HomePod, AirPort Express), any other by its features leaving
+     * out video (bit 0 of `ft`). An Apple TV, or one that says neither, isn't.
+     */
+    val isSpeaker: Boolean get() {
+        val model = txt["am"].orEmpty()
+        if (model.startsWith("AppleTV")) return false
+        if (model.startsWith("AudioAccessory") || model.startsWith("AirPort")) return true
+        val features = txt["ft"]?.substringBefore(',')?.trim()?.removePrefix("0x")?.toLongOrNull(16) ?: return false
+        return features and VIDEO_FEATURE == 0L
+    }
+
     private fun values(key: String): List<String> = txt[key].orEmpty().split(',').map { it.trim() }
 
     companion object {
@@ -85,6 +98,7 @@ data class AirPlayReceiver(
             return null
         }
 
+        private const val VIDEO_FEATURE = 0x1L
         private const val PIN_REQUIRED = 0x8L
         private const val PASSWORD_REQUIRED = 0x80L
         private const val PAIRING_REQUIRED = 0x200L

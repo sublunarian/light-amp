@@ -93,11 +93,16 @@ class PlaylistDetailScreen(
     // when Wi-Fi drops would otherwise keep offering edits that can only fail.
     private val offline = mutableStateOf(false)
 
+    // Reached from Downloads: only the songs on the phone are listed, the rest
+    // kept in place unlisted, as a song outside the library is. Kept live, as
+    // [offline] is.
+    private val downloadsOnly = mutableStateOf(false)
+
     /**
      * Whether this playlist may be edited: online (an edit touches the network, which
      * offline modes forbid), and whole (a partial list can't be addressed by position).
      */
-    private fun canEdit(): Boolean = wholeList.value && !offline.value
+    private fun canEdit(): Boolean = wholeList.value && !offline.value && !downloadsOnly.value
 
     // A playlist can hold a song twice, so rows use a synthetic key, not track.id.
     private var nextEntryKey = 0
@@ -129,6 +134,8 @@ class PlaylistDetailScreen(
         // Collected for the life of the screen: the half of canEdit that can change
         // while the playlist sits open.
         LaunchedEffect(Unit) { App.offlineOnly.collect { offline.value = it } }
+        LaunchedEffect(Unit) { LibraryNav.downloadsOnly.collect { downloadsOnly.value = it } }
+        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
 
         val selection = rememberSelection("playlist:$playlistId")
 
@@ -185,9 +192,12 @@ class PlaylistDetailScreen(
                     when (val list = entries.value) {
                         null -> CenteredNote("Loading…")
                         else -> {
-                            val shown = remember(list) { list.filter { it.shown } }
+                            val shown = remember(list, downloadsOnly.value, downloadedIds) {
+                                list.filter { listed(it, downloadedIds) }
+                            }
                             when {
                                 shown.isNotEmpty() -> TrackList(shown, selection)
+                                downloadsOnly.value -> CenteredNote("Nothing downloaded")
                                 // Neither the server's copy nor one held: not known to be empty.
                                 list.isEmpty() && !wholeList.value && !offline.value -> CenteredNote("Couldn't load")
                                 list.isEmpty() || offline.value -> CenteredNote("Empty playlist")
@@ -211,7 +221,11 @@ class PlaylistDetailScreen(
     private fun entriesOf(view: PlaylistView): List<PlaylistEntry> =
         view.all.mapIndexed { i, track -> PlaylistEntry(newEntryKey(), track, view.shown[i]) }
 
-    private fun shownEntries(): List<PlaylistEntry> = entries.value.orEmpty().filter { it.shown }
+    private fun shownEntries(): List<PlaylistEntry> =
+        entries.value.orEmpty().filter { listed(it, App.library.downloadedTrackIds.value) }
+
+    private fun listed(entry: PlaylistEntry, downloadedIds: Set<String>): Boolean =
+        entry.shown && (!downloadsOnly.value || entry.track.id in downloadedIds)
 
     /** The tracks. Edit mode is one mode: the grab bars appear and rows become selectable together. */
     @Composable
@@ -273,8 +287,7 @@ class PlaylistDetailScreen(
                                 if (editing) {
                                     selection.toggle(entry.key)
                                 } else {
-                                    App.playback.playQueue(list.map { it.track }, index)
-                                    go { NowPlayingScreen(it) }
+                                    playFromRow(list.map { it.track }, index)
                                 }
                             },
                             onLongClick = {

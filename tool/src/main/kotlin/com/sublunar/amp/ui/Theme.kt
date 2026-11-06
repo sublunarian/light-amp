@@ -27,16 +27,24 @@ fun PlayerTheme(
     library: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    // Menus and settings have no grey.
-    val dimAlpha = if (library) DIM_TEXT_ALPHA else 1f
     val invert by App.settings.invertColors.state.collectAsState()
+    // Menus and settings have no grey.
+    val dimAlpha = when {
+        !library -> 1f
+        invert -> GREY_ON_WHITE_ALPHA
+        else -> GREY_ON_BLACK_ALPHA
+    }
     val colors = if (invert) LightThemeColors.Light else LightThemeColors.Dark
     LightTheme(colors = colors) {
         val scale = rememberScale()
         // The one place every screen passes through tells the artwork loader
         // how wide the panel really is — see ArtworkLoader.panelWidthPx.
         SideEffect { App.artwork.panelWidthPx = scale.windowWidthPx }
-        CompositionLocalProvider(LocalScale provides scale, LocalDimTextAlpha provides dimAlpha) {
+        CompositionLocalProvider(
+            LocalScale provides scale,
+            LocalDimTextAlpha provides dimAlpha,
+            LocalGreyText provides library,
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -51,8 +59,26 @@ fun PlayerTheme(
     }
 }
 
-/** How strongly dimmed (grey) text is drawn on this screen, white being 1. */
-val LocalDimTextAlpha = compositionLocalOf { DIM_TEXT_ALPHA }
+/**
+ * How far what can't take a colour (the player's glyphs, the queue's past rows)
+ * fades to reach the grey on this screen, white being 1: see [LocalGreyText].
+ */
+val LocalDimTextAlpha = compositionLocalOf { GREY_ON_BLACK_ALPHA }
 
-/** The library and player's grey. */
-private const val DIM_TEXT_ALPHA = 0.5675f
+/**
+ * What can't be used right now (an index letter with nothing under it, a row
+ * with no choice to make, a fader Amp can't move): fainter than any secondary
+ * grey in either scheme, about #595959 over black and #A6A6A6 over white, and the
+ * same on every page, menus included.
+ */
+const val DISABLED_ALPHA = 0.35f
+
+/**
+ * Whether dimmed text on this screen is drawn in the SDK's own grey (`LightText`'s
+ * lighten): the library and player have it; menus and settings have no grey.
+ * What can't take a colour fades to the same grey: #BBBBBB over black, #666666
+ * over white.
+ */
+val LocalGreyText = compositionLocalOf { false }
+private const val GREY_ON_BLACK_ALPHA = 0xBB / 255f
+private const val GREY_ON_WHITE_ALPHA = 1f - 0x66 / 255f

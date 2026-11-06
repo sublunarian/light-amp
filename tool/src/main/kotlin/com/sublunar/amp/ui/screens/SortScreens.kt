@@ -44,6 +44,7 @@ class TagFilterScreen(
             onBack = { goBack() },
             title = "Genre",
             subtitle = tab.title,
+            headingRows = true,
         ) {
             ScrollableList {
                 item { TextRow(title = "All", checked = current.isEmpty()) { choose("") } }
@@ -127,7 +128,12 @@ class SortScreen(
 
         // The page being sorted is named under the heading, as Filter and View do,
         // with its narrowing, so sorting a filtered list says so.
-        ListScreen(onBack = { goBack() }, title = "Sort by", subtitle = tabTitle(tab, likedOnly(tab))) {
+        ListScreen(
+            onBack = { goBack() },
+            title = "Sort by",
+            subtitle = tabTitle(tab, likedOnly(tab)),
+            headingRows = true,
+        ) {
             ScrollableList {
                 item {
                     SectionLabel(
@@ -165,7 +171,7 @@ class SortScreen(
                                 val descending = naturallyDescending(option) != isReversed
                                 AppIcon(
                                     if (descending) AppIcons.ArrowDownward else AppIcons.ArrowUpward,
-                                    size = px(46),
+                                    size = px(SORT_ARROW_PX),
                                 )
                             }
                         },

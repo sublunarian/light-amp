@@ -14,13 +14,13 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Dehaze
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Favorite
@@ -131,12 +131,12 @@ class MaterialGlyphsTest {
             Material.Filled.ArrowUpward to Icons.Filled.ArrowUpward,
             Material.Filled.Bluetooth to Icons.Filled.Bluetooth,
             Material.Filled.Cast to Icons.Filled.Cast,
+            Material.Filled.Speaker to Icons.Filled.Speaker,
             Material.Filled.CheckCircle to Icons.Filled.CheckCircle,
             Material.Filled.Close to Icons.Filled.Close,
             Material.Filled.CloudOff to Icons.Filled.CloudOff,
             Material.Filled.Dehaze to Icons.Filled.Dehaze,
             Material.Filled.DeleteOutline to Icons.Filled.DeleteOutline,
-            Material.Filled.Download to Icons.Filled.Download,
             Material.Filled.Dns to Icons.Filled.Dns,
             Material.Filled.FastForward to Icons.Filled.FastForward,
             Material.Filled.FastRewind to Icons.Filled.FastRewind,
