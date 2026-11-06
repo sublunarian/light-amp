@@ -2,101 +2,11 @@
 
 ## Unreleased
 
-### Fixed
-
-- A failed request no longer leaves your Subsonic or Bandcamp login in Amp's
-  log.
-- A Wi-Fi login page, like a hotel's or café's, no longer counts as your
-  server answering.
-- A Wi-Fi signal that drops for a moment no longer switches the library to
-  what's downloaded and back.
-- Playlists open at once with their saved songs, offline too, and no longer
-  sit on Loading… when the server can't be reached (#19, #27, thanks
-  @wsturgiss).
-- Switching source offline shows that source's playlists instead of an empty
-  Playlists tab.
-- Seeking with repeat-one on no longer jumps to the first song, and Play Next
-  keeps an album in order.
-- Previous on the first song starts it over, and after a seek in a streamed
-  song the next song you pick starts at its beginning.
-- A downloaded song in a queue restored at launch plays from its file, offline
-  too, and a long queue reopens on the song you were playing.
-- Synced lyrics follow the timing offset their server or file gives them.
-- A refused login on a Subsonic server or Bandcamp now says to sign in again.
-- Editing a source you aren't using no longer stops playback and clears the
-  library you're using, and switching source mid-load no longer mixes two
-  servers' songs.
-- An interrupted Sync Now no longer blocks later syncs until a restart, and
-  syncing one library re-reads only what changed.
-- Covers of hidden libraries are no longer synced, and opening Artists no
-  longer refetches the whole artist list.
-- Invert Colors and Hide Artwork no longer flash off as a screen opens, and
-  Settings and Offline open without a stall.
-- Very large playlists open without running out of memory on Navidrome and
-  other Subsonic servers, and reorder much faster on Plex and Jellyfin.
-- Amp no longer reorders or removes songs in a Navidrome playlist with
-  missing files, which could remove the wrong song.
-- A Plex server linked at home is reached away from home too, without a
-  Sync Now (#27, thanks @wsturgiss).
-- Looking for your Plex server at its other addresses no longer sends your
-  Plex token to each one.
-- Picking a second speaker stops the first one, and queues that mix formats
-  play on a speaker at Original quality.
-- More casting fixes: seeking, starting mid-song, the next song, Plex songs,
-  the speaker's own remote, Wi-Fi dropping out and the ends of the queue.
-- While casting, the volume buttons control the speaker on every page, and
-  the Output page is quicker and says when speakers need Wi-Fi.
-- Several fixes to downloads, covers, syncs, A–Z jumps, search, lyrics, the
-  seek line, album and playlist menus, phone playlists and linking Plex.
-
-### Changed
-
-- A fresh look for the library: bigger covers on album lists, five to a
-  screen, outline tab icons, rounded covers and tidier margins, with download
-  marks at the end of each row.
-- The simple layout's buttons read Search, HOME and Player as LightOS's own
-  do, and new installs start there, without artwork.
-- Each server only offers the qualities it really sends. FLAC is gone, and
-  Bandcamp has a single quality.
-- Covers load faster and use less data, stay within your Storage Limit, and
-  show on cellular in Low Data.
-- Settings is simpler, with Storage and Streams & Downloads on their own pages
-  and a new Downloads page showing what's queued and what takes the room.
-- Casting to Plex players is gone for now. It may come back, built again.
-- Replay Gain and the Playback settings page are gone for now. They come
-  back once Light's SDK can set a player's volume.
-- Amp's license is now PolyForm Noncommercial 1.0.0: free for anything but
-  commercial use. Light's SDK stays MIT, as do Amp 0.8.2 and earlier.
-- Playing your whole library plays all of it, not only the 500 songs around
-  the one you picked, and Save Queue as Playlist can save it whole.
-- Amp reopens on the library tab you last used instead of always on Albums.
-- Playlist and queue songs line up with every other list, and songs in a
-  playlist show their download marks.
-- Every play counts toward your scrobbles, repeats included.
-- Recently Added for songs lists the newest albums first, each in track order.
-- Now Playing shows Buffering… while a seek loads or a speaker starts a song.
-- Leaving Wi-Fi mid-song moves that song to its downloaded copy at the same
-  spot, as the songs after it already do (#27, thanks @wsturgiss).
-- Sync progress counts only new or changed albums, and music on the phone
-  offers Rescan Library instead of Sync Now.
-- Add Source lists music on this phone and Bandcamp first, and the QR scan
-  for a username and password is offered for Bandcamp only.
-- Every playlist shows, whole, whichever library you pick; only songs from
-  libraries you hide stay out.
-- Choosing a speaker while paused no longer starts playback, and switching
-  source while casting keeps the speaker.
-- Contributions now come as issues, with pull requests by invitation.
-- Built on Light's SDK 0.2.3.
-
 ### Added
 
-- Play to AirPlay speakers, lossless at CD quality, including music stored on
-  the phone. A speaker that also takes DLNA is listed once. Hold another
-  AirPlay speaker to play on both at once, each with its own volume, and a
-  speaker's own knob and remote follow along in Amp.
+- Cast to AirPlay speakers, lossless at CD quality, one or several at once.
 - Artist pages group records into Albums, Singles & EPs, Live Albums and
-  more, with a tap on a heading to play or shuffle it, followed by the
-  artist's popular tracks.
+  more, followed by the artist's popular tracks.
 - Favorites and Downloads on the library page, each the same lists narrowed
   to what you liked or what's on the phone.
 - Song Info in every song's menu, with its format and bitrate.
@@ -104,21 +14,64 @@
   artist or most played.
 - Tap a synced lyric to jump to it, and show lyrics in another script in
   Latin letters.
-- Choose several libraries of a source at once.
 - A private log of what Amp did, kept on the phone and never sent anywhere,
   that you can save from About to report a problem.
-- Navidrome and other servers that support it now see each play, pause and
-  seek, so their Now Playing stays right, casting included.
-- While casting to a speaker, your launcher and Bluetooth buttons control it,
-  even with Amp in the background.
-- A speaker left paused for ten minutes hands playback back to the phone.
+
+### Changed
+
+- Casting to Plex players and Replay Gain are gone for now. Replay Gain comes
+  back once Light's SDK can set a player's volume.
+- A fresh look for the library: bigger covers on album lists, five to a
+  screen, outline tab icons, rounded covers and tidier margins.
+- The simple layout's buttons read Search, HOME and Player as LightOS's own
+  do, and new installs start there, without artwork.
+- Each server only offers the qualities it really sends. FLAC is gone, and
+  Bandcamp has a single quality.
+- Covers load faster, use less data, and now show on cellular in Low Data.
+- Settings is simpler, with Storage and Streams & Downloads on their own pages
+  and a new Downloads page showing what's queued and what takes the room.
+- Playing your whole library plays all of it, not only the 500 songs around
+  the one you picked, and Save Queue as Playlist can save it whole.
+- Amp reopens on the library tab you last used instead of always on Albums.
+- Every play counts toward your scrobbles, repeats included.
+- Leaving Wi-Fi mid-song moves that song to its downloaded copy at the same
+  spot, as the songs after it already do (#27, thanks @wsturgiss).
+- Playlists show in full in every library, except songs from libraries you
+  hide.
+
+### Fixed
+
+- Your logins no longer end up in Amp's log, and your Plex token is no longer
+  sent to your server's other addresses.
+- Hotel and café Wi-Fi login pages and brief Wi-Fi drops no longer confuse
+  Amp about being online.
+- Playlists open at once with their saved songs, offline too, and no longer
+  sit on Loading… when the server can't be reached (#19, #27, thanks
+  @wsturgiss).
+- Very large playlists open without running out of memory on Navidrome and
+  other Subsonic servers, and reorder much faster on Plex and Jellyfin.
+- Amp no longer reorders or removes songs in a Navidrome playlist with
+  missing files, which could remove the wrong song.
+- A Plex server linked at home is reached away from home too, without a
+  Sync Now (#27, thanks @wsturgiss).
+- A refused login on a Subsonic server or Bandcamp now says to sign in again.
+- Several playback fixes: repeat-one seeking, Play Next order, Previous on
+  the first song, and restored queues playing downloads offline.
+- Switching or editing sources and Sync Now are more reliable, and syncs only
+  fetch what changed.
+- Many casting fixes, and the volume buttons control the speaker on every
+  page.
+- Several fixes to downloads, covers, A–Z jumps, search, lyrics, the seek
+  line, album and playlist menus, phone playlists, linking Plex and the
+  colors as a screen opens.
 
 ### Under the hood
 
-- A readability refactor removed about 4,500 lines (11%), mostly outdated
-  comments, so with everything above Amp is only 3% larger than 0.8.2.
-- Files over 1,000 lines went from 8 to 4, the largest from 4,655 lines to
-  3,215, and unit tests from 276 to 593.
+- Amp's license is now PolyForm Noncommercial 1.0.0: free for anything but
+  commercial use. Light's SDK stays MIT, as do Amp 0.8.2 and earlier.
+- Built on Light's SDK 0.2.3.
+- A readability refactor removed about 4,500 lines, mostly outdated comments.
+- Unit tests went from 276 to 732.
 - Each kind of source (Subsonic, Plex, Jellyfin, the phone) and of casting
   lives in its own part of the code, behind a shared interface for each.
 - Patches to Light's SDK went from 11 to 5, adding about 410 lines instead of
@@ -126,6 +79,7 @@
   live in Amp's own code.
 - The compile errors that stop Light's store builder from building Amp went
   from 164 in September to 46.
+- Contributions now come as issues, with pull requests by invitation.
 
 ## 0.8.2
 
