@@ -11,8 +11,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * One family's way of playing somewhere else — a speaker on the network, a
- * Plex player across the room — steering one target at a time. Made once per
+ * One family's way of playing somewhere else — a DLNA speaker, an AirPlay
+ * one — steering one target at a time. Made once per
  * family for the life of the process, by [OutputFamily.create]. Every control
  * goes here while the sound is elsewhere.
  *
@@ -153,7 +153,7 @@ class Refound(
 )
 
 /**
- * A kind of output: speakers on the network, Plex players. Listed by whoever
+ * A kind of output: DLNA speakers, AirPlay ones. Listed by whoever
  * offers it — the phone's own in [Outputs], a kind of source's by its
  * provider.
  */

@@ -44,13 +44,12 @@
   the speaker's own remote, Wi-Fi dropping out and the ends of the queue.
 - While casting, the volume buttons control the speaker on every page, and
   the Output page is quicker and says when speakers need Wi-Fi.
-- A long queue cast to a Plex player keeps playing to the end, the cast no
-  longer ends while the player loads, and each play counts once on Plex.
 - Several fixes to downloads, covers, syncs, A–Z jumps, search, lyrics, the
   seek line, album and playlist menus, phone playlists and linking Plex.
 
 ### Changed
 
+- Casting to Plex players is gone for now. It may come back, built again.
 - Amp's license is now PolyForm Noncommercial 1.0.0: free for anything but
   commercial use. Light's SDK stays MIT, as do Amp 0.8.2 and earlier.
 - Playing your whole library plays all of it, not only the 500 songs around

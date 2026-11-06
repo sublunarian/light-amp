@@ -1,7 +1,6 @@
 package com.sublunar.amp.source.plex
 
 import io.ktor.client.HttpClient
-import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.header
 import io.ktor.client.request.request
 import io.ktor.client.statement.HttpResponse
@@ -51,9 +50,6 @@ import com.sublunar.amp.source.templatedPath
  * streaming, playlists, play counts and star ratings all round-trip to the
  * server, so what is done here shows up in Plexamp and the other way round.
  * What Plex can't do is left out rather than faked: see PlexProvider.capabilities.
- *
- * The Plex Companion calls, which steer another Plex player, are extensions
- * of this client in companion/PlexCompanionCalls.kt.
  */
 class PlexClient(
     /** A server connection URI, e.g. `http://192.168.1.10:32400`. */
@@ -75,16 +71,13 @@ class PlexClient(
     private val sendFailures = FailureRuns(TAG)
     private val lyricsFailures = FailureRuns("AmpLyrics")
 
-    /** Serialises requests aimed at a player — see the Companion calls. */
-    internal val playerLock = Mutex()
-
     override fun close() = http.close()
 
     // --- Requests ------------------------------------------------------------
 
-    /** [path] on [host] — the server unless a player is named — with [params] as its query. */
-    private fun url(path: String, params: List<Pair<String, String>> = emptyList(), host: String = baseUrl): String =
-        serverUrl(host, rooted(path), params)
+    /** [path] on the server with [params] as its query. */
+    private fun url(path: String, params: List<Pair<String, String>> = emptyList()): String =
+        serverUrl(baseUrl, rooted(path), params)
 
     /**
      * Paths come from the server too (part keys, thumbs, lyric streams), and
@@ -96,24 +89,20 @@ class PlexClient(
     /**
      * A request with Plex's headers, its answer unread. The identity goes on
      * every request and the token on all but a [withToken] false one; Plex
-     * answers XML unless [accept] asks for something else. [more] adds the
-     * call's own headers.
+     * answers XML unless [accept] asks for something else.
      */
-    internal suspend fun request(
+    private suspend fun request(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
         method: HttpMethod = HttpMethod.Get,
-        host: String = baseUrl,
         accept: String = JSON,
         withToken: Boolean = true,
         via: HttpClient = http.bulk,
-        more: HttpRequestBuilder.() -> Unit = {},
-    ): HttpResponse = via.request(url(path, params, host)) {
+    ): HttpResponse = via.request(url(path, params)) {
         this.method = method
         if (withToken) header("X-Plex-Token", token)
         header("Accept", accept)
         identityHeaders.forEach { (k, v) -> header(k, v) }
-        more()
     }
 
     /** An answer as text; a refusal throws [PlexException] with its status. */

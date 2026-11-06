@@ -16,7 +16,6 @@ source/                one folder per kind of library, and what they share
   SignInOutcome.kt, PendingServer.kt, ServerAddress.kt   shared sign-in pieces
   subsonic/            Navidrome, gonic, Airsonic, Bandcamp…: client, wire types, sign-in, form
   plex/                client, wire types, plex.tv account, link screens
-    companion/         Plex Companion: casting to Plex players, an output the provider offers
   jellyfin/            client, wire types, sign-in, link screen
   local/               the phone's own files: LocalLibrary, m3u playlists, ReplayGain tags
 
@@ -147,19 +146,11 @@ the LAN), so nothing builds an output to ask. DLNA is one, in
 (`DlnaOutput`) and its poll's pure decision (`CastWatch`) — listed in
 `Outputs`, Amp's own code rather than an SDK patch. A cast remembers its format
 choice per renderer and format, and per track for Original, which is each file's
-own container (`formatChoiceKey`). Plex Companion is the other, in
-`source/plex/companion` — discovery, the listener, the cast and its calls
-(`PlexCompanionCalls.kt`, extensions on `PlexClient`, which holds the token and
-the lock they need) — offered by the Plex provider
-(`SourceProvider.outputFamilies`), so only a Plex source lists its players. A
-player is never sent that token, which on a server the user owns opens the
-whole Plex account, but a transient one the server mints for each queue
-handed over, or for a player that won't say who it is without one
-(`mintPlayerKey`). The
-Output page lists `OutputFamilies` — the source's and the phone's — without
-naming any of them.
+own container (`formatChoiceKey`). A provider can offer families of its own
+(`SourceProvider.outputFamilies`, none today), and the Output page lists
+`OutputFamilies` — the source's and the phone's — without naming any of them.
 
-AirPlay is the third, in `playback/output/airplay`, and the only one where the
+AirPlay is the other, in `playback/output/airplay`, and the only one where the
 phone makes the sound: AirPlay 1 is a stream of audio, not an address handed
 over. The output reads each track as the phone's own player would
 (`OutputHost.phoneSource`: the file, or the loopback door's stream fetched once

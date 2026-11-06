@@ -39,9 +39,9 @@ class OutputFamiliesTest {
     }
 
     @Test
-    fun `only a Plex source offers outputs of its own`() {
+    fun `no source offers outputs of its own`() {
         assertEquals(
-            listOf(SourceKind.PLEX),
+            emptyList<SourceKind>(),
             Providers.all.filter { it.outputFamilies.isNotEmpty() }.map { it.kind },
         )
     }
