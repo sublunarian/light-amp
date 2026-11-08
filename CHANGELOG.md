@@ -2,32 +2,8 @@
 
 ## 0.9.2
 
-### Fixed
-
-- Search with no results stays open on Return, so you can try again or
-  pick another page.
-- Lists without artwork fit exactly eight artists or playlists to a screen.
-- Popular no longer shows for the phone's own music or Jellyfin, which
-  have no popular songs, and elsewhere appears once its songs have loaded.
-
-### Changed
-
-- The simple layout works like tabs again: the library button on the left,
-  search in the middle, the page you're on lit. Its home page brings back
-  Liked Artists, Albums and Songs in place of Favorites and Downloads, and
-  search works as it does with tabs.
-- Grouping an artist's records by release type is now a Group Release
-  Types switch in the artist's More menu, off for new installs. Records
-  sort by Date Released by default.
-- All Songs and Popular sit side by side at the top of artist pages again.
-- Playlists have a More menu with Edit, and can sort by Playlist Order,
-  Title, Artist, Album or Release Date, remembered for each playlist.
-- Lists start at the wider margin again, with the download mark on the
-  left, and album lists show six to a screen.
-- Appearance has an Artwork page, with a new Playlists Art switch. Library
-  Tabs Layout is now Simple Library View.
-- One darker grey throughout, filled Songs and Playlists tab icons, and a
-  square cover on Now Playing.
+- Parts of 0.8.2's library look are back: the simple layout's tab-style bar and a few other changes are restored.
+- Playlists can be sorted, and remember their own sort.
 
 ## 0.9.1
 
