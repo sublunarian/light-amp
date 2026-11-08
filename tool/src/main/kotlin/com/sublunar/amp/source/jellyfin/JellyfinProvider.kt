@@ -58,6 +58,7 @@ object JellyfinProvider : SourceProvider {
         serverScan = true,
         libraries = true,
         releaseTypes = false,
+        popularSongs = false,
     )
 
     override fun createClient(source: MusicSource): MusicServer? =

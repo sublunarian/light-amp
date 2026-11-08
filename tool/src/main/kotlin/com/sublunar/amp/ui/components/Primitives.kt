@@ -34,8 +34,13 @@ object AppIcons {
      * a stack is what the tab holds.
      */
     val AlbumStack = Icons.Filled.FilterNone
+
+    /** The library, on the three-button bar's Library Button trial. */
+    val Library = Icons.Filled.LibraryMusic
+
+    /** An artist's popular songs. */
+    val Popular = Icons.Filled.Whatshot
     val MusicNote = Icons.Filled.MusicNote
-    val MusicNoteOutline = Icons.Outlined.MusicNote
 
     /**
      * Artists: a filled mic, at the same weight as the note and the disc beside it.

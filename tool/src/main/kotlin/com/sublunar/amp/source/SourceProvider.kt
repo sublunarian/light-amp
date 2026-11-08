@@ -116,4 +116,6 @@ data class SourceCapabilities(
     val libraries: Boolean,
     /** Whether its records say what kind they are (album, EP, live…) — see MusicSource.supportsReleaseTypes. */
     val releaseTypes: Boolean,
+    /** Whether it can name an artist's popular songs — see MusicSource.supportsPopularSongs. */
+    val popularSongs: Boolean,
 )

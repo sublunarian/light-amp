@@ -46,6 +46,7 @@ object PlexProvider : SourceProvider {
         serverScan = true,
         libraries = true,
         releaseTypes = true,
+        popularSongs = true,
     )
 
     override fun createClient(source: MusicSource): MusicServer? =

@@ -58,4 +58,40 @@ class ChangedDefaultsTest {
         assertEquals(LayoutMode.SIMPLIFIED, relaunched.layoutMode.value)
         assertEquals(ArtworkMode.NONE, relaunched.artwork.value)
     }
+
+    @Test
+    fun `an install from before keeps its records grouped by release type, by date`() {
+        for (stored in listOf(null, "RELEASE_TYPE")) {
+            val prefs = mutablePreferencesOf(stringPreferencesKey("pref.sources") to oldSources)
+            if (stored != null) prefs[stringPreferencesKey("pref.artistAlbumOrder")] = stored
+            val settings = MemoryDataStore(prefs).settings()
+            assertEquals(true, settings.groupReleaseTypes.value)
+            assertEquals(ArtistAlbumOrder.DATE_RELEASED, settings.artistAlbumOrder.value)
+        }
+    }
+
+    @Test
+    fun `an install from before that sorted its records by name keeps that, ungrouped`() {
+        val store = MemoryDataStore(
+            mutablePreferencesOf(
+                stringPreferencesKey("pref.sources") to oldSources,
+                stringPreferencesKey("pref.artistAlbumOrder") to "NAME",
+            ),
+        )
+        val settings = store.settings()
+        assertEquals(false, settings.groupReleaseTypes.value)
+        assertEquals(ArtistAlbumOrder.NAME, settings.artistAlbumOrder.value)
+    }
+
+    @Test
+    fun `a fresh install starts ungrouped by date, and keeps that once it has a source`() = runBlocking {
+        val store = MemoryDataStore()
+        val first = store.settings()
+        assertEquals(false, first.groupReleaseTypes.value)
+        assertEquals(ArtistAlbumOrder.DATE_RELEASED, first.artistAlbumOrder.value)
+        first.saveSource(source)
+        val relaunched = store.settings()
+        assertEquals(false, relaunched.groupReleaseTypes.value)
+        assertEquals(ArtistAlbumOrder.DATE_RELEASED, relaunched.artistAlbumOrder.value)
+    }
 }

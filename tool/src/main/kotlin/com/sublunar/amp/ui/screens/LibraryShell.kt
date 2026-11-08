@@ -1,8 +1,9 @@
 package com.sublunar.amp.ui.screens
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -24,14 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.material3.Icon
-import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.Dp
-import com.thelightphone.sdk.ui.LightThemeTokens
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.LayoutMode
@@ -45,14 +40,15 @@ import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AlbumGrid
 import com.sublunar.amp.ui.components.AlphabetIndex
 import com.sublunar.amp.ui.components.AppHeader
+import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
+import com.sublunar.amp.ui.components.MENU_INSET_PX
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.ArtistRow
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.INDEX_STRIP_PX
 import com.sublunar.amp.ui.components.LatestList
 import com.sublunar.amp.ui.components.ListScrollBar
-import com.sublunar.amp.ui.components.MENU_ROW_INSET_PX
 import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.ScrollableList
@@ -63,7 +59,6 @@ import com.sublunar.amp.ui.components.TabGlyphs
 import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.TitleCard
 import com.sublunar.amp.ui.components.TrackRow
-import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.listPadding
 import com.sublunar.amp.ui.components.rememberGridAnchor
 import com.sublunar.amp.ui.components.rememberLatest
@@ -75,8 +70,6 @@ import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.rememberPermissionRequestLauncher
-import com.thelightphone.sdk.ui.LightIcon
-import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -106,10 +99,8 @@ internal fun iconFor(tab: LibraryTab): ImageVector = when (tab) {
 fun SimpleLightScreen<*>.LibraryShell() {
     val currentTab by LibraryNav.currentTab.collectAsState()
     val libraryIndex by LibraryNav.libraryIndex.collectAsState()
-    val folder by LibraryNav.indexFolder.collectAsState()
     val searchActive by LibraryNav.searchActive.collectAsState()
     val typing by LibraryNav.typing.collectAsState()
-    val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
     PlayerTheme(library = true) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
@@ -122,17 +113,16 @@ fun SimpleLightScreen<*>.LibraryShell() {
                 }
             }
             // Not while typing, where the keyboard takes the bottom. Over the
-            // results it is back, with no tab lit: search is none of them, and
-            // a tab tapped there leaves it for that tab. Simplified's results
-            // are stock Music's page, which has no bar: its back is the way out.
-            if (!searchActive || (!typing && !simplified)) {
+            // results it is back: with no tab lit, as search is none of them,
+            // and under Simplified with search lit.
+            if (!searchActive || !typing) {
                 Navbar(
                     current = if (libraryIndex || searchActive) null else currentTab,
                     onSelect = { LibraryNav.tapTab(it) },
                     onSearch = { startSearch() },
                     onNowPlaying = { go { NowPlayingScreen(it) } },
                     onBrowse = { LibraryNav.pressLibrary() },
-                    showLibrary = !libraryIndex || searchActive || folder != null,
+                    libraryLit = !searchActive,
                 )
             }
         }
@@ -553,6 +543,7 @@ private fun SimpleLightScreen<*>.PlaylistsTab(header: Boolean = true) {
     // that stayed composed through the switch would otherwise sit on an empty
     // list for ever.
     LaunchedEffect(source.id) { App.playlists.refreshPlaylists() }
+    val artworkHidden = App.hidePlaylistArtwork.collectAsState().value
     Column(Modifier.fillMaxSize()) {
         if (header) TabHeader(LibraryTab.PLAYLISTS)
         IndexedList(
@@ -564,7 +555,15 @@ private fun SimpleLightScreen<*>.PlaylistsTab(header: Boolean = true) {
             // A server that can't hold an empty playlist has no use for a bare
             // "New Playlist" — see MusicSource.supportsEmptyPlaylists.
             if (canCreateEmpty) {
-                item { PlayAllRow(AppIcons.Add, "New Playlist", headsList = true, oneLineList = true) { newPlaylist() } }
+                item {
+                    PlayAllRow(
+                        AppIcons.Add,
+                        "New Playlist",
+                        headsList = true,
+                        oneLineList = true,
+                        artworkHidden = artworkHidden,
+                    ) { newPlaylist() }
+                }
             }
             items(playlists, key = { it.id }) { playlist ->
                 TrackRow(
@@ -575,6 +574,7 @@ private fun SimpleLightScreen<*>.PlaylistsTab(header: Boolean = true) {
                     downloaded = playlist.id in downloadedPlaylists,
                     onClick = { go { PlaylistDetailScreen(it, playlist.id, playlist.name) } },
                     onLongClick = { go { PlaylistActionsScreen(it, playlist.id, playlist.name) } },
+                    artworkHidden = artworkHidden,
                 )
             }
         }
@@ -583,122 +583,42 @@ private fun SimpleLightScreen<*>.PlaylistsTab(header: Boolean = true) {
 
 /**
  * Everything there is to browse, in one list: the simplified layout's library
- * button lands here. The four tabs, then their liked versions. The player and
- * search are in the bar below.
+ * button lands here. The four tabs, then the liked lists that have something in
+ * them. The player and search are in the bar below.
  */
 @Composable
 private fun SimpleLightScreen<*>.LibraryIndex() {
     val source by App.source.collectAsState()
-    // The liked lists appear only where there is something in them, and not at
-    // all where the source has no likes — see MusicSource.supportsLikes.
+    // Not at all where the source has no likes — see MusicSource.supportsLikes.
     val likedArtists by App.library.hasLikedArtists.collectAsState()
     val likedAlbums by App.library.hasLikedAlbums.collectAsState()
     val likedTracks by App.library.hasLikedTracks.collectAsState()
     val likes = source.supportsLikes
-    val anyDownloaded = App.library.downloadedTrackIds.collectAsState().value.isNotEmpty()
-    val folder = LibraryNav.indexFolder.collectAsState().value
-    if (folder != null) {
-        FolderIndex(folder, likedArtists, likedAlbums, likedTracks)
-        return
-    }
 
     // A Column of its own: the shell hands each page a Box.
     Column(modifier = Modifier.fillMaxSize()) {
         AppHeader(
-            // The source's name with the SDK's chevron: a picker, as the library's
-            // name is at the top of Plexamp. Choosing a source is the whole
-            // library's business, so this page is where it lives in this layout.
-            titleContent = { SourceTitle(source.name) { go { SourcesScreen(it) } } },
-            // Settings' one place in this layout, two taps from anywhere: the
-            // More menus leave it out here.
-            rightAction = HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
+            title = "Library",
+            fitTitle = true,
+            // The page's own More, as on every other library page.
+            rightAction = libraryCornerAction(LibraryPage.LIBRARY),
         )
-        // The four lists, then what you kept and what is on the phone, each a
-        // page of the same lists narrowed to it, shown only with something in it.
-        IndexList { pitch ->
-            HOME_ORDER.forEach { tab -> item { IndexRow(tab, pitch) } }
-            if (likes && (likedArtists || likedAlbums || likedTracks)) {
-                item { FolderRow(IndexFolder.FAVORITES, pitch) }
-            }
-            if (source.supportsDownloads && anyDownloaded) {
-                item { FolderRow(IndexFolder.DOWNLOADS, pitch) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SourceTitle(name: String, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier.fillMaxWidth().appClickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            AppText(
-                name,
-                pxSp(LightType.FINE_PX),
-                role = TextRole.Subheading,
-                maxLines = 1,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            Spacer(Modifier.width(px(SOURCE_CHEVRON_GAP_PX)))
-            LightIcon(LightIcons.DOWN, size = SOURCE_CHEVRON_UNITS, contentDescription = "Choose source")
-        }
-    }
-}
-
-/** The chevron at one grid unit, about the title's cap height, a little apart from it. */
-private const val SOURCE_CHEVRON_UNITS = 1f
-private const val SOURCE_CHEVRON_GAP_PX = 16
-
-/** One tab, on the index: its own bar icon, and its name. */
-@Composable
-private fun IndexRow(tab: LibraryTab, pitch: Dp) {
-    // The unnarrowed list: "Albums" showing only the liked ones would lie.
-    IndexLine(tab.title, rememberVectorPainter(iconFor(tab)), tabGlyphScale(tab), tabGlyphLiftPx(tab), pitch) {
-        openNarrowed(tab, liked = false, downloaded = false)
-    }
-}
-
-/** Favorites or Downloads, on the home list: opens its page of lists. */
-@Composable
-private fun FolderRow(folder: IndexFolder, pitch: Dp) {
-    val glyph = when (folder) {
-        IndexFolder.FAVORITES -> rememberVectorPainter(AppIcons.Favorite)
-        IndexFolder.DOWNLOADS -> painterResource(LightIcons.DOWNLOADED_ARROW.drawableResource)
-    }
-    val scale = when (folder) {
-        IndexFolder.FAVORITES -> LIKED_GLYPH_SCALE
-        IndexFolder.DOWNLOADS -> DOWNLOADS_GLYPH_SCALE
-    }
-    IndexLine(folder.title, glyph, scale, pitch = pitch) { LibraryNav.indexFolder.value = folder }
-}
-
-/**
- * Favorites or Downloads itself: the lists by their own names and tab glyphs, the
- * page's title saying how they are narrowed. Favorites shows only what has likes.
- */
-@Composable
-private fun FolderIndex(folder: IndexFolder, likedArtists: Boolean, likedAlbums: Boolean, likedTracks: Boolean) {
-    val tabs = when (folder) {
-        IndexFolder.FAVORITES -> listOfNotNull(
-            LibraryTab.ARTISTS.takeIf { likedArtists },
-            LibraryTab.ALBUMS.takeIf { likedAlbums },
-            LibraryTab.SONGS.takeIf { likedTracks },
-        )
-        IndexFolder.DOWNLOADS -> HOME_ORDER
-    }
-    Column(modifier = Modifier.fillMaxSize()) {
-        AppHeader(title = folder.title, onBack = { LibraryNav.indexFolder.value = null })
-        IndexList { pitch ->
-            tabs.forEach { tab ->
-                item {
-                    IndexLine(tab.title, rememberVectorPainter(iconFor(tab)), tabGlyphScale(tab), tabGlyphLiftPx(tab), pitch) {
-                        openNarrowed(
-                            tab,
-                            liked = folder == IndexFolder.FAVORITES,
-                            downloaded = folder == IndexFolder.DOWNLOADS,
-                        )
+        // Seven rows to exactly the space under the header.
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val pitch = maxHeight / INDEX_ROWS_PER_SCREEN
+            ScrollableList {
+                HOME_ORDER.forEach { tab ->
+                    item { IndexLine(tab.title, iconFor(tab), pitch) { openNarrowed(tab, liked = false) } }
+                }
+                // The same three again, narrowed, as a block under the whole set.
+                LIKED_ORDER.forEach { tab ->
+                    val any = when (tab) {
+                        LibraryTab.ARTISTS -> likedArtists
+                        LibraryTab.ALBUMS -> likedAlbums
+                        else -> likedTracks
+                    }
+                    if (likes && any) {
+                        item { IndexLine("Liked ${tab.title}", AppIcons.Favorite, pitch) { openNarrowed(tab, liked = true) } }
                     }
                 }
             }
@@ -706,28 +626,19 @@ private fun FolderIndex(folder: IndexFolder, likedArtists: Boolean, likedAlbums:
     }
 }
 
-/** The home list's rows at a sixth of the space under the header each, so six fill it exactly. */
-@Composable
-private fun ColumnScope.IndexList(content: LazyListScope.(pitch: Dp) -> Unit) {
-    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-        val pitch = maxHeight / INDEX_ROWS_PER_SCREEN
-        ScrollableList { content(pitch) }
-    }
-}
-
-private const val INDEX_ROWS_PER_SCREEN = 6
-
-/** The home list's order, and its pages'. */
+/** The home list's order. */
 private val HOME_ORDER = listOf(LibraryTab.PLAYLISTS, LibraryTab.ARTISTS, LibraryTab.ALBUMS, LibraryTab.SONGS)
+private val LIKED_ORDER = listOf(LibraryTab.ARTISTS, LibraryTab.ALBUMS, LibraryTab.SONGS)
 
 /**
- * Opens [tab] with Liked set to [liked], once its list is narrowed to match: the
- * list is sorted off the main thread, and opening at once drew a frame of the
- * other list first. The wait is that one sort, so a few milliseconds.
+ * Opens [tab] with Liked set to [liked], and never narrowed to downloads, once
+ * its list is narrowed to match: the list is sorted off the main thread, and
+ * opening at once drew a frame of the other list first. The wait is that one
+ * sort, so a few milliseconds.
  */
-private fun openNarrowed(tab: LibraryTab, liked: Boolean, downloaded: Boolean) {
+private fun openNarrowed(tab: LibraryTab, liked: Boolean) {
     setLikedOnly(tab, liked)
-    setDownloadedOnlyNow(tab, downloaded)
+    setDownloadedOnlyNow(tab, false)
     val view: Flow<App.SortedView<*>>? = when (tab) {
         LibraryTab.ALBUMS -> App.sortedAlbums
         LibraryTab.SONGS -> App.sortedSongs
@@ -743,57 +654,32 @@ private fun openNarrowed(tab: LibraryTab, liked: Boolean, downloaded: Boolean) {
 
 private const val NARROWED_WAIT_MS = 500L
 
-/**
- * A row of the index: the glyph on the menus' text axis, the name after it at a
- * menu's Heading, six rows to the page.
- */
+/** A row of the home list, as 0.8.2 drew it: the glyph, then the name at Copy, [pitch] tall. */
 @Composable
-private fun IndexLine(
-    title: String,
-    icon: Painter,
-    /** The glyph's trim and rise from the tab bar, so the list keeps the bar's proportions. */
-    glyphScale: Float,
-    glyphLiftPx: Int = 0,
-    /** The row's height, so six fill the page — see [IndexList]. */
-    pitch: Dp,
-    onClick: () -> Unit,
-) {
+private fun IndexLine(title: String, icon: ImageVector, pitch: Dp, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(pitch)
-            .rowClickable(onClick = onClick),
+            .rowClickable(onClick = onClick)
+            .padding(start = px(MENU_INSET_PX)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Spacer(Modifier.width(px(MENU_ROW_INSET_PX)))
-        // The bar's glyph box, shrunk to the type.
-        val boxPx = NAV_ICON_PX * LightType.HEADING_PX.toFloat() / NAV_ICON_PER_TYPE_PX
-        Box(Modifier.size(px(boxPx)), contentAlignment = Alignment.Center) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = LightThemeTokens.colors.content,
-                modifier = Modifier
-                    .offset(y = -px(glyphLiftPx * boxPx / NAV_ICON_PX))
-                    .size(px(boxPx * glyphScale)),
-            )
-        }
+        AppIcon(icon, size = px(INDEX_GLYPH_PX))
         Spacer(Modifier.width(px(INDEX_GLYPH_GAP_PX)))
         AppText(
             title,
-            pxSp(LightType.HEADING_PX),
-            lineHeight = pxSp(LightType.HEADING_LINE_PX),
-            role = TextRole.Heading,
+            pxSp(LightType.COPY_PX),
+            lineHeight = pxSp(LightType.COPY_LINE_PX),
+            role = TextRole.Copy,
             maxLines = 1,
         )
     }
 }
 
-/**
- * The type size at which a home glyph draws at the bar's own size: Heading's 79px
- * names then carry tall glyphs about 58px high, a little over the letters' caps.
- */
-private const val NAV_ICON_PER_TYPE_PX = 97f
+/** The glyph 56px, a unit before the name. */
+private const val INDEX_ROWS_PER_SCREEN = 7
+private const val INDEX_GLYPH_PX = 56
 private const val INDEX_GLYPH_GAP_PX = 40
 
 /** Whether this tab is narrowed to what is downloaded — see AppSettings.downloadedAlbumsOnly. */

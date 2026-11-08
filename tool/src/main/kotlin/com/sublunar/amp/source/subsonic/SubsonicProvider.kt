@@ -62,6 +62,7 @@ object SubsonicProvider : SourceProvider {
         serverScan = features.allows(ServerFeatures.SCAN_STATUS),
         libraries = true,
         releaseTypes = true,
+        popularSongs = true,
     )
 
     // Built again whenever the record changes, its features with it, so a

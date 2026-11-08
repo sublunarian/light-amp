@@ -64,7 +64,7 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val sync by App.librarySync.syncState.collectAsState()
         val current = choice ?: active?.let { Choice(it.id, it.selectedLibraries) }
 
-        ListScreen(onBack = { goBack() }, title = "Sources", listRows = true) {
+        ListScreen(onBack = { goBack() }, title = "Sources") {
             ScrollableList {
                 sources.forEach { source ->
                     // The source is the heading its libraries sit under: there is

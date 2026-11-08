@@ -1,7 +1,6 @@
 package com.sublunar.amp.ui.components
 
 import androidx.compose.material.icons.Icons as Material
-import androidx.compose.material.icons.outlined.MusicNote as OutlinedMusicNote
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.automirrored.filled.Sort
@@ -28,6 +27,8 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.FilterNone
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
@@ -144,6 +145,8 @@ class MaterialGlyphsTest {
             Material.Filled.Star to Icons.Filled.Star,
             Material.Filled.StarBorder to Icons.Filled.StarBorder,
             Material.Filled.FilterNone to Icons.Filled.FilterNone,
+            Material.Filled.LibraryMusic to Icons.Filled.LibraryMusic,
+            Material.Filled.Whatshot to Icons.Filled.Whatshot,
             Material.Filled.MoreVert to Icons.Filled.MoreVert,
             Material.Filled.MusicNote to Icons.Filled.MusicNote,
             Material.Filled.Pause to Icons.Filled.Pause,
@@ -158,7 +161,6 @@ class MaterialGlyphsTest {
             Material.Filled.Smartphone to Icons.Filled.Smartphone,
             Material.AutoMirrored.Filled.FormatListBulleted to Icons.AutoMirrored.Filled.FormatListBulleted,
             Material.AutoMirrored.Filled.QueueMusic to Icons.AutoMirrored.Filled.QueueMusic,
-            Material.Outlined.OutlinedMusicNote to Icons.Outlined.MusicNote,
             Material.AutoMirrored.Filled.Sort to Icons.AutoMirrored.Filled.Sort,
             Material.AutoMirrored.Filled.VolumeDown to Icons.AutoMirrored.Filled.VolumeDown,
             Material.AutoMirrored.Filled.VolumeUp to Icons.AutoMirrored.Filled.VolumeUp,

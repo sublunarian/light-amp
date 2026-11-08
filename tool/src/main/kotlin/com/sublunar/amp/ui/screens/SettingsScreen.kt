@@ -88,9 +88,6 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val syncedLyrics by App.settings.syncedLyrics.state.collectAsState()
         val hideDownloadIcons by App.settings.hideDownloadIcons.state.collectAsState()
         val sources by App.settings.sources.state.collectAsState()
-        val artwork by App.settings.artwork.state.collectAsState()
-        val listArtwork by App.settings.listArtwork.state.collectAsState()
-        val hideArtistImages by App.settings.hideArtistImages.state.collectAsState()
         val layoutMode by App.settings.layoutMode.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Appearance", headingRows = true) {
@@ -119,21 +116,38 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     }
                 }
                 item {
-                    // On spreads the four tabs across the bar. Off, the default, is
-                    // the phone's own three buttons with the library as a page.
-                    val tabs = layoutMode == LayoutMode.STANDARD
-                    ToggleRow("Library Tabs Layout", tabs) {
+                    // On, the default, is the phone's own three buttons with the
+                    // library as a page. Off spreads the four tabs across the bar.
+                    val simple = layoutMode == LayoutMode.SIMPLIFIED
+                    ToggleRow("Simple Library View", simple) {
                         // Each layout's own front page, as at launch: the index
                         // for the three buttons, the last tab for the tabs.
-                        LibraryNav.libraryIndex.value = tabs
-                        LibraryNav.indexFolder.value = null
+                        LibraryNav.libraryIndex.value = !simple
                         App.scope.launch {
                             App.settings.layoutMode.set(
-                                if (tabs) LayoutMode.SIMPLIFIED else LayoutMode.STANDARD,
+                                if (simple) LayoutMode.STANDARD else LayoutMode.SIMPLIFIED,
                             )
                         }
                     }
                 }
+                item { TextRow(title = "Artwork") { go { ArtworkScreen(it) } } }
+            }
+        }
+    }
+}
+
+/** Where covers and pictures show: everywhere or nowhere first, then each kind of list. */
+class ArtworkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
+
+    @Composable
+    override fun Content() {
+        val artwork by App.settings.artwork.state.collectAsState()
+        val listArtwork by App.settings.listArtwork.state.collectAsState()
+        val playlistArtwork by App.settings.playlistArtwork.state.collectAsState()
+        val hideArtistImages by App.settings.hideArtistImages.state.collectAsState()
+
+        ListScreen(onBack = { goBack() }, title = "Artwork", headingRows = true) {
+            ScrollableList {
                 item {
                     // Covers everywhere or none, which also stops the app
                     // fetching and decoding them.
@@ -144,11 +158,16 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         }
                     }
                 }
-                // With Enable Artwork off, the lists and the artists have already lost theirs.
+                // With Enable Artwork off, every list has already lost its covers.
                 if (artwork != ArtworkMode.NONE) {
                     item {
                         ToggleRow("Album Art in Lists", listArtwork) {
                             App.scope.launch { App.settings.listArtwork.set(!listArtwork) }
+                        }
+                    }
+                    item {
+                        ToggleRow("Playlists Art", playlistArtwork) {
+                            App.scope.launch { App.settings.playlistArtwork.set(!playlistArtwork) }
                         }
                     }
                     item {

@@ -27,7 +27,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,13 +35,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Album
-import com.sublunar.amp.data.LayoutMode
-import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
@@ -51,17 +47,15 @@ import com.sublunar.amp.ui.components.ArtistRow
 import com.sublunar.amp.ui.components.CORNER_ICON_PX
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.HEADER_BAR_PX
-import com.sublunar.amp.ui.components.INNER_SLOT_PX
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import com.sublunar.amp.ui.components.ListScrollBar
 import com.sublunar.amp.ui.components.ROW_ACTION_ICON_PX
 import com.sublunar.amp.ui.components.ROW_GAP_PX
-import com.sublunar.amp.ui.components.ROW_LEAD_PX
+import com.sublunar.amp.ui.components.LIST_LEAD_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.SectionLabel
-import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.components.listPadding
@@ -73,18 +67,9 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * The bar's search button. Simplified gets the full-screen editor: its bar is the
- * phone's own three buttons, and the inline keyboard belongs to the layout with a
- * magnifier in the header. Standard goes straight to typing on the page itself.
- */
+/** The bar's search button: straight to typing on the page itself, in either layout. */
 internal fun SimpleLightScreen<*>.startSearch() {
-    if (App.settings.layoutMode.value == LayoutMode.SIMPLIFIED) {
-        LibraryNav.openSearch()
-        editSearch("")
-    } else {
-        LibraryNav.openSearch(withKeyboard = true)
-    }
+    LibraryNav.openSearch(withKeyboard = true)
 }
 
 @Composable
@@ -107,9 +92,6 @@ internal fun SimpleLightScreen<*>.SearchView() {
     LaunchedEffect(live, tracks, albums, artists) {
         results = withContext(Dispatchers.Default) { App.library.search(live) }
     }
-    // The keyboard keeps the Return handler it was built with, so it reads the
-    // results through this rather than capturing the first ones.
-    val latestResults = rememberUpdatedState(results)
     val listState = rememberListAnchor("search")
     // Scrolling the results puts the keyboard away, so the whole list shows.
     LaunchedEffect(listState, typing) {
@@ -130,43 +112,19 @@ internal fun SimpleLightScreen<*>.SearchView() {
         LibraryNav.typing.value = false
         LibraryNav.closeSearch()
     }
-    val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
     Column(Modifier.fillMaxSize()) {
-        if (simplified) {
-            // Stock Music's results page: back, the query as the title, nothing
-            // else. A tap on the query edits it in the SDK's own screen.
-            AppHeader(
-                onBack = cancel,
-                titleContent = {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().appClickable { editSearch(live) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        AppText(
-                            live.ifBlank { "Search" },
-                            pxSp(LightType.FINE_PX),
-                            role = TextRole.Subheading,
-                            maxLines = 1,
-                            align = TextAlign.Center,
-                        )
-                    }
-                },
-            )
-        } else {
-            SearchHeader(
-                query = live,
-                // While typing, where the next key lands; a tap or drag in the
-                // field moves it, raising the keyboard if it was down.
-                cursor = if (typing) state.selection.min else null,
-                onPlaceCursor = { offset ->
-                    state.edit { selection = TextRange(offset) }
-                    LibraryNav.typing.value = true
-                },
-                onEdit = { LibraryNav.typing.value = true },
-                onCancel = cancel,
-                onMenu = { go { MoreScreen(it, LibraryPage.SEARCH) } },
-            )
-        }
+        SearchHeader(
+            query = live,
+            // While typing, where the next key lands; a tap or drag in the
+            // field moves it, raising the keyboard if it was down.
+            cursor = if (typing) state.selection.min else null,
+            onPlaceCursor = { offset ->
+                state.edit { selection = TextRange(offset) }
+                LibraryNav.typing.value = true
+            },
+            onEdit = { LibraryNav.typing.value = true },
+            onCancel = cancel,
+        )
         Box(modifier = Modifier.weight(1f)) {
             // Nothing typed yet, so nothing listed: results come with the first
             // keystroke.
@@ -238,11 +196,11 @@ internal fun SimpleLightScreen<*>.SearchView() {
             }
         }
         if (typing) {
-            // Return reads the results: with some it puts the keyboard away to
-            // show them; with none (or nothing typed) there is nothing to look
-            // at, so it goes back to the library.
+            // Return puts the keyboard away to show the results, "No results"
+            // included, so the bar is back to choose from. With nothing typed
+            // there is nothing to show, so it goes back to the library.
             SearchKeyboard(state) {
-                if (latestResults.value.isEmpty || state.text.isBlank()) {
+                if (state.text.isBlank()) {
                     LibraryNav.closeSearch()
                 } else {
                     LibraryNav.typing.value = false
@@ -269,7 +227,6 @@ private fun SearchHeader(
     onPlaceCursor: ((Int) -> Unit)?,
     onEdit: () -> Unit,
     onCancel: () -> Unit,
-    onMenu: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -284,30 +241,20 @@ private fun SearchHeader(
                 .appClickable(onClick = onEdit),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Spacer(Modifier.width(px(LIST_EDGE_PX + ROW_LEAD_PX)))
+            Spacer(Modifier.width(px(LIST_EDGE_PX + LIST_LEAD_PX)))
             AppIcon(AppIcons.Search, size = px(SEARCH_GLYPH_PX))
             Spacer(Modifier.width(px(ROW_GAP_PX)))
             QueryField(query, cursor, onPlaceCursor, Modifier.weight(1f))
         }
-        // The cross takes the slot the magnifier had on the tab this came from,
-        // so the button that leaves search is where the one that entered it was.
-        // Both slots are AppHeader's: an 80px square hard against the 160px one.
-        Box(
-            modifier = Modifier
-                .width(px(INNER_SLOT_PX))
-                .fillMaxHeight()
-                .appClickable(onClick = onCancel),
-            contentAlignment = Alignment.Center,
-        ) {
-            AppIcon(AppIcons.Close, size = px(SEARCH_GLYPH_PX))
-        }
+        // The cross in the header's corner, AppHeader's 160px square: search
+        // has no menu of its own, so the way out is where More is elsewhere.
         Box(
             modifier = Modifier
                 .size(px(HEADER_BAR_PX))
-                .appClickable(onClick = onMenu),
+                .appClickable(onClick = onCancel),
             contentAlignment = Alignment.Center,
         ) {
-            AppIcon(AppIcons.Sort, size = px(CORNER_ICON_PX))
+            AppIcon(AppIcons.Close, size = px(CORNER_ICON_PX))
         }
     }
 }

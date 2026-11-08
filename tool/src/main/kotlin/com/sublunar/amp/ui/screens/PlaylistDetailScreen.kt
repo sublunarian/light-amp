@@ -23,7 +23,17 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import com.sublunar.amp.App
+import com.sublunar.amp.data.Album
+import com.sublunar.amp.data.PlaylistSortChoice
+import com.sublunar.amp.data.PlaylistTrackSort
 import com.sublunar.amp.data.PlaylistView
+import com.sublunar.amp.data.nameKey
+import com.sublunar.amp.data.titleKey
+import androidx.compose.foundation.lazy.items
+import com.sublunar.amp.ui.components.ListScreen
+import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.AppIcon
+import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.components.AppHeader
@@ -93,16 +103,20 @@ class PlaylistDetailScreen(
     // when Wi-Fi drops would otherwise keep offering edits that can only fail.
     private val offline = mutableStateOf(false)
 
-    // Reached from Downloads: only the songs on the phone are listed, the rest
-    // kept in place unlisted, as a song outside the library is. Kept live, as
-    // [offline] is.
-    private val downloadsOnly = mutableStateOf(false)
-
     /**
      * Whether this playlist may be edited: online (an edit touches the network, which
      * offline modes forbid), and whole (a partial list can't be addressed by position).
      */
-    private fun canEdit(): Boolean = wholeList.value && !offline.value && !downloadsOnly.value
+    private fun canEdit(): Boolean = wholeList.value && !offline.value
+
+    // This playlist's own sort — see AppSettings.playlistSorts.
+    private val sortKey = playlistSortKey(playlistId)
+
+    /** Into edit mode, back in Playlist Order: the order is what an edit changes. */
+    private fun startEditing(selection: SelectionState, key: String? = null) {
+        App.scope.launch { App.settings.setPlaylistSort(sortKey, PlaylistSortChoice()) }
+        selection.begin(key)
+    }
 
     // A playlist can hold a song twice, so rows use a synthetic key, not track.id.
     private var nextEntryKey = 0
@@ -134,8 +148,8 @@ class PlaylistDetailScreen(
         // Collected for the life of the screen: the half of canEdit that can change
         // while the playlist sits open.
         LaunchedEffect(Unit) { App.offlineOnly.collect { offline.value = it } }
-        LaunchedEffect(Unit) { LibraryNav.downloadsOnly.collect { downloadsOnly.value = it } }
-        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
+        val (sort, reversed) = playlistSortOf(sortKey)
+        val albums by App.library.albums.collectAsState()
 
         val selection = rememberSelection("playlist:$playlistId")
 
@@ -170,19 +184,18 @@ class PlaylistDetailScreen(
                         AppHeader(
                             onBack = { goBack() },
                             title = liveName,
-                            // The playlist's own menu (a playlist has no order to
-                            // choose), the same as a long-press on its row.
+                            // More, as every library page has, with Edit at its top.
                             rightAction = HeaderAction(
-                                AppIcons.MoreVert,
+                                AppIcons.Sort,
                                 onLongClick = { go { SettingsScreen(it) } },
                             ) {
                                 go {
-                                    PlaylistActionsScreen(
+                                    MoreScreen(
                                         it,
-                                        playlistId,
+                                        LibraryPage.PLAYLIST,
                                         liveName,
-                                        fromDetail = true,
-                                        onEdit = { selection.begin() },
+                                        playlistSortKey = sortKey,
+                                        onEdit = { startEditing(selection) },
                                     )
                                 }
                             },
@@ -192,12 +205,13 @@ class PlaylistDetailScreen(
                     when (val list = entries.value) {
                         null -> CenteredNote("Loading…")
                         else -> {
-                            val shown = remember(list, downloadsOnly.value, downloadedIds) {
-                                list.filter { listed(it, downloadedIds) }
+                            val shown = remember(list, sort, reversed, albums) {
+                                sortedEntries(list.filter { it.shown }, sort, reversed, albums)
                             }
+                            // A drag means a new position only in the playlist's own order, forwards.
+                            val reorderable = sort == PlaylistTrackSort.PLAYLIST_ORDER && !reversed
                             when {
-                                shown.isNotEmpty() -> TrackList(shown, selection)
-                                downloadsOnly.value -> CenteredNote("Nothing downloaded")
+                                shown.isNotEmpty() -> TrackList(shown, selection, reorderable)
                                 // Neither the server's copy nor one held: not known to be empty.
                                 list.isEmpty() && !wholeList.value && !offline.value -> CenteredNote("Couldn't load")
                                 list.isEmpty() || offline.value -> CenteredNote("Empty playlist")
@@ -216,20 +230,27 @@ class PlaylistDetailScreen(
      * is false for a song the chosen library doesn't hold, which stays in place for the
      * edits to work against but isn't listed.
      */
-    private data class PlaylistEntry(val key: String, val track: Track, val shown: Boolean = true)
+    internal data class PlaylistEntry(val key: String, val track: Track, val shown: Boolean = true)
 
     private fun entriesOf(view: PlaylistView): List<PlaylistEntry> =
         view.all.mapIndexed { i, track -> PlaylistEntry(newEntryKey(), track, view.shown[i]) }
 
     private fun shownEntries(): List<PlaylistEntry> =
-        entries.value.orEmpty().filter { listed(it, App.library.downloadedTrackIds.value) }
-
-    private fun listed(entry: PlaylistEntry, downloadedIds: Set<String>): Boolean =
-        entry.shown && (!downloadsOnly.value || entry.track.id in downloadedIds)
+        sortedEntries(
+            entries.value.orEmpty().filter { it.shown },
+            (App.settings.playlistSorts.value[sortKey] ?: PlaylistSortChoice()).sort,
+            (App.settings.playlistSorts.value[sortKey] ?: PlaylistSortChoice()).reversed,
+            App.library.albums.value,
+        )
 
     /** The tracks. Edit mode is one mode: the grab bars appear and rows become selectable together. */
     @Composable
-    private fun TrackList(list: List<PlaylistEntry>, selection: SelectionState) {
+    private fun TrackList(
+        list: List<PlaylistEntry>,
+        selection: SelectionState,
+        /** In the playlist's own order, where a drag means a new position; sorted otherwise. */
+        reorderable: Boolean,
+    ) {
         val editing = selection.active
         val drag = rememberDragReorderState<String>()
         val rowPx = with(LocalDensity.current) { px(ROW_H_PX).toPx() }
@@ -246,7 +267,7 @@ class PlaylistDetailScreen(
                 .fillMaxSize()
                 .dragReorderContainer(
                     state = drag,
-                    enabled = editing && canEdit(),
+                    enabled = editing && canEdit() && reorderable,
                     restartKey = list,
                     orderedKeys = orderedKeys,
                     rowPx = rowPx,
@@ -295,7 +316,7 @@ class PlaylistDetailScreen(
                                     go {
                                         TrackActionsScreen(
                                             it, track.id,
-                                            onSelect = { selection.begin(entry.key) },
+                                            onSelect = { startEditing(selection, entry.key) },
                                             // Absent where it could only fail, as the delete icon.
                                             onRemoveFromPlaylist =
                                                 if (canEdit()) ({ removeSongs(setOf(entry.key)) }) else null,
@@ -306,7 +327,7 @@ class PlaylistDetailScreen(
                             },
                             downloaded = track.id in downloaded,
                             selected = if (editing) entry.key in selection.selected else null,
-                            trailing = if (editing && canEdit()) {
+                            trailing = if (editing && canEdit() && reorderable) {
                                 { DragHandle { drag.iconCoords[entry.key] = it } }
                             } else {
                                 null
@@ -429,5 +450,98 @@ class PlaylistDetailScreen(
         val newList = moveShownBlock(current, { it.key }, { it.shown }, indices, insertAt)
         if (newList == current) return
         edit(newList) { App.playlists.reorderPlaylist(playlistId, newList.map { it.track.id }) }
+    }
+}
+
+/**
+ * [entries] in [sort]'s order: as they come for the playlist's own, otherwise by
+ * the chosen key with the record's own order to break ties. [reversed] turns the
+ * whole list round.
+ */
+private fun <E> sortedEntries(
+    entries: List<E>,
+    sort: PlaylistTrackSort,
+    reversed: Boolean,
+    albums: List<Album>,
+    track: (E) -> Track,
+): List<E> {
+    val sorted = sortedEntries(entries, sort, albums, track)
+    return if (reversed) sorted.asReversed() else sorted
+}
+
+private fun <E> sortedEntries(entries: List<E>, sort: PlaylistTrackSort, albums: List<Album>, track: (E) -> Track): List<E> {
+    val onRecord = compareBy<E>({ titleKey(track(it).album) }, { track(it).discNumber ?: 0 }, { track(it).trackNumber ?: 0 })
+    return when (sort) {
+        PlaylistTrackSort.PLAYLIST_ORDER -> entries
+        PlaylistTrackSort.TITLE -> entries.sortedBy { titleKey(track(it).title) }
+        PlaylistTrackSort.ARTIST -> entries.sortedWith(compareBy<E> { nameKey(track(it).artist) }.then(onRecord))
+        PlaylistTrackSort.ALBUM -> entries.sortedWith(onRecord)
+        PlaylistTrackSort.RELEASE_DATE -> {
+            // The full date where the album has one, so a year's releases still order; newest first.
+            val released = albums.associate { it.id to if (it.releaseDate != 0L) it.releaseDate else (it.year ?: 0) * 10_000L }
+            entries.sortedWith(
+                compareByDescending<E> { released[track(it).albumId] ?: (track(it).year ?: 0) * 10_000L }.then(onRecord),
+            )
+        }
+    }
+}
+
+private fun sortedEntries(
+    entries: List<PlaylistDetailScreen.PlaylistEntry>,
+    sort: PlaylistTrackSort,
+    reversed: Boolean,
+    albums: List<Album>,
+) = sortedEntries(entries, sort, reversed, albums) { it.track }
+
+/** Where a playlist's own sort is stored: by source as well, since two servers' ids can match. */
+fun playlistSortKey(playlistId: String): String = "${App.source.value.id}:$playlistId"
+
+/** The playlist's sort as stored, Playlist Order where it has none. */
+@Composable
+fun playlistSortOf(key: String): PlaylistSortChoice =
+    App.settings.playlistSorts.state.collectAsState().value[key] ?: PlaylistSortChoice()
+
+/**
+ * "Sort by" for one playlist's songs, as the tabs' are: picking one applies it and
+ * closes, tapping the current one again reverses it, and the arrow shows which way.
+ */
+class PlaylistTrackSortScreen(
+    sealed: SealedLightActivity,
+    private val sortKey: String,
+) : AmpScreen<Unit>(sealed) {
+    @Composable
+    override fun Content() {
+        val (sort, reversed) = playlistSortOf(sortKey)
+        ListScreen(onBack = { goBack() }, title = "Sort by", subtitle = "Songs", headingRows = true) {
+            ScrollableList {
+                item { SectionLabel("Tap the current sort again to reverse it") }
+                items(PlaylistTrackSort.entries) { option ->
+                    val selected = option == sort
+                    TextRow(
+                        title = option.label,
+                        onClick = {
+                            App.scope.launch {
+                                val next = if (selected) {
+                                    PlaylistSortChoice(sort, !reversed)
+                                } else {
+                                    PlaylistSortChoice(option)
+                                }
+                                App.settings.setPlaylistSort(sortKey, next)
+                            }
+                            goBack(Unit)
+                        },
+                        trailing = {
+                            if (selected) {
+                                val descending = option.descendingByNature != reversed
+                                AppIcon(
+                                    if (descending) AppIcons.ArrowDownward else AppIcons.ArrowUpward,
+                                    size = px(SORT_ARROW_PX),
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+        }
     }
 }

@@ -1,6 +1,7 @@
 package com.sublunar.amp.ui.components
 
 import androidx.compose.foundation.background
+import com.sublunar.amp.ui.GREY_ALPHA
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -198,9 +199,5 @@ private const val MARKER_H_PX = 3
 private const val LETTER_PX = 28
 private const val SLOT_PX = 34
 
-/**
- * A letter with nothing under it: between [DISABLED_ALPHA] and the SDK's grey,
- * about #808080 over black, since a full strip of the fainter grey read as too
- * dim to make out.
- */
-private const val EMPTY_LETTER_ALPHA = 0.5f
+/** A letter with nothing under it: the grey — see GREY_ALPHA. */
+private const val EMPTY_LETTER_ALPHA = GREY_ALPHA

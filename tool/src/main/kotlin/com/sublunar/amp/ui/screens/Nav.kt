@@ -10,10 +10,6 @@ import com.sublunar.amp.ui.components.Selections
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -59,32 +55,10 @@ object LibraryNav {
      */
     val libraryIndex = MutableStateFlow(false)
 
-    /**
-     * The index page the lists were chosen from, Favorites or Downloads, null
-     * for the home list. A list's back arrow returns to it; HOME leaves it.
-     */
-    val indexFolder = MutableStateFlow<IndexFolder?>(null)
-
-    /**
-     * Whether the pages open now show only what is downloaded: everything reached
-     * from Downloads, until HOME or its back arrow leaves it. Search is the whole
-     * library, so its results aren't.
-     */
-    val downloadsOnly: StateFlow<Boolean> by lazy {
-        combine(indexFolder, searchActive) { folder, search -> folder == IndexFolder.DOWNLOADS && !search }
-            .stateIn(App.scope, SharingStarted.Eagerly, false)
-    }
-
-    /** Show the index, leaving whatever was showing: the page the list was chosen from, Downloads included. */
+    /** Show the index, leaving whatever was showing. */
     fun openLibraryIndex() {
         closeSearch()
         libraryIndex.value = true
-    }
-
-    /** HOME from a page pushed over the library: the home list itself, out of Favorites or Downloads. */
-    fun openHome() {
-        openLibraryIndex()
-        indexFolder.value = null
     }
 
     /**
@@ -100,7 +74,6 @@ object LibraryNav {
             return
         }
         libraryIndex.value = true
-        indexFolder.value = null
     }
 
     fun setQuery(query: String) {
@@ -152,12 +125,6 @@ object LibraryNav {
     }
 }
 
-/** A page of the home list's: the lists, narrowed to what you liked or downloaded. */
-enum class IndexFolder(val title: String) {
-    FAVORITES("Favorites"),
-    DOWNLOADS("Downloads"),
-}
-
 /**
  * Which library page More was opened over, so it can show that list's view, sort
  * and filter. The page's header corner names it.
@@ -172,11 +139,11 @@ enum class LibraryPage {
     ARTISTS,
     PLAYLISTS,
 
-    /** Results, which are the library in its own order. */
-    SEARCH,
-
     /** The simplified layout's index of everything there is to browse. */
     LIBRARY,
+
+    /** A playlist's own page, whose songs can be put in another order. */
+    PLAYLIST,
 
     /** An artist's pages, whose order is the discography's or the server's. */
     ARTIST,
@@ -217,24 +184,6 @@ fun SimpleLightScreen<*>.openSelectionActions(
 fun SimpleLightScreen<Unit>.replaceWithPlayer() {
     goBack()
     go { NowPlayingScreen(it) }
-}
-
-/** The SDK's full-screen editor: Simplified's way of typing a query. */
-fun SimpleLightScreen<*>.editSearch(current: String) {
-    navigateTo<String?>(
-        {
-            TextEntryScreen(
-                it,
-                title = "Search",
-                initial = current,
-                submitLabel = "SEARCH",
-                // Backed out of before anything was searched: there are no
-                // results to go back to, so back is to where search began.
-                onDismissed = { if (current.isBlank()) LibraryNav.closeSearch() },
-            )
-        },
-        resultCallback = { text -> if (text != null) LibraryNav.setQuery(text) },
-    )
 }
 
 /**

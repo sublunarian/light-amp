@@ -14,7 +14,6 @@ import androidx.compose.runtime.setValue
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.ArtistAlbumOrder
-import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.ReleaseType
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.data.nameKey
@@ -26,6 +25,7 @@ import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.ROW_LEAD_PX
+import com.sublunar.amp.ui.components.SplitActionRow
 import com.sublunar.amp.ui.components.rememberNumberColumn
 import com.sublunar.amp.ui.components.formatTime
 import androidx.compose.foundation.layout.Column
@@ -64,57 +64,63 @@ class ArtistDetailScreen(
 ) : AmpScreen<Unit>(sealed) {
 
     /**
-     * After the records: Popular Tracks as a heading that opens the whole list,
-     * its first [POPULAR_PREVIEW] songs to play from, each numbered by its rank
-     * before its cover, its length under the title; then, with [allSongs], All
-     * Tracks, a heading of the same kind. An artist of one record leaves it out:
-     * that record already holds their songs.
+     * Over ungrouped records: All Songs, and Popular beside it once its songs
+     * have come, never where the server has none.
      */
     @Composable
-    private fun SongsAtEnd(popular: List<Track>, allSongs: Boolean, downloadedIds: Set<String>) {
+    private fun SongShortcuts(hasPopular: Boolean) {
+        SplitActionRow(
+            leftIcon = AppIcons.FormatListBulleted,
+            leftLabel = "All Songs",
+            onLeft = { go { ArtistSongsScreen(it, name, credit = credit) } },
+            rightIcon = AppIcons.Popular.takeIf { hasPopular },
+            rightLabel = "Popular",
+            onRight = { go { ArtistSongsScreen(it, name, popular = true, credit = credit) } },
+        )
+    }
+
+    /**
+     * After grouped records: All Songs as a heading that opens the list; then
+     * Popular, a heading of the same kind, and its first [POPULAR_PREVIEW] songs
+     * to play from, each numbered by its rank before its cover, its length under
+     * the title.
+     */
+    @Composable
+    private fun SongsAtEnd(popular: List<Track>, downloadedIds: Set<String>) {
         val shown = popular.take(POPULAR_PREVIEW)
         val numberColumn = rememberNumberColumn(remember(shown.size) { List(shown.size) { it + 1 } })
-        if (popular.isNotEmpty()) {
-            HeadingRow("Popular Tracks", ROW_H_PX) {
-                go { ArtistSongsScreen(it, name, popular = true, credit = credit) }
-            }
-            shown.forEachIndexed { index, track ->
-                TrackRow(
-                    title = track.title,
-                    subtitle = formatTime(track.durationMs),
-                    coverArtId = track.coverArtId,
-                    downloaded = track.id in downloadedIds,
-                    onClick = { playFromRow(popular, index) },
-                    onLongClick = { openTrackActions(track.id, null, onArtistPage = name) },
-                    number = index + 1,
-                    numberColumn = numberColumn,
-                )
-            }
+        HeadingRow("All Songs", ROW_H_PX) { go { ArtistSongsScreen(it, name, credit = credit) } }
+        if (popular.isEmpty()) return
+        HeadingRow("Popular", ROW_H_PX) {
+            go { ArtistSongsScreen(it, name, popular = true, credit = credit) }
         }
-        if (allSongs) HeadingRow("All Tracks", ROW_H_PX) { go { ArtistSongsScreen(it, name, credit = credit) } }
+        shown.forEachIndexed { index, track ->
+            TrackRow(
+                title = track.title,
+                subtitle = formatTime(track.durationMs),
+                coverArtId = track.coverArtId,
+                downloaded = track.id in downloadedIds,
+                onClick = { playFromRow(popular, index) },
+                onLongClick = { openTrackActions(track.id, null, onArtistPage = name) },
+                number = index + 1,
+                numberColumn = numberColumn,
+            )
+        }
     }
 
     @Composable
     override fun Content() {
         val tracks by App.library.tracks.collectAsState()
         val albums by App.library.albums.collectAsState()
-        val allArtistAlbums = remember(tracks, albums, name) { App.library.albumsForArtist(name, credit) }
+        val artistAlbums = remember(tracks, albums, name) { App.library.albumsForArtist(name, credit) }
         val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
-        // Reached from Downloads: the records with a song on the phone, and
-        // Popular only if one of its songs is.
-        val downloadsOnly by LibraryNav.downloadsOnly.collectAsState()
-        val withDownloads by App.albumsWithDownloads.collectAsState()
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
-        val artistAlbums = remember(allArtistAlbums, downloadsOnly, withDownloads) {
-            if (downloadsOnly) allArtistAlbums.filter { it.id in withDownloads } else allArtistAlbums
-        }
 
-        // Popular only when the server returns some (Navidrome needs Last.fm set up).
+        // Empty where the server has none (Navidrome needs Last.fm set up).
+        // Not asked for where the source has no such list.
+        val offered = App.source.collectAsState().value.supportsPopularSongs
         var popular by remember(name) { mutableStateOf<List<Track>>(emptyList()) }
-        LaunchedEffect(name, downloadsOnly, downloadedIds) {
-            val top = App.library.topSongsForArtist(name)
-            popular = if (downloadsOnly) top.filter { it.id in downloadedIds } else top
-        }
+        LaunchedEffect(name, offered) { if (offered) popular = App.library.topSongsForArtist(name) }
 
         val grid = App.artistAlbumGrid.collectAsState().value
         val order by App.settings.artistAlbumOrder.state.collectAsState()
@@ -123,18 +129,13 @@ class ArtistDetailScreen(
             if (order == ArtistAlbumOrder.NAME) artistAlbums.sortedBy { nameKey(it.title) } else artistAlbums
         }
         // Grouped only where the source knows release types (see
-        // MusicSource.supportsReleaseTypes); otherwise the records keep their dates' order.
-        // Singles and EPs as one, the dates' order in each group.
-        // Every group headed, one alone included, so the page is the same shape
-        // before and after the popular tracks come.
+        // MusicSource.supportsReleaseTypes). Singles and EPs as one, the page's
+        // order in each group. Every group headed, one alone included, so the
+        // page is the same shape before and after the popular tracks come.
         val typed = App.source.collectAsState().value.supportsReleaseTypes
-        val groups = remember(artistAlbums, typed, order) {
-            if (order == ArtistAlbumOrder.RELEASE_TYPE && typed) recordGroups(artistAlbums) else null
-        }
+        val grouping = App.settings.groupReleaseTypes.state.collectAsState().value && typed
+        val groups = remember(ordered, grouping) { if (grouping) recordGroups(ordered) else null }
         val shown = remember(groups, ordered) { groups?.flatMap { it.albums } ?: ordered }
-        // Without covers, records under a heading sit a step in from it.
-        val artless = App.hideListArtwork.collectAsState().value
-        val recordIndentPx = if (artless && groups != null) RECORD_INDENT_PX else 0
 
         LibrarySubPage {
             AppHeader(
@@ -166,11 +167,19 @@ class ArtistDetailScreen(
                     // records, spanning the row.
                     state = rememberGridAnchor("artist-albums:$name/grid"),
                     footer = {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Column { SongsAtEnd(popular, allSongs = artistAlbums.size > 1, downloadedIds) }
+                        if (groups != null) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Column { SongsAtEnd(popular, downloadedIds) }
+                            }
                         }
                     },
-                ) {}
+                ) {
+                    if (groups == null) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            SongShortcuts(popular.isNotEmpty())
+                        }
+                    }
+                }
                 return@LibrarySubPage
             }
             LibraryList(
@@ -179,6 +188,9 @@ class ArtistDetailScreen(
             ) {
                 // A discography, the ways into the songs after it: liking is on
                 // the artist's long-press.
+                if (groups == null) {
+                    item(key = "song-shortcuts") { SongShortcuts(popular.isNotEmpty()) }
+                }
                 val sections = groups ?: listOf(RecordGroup(null, ordered))
                 sections.forEach { group ->
                     if (group.heading != null) {
@@ -198,12 +210,11 @@ class ArtistDetailScreen(
                             onClick = { openAlbum(album.id, Parent.Here) },
                             onLongClick = { go { AlbumActionsScreen(it, album.id, onArtistPage = name) } },
                             tall = true,
-                            extraLeadPx = recordIndentPx,
                         )
                     }
                 }
-                item(key = "songs-at-end") {
-                    Column { SongsAtEnd(popular, allSongs = artistAlbums.size > 1, downloadedIds) }
+                if (groups != null) {
+                    item(key = "songs-at-end") { Column { SongsAtEnd(popular, downloadedIds) } }
                 }
             }
         }
@@ -272,11 +283,8 @@ class ArtistSongsScreen(
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val view by ArtistSongsVisit.view.collectAsState()
         val albums by App.library.albums.collectAsState()
-        // Reached from Downloads: only what is on the phone, Popular included.
-        val downloadsOnly by LibraryNav.downloadsOnly.collectAsState()
-        val songs = remember(all, view, downloadedIds, albums, downloadsOnly) {
-            val onPhone = if (downloadsOnly) all?.filter { it.id in downloadedIds } else all
-            if (popular || onPhone == null) onPhone else view.applyTo(onPhone, downloadedIds, albums)
+        val songs = remember(all, view, downloadedIds, albums) {
+            if (popular || all == null) all else view.applyTo(all, downloadedIds, albums)
         }
         // Anchor and selection owner both: the two lists never share either.
         val owner = if (popular) "artist-top:$name" else "artist-songs:$name"
@@ -293,21 +301,14 @@ class ArtistSongsScreen(
                 // The narrowing on a second line, Liked included: the title is
                 // the artist's name, with no room to say it.
                 val filters = if (popular) null else view.filterLine()
-                // Popular Songs' More holds only the source, which the three
-                // buttons keep on the library page instead: no menu to open.
-                val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
                 AppHeader(
                     onBack = { goBack() },
                     title = if (filters == null) name else null,
                     titleContent = filters?.let { line -> { TitleCard(name, line) } },
-                    rightAction = if (popular && simplified) {
-                        null
-                    } else {
-                        libraryCornerAction(
-                            if (popular) LibraryPage.ARTIST_POPULAR else LibraryPage.ARTIST_SONGS,
-                            name,
-                        )
-                    },
+                    rightAction = libraryCornerAction(
+                        if (popular) LibraryPage.ARTIST_POPULAR else LibraryPage.ARTIST_SONGS,
+                        name,
+                    ),
                     fitTitle = true,
                 )
             }
@@ -446,8 +447,8 @@ private val RECORD_GROUPS = listOf(
 
 /**
  * A heading as a row of its own, [heightPx] tall (a song row's, lighter than the
- * records under it), the words at the list titles' type, white from the list's
- * margin, centred in it. A tap opens what it heads.
+ * records under it), the words at the list titles' type, white, 40px from the
+ * screen's edge where the records under it start at 72. A tap opens what it heads.
  */
 @Composable
 private fun HeadingRow(text: String, heightPx: Int, onClick: () -> Unit) {
@@ -470,9 +471,6 @@ private fun HeadingRow(text: String, heightPx: Int, onClick: () -> Unit) {
     }
 }
 
-/** How far records sit in from the headings over them, without covers. */
-private const val RECORD_INDENT_PX = 32
-
 /** How many of the popular songs the artist page shows. */
 private const val POPULAR_PREVIEW = 5
 
@@ -486,12 +484,10 @@ class GroupPlayScreen(
     @Composable
     override fun Content() {
         val tracks by App.library.tracks.collectAsState()
-        val downloadsOnly by LibraryNav.downloadsOnly.collectAsState()
-        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
-        val songs = remember(tracks, albums, downloadsOnly, downloadedIds) {
+        val songs = remember(tracks, albums) {
             val place = albums.withIndex().associate { it.value.id to it.index }
             tracks
-                .filter { it.albumId in place && (!downloadsOnly || it.id in downloadedIds) }
+                .filter { it.albumId in place }
                 .sortedWith(compareBy({ place[it.albumId] }, { it.discNumber ?: 0 }, { it.trackNumber ?: 0 }))
         }
         ListScreen(onBack = { goBack() }, title = heading, subtitle = artist, headingRows = true) {
@@ -502,29 +498,14 @@ class GroupPlayScreen(
 
 
 
-/** The artist page's order as it actually is: Release Type reads as the dates' order where it can't group. */
-@Composable
-internal fun artistOrderShown(): ArtistAlbumOrder {
-    val order by App.settings.artistAlbumOrder.state.collectAsState()
-    val typed = App.source.collectAsState().value.supportsReleaseTypes
-    return if (order == ArtistAlbumOrder.RELEASE_TYPE && !typed) {
-        ArtistAlbumOrder.DATE_RELEASED
-    } else {
-        order
-    }
-}
-
-/** An artist's page's order: by date, or grouped by release type. */
+/** An artist's page's order: by date or by name. */
 class ArtistAlbumOrderScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val order = artistOrderShown()
-        // Release Type only where the source knows them — see MusicSource.supportsReleaseTypes.
-        val typed = App.source.collectAsState().value.supportsReleaseTypes
-        val options = ArtistAlbumOrder.entries.filter { it != ArtistAlbumOrder.RELEASE_TYPE || typed }
+        val order by App.settings.artistAlbumOrder.state.collectAsState()
         ListScreen(onBack = { goBack() }, title = "Sort by", subtitle = "Records", headingRows = true) {
             ScrollableList {
-                items(options) { option ->
+                items(ArtistAlbumOrder.entries) { option ->
                     TextRow(title = option.label, checked = option == order) {
                         App.scope.launch { App.settings.artistAlbumOrder.set(option) }
                         goBack(Unit)

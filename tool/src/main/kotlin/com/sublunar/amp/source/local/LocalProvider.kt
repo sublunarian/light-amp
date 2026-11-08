@@ -49,6 +49,7 @@ object LocalProvider : SourceProvider {
         serverScan = false,
         libraries = false,
         releaseTypes = true,
+        popularSongs = false,
     )
 
     /** There is no server behind the phone's own music at all. */

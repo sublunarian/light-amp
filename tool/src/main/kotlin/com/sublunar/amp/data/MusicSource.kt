@@ -368,6 +368,13 @@ data class MusicSource(
     val supportsReleaseTypes: Boolean get() = capabilities.releaseTypes
 
     /**
+     * Whether an artist page can have Popular: Subsonic servers' getTopSongs
+     * (Navidrome's needs Last.fm set up) and Plex's most-rated tracks. Jellyfin
+     * has no such list, and the phone's own files have nothing to rank by.
+     */
+    val supportsPopularSongs: Boolean get() = capabilities.popularSongs
+
+    /**
      * Whether the server won't let this account keep copies — see
      * ServerFeatures.KEEP_COPIES. Respected rather than routed round: Jellyfin
      * has a call that hands over the file without asking, and using it would

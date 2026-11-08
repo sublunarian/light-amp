@@ -1,27 +1,20 @@
 package com.sublunar.amp.ui.screens
 
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.BuildConfig
 import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.ArtistAlbumOrder
-import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.descendingByNature
 import com.sublunar.amp.ui.LightType
@@ -53,6 +46,10 @@ class MoreScreen(
     private val page: LibraryPage,
     /** What that list is called, where its name isn't a constant — an artist's. See [defaultTitle] for the rest. */
     private val pageTitle: String? = null,
+    /** A playlist's page: where its own sort is stored — see playlistSortKey. */
+    private val playlistSortKey: String? = null,
+    /** A playlist's page: Edit, at the top, starts selecting its songs there. */
+    private val onEdit: (() -> Unit)? = null,
 ) : AmpScreen<Unit>(sealed) {
 
     @Composable
@@ -61,25 +58,18 @@ class MoreScreen(
         // Read here rather than at the row: a list's items are built outside
         // composition, where a @Composable can't be called.
         val view = viewOf(page)
-        val sort = sortOf(page)
-        // Under Simplified the liked lists are entries on the library index
-        // rather than a filter over a tab.
-        val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
-        val likedTab = likedFilterTab(page).takeUnless { simplified }
+        val sort = sortOf(page, playlistSortKey)
+        val likedTab = likedFilterTab(page)
         val liked = likedOnly(likedTab)
-        // Under both layouts, unlike the liked filter: these narrowings have no
-        // other home.
         val genre = genreSettingOf(page)
         // The phone's own music is all on the phone already: nothing to narrow to.
-        // Under Simplified, Downloads on the index is the downloaded lists'
-        // home, as Favorites is the liked lists'.
         val downloadedTab = downloadedFilterTab(page)
             .takeIf { App.source.collectAsState().value.supportsDownloads }
-            .takeUnless { simplified }
         val downloaded = downloadedOnly(downloadedTab)
         // An artist's songs carry their own, for the one visit — see ArtistSongsVisit.
         val visit = ArtistSongsVisit.view.collectAsState().value.takeIf { page == LibraryPage.ARTIST_SONGS }
         val source = App.source.collectAsState().value
+        val grouping = App.settings.groupReleaseTypes.state.collectAsState().value
 
         // Covers the tab bar: a menu that leaves the navigation showing reads as
         // another page rather than something on top of the one you were on.
@@ -90,27 +80,38 @@ class MoreScreen(
                     title = pageTitle ?: defaultTitle(page),
                     fitTitle = true,
                     onBack = { goBack() },
-                    // The three buttons keep Settings on the library page alone.
-                    rightAction = if (simplified) null else HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
+                    rightAction = HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
                 )
                 CompositionLocalProvider(LocalMenuHeading provides true) {
                     ScrollableList {
-                        // Always there with the tabs, even with one source and one
-                        // library: the page it opens is also where Sync Now lives.
-                        // The three buttons have it at the library page's title.
-                        if (!simplified) {
+                        if (onEdit != null) {
                             item {
-                                TextRow(
-                                    title = "Source",
-                                    value = active?.name,
-                                    onClick = { go { SourcesScreen(it) } },
-                                )
+                                TextRow(title = "Edit") {
+                                    onEdit.invoke()
+                                    goBack()
+                                }
                             }
+                        }
+                        // Always there, even with one source and one library: the
+                        // page it opens is also where Sync Now lives.
+                        item {
+                            TextRow(
+                                title = "Source",
+                                value = active?.name,
+                                onClick = { go { SourcesScreen(it) } },
+                            )
                         }
                         // Only where there is something to choose: a fixed order (a
                         // record plays as it was cut) is better said by the list.
                         if (view.open != null) item { Setting("View", view) }
                         if (sort.open != null) item { Setting("Sort by", sort) }
+                        if (page == LibraryPage.ARTIST && source.supportsReleaseTypes) {
+                            item {
+                                ToggleRow("Group Release Types", grouping) {
+                                    App.scope.launch { App.settings.groupReleaseTypes.set(!grouping) }
+                                }
+                            }
+                        }
                         // What is in the list, last, and unlabelled: the rows name
                         // themselves. These stay on this page when used, since
                         // several are often set together; back shows the narrowed list.
@@ -184,8 +185,8 @@ private fun defaultTitle(page: LibraryPage): String = when (page) {
     LibraryPage.SONGS -> tabTitle(LibraryTab.SONGS, likedOnly(LibraryTab.SONGS))
     LibraryPage.ARTISTS -> tabTitle(LibraryTab.ARTISTS, likedOnly(LibraryTab.ARTISTS))
     LibraryPage.PLAYLISTS -> LibraryTab.PLAYLISTS.title
-    LibraryPage.SEARCH -> "Search"
     LibraryPage.LIBRARY -> "Library"
+    LibraryPage.PLAYLIST -> "Playlist"
     LibraryPage.ARTIST_POPULAR -> "Popular Songs"
     // Named after the artist, so the page hands its own title over — see
     // MoreScreen.pageTitle.
@@ -229,7 +230,7 @@ private fun viewOf(page: LibraryPage): PageSetting {
 
 /** The order the page is in. A fixed order has no [PageSetting.open], so its row is dropped. */
 @Composable
-private fun sortOf(page: LibraryPage): PageSetting = when (page) {
+private fun sortOf(page: LibraryPage, playlistSortKey: String?): PageSetting = when (page) {
     LibraryPage.ALBUMS -> {
         val sort by App.settings.albumSort.state.collectAsState()
         val reversed by App.settings.albumSortReversed.state.collectAsState()
@@ -268,17 +269,21 @@ private fun sortOf(page: LibraryPage): PageSetting = when (page) {
         }
     }
 
-    // Release Type is offered only where the source knows release types; a
-    // stored choice of it reads as the dates' order where it doesn't.
-    LibraryPage.ARTIST -> PageSetting(artistOrderShown().label, open = { ArtistAlbumOrderScreen(it) })
+    LibraryPage.ARTIST -> {
+        val order by App.settings.artistAlbumOrder.state.collectAsState()
+        PageSetting(order.label, open = { ArtistAlbumOrderScreen(it) })
+    }
     // Fixed orders, named as they actually are — see LibraryRepository.
     // Its own order, for the visit — see ArtistSongsVisit.
     LibraryPage.ARTIST_SONGS -> {
         val view by ArtistSongsVisit.view.collectAsState()
         PageSetting(view.sort.label, open = { ArtistSongSortScreen(it) })
     }
+    LibraryPage.PLAYLIST -> {
+        val (order, reversed) = playlistSortOf(playlistSortKey.orEmpty())
+        sortable(order.label, order.descendingByNature, reversed) { PlaylistTrackSortScreen(it, playlistSortKey.orEmpty()) }
+    }
     LibraryPage.ARTIST_POPULAR -> PageSetting("Frequently Played")
-    LibraryPage.SEARCH -> PageSetting("Library order")
     // A menu of places, in the order the app lists them.
     LibraryPage.LIBRARY -> PageSetting("Fixed")
 }
@@ -399,24 +404,10 @@ class AboutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     AppText("Buy Me a Coffee", pxSp(LightType.PARAGRAPH_PX))
                     AppText("buymeacoffee.com/sublunarian", pxSp(LightType.PARAGRAPH_PX), dim = true)
                 }
-                // Whatever height is left, so the page never needs to scroll.
-                val qr = remember {
-                    App.readAsset(BMC_QR_ASSET).let { BitmapFactory.decodeByteArray(it, 0, it.size) }.asImageBitmap()
-                }
-                Image(
-                    bitmap = qr,
-                    contentDescription = "QR code for buymeacoffee.com/sublunarian",
-                    contentScale = ContentScale.Fit,
-                    // With the column's 26, the 54 kept above Buy Me a Coffee.
-                    modifier = Modifier.padding(top = px(28)).weight(1f).fillMaxWidth(),
-                )
             }
         }
     }
 }
-
-/** Buy Me a Coffee's own QR code, inverted to grey on black. */
-private const val BMC_QR_ASSET = "about/buymeacoffee-qr.png"
 
 /** The sort direction's arrow: about the picker pages' tick, and a multiple of 3 to stay sharp on the LP3. */
 internal const val SORT_ARROW_PX = 60

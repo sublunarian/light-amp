@@ -43,6 +43,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import com.sublunar.amp.App
+import com.sublunar.amp.ui.GREY_ALPHA
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.LastSection
@@ -334,7 +335,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         // The cover square inside the panel: cropping a sleeve to the panel's
         // shape would be worse than the margins. Long-pressing it opens the cover
         // full-screen, as on the album page, and the same press comes back.
-        // Rounded either way, the full-width cover too.
+        // Square either way, the full-width cover too.
         val corners = RoundedCornerShape(px(PLAYER_COVER_CORNER_PX))
         Box(
             modifier = panel.slowLongPress(onClick = onTap, onLongPress = onLongPress),
@@ -697,8 +698,8 @@ private const val HERO_TITLE_PX = LightType.HEADING_PX
 private const val HERO_TITLE_LINE_PX = LightType.HEADING_LINE_PX
 private const val HERO_TITLE_LINES = 2
 
-/** The player's cover's corner, small or full-width. */
-private const val PLAYER_COVER_CORNER_PX = 24
+/** The player's cover's corner, small or full-width: square, as the sleeve is. */
+private const val PLAYER_COVER_CORNER_PX = 0
 
 
 /**
@@ -761,8 +762,8 @@ private const val SECONDARY_BOX_PX = 54
 private const val QUEUE_TILE_PX = 66
 private const val QUEUE_TILE_RADIUS_PX = 6
 
-/** Transport is full white; everything else on black is knocked back. */
-private const val DIM_ALPHA = 0.45f
+/** Transport is full white; everything else on black is knocked back to the grey. */
+private const val DIM_ALPHA = GREY_ALPHA
 
 /**
  * The same controls standing on a sleeve rather than on black: over a picture

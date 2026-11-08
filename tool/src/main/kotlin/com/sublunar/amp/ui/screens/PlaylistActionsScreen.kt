@@ -16,18 +16,11 @@ import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
 
-/** Long-press actions for a playlist row: play, download, edit, rename, delete. */
+/** Long-press actions for a playlist row: play, download, rename, delete. */
 class PlaylistActionsScreen(
     sealed: SealedLightActivity,
     private val playlistId: String,
     private val playlistName: String,
-    /**
-     * Opened from the playlist's own page, so Delete unwinds past it rather than
-     * landing on the page of a playlist that no longer exists.
-     */
-    private val fromDetail: Boolean = false,
-    /** Set from the playlist's own page: adds "Edit", which starts selecting there. */
-    private val onEdit: (() -> Unit)? = null,
 ) : AmpScreen<Unit>(sealed) {
 
     @Composable
@@ -63,18 +56,12 @@ class PlaylistActionsScreen(
             ActionList {
                 PlayRows(list)
                 DownloadRow(source, list, fullyDownloaded, "Download Playlist")
-                if (onEdit != null) {
-                    TextRow(title = "Edit") {
-                        onEdit.invoke()
-                        goBack()
-                    }
-                }
                 if (!readOnly) {
                     TextRow(title = "Rename") { rename() }
                     TextRow(title = if (confirmDelete) "Tap again to delete" else "Delete Playlist") {
                         if (confirmDelete) {
                             App.scope.launch { App.playlists.deletePlaylist(playlistId) }
-                            if (fromDetail) backToRoot() else goBack()
+                            goBack()
                         } else {
                             confirmDelete = true
                         }

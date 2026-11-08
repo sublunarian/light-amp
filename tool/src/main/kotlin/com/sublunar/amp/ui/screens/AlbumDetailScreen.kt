@@ -69,7 +69,6 @@ class AlbumDetailScreen(
         val current by App.playback.currentTrack.collectAsState()
         val artworkHidden by App.hideArtwork.collectAsState()
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
-        val downloadsOnly by LibraryNav.downloadsOnly.collectAsState()
 
         var tracks by remember(albumId) { mutableStateOf<List<Track>?>(null) }
         LaunchedEffect(albumId) {
@@ -122,10 +121,7 @@ class AlbumDetailScreen(
                 )
             }
 
-            // Reached from Downloads: what is on the phone, numbered as on the record.
-            val list = remember(tracks, downloadsOnly, downloadedIds) {
-                if (downloadsOnly) tracks?.filter { it.id in downloadedIds } else tracks
-            }
+            val list = tracks
             if (list == null) {
                 CenteredNote("Loading…")
             } else {

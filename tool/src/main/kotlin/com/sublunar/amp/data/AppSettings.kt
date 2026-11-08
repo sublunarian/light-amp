@@ -86,11 +86,26 @@ enum class ArtistSort(val credit: ArtistCredit) {
     MOST_PLAYED(ArtistCredit.ALBUM),
 }
 
-/** An artist's own records: grouped by [ReleaseType] where the source knows them (the default; by date elsewhere), by date, or by name. */
+/** One playlist's order on its page — see [AppSettings.playlistSorts]. */
+@Serializable
+data class PlaylistSortChoice(
+    val sort: PlaylistTrackSort = PlaylistTrackSort.PLAYLIST_ORDER,
+    val reversed: Boolean = false,
+)
+
+/** A playlist's songs: as the playlist has them, or sorted for the page; newest first by date. */
+enum class PlaylistTrackSort(val label: String, val descendingByNature: Boolean = false) {
+    PLAYLIST_ORDER("Playlist Order"),
+    TITLE("Title"),
+    ARTIST("Artist"),
+    ALBUM("Album"),
+    RELEASE_DATE("Release Date", descendingByNature = true),
+}
+
+/** An artist's own records: by date or by name, in each release-type group where [AppSettings.groupReleaseTypes] is on. */
 enum class ArtistAlbumOrder(val label: String) {
     DATE_RELEASED("Date Released"),
     NAME("Name"),
-    RELEASE_TYPE("Release Type"),
 }
 enum class PlaylistSort { RECENTLY_UPDATED, NAME, DATE_CREATED }
 
@@ -423,7 +438,25 @@ class AppSettings(
     val latinLyrics: Pref<Boolean> = bool("pref.latinLyrics", false)
 
     /** How an artist's page orders their records — see [ArtistAlbumOrder]. */
-    val artistAlbumOrder: Pref<ArtistAlbumOrder> = enum("pref.artistAlbumOrder", ArtistAlbumOrder.RELEASE_TYPE)
+    val artistAlbumOrder: Pref<ArtistAlbumOrder> = enum(ARTIST_ALBUM_ORDER.name, ArtistAlbumOrder.DATE_RELEASED)
+
+    /**
+     * An artist's records under Albums, Singles & EPs and the rest, where the
+     * source knows release types. Off for new installs; an install that had
+     * Release Type as its order, chosen or by default, keeps it on.
+     */
+    val groupReleaseTypes: Pref<Boolean> = bool(GROUP_RELEASE_TYPES.name, false)
+
+    /**
+     * Each playlist's own order on its page, by [playlistSortKey]: a playlist
+     * missing from it is in Playlist Order, so only the others are stored.
+     */
+    val playlistSorts: Stored<Map<String, PlaylistSortChoice>> = stored { p ->
+        p[PLAYLIST_SORTS]
+            ?.let { runCatching { sourcesJson.decodeFromString<Map<String, PlaylistSortChoice>>(it) }.getOrNull() }
+            ?: emptyMap()
+    }
+
 
     /** Whether to use the simplified or standard layout mode. */
     val layoutMode: Pref<LayoutMode> = enum(LAYOUT_MODE.name, LayoutMode.SIMPLIFIED)
@@ -474,6 +507,9 @@ class AppSettings(
      * text-only pitch. Artists' pictures have their own switch.
      */
     val listArtwork: Pref<Boolean> = bool("pref.listArtwork", true)
+
+    /** Covers beside the Playlists list's rows, apart from the other lists'. Off, the list takes the text-only pitch. */
+    val playlistArtwork: Pref<Boolean> = bool("pref.playlistArtwork", true)
 
     /** How much of the player the cover gets, if any. None to start, as Light's own tools: covers are the heavier choice. */
     val artwork: Pref<ArtworkMode> = enum(ARTWORK_MODE.name, ArtworkMode.NONE)
@@ -578,6 +614,16 @@ class AppSettings(
     private fun songCheckKey(sourceId: String) =
         stringPreferencesKey("state.songCheck.$sourceId")
 
+    suspend fun setPlaylistSort(key: String, choice: PlaylistSortChoice) {
+        dataStore.edit { p ->
+            val all = p[PLAYLIST_SORTS]
+                ?.let { runCatching { sourcesJson.decodeFromString<Map<String, PlaylistSortChoice>>(it) }.getOrNull() }
+                .orEmpty()
+            val next = if (choice == PlaylistSortChoice()) all - key else all + (key to choice)
+            p[PLAYLIST_SORTS] = sourcesJson.encodeToString(next)
+        }
+    }
+
     /** Read once per operation rather than observed: see [PendingActions]. */
     suspend fun pendingActions(): String = dataStore.data.first()[PENDING_ACTIONS] ?: ""
 
@@ -629,18 +675,28 @@ class AppSettings(
         dataStore.edit { p ->
             if (p[SOURCES] == null) return@edit
             for ((key, change) in CHANGED_DEFAULTS) if (p[key] !in change.known) p[key] = change.was
+            // Release Type was an order until it became its own switch.
+            val order = p[ARTIST_ALBUM_ORDER]
+            if (order == null || order == "RELEASE_TYPE") {
+                p[GROUP_RELEASE_TYPES] = true
+                p[ARTIST_ALBUM_ORDER] = ArtistAlbumOrder.DATE_RELEASED.name
+            }
         }
     }
 
     /** A fresh install's first source: today's defaults written down, so [keepEarlierDefaults] never mistakes it for an old one. */
     private fun MutablePreferences.settleNewDefaults() {
         for ((key, change) in CHANGED_DEFAULTS) if (this[key] !in change.known) this[key] = change.now
+        if (this[ARTIST_ALBUM_ORDER] == null) this[ARTIST_ALBUM_ORDER] = ArtistAlbumOrder.DATE_RELEASED.name
     }
 
     companion object {
         private val SOURCES = stringPreferencesKey("pref.sources")
         private val LAYOUT_MODE = stringPreferencesKey("pref.layoutMode")
         private val ARTWORK_MODE = stringPreferencesKey("pref.artworkMode")
+        private val ARTIST_ALBUM_ORDER = stringPreferencesKey("pref.artistAlbumOrder")
+        private val GROUP_RELEASE_TYPES = booleanPreferencesKey("pref.groupReleaseTypes")
+        private val PLAYLIST_SORTS = stringPreferencesKey("pref.playlistSorts")
 
         /**
          * A default that has changed. A stored value outside [known] (unset, or

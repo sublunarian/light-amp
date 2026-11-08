@@ -65,7 +65,7 @@ fun SimpleLightScreen<*>.LibrarySubPage(content: @Composable ColumnScope.() -> U
                 onNowPlaying = { go { NowPlayingScreen(it) } },
                 // The top of the library, however deep this page is.
                 onBrowse = {
-                    LibraryNav.openHome()
+                    LibraryNav.openLibraryIndex()
                     backToRoot()
                 },
             )

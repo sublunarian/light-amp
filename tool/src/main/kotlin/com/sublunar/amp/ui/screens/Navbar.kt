@@ -21,10 +21,9 @@ import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.TabGlyphs
 import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.px
-import com.thelightphone.sdk.ui.LightIcon
+import androidx.compose.material3.Icon
+import androidx.compose.ui.res.painterResource
 import com.thelightphone.sdk.ui.LightIcons
-import com.thelightphone.sdk.ui.LightText
-import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
 
 /**
@@ -44,34 +43,35 @@ fun Navbar(
     onNowPlaying: () -> Unit,
     /** Simplified's library button — see [LibraryNav.libraryIndex]. */
     onBrowse: () -> Unit,
-    /** False on the library page itself, where Simplified's library button would lead nowhere. */
-    showLibrary: Boolean = true,
+    /** Simplified's library button lit, as a tab is: everywhere but search. */
+    libraryLit: Boolean = true,
 ) {
     // The eager state rather than the preference Flow: the bar is on every
     // screen, and a fresh collect draws a frame of the wrong bar.
     val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
     if (simplified) {
-        SimplifiedNavbar(onSearch, onNowPlaying, onBrowse, showLibrary)
+        SimplifiedNavbar(onSearch, onNowPlaying, onBrowse, libraryLit)
     } else {
         StandardNavbar(current, onSelect, onNowPlaying)
     }
 }
 
 /**
- * Simplified layout: search, the library and the player as the phone's own three
+ * Simplified layout: the library, search and the player as the phone's own three
  * buttons, laid out as the SDK's LightBottomBar lays out three: start, centre and
  * end, each glyph two grid units, its outer edge two units from the screen's.
- * Buttons, not tabs: all three full white, none lit. On the library page itself
- * its own button would lead nowhere, so its slot stands empty and the others
- * keep their places: the slot only ever means Library.
+ * Lit as tabs are: the one you are on white, the others the grey. The
+ * player is never lit, since it hides this bar.
  */
 @Composable
 private fun SimplifiedNavbar(
     onSearch: () -> Unit,
     onNowPlaying: () -> Unit,
     onBrowse: () -> Unit,
-    showLibrary: Boolean,
+    libraryLit: Boolean,
 ) {
+    val lit = LightThemeTokens.colors.content
+    val unlit = LightThemeTokens.colors.contentSecondary
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -80,14 +80,23 @@ private fun SimplifiedNavbar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BarSlot(Alignment.CenterStart) {
-            BarButton(onSearch) { LightIcon(LightIcons.SEARCH, size = SDK_GLYPH_UNITS) }
+            BarButton(onBrowse) {
+                AppIcon(AppIcons.Library, size = px(SDK_GLYPH_PX), tint = if (libraryLit) lit else unlit)
+            }
         }
         BarSlot(Alignment.Center) {
-            if (showLibrary) TextBarButton("HOME", onBrowse)
+            BarButton(onSearch) {
+                Icon(
+                    painterResource(LightIcons.SEARCH.drawableResource),
+                    contentDescription = "Search",
+                    tint = if (libraryLit) unlit else lit,
+                    modifier = Modifier.size(px(SDK_GLYPH_PX)),
+                )
+            }
         }
         BarSlot(Alignment.CenterEnd) {
             BarButton(onNowPlaying) {
-                AppIcon(AppIcons.Waveform, size = px(SDK_GLYPH_PX), tint = LightThemeTokens.colors.content)
+                AppIcon(AppIcons.Waveform, size = px(SDK_GLYPH_PX), tint = unlit)
             }
         }
     }
@@ -108,23 +117,8 @@ private fun BarButton(onClick: () -> Unit, glyph: @Composable () -> Unit) {
 }
 
 /**
- * A worded bar button as the SDK's LightBottomBar draws one (Weather's THIS WEEK):
- * Button type, one line, its tap target the bar's height and the word's width.
- */
-@Composable
-private fun TextBarButton(text: String, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .height(px(BOTTOM_BAR_PX))
-            .appClickable(onClick = onClick)
-            .padding(horizontal = px(TEXT_BUTTON_PAD_PX)),
-        contentAlignment = Alignment.Center,
-    ) { LightText(text, variant = LightTextVariant.Button, maxLines = 1) }
-}
-
-/**
- * Standard layout: the four tabs across the bar, then the player. Every glyph an
- * outline that never fills: the tab you are on white, the rest the SDK's grey.
+ * Standard layout: the four tabs across the bar, then the player: the tab you
+ * are on white, the rest the grey.
  */
 @Composable
 private fun StandardNavbar(
@@ -140,7 +134,7 @@ private fun StandardNavbar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         NavIcon(
-            TabGlyphs.Playlist,
+            AppIcons.QueueMusic,
             current == LibraryTab.PLAYLISTS,
             scale = tabGlyphScale(LibraryTab.PLAYLISTS),
             lift = tabGlyphLiftPx(LibraryTab.PLAYLISTS),
@@ -157,7 +151,7 @@ private fun StandardNavbar(
             scale = tabGlyphScale(LibraryTab.ALBUMS),
         ) { onSelect(LibraryTab.ALBUMS) }
         NavIcon(
-            AppIcons.MusicNoteOutline,
+            AppIcons.MusicNote,
             current == LibraryTab.SONGS,
             scale = tabGlyphScale(LibraryTab.SONGS),
         ) { onSelect(LibraryTab.SONGS) }
@@ -175,7 +169,7 @@ private fun StandardNavbar(
 @Composable
 private fun NavIcon(
     icon: ImageVector,
-    /** The tab you are on: white, where the rest are the SDK's grey. */
+    /** The tab you are on: white, where the rest are the grey. */
     active: Boolean,
     /** Trims a glyph that draws larger than the rest at the same box size. */
     scale: Float = 1f,
@@ -198,7 +192,6 @@ private fun NavIcon(
     }
 }
 
-/** A bar button with no tab behind it: Simplified's three. */
 /** Height of the library's bottom bar: 4 grid units, as the stock LightOS bar. */
 private const val BOTTOM_BAR_PX = 160
 
@@ -225,11 +218,7 @@ private const val LIGHT_MIC_DRAWN_PX = 108 // 38 of its 40 units
 
 
 /** The SDK's bar glyph: two grid units (LightBarButtonDefaults.ICON_SIZE_UNITS). */
-private const val SDK_GLYPH_UNITS = 2f
 private const val SDK_GLYPH_PX = 80
-
-/** Widens a worded button's tap target past the word's own edges. */
-private const val TEXT_BUTTON_PAD_PX = 40
 
 /** Where the tall glyphs land: above the playlist's own 66, well under their 90. */
 private const val TALL_TARGET_PX = 72
@@ -239,8 +228,8 @@ private const val ARTISTS_TARGET_PX = 75
 
 private fun navScale(drawnPx: Int, targetPx: Int): Float = targetPx.toFloat() / drawnPx
 
-/** A tab glyph's trim inside a [NAV_ICON_PX] box, so the bar and the home list match. */
-internal fun tabGlyphScale(tab: LibraryTab): Float = when (tab) {
+/** A tab glyph's trim inside a [NAV_ICON_PX] box. */
+private fun tabGlyphScale(tab: LibraryTab): Float = when (tab) {
     LibraryTab.PLAYLISTS -> PLAYLISTS_SCALE
     LibraryTab.ARTISTS -> navScale(LIGHT_MIC_DRAWN_PX, ARTISTS_TARGET_PX)
     LibraryTab.ALBUMS -> navScale(ALBUMS_DRAWN_PX, TALL_TARGET_PX)
@@ -248,22 +237,7 @@ internal fun tabGlyphScale(tab: LibraryTab): Float = when (tab) {
 }
 
 /** How far a tab glyph rises inside a [NAV_ICON_PX] box. */
-internal fun tabGlyphLiftPx(tab: LibraryTab): Int = if (tab == LibraryTab.PLAYLISTS) PLAYLISTS_LIFT_PX else 0
-
-/**
- * The home list's heart, which has no tab: 18.35 of its 24 units tall, so 87 of a
- * [NAV_ICON_PX] box, brought to the playlist glyph's height (66 under its 0.94),
- * since both are wide shapes.
- */
-private const val HEART_DRAWN_PX = 87
-private const val WIDE_TARGET_PX = 62
-internal val LIKED_GLYPH_SCALE = navScale(HEART_DRAWN_PX, WIDE_TARGET_PX)
-
-/**
- * Light's download arrow, its bar included: 49 units tall to 40 wide, so it fills
- * a [NAV_ICON_PX] square's height, brought to the tall tab glyphs' height.
- */
-internal val DOWNLOADS_GLYPH_SCALE = navScale(NAV_ICON_PX, TALL_TARGET_PX)
+private fun tabGlyphLiftPx(tab: LibraryTab): Int = if (tab == LibraryTab.PLAYLISTS) PLAYLISTS_LIFT_PX else 0
 
 /**
  * How far the outer edge of a glyph sits from the screen's edge, for the bars

@@ -196,7 +196,7 @@ fun albumSortLabel(sort: AlbumSort): String = when (sort) {
 
 fun songSortLabel(sort: SongSort): String = when (sort) {
     SongSort.TITLE -> "Title"
-    SongSort.ARTIST -> "Artist"
+    SongSort.ARTIST -> "Track Artist"
     SongSort.DATE_ADDED -> "Recently Added"
     SongSort.RECENTLY_PLAYED -> "Recently Played"
     SongSort.MOST_PLAYED -> "Frequently Played"
@@ -205,7 +205,7 @@ fun songSortLabel(sort: SongSort): String = when (sort) {
 
 fun artistSortLabel(sort: ArtistSort): String = when (sort) {
     ArtistSort.NAME -> "Album Artist"
-    ArtistSort.ARTIST -> "Artist"
+    ArtistSort.ARTIST -> "Track Artist"
     ArtistSort.MOST_PLAYED -> "Frequently Played"
 }
 

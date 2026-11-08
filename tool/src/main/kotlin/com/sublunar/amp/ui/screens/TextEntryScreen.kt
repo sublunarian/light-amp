@@ -57,9 +57,7 @@ import com.thelightphone.sdk.ui.keyboard.LightEmbeddedLp3Keyboard
 
 /**
  * Full-screen text entry backed by the LP3 keyboard. Returns the submitted text
- * as its navigation result, or null when dismissed with back. [onDismissed] runs
- * when it closes without a submit, by the arrow or the system's back gesture,
- * which delivers no result at all.
+ * as its navigation result, or null when dismissed with back.
  *
  * Holding the text swaps the keys for Notes' menu — see [TextEditor].
  */
@@ -68,14 +66,7 @@ class TextEntryScreen(
     private val title: String,
     private val initial: String = "",
     private val submitLabel: String = "DONE",
-    private val onDismissed: () -> Unit = {},
 ) : AmpScreen<String?>(sealed) {
-
-    private var submitted = false
-
-    override fun onScreenDestroy() {
-        if (!submitted) onDismissed()
-    }
 
     @Composable
     override fun Content() {
@@ -85,10 +76,7 @@ class TextEntryScreen(
                 title = title,
                 state = state,
                 submitLabel = submitLabel,
-                onSubmit = {
-                    submitted = true
-                    goBack(state.text.toString())
-                },
+                onSubmit = { goBack(state.text.toString()) },
                 onBack = { goBack(null) },
             )
         }

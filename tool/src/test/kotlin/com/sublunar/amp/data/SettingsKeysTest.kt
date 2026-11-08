@@ -29,6 +29,7 @@ class SettingsKeysTest {
                 // A first source settles the defaults — see ChangedDefaultsTest.
                 "pref.layoutMode" to "SIMPLIFIED",
                 "pref.artworkMode" to "NONE",
+                "pref.artistAlbumOrder" to "DATE_RELEASED",
             ),
             store.all(),
         )
@@ -155,6 +156,7 @@ class SettingsKeysTest {
                 // A fresh install's first source settles the new looks — see AppSettings.CHANGED_DEFAULTS.
                 "pref.layoutMode" to "SIMPLIFIED",
                 "pref.artworkMode" to "NONE",
+                "pref.artistAlbumOrder" to "DATE_RELEASED",
                 "pref.sources" to """[{"id":"src-2","kind":"SUBSONIC","name":"Home","baseUrl":"https://x.example"}]""",
                 "state.pendingActions" to "[]",
                 "state.lastSynced.src-2" to "5",
