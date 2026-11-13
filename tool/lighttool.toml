@@ -21,6 +21,9 @@ permissions = [
 # cleartext-http: a self-hosted server on a home network usually speaks plain
 # http://, and without this Android refuses every such request.
 capabilities = ["detached-audio", "cleartext-http"]
+# A large library's lists and queue fit in Android's normal 128 MB heap only
+# just; this lets Amp grow to 256 MB on the LP3 before it runs out.
+largeHeap = true
 # Real LP3 hardware binds to the LightOS system app.
 # Use "com.thelightphone.sdk.emulator" for the LightOS emulator instead, and
 # build with -DlightSdk.allowAltServerPackage=true, which the SDK requires for it.

@@ -2,15 +2,17 @@
 
 Amp ships today, but parts of it are built around the SDK because there is no
 supported route. Each item below is a workaround we would delete the day an API
-exists. Checked against SDK 0.2.3 (`8d3238c`, 30 Oct 2026), which is where the
+exists. Checked against SDK 0.2.7 (`e81295e`, 12 Nov 2026), which is where the
 `light-sdk` submodule is pinned. 0.2.0 closed one gap, plain `http://` (see
 Data modes below), and 0.2.1 brought single-item queue edits; 0.2.2 only moved
 the Tool Manager library on, and 0.2.3 let a tool configure its Room database
-(Room migrations below). The rest stand.
+(Room migrations below). 0.2.4 to 0.2.7 added `largeHeap`, notifications, and
+the image, video and contacts permissions; none of them closes a gap here. The
+rest stand.
 
 Built the way Light's store builder builds it (a pristine SDK, via
-`scripts/store-build-check.sh`), Amp stops at 46 compile errors on 0.2.3
-(checked 5 Nov; three of them follow from one missing `deviceVolume`), every
+`scripts/store-build-check.sh`), Amp stops at 44 compile errors on 0.2.7
+(checked 12 Nov; three of them follow from one missing `deviceVolume`), every
 one a call into our patches. It was 164 on 21 Sep. Most used first:
 `playWhenReady`, `repeatMode`, `replaceRange`,
 `deviceVolume`/`setSystemVolume`, `setMediaQueueAt`, `hasRuntimePermission`,
@@ -344,7 +346,7 @@ what the workaround costs. **These are requests, not blockers.**
 ## Smaller additions
 
 Already written as patches; see [SDK-PATCHES.md](SDK-PATCHES.md), which is the
-authority. None of these is upstream as of 0.2.3 (`8d3238c`). The last column
+authority. None of these is upstream as of 0.2.7 (`e81295e`). The last column
 says what we mean to do about each: some are worth asking Light for, and some
 Amp could stop needing on its own.
 

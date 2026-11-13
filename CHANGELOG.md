@@ -6,6 +6,8 @@
 
 - Resuming on an AirPlay speaker takes about half as long.
 
+- Built on Light's SDK 0.2.7.
+
 ### Added
 
 - Play to an Apple TV or a Mac over AirPlay, lossless at CD quality: pair
