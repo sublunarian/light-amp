@@ -461,6 +461,9 @@ class AppSettings(
     /** Whether to use the simplified or standard layout mode. */
     val layoutMode: Pref<LayoutMode> = enum(LAYOUT_MODE.name, LayoutMode.SIMPLIFIED)
 
+    /** The simple layout's bar as plain buttons, none lit, rather than tabs; search then has no bar. */
+    val tablessFooter: Pref<Boolean> = bool("pref.tablessFooter", false)
+
     /** Where the app was when it was last closed — see [LastSection]. */
     val lastSection: Pref<LastSection> = enum("pref.lastSection", LastSection.LIBRARY)
 

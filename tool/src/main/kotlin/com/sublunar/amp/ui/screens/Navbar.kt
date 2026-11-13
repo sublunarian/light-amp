@@ -43,14 +43,17 @@ fun Navbar(
     onNowPlaying: () -> Unit,
     /** Simplified's library button — see [LibraryNav.libraryIndex]. */
     onBrowse: () -> Unit,
-    /** False on the home page itself, where Simplified's library button would lead nowhere. */
-    showLibrary: Boolean = true,
+    /** Simplified as tabs: search lit rather than the library. */
+    searchLit: Boolean = false,
+    /** On the home page itself, where Simplified's library button, as buttons, would lead nowhere. */
+    onHome: Boolean = false,
 ) {
     // The eager state rather than the preference Flow: the bar is on every
     // screen, and a fresh collect draws a frame of the wrong bar.
     val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
     if (simplified) {
-        SimplifiedNavbar(onSearch, onNowPlaying, onBrowse, showLibrary)
+        val tabless = App.settings.tablessFooter.state.collectAsState().value
+        SimplifiedNavbar(onSearch, onNowPlaying, onBrowse, tabless, searchLit, onHome)
     } else {
         StandardNavbar(current, onSelect, onNowPlaying)
     }
@@ -60,17 +63,24 @@ fun Navbar(
  * Simplified layout: the library, search and the player as the phone's own three
  * buttons, laid out as the SDK's LightBottomBar lays out three: start, centre and
  * end, each glyph two grid units, its outer edge two units from the screen's.
- * Buttons, not tabs: all three white, none lit. On the home page the library's
- * slot stands empty, the others keeping their places.
+ * As tabs, lit as tabs are: the one you are on white, the others the grey; the
+ * player is never lit, since it hides this bar. Tabless, all three are white
+ * buttons, none lit, and on the home page the library's slot stands empty, the
+ * others keeping their places.
  */
 @Composable
 private fun SimplifiedNavbar(
     onSearch: () -> Unit,
     onNowPlaying: () -> Unit,
     onBrowse: () -> Unit,
-    showLibrary: Boolean,
+    tabless: Boolean,
+    searchLit: Boolean,
+    onHome: Boolean,
 ) {
-    val white = LightThemeTokens.colors.content
+    val lit = LightThemeTokens.colors.content
+    val unlit = if (tabless) lit else LightThemeTokens.colors.contentSecondary
+    val libraryTint = if (searchLit) unlit else lit
+    val searchTint = if (searchLit || tabless) lit else unlit
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -79,9 +89,9 @@ private fun SimplifiedNavbar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BarSlot(Alignment.CenterStart) {
-            if (showLibrary) {
+            if (!(tabless && onHome)) {
                 BarButton(onBrowse) {
-                    AppIcon(AppIcons.Library, size = px(SDK_GLYPH_PX), tint = white)
+                    AppIcon(AppIcons.Library, size = px(SDK_GLYPH_PX), tint = libraryTint)
                 }
             }
         }
@@ -90,14 +100,14 @@ private fun SimplifiedNavbar(
                 Icon(
                     painterResource(LightIcons.SEARCH.drawableResource),
                     contentDescription = "Search",
-                    tint = white,
+                    tint = searchTint,
                     modifier = Modifier.size(px(SDK_GLYPH_PX)),
                 )
             }
         }
         BarSlot(Alignment.CenterEnd) {
             BarButton(onNowPlaying) {
-                AppIcon(AppIcons.Waveform, size = px(SDK_GLYPH_PX), tint = white)
+                AppIcon(AppIcons.Waveform, size = px(SDK_GLYPH_PX), tint = unlit)
             }
         }
     }

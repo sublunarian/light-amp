@@ -89,6 +89,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val hideDownloadIcons by App.settings.hideDownloadIcons.state.collectAsState()
         val sources by App.settings.sources.state.collectAsState()
         val layoutMode by App.settings.layoutMode.state.collectAsState()
+        val tablessFooter by App.settings.tablessFooter.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Appearance", headingRows = true) {
             ScrollableList {
@@ -127,6 +128,13 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                             App.settings.layoutMode.set(
                                 if (simple) LayoutMode.STANDARD else LayoutMode.SIMPLIFIED,
                             )
+                        }
+                    }
+                }
+                if (layoutMode == LayoutMode.SIMPLIFIED) {
+                    item {
+                        ToggleRow("Tabless Footer", tablessFooter) {
+                            App.scope.launch { App.settings.tablessFooter.set(!tablessFooter) }
                         }
                     }
                 }

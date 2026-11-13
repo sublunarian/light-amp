@@ -160,8 +160,10 @@ internal fun SimpleLightScreen<*>.SearchView() {
                                 name = artist.name,
                                 imageId = artist.imageId,
                                 modifier = Modifier.padding(end = lane),
-                                // Over the results, so back returns to them.
-                                onClick = { openArtist(artist.name, Parent.Here) },
+                                onClick = {
+                                    LibraryNav.closeSearch()
+                                    openArtist(artist.name, Parent.tab(LibraryTab.ARTISTS))
+                                },
                             )
                         }
                     }
@@ -174,8 +176,14 @@ internal fun SimpleLightScreen<*>.SearchView() {
                                 coverArtId = album.coverArtId,
                                 fallback = AppIcons.Album,
                                 modifier = Modifier.padding(end = lane),
-                                onClick = { openAlbum(album.id, Parent.Here) },
-                                onLongClick = { go { AlbumActionsScreen(it, album.id) } },
+                                onClick = {
+                                    LibraryNav.closeSearch()
+                                    openAlbum(album.id, Parent.artist(album.artist))
+                                },
+                                onLongClick = {
+                                    LibraryNav.closeSearch()
+                                    go { AlbumActionsScreen(it, album.id) }
+                                },
                             )
                         }
                     }

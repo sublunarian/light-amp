@@ -100,6 +100,9 @@ fun SimpleLightScreen<*>.LibraryShell() {
     val currentTab by LibraryNav.currentTab.collectAsState()
     val libraryIndex by LibraryNav.libraryIndex.collectAsState()
     val searchActive by LibraryNav.searchActive.collectAsState()
+    val typing by LibraryNav.typing.collectAsState()
+    val searchTab = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED &&
+        !App.settings.tablessFooter.state.collectAsState().value
     PlayerTheme(library = true) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
@@ -111,16 +114,18 @@ fun SimpleLightScreen<*>.LibraryShell() {
                     TabContent(currentTab)
                 }
             }
-            // Search is a page of its own, with no bar in either layout.
-            if (!searchActive) {
+            // Search is a page of its own with no bar, except where the simple
+            // layout's bar is tabs: there search is one, lit over the results,
+            // and the keyboard takes the bottom while typing.
+            if (!searchActive || (searchTab && !typing)) {
                 Navbar(
                     current = if (libraryIndex) null else currentTab,
                     onSelect = { LibraryNav.tapTab(it) },
                     onSearch = { startSearch() },
                     onNowPlaying = { go { NowPlayingScreen(it) } },
                     onBrowse = { LibraryNav.pressLibrary() },
-                    // The home page is the library: no button for it there.
-                    showLibrary = !libraryIndex,
+                    searchLit = searchActive,
+                    onHome = libraryIndex,
                 )
             }
         }
