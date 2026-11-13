@@ -28,6 +28,8 @@ internal class RaopSession private constructor(
     private val rtsp: Rtsp,
     private val url: String,
     private val log: (String) -> Unit,
+    /** How this receiver is paired for AirPlay 2; null for plain AirPlay 1. */
+    private val pairing: Ap2Pairing? = null,
 ) : Closeable {
 
     private val remote: InetAddress = InetAddress.getByName(receiver.address)
@@ -108,6 +110,11 @@ internal class RaopSession private constructor(
 
     private val threads = ArrayList<Thread>()
 
+    // AirPlay 2 only: the key the sound is sealed with, its counter, and the event channel.
+    private var audioKey: ByteArray? = null
+    private var audioCounter = 0L
+    private var events: java.net.Socket? = null
+
     // --- Setting up ----------------------------------------------------------
 
     private fun setUp(authSetup: Boolean) {
@@ -144,6 +151,134 @@ internal class RaopSession private constructor(
             if (said > latencyFrames) latencyFrames = said
         }
         touch()
+    }
+
+    /**
+     * AirPlay 2, as an Apple TV or a HomePod takes it: proof of the pairing,
+     * everything after it encrypted, the session and then its one stream
+     * described in property lists, sound sealed packet by packet. Timing
+     * stays the network clock AirPlay 1 uses (NTP), and the sound Apple
+     * Lossless at CD quality, as with every other speaker.
+     */
+    private fun setUp2(pairing: Ap2Pairing) {
+        val shared = when (pairing) {
+            is Ap2Pairing.Kept -> AirPlayPairing.verify(rtsp, pairing.keys)
+            Ap2Pairing.Transient -> AirPlayPairing.transient(rtsp)
+        }
+        rtsp.encrypt(
+            HapCrypto.hkdf(shared, "Control-Salt", "Control-Write-Encryption-Key"),
+            HapCrypto.hkdf(shared, "Control-Salt", "Control-Read-Encryption-Key"),
+        )
+        startListening()
+        val deviceId = macLike(rtsp.clientInstance)
+        val base = rtsp.request(
+            "SETUP",
+            url,
+            contentType = PLIST,
+            body = Bplist.write(
+                mapOf(
+                    "deviceID" to deviceId,
+                    "macAddress" to deviceId,
+                    "sessionUUID" to java.util.UUID.randomUUID().toString().uppercase(),
+                    "timingPort" to timing.localPort.toLong(),
+                    "timingProtocol" to "NTP",
+                    "name" to "Amp",
+                    "isMultiSelectAirPlay" to true,
+                    "groupContainsGroupLeader" to false,
+                    "senderSupportsRelay" to false,
+                    "statsCollectionEnabled" to false,
+                ),
+            ),
+        )
+        expect("SETUP", base)
+        rtsp.session = base.headers["session"]?.substringBefore(';')?.trim() ?: url.substringAfterLast('/')
+        val eventPort = (plist(base)["eventPort"] as? Long)?.toInt()
+        if (eventPort != null && eventPort in PORTS) openEvents(shared, eventPort)
+
+        val key = randomBytes(32)
+        val stream = rtsp.request(
+            "SETUP",
+            url,
+            contentType = PLIST,
+            body = Bplist.write(
+                mapOf(
+                    "streams" to listOf(
+                        mapOf(
+                            "type" to 96L,
+                            "ct" to 2L,
+                            "audioFormat" to ALAC_44100_16_2,
+                            "audioMode" to "default",
+                            "spf" to AlacFrames.FRAMES_PER_PACKET.toLong(),
+                            "sr" to AIRPLAY_RATE.toLong(),
+                            "latencyMin" to RECEIVER_OFFSET_FRAMES.toLong(),
+                            "latencyMax" to DEFAULT_LATENCY_FRAMES.toLong(),
+                            "controlPort" to control.localPort.toLong(),
+                            "shk" to key,
+                            "isMedia" to true,
+                            "supportsDynamicStreamID" to false,
+                            "streamConnectionID" to (url.substringAfterLast('/').toLongOrNull() ?: 0L),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        expect("SETUP", stream)
+        @Suppress("UNCHECKED_CAST")
+        val given = ((plist(stream)["streams"] as? List<Any?>)?.firstOrNull() as? Map<String, Any?>).orEmpty()
+        serverPort = (given["dataPort"] as? Long)?.toInt()?.takeIf { it in PORTS }
+            ?: throw RaopRefused("SETUP", 0, "no data port")
+        controlPort = (given["controlPort"] as? Long)?.toInt()?.takeIf { it in PORTS }
+            ?: throw RaopRefused("SETUP", 0, "no control port")
+        audioKey = key
+
+        avoidZeroRtp()
+        expect("RECORD", rtsp.request("RECORD", url))
+        flush()
+        touch()
+    }
+
+    private fun plist(reply: RtspResponse): Map<String, Any?> {
+        if (reply.body.isEmpty()) return emptyMap()
+        @Suppress("UNCHECKED_CAST")
+        return runCatching { Bplist.read(reply.body) as? Map<String, Any?> }.getOrNull().orEmpty()
+    }
+
+    /**
+     * The receiver's own channel back to the sender, encrypted with keys of
+     * its own: it says things there now and then and wants an OK, nothing more.
+     */
+    private fun openEvents(shared: ByteArray, port: Int) {
+        val socket = java.net.Socket()
+        try {
+            socket.connect(java.net.InetSocketAddress(remote, port), CONNECT_TIMEOUT_MS)
+        } catch (e: IOException) {
+            runCatching { socket.close() }
+            log("${receiver.name}: no event channel")
+            return
+        }
+        events = socket
+        // From this end the receiver's "read" key is the one written with.
+        val out = HapOutputStream(socket.getOutputStream(), HapCrypto.hkdf(shared, "Events-Salt", "Events-Read-Encryption-Key"))
+        val input = java.io.BufferedInputStream(HapInputStream(socket.getInputStream(), HapCrypto.hkdf(shared, "Events-Salt", "Events-Write-Encryption-Key")))
+        threads += Thread({
+            try {
+                while (!closed) {
+                    val asked = Rtsp.readMessage(input)
+                    val reply = buildString {
+                        append("RTSP/1.0 200 OK\r\n")
+                        asked.headers["cseq"]?.let { append("CSeq: ").append(it).append("\r\n") }
+                        append("Content-Length: 0\r\nAudio-Latency: 0\r\n\r\n")
+                    }
+                    out.write(reply.toByteArray())
+                    out.flush()
+                }
+            } catch (_: IOException) {
+                // The channel closed with the session.
+            }
+        }, "AmpAirPlay-events").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     private fun options() {
@@ -273,13 +408,23 @@ internal class RaopSession private constructor(
     fun sendAudio(frame: ByteArray, length: Int, first: Boolean): Long {
         val seq = nextSeq
         val rtp = nextRtp
-        val packet = ByteArray(RTP_HEADER + length)
+        val key = audioKey
+        val packet = ByteArray(RTP_HEADER + length + if (key != null) SEAL_EXTRA else 0)
         packet[0] = 0x80.toByte()
         packet[1] = (if (first) 0x80 or AUDIO else AUDIO).toByte()
         putU16(packet, 2, seq)
         putU32(packet, 4, rtp)
         putU32(packet, 8, ssrc.toLong() and MASK32)
-        System.arraycopy(frame, 0, packet, RTP_HEADER, length)
+        if (key == null) {
+            System.arraycopy(frame, 0, packet, RTP_HEADER, length)
+        } else {
+            // Sealed under the session's key, the RTP time and SSRC as associated
+            // data, and the nonce's 8 bytes after it for the receiver.
+            val nonce = HapCrypto.counterNonce(audioCounter++)
+            val sealed = HapCrypto.seal(key, nonce, frame.copyOf(length), packet.copyOfRange(4, RTP_HEADER))
+            System.arraycopy(sealed, 0, packet, RTP_HEADER, sealed.size)
+            System.arraycopy(nonce, 0, packet, RTP_HEADER + sealed.size, 8)
+        }
         synchronized(history) {
             val slot = seq and (HISTORY - 1)
             history[slot] = packet
@@ -316,6 +461,11 @@ internal class RaopSession private constructor(
 
     /** Drop everything buffered: what is sent next, from [nextSeq] and [nextRtp], starts afresh. */
     fun flush() {
+        // An Apple TV goes quiet at a flush but keeps what it held unplayed, and
+        // when the next schedule comes it fits that in just ahead of the new
+        // sound and plays it: a blip of the music from where it paused. RTP
+        // times well past it put it in the past, where it's dropped.
+        if (pairing != null) nextRtp = (nextRtp + FLUSH_GAP_FRAMES) and MASK32
         avoidZeroRtp()
         request("FLUSH", headers = listOf("RTP-Info" to "seq=$nextSeq;rtptime=$nextRtp"))
         unflushed = false
@@ -361,7 +511,7 @@ internal class RaopSession private constructor(
 
     /** A request that keeps an idle session open, and finds out whether it still is. */
     fun keepAlive() {
-        val reply = rtsp.request("OPTIONS", "*")
+        val reply = if (pairing != null) rtsp.request("POST", "/feedback") else rtsp.request("OPTIONS", "*")
         touch()
         if (!reply.ok && reply.status != NOT_IMPLEMENTED) throw RaopRefused("OPTIONS", reply.status, reply.reason)
     }
@@ -392,6 +542,7 @@ internal class RaopSession private constructor(
         if (closed) return
         closed = true
         rtsp.close()
+        events?.let { runCatching { it.close() } }
         audio.close()
         control.close()
         timing.close()
@@ -419,6 +570,30 @@ internal class RaopSession private constructor(
         private const val RESEND_REQUEST = 0x55
         private const val RESEND_REPLY = 0x56
         private const val RTP_HEADER = 12
+
+        /** How far a flush moves an AirPlay 2 receiver's RTP times on: ten seconds, well past anything it holds. */
+        private const val FLUSH_GAP_FRAMES = 10L * AIRPLAY_RATE
+
+        /** What sealing adds to a packet: the 16-byte tag, then the nonce's 8. */
+        private const val SEAL_EXTRA = 16 + 8
+        private const val PLIST = "application/x-apple-binary-plist"
+
+        /** AirPlay 2's code for Apple Lossless, 44.1 kHz, 16 bits, stereo. */
+        private const val ALAC_44100_16_2 = 0x40000L
+
+        /**
+         * What an AirPlay 2 receiver asks of a sender's name before it will
+         * talk to it: AirPlay's own form, the name and version of the
+         * protocol it speaks.
+         */
+        const val AIRPLAY2_USER_AGENT = "AirPlay/550.10"
+
+        /** A stable MAC-shaped id from this run's DACP-ID, marked as locally made. */
+        private fun macLike(id: String): String {
+            val bytes = HapCrypto.hex(id.padStart(16, '0').takeLast(12))
+            bytes[0] = ((bytes[0].toInt() and 0xfc) or 0x02).toByte()
+            return bytes.joinToString(":") { "%02X".format(it.toInt() and 0xff) }
+        }
         private const val NOT_IMPLEMENTED = 501
         private val PORTS = 1..65535
         private const val MASK32 = 0xffffffffL
@@ -439,17 +614,19 @@ internal class RaopSession private constructor(
             authSetup: Boolean,
             log: (String) -> Unit,
             dacpId: String = DacpRecords.newId(),
+            pairing: Ap2Pairing? = null,
         ): RaopSession {
-            val rtsp = Rtsp.connect(receiver.address, receiver.port, userAgent, dacpId, CONNECT_TIMEOUT_MS)
+            val agent = if (pairing != null) AIRPLAY2_USER_AGENT else userAgent
+            val rtsp = Rtsp.connect(receiver.address, receiver.port, agent, dacpId, CONNECT_TIMEOUT_MS)
             val url = "rtsp://${rtsp.localAddress}/${randomInt().toLong() and MASK32}"
             val session = try {
-                RaopSession(receiver, rtsp, url, log)
+                RaopSession(receiver, rtsp, url, log, pairing)
             } catch (e: SocketException) {
                 rtsp.close()
                 throw e
             }
             try {
-                session.setUp(authSetup)
+                if (pairing != null) session.setUp2(pairing) else session.setUp(authSetup)
             } catch (e: Exception) {
                 session.close()
                 throw e
@@ -525,4 +702,11 @@ internal object Dmap {
     }
 
     private fun int32(v: Int) = byteArrayOf((v ushr 24).toByte(), (v ushr 16).toByte(), (v ushr 8).toByte(), v.toByte())
+}
+
+/** How an AirPlay 2 receiver is paired with: keys kept from a code once typed, or afresh each time without one. */
+internal sealed interface Ap2Pairing {
+    class Kept(val keys: PairedKeys) : Ap2Pairing
+
+    data object Transient : Ap2Pairing
 }

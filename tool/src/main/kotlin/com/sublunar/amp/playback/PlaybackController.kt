@@ -454,7 +454,7 @@ class PlaybackController(
     init {
         scope.launch(Dispatchers.IO) {
             outputsDir.listFiles()?.forEach { output ->
-                output.listFiles()?.filter { it.name != processTag }?.forEach { it.deleteRecursively() }
+                output.listFiles()?.filter { it.name != processTag && it.name != KEPT }?.forEach { it.deleteRecursively() }
             }
         }
     }
@@ -2898,6 +2898,17 @@ class PlaybackController(
      * of another kind (a DLNA one) can, where its speaker is also among
      * [found] under [family]: the cast moves over to that, see [addToGroup].
      */
+    /** Whether [target] needs pairing with a code before it can be cast to (see [Output.needsCode]). */
+    fun needsCode(family: OutputFamily, target: OutputTarget): Boolean = outputOf(family).needsCode(target)
+
+    /** [Output.showCode], off Main. */
+    suspend fun showCode(family: OutputFamily, target: OutputTarget): Boolean =
+        withContext(Dispatchers.IO) { outputOf(family).showCode(target) }
+
+    /** [Output.enterCode], off Main. */
+    suspend fun enterCode(family: OutputFamily, target: OutputTarget, code: String): Boolean =
+        withContext(Dispatchers.IO) { outputOf(family).enterCode(target, code) }
+
     fun canGroup(family: OutputFamily, target: OutputTarget, found: Map<String, List<OutputTarget>>): Boolean {
         val a = _active.value ?: return false
         if (a.family === family) return a.output.canGroup(target)
@@ -3303,6 +3314,8 @@ class PlaybackController(
 
         override fun workDir(output: String): File = File(File(outputsDir, output), processTag).apply { mkdirs() }
 
+        override fun keepDir(output: String): File = File(File(outputsDir, output), KEPT).apply { mkdirs() }
+
         override fun queueFinished(output: Output) {
             if (steering(output) == null) return
             this@PlaybackController.queueFinished()
@@ -3357,6 +3370,9 @@ class PlaybackController(
     }
 
     companion object {
+        /** The folder under an output's that outlives the process — see [OutputHost.keepDir]. */
+        private const val KEPT = "kept"
+
         // Why a track is parked, in the screen's words.
 
         /** The server refused the track: a bad status, not a bad link. */

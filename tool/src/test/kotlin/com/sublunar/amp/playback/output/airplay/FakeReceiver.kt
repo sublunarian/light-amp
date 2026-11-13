@@ -28,7 +28,7 @@ internal class FakeReceiver(
 
     class Audio(val seq: Int, val rtp: Long, val marker: Boolean, val payload: ByteArray, val atNanos: Long)
 
-    class Sync(val first: Boolean, val rtpLessLatency: Long, val ntp: Long, val rtp: Long)
+    class Sync(val first: Boolean, val rtpLessLatency: Long, val ntp: Long, val rtp: Long, val atNanos: Long = System.nanoTime())
 
     val requests = CopyOnWriteArrayList<Request>()
     val audio = CopyOnWriteArrayList<Audio>()

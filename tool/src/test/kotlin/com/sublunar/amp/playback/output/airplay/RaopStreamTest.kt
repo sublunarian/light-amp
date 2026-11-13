@@ -173,9 +173,13 @@ class RaopStreamTest {
         assertArrayEquals(source.samples, heard.copyOf(source.samples.size))
         assertTrue(heard.copyOfRange(source.samples.size, heard.size).all { it.toInt() == 0 })
 
-        // Half a second of sound took half a second to send.
-        val spread = (receiver.audio.maxOf { it.atNanos } - receiver.audio.minOf { it.atNanos }) / 1_000_000
-        assertTrue("sent over $spread ms", spread in 400..650)
+        // The schedule goes a fifth of a second ahead of the sound, and the
+        // sound keeps its places: half a second of it done half a second
+        // after the schedule said it starts.
+        val lead = (receiver.audio.minOf { it.atNanos } - sync.atNanos) / 1_000_000
+        assertTrue("sound $lead ms after the schedule", lead in 180..300)
+        val done = (receiver.audio.maxOf { it.atNanos } - sync.atNanos) / 1_000_000
+        assertTrue("all sent $done ms after the schedule", done in 400..650)
         session.teardown()
     }
 

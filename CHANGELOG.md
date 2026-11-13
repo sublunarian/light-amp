@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Resuming on an AirPlay speaker takes about half as long.
+
+### Added
+
+- Play to an Apple TV or a Mac over AirPlay, lossless at CD quality: pair
+  once with the code it shows. HomePods too.
+
 ## 0.9.2
 
 - Parts of 0.8.2's library look are back: the simple layout's tab-style bar and a few other changes are restored.

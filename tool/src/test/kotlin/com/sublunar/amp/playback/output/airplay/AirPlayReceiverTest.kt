@@ -44,10 +44,42 @@ class AirPlayReceiverTest {
     }
 
     @Test
-    fun `an Apple TV and a Mac, which want pairing, are left out`() {
-        assertEquals("needs pairing", AirPlayReceiver.whyNot(appleTv))
+    fun `an Apple TV and a Mac pair with their code, one that doesn't say how is left out`() {
+        assertNull(AirPlayReceiver.whyNot(appleTv))
+        assertTrue(AirPlayReceiver.from(appleTv)!!.pairsWithCode)
+        // The user's MacBook Pro as it announces itself: pairing wanted, HomeKit pairing offered.
+        val laptop = service(
+            "06AF6801C210@Viscero",
+            mapOf("cn" to "0,1,2,3", "et" to "0,3,5", "ft" to "0x4A7FCFD5,0x38174FDE", "sf" to "0x204", "am" to "MacBookPro18,3", "tp" to "UDP"),
+        )
+        assertNull(AirPlayReceiver.whyNot(laptop))
+        assertTrue(AirPlayReceiver.from(laptop)!!.pairsWithCode)
+        // No features said: pairing of an unknown kind.
         assertEquals("needs pairing", AirPlayReceiver.whyNot(mac))
-        assertNull(AirPlayReceiver.from(appleTv))
+    }
+
+    @Test
+    fun `a HomePod that offers pairing without a code is listed for it`() {
+        val homePod = service("AABBCCDDEE01@Kitchen", mapOf("am" to "AudioAccessory5,1", "ov" to "27.1", "ft" to "0x4A7FDFD5,0x00010000"))
+        assertNull(AirPlayReceiver.whyNot(homePod))
+        val r = AirPlayReceiver.from(homePod)!!
+        assertTrue(r.pairsWithoutCode)
+        assertTrue(!r.pairsWithCode)
+    }
+
+    @Test
+    fun `a Mac that lets only its owner's account play is known by its AirPlay record`() {
+        // The user's MacBook Pro set to Current User, then to anyone on the network.
+        val currentUser = Mdns.Service("Viscero._airplay._tcp.local", "v.local", 7000, "192.168.2.10", mapOf("act" to "2", "acl" to "0", "deviceid" to "06:AF:68:01:C2:10"))
+        val anyone = Mdns.Service("Viscero._airplay._tcp.local", "v.local", 7000, "192.168.2.10", mapOf("acl" to "0", "deviceid" to "06:AF:68:01:C2:10"))
+        assertEquals(setOf("06af6801c210"), AirPlayFamily.ownerOnly(listOf(currentUser)))
+        assertTrue(AirPlayFamily.ownerOnly(listOf(anyone)).isEmpty())
+    }
+
+    @Test
+    fun `an Apple TV set to a password is left out`() {
+        val passworded = service("AABBCCDDEEFF@TV", mapOf("am" to "AppleTV14,1", "sf" to "0x284"))
+        assertEquals("needs a password", AirPlayReceiver.whyNot(passworded))
     }
 
     @Test

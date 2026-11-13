@@ -51,7 +51,18 @@ internal class Streamer(
     private val feed: Feed,
     private val events: StreamEvents,
     private val log: (String) -> Unit,
+    /** A resume: where the last run stopped, its packets the speaker never got to play, to go first. */
+    resume: Parked? = null,
 ) {
+    /** A run stopped by a pause with its feed kept: what [Streamer] needs to carry on from where it was heard. */
+    class Parked(val heard: Heard, val replay: List<ByteArray>, val startFrame: Long)
+
+    private val replay = ArrayDeque(resume?.replay.orEmpty())
+
+    // The packets sent lately and the run frame of the first, so a pause can hand on what wasn't heard yet.
+    private val recent = ArrayDeque<ByteArray>()
+    private var recentFirstFrame = resume?.startFrame ?: 0L
+
     @Volatile
     private var stopping = false
     private val thread = Thread({ run() }, "AmpAirPlay-send").apply {
@@ -68,9 +79,13 @@ internal class Streamer(
         @Volatile
         var anchorK = 0L
 
-        /** Not yet told the current schedule: its next packet is its first. */
+        /** Not yet told the current schedule. */
         @Volatile
         var fresh = true
+
+        /** Told it, and its next packet is the first under it: marked as such. */
+        @Volatile
+        var firstPacket = false
     }
 
     private val legs = CopyOnWriteArrayList(first.map(::Leg))
@@ -92,16 +107,22 @@ internal class Streamer(
 
     @Volatile
     private var started = false
-    private var framesSent = 0L
+    private var framesSent = resume?.startFrame ?: 0L
 
     /** The furthest run frame the speaker was ever reckoned to be at: what it hears never goes back. */
     @Volatile
-    private var furthestHeard = -1L
+    private var furthestHeard = resume?.startFrame ?: -1L
+
+    /** The run frame this run's first packet carries: sound is heard once the speaker reaches it. */
+    private val runStart = resume?.startFrame ?: 0L
 
     fun start() {
         feed.start()
         thread.start()
     }
+
+    /** Start a run that carries on from a pause: its feed is going already. */
+    fun resume() = thread.start()
 
     /** The speakers being sent to. */
     val sessions: List<RaopSession> get() = legs.map { it.session }
@@ -127,6 +148,32 @@ internal class Streamer(
         return heardNow()
     }
 
+    /**
+     * Stop sending but keep the feed, for a pause: where the speaker had got
+     * to and the packets from there that it held but won't now play. Null
+     * when there's nothing to carry on from (it hadn't started, or the
+     * thread didn't stop), and the feed is stopped as by [stop].
+     */
+    fun park(): Parked? {
+        stopping = true
+        thread.interrupt()
+        runCatching { thread.join(STOP_WAIT_MS) }
+        val heard = heardNow()
+        if (!started || thread.isAlive || heard == null || !heard.sounding) {
+            feed.stop()
+            return null
+        }
+        val frame = playingFrame(System.nanoTime()).coerceAtLeast(furthestHeard).coerceAtMost(framesSent)
+        val skip = ((frame - recentFirstFrame) / AlacFrames.FRAMES_PER_PACKET).toInt()
+        if (skip < 0 || skip > recent.size) {
+            feed.stop()
+            return null
+        }
+        val from = recentFirstFrame + skip.toLong() * AlacFrames.FRAMES_PER_PACKET
+        val unheard = recent.toList().subList(skip, recent.size) + replay
+        return Parked(heard, unheard, from)
+    }
+
     /** Where the speaker is now, or null before anything has been laid. */
     fun heardNow(): Heard? {
         // A copy taken at once: the feed may drop a segment that gave nothing.
@@ -134,7 +181,7 @@ internal class Streamer(
         if (segments.isEmpty()) return null
         if (!started) return Heard(segments.first(), segments.first().startMs, sounding = false)
         val frame = playingFrame(System.nanoTime())
-        val sounding = frame >= 0
+        val sounding = frame >= runStart
         val at = frame.coerceAtLeast(0).coerceAtLeast(furthestHeard).coerceAtMost(framesSent)
         val segment = segments.lastOrNull { it.firstFrame <= at } ?: segments.first()
         val ms = segment.startMs + (at - segment.firstFrame) * 1000 / AIRPLAY_RATE
@@ -162,12 +209,13 @@ internal class Streamer(
             var lastHeard = 0L
             while (!stopping) {
                 val due = dueOf(k)
+                val goAt = maxOf(due, soundFrom)
                 val now = System.nanoTime()
-                if (now < due) {
-                    LockSupport.parkNanos(minOf(due - now, MAX_PARK_NS))
+                if (now < goAt) {
+                    LockSupport.parkNanos(minOf(goAt - now, MAX_PARK_NS))
                     continue
                 }
-                val packet = feed.packets.peek()
+                val packet = replay.firstOrNull() ?: feed.packets.peek()
                 if (packet == null) {
                     val end = feed.ended
                     if (end != null && feed.packets.isEmpty()) {
@@ -187,7 +235,12 @@ internal class Streamer(
                     anchor(now + START_LEAD_NS)
                     continue
                 }
-                feed.packets.poll()
+                if (replay.isNotEmpty()) replay.removeFirst() else feed.packets.poll()
+                recent.addLast(packet)
+                if (recent.size > RECENT_PACKETS) {
+                    recent.removeFirst()
+                    recentFirstFrame += AlacFrames.FRAMES_PER_PACKET
+                }
                 for (leg in legs) send(leg, packet, due)
                 k++
                 framesSent += AlacFrames.FRAMES_PER_PACKET
@@ -221,19 +274,28 @@ internal class Streamer(
      */
     private fun send(leg: Leg, packet: ByteArray, due: Long) {
         try {
-            val first = leg.fresh
-            if (first) {
-                leg.anchorRtp = leg.session.nextRtp
-                leg.anchorK = k
-                leg.session.sendSync(leg.anchorRtp, due, first = true, latencyFrames)
-                leg.fresh = false
-            }
+            if (leg.fresh) tell(leg, due)
+            val first = leg.firstPacket
+            leg.firstPacket = false
             leg.session.sendAudio(packet, packet.size, first)
         } catch (e: IOException) {
-            if (legs.size <= 1) throw e
-            legs.remove(leg)
-            events.leftGroup(leg.session, e)
+            drop(leg, e)
         }
+    }
+
+    /** Tell [leg] the schedule: packet [k], its next, is the one due at [due]. */
+    private fun tell(leg: Leg, due: Long) {
+        leg.anchorRtp = leg.session.nextRtp
+        leg.anchorK = k
+        leg.session.sendSync(leg.anchorRtp, due, first = true, latencyFrames)
+        leg.fresh = false
+        leg.firstPacket = true
+    }
+
+    private fun drop(leg: Leg, e: IOException) {
+        if (legs.size <= 1) throw e
+        legs.remove(leg)
+        events.leftGroup(leg.session, e)
     }
 
     /**
@@ -243,7 +305,7 @@ internal class Streamer(
     private fun prebuffer(): Boolean {
         val deadline = System.nanoTime() + PREBUFFER_LIMIT_NS
         while (!stopping) {
-            if (feed.bufferedFrames >= PREBUFFER_FRAMES) return true
+            if (replay.isNotEmpty() || feed.bufferedFrames >= PREBUFFER_FRAMES) return true
             val end = feed.ended
             if (end == Feed.End.UNREADABLE) {
                 events.couldNotStart()
@@ -259,13 +321,31 @@ internal class Streamer(
     /** When packet [k] of the current clock is due to go. */
     private fun dueOf(k: Long): Long = t0 + k * AlacFrames.FRAMES_PER_PACKET * 1_000_000_000L / AIRPLAY_RATE
 
+    /**
+     * Start the clock with packet 0 due at [at], and tell every speaker so
+     * at once. The sound itself waits a moment after: an Apple TV plays what
+     * comes before it has taken in the schedule as it comes, and plays it
+     * again in its place — a blip of the music, then the music. The packets
+     * keep their places, so they are heard no later for the wait.
+     */
     private fun anchor(at: Long) {
         t0 = at
         anchorFrame = framesSent
         k = 0
-        for (leg in legs) leg.fresh = true
+        for (leg in legs.toList()) {
+            leg.fresh = true
+            try {
+                tell(leg, at)
+            } catch (e: IOException) {
+                drop(leg, e)
+            }
+        }
+        soundFrom = System.nanoTime() + SCHEDULE_LEAD_NS
         started = true
     }
+
+    /** No sound goes before this, so the schedule is in hand first (see [anchor]). */
+    private var soundFrom = 0L
 
     /** Everything is sent: wait until the speaker has played it, then say so. */
     private fun finish(end: Feed.End) {
@@ -289,11 +369,17 @@ internal class Streamer(
         const val STARVED_PARK_NS = 2_000_000L
         const val START_LEAD_NS = 30_000_000L
 
+        /** How long the schedule goes ahead of the first sound: well within the 2 s a packet has to arrive in. */
+        const val SCHEDULE_LEAD_NS = 200_000_000L
+
         /** A quarter second laid by before the first packet goes. */
         const val PREBUFFER_FRAMES = AIRPLAY_RATE / 4
 
         /** A slow start (a transcode warming up) plays what it has after this. */
         val PREBUFFER_LIMIT_NS = TimeUnit.SECONDS.toNanos(20)
         const val STOP_WAIT_MS = 1_000L
+
+        /** Packets kept after sending: more than a speaker holds unplayed (2.25 s is 282). */
+        const val RECENT_PACKETS = 512
     }
 }

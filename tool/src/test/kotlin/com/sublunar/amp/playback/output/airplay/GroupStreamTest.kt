@@ -72,6 +72,41 @@ class GroupStreamTest {
         b.teardown()
     }
 
+    @Test
+    fun `a pause keeps what wasn't heard, and the play after carries on with exactly the next packet`() {
+        val a = RaopSession.open(first.receiver, "Amp/test", authSetup = false, log = log)
+        val feed = feed()
+        val streamer = Streamer(listOf(a), feed, NoEvents, log)
+        streamer.start()
+        // Past the speaker's latency, so it has been heard.
+        Thread.sleep(3_200)
+        val parked = streamer.park()!!
+        assertTrue(parked.heard.sounding)
+        val before = first.audio.toList()
+        val heardPacket = (parked.startFrame / AlacFrames.FRAMES_PER_PACKET).toInt()
+        // What the speaker held unheard is about its latency's worth, and the
+        // shown position is the first of it.
+        val unheldSent = before.size - heardPacket
+        assertTrue("unheard $unheldSent", unheldSent in 240..330)
+        assertEquals((parked.startFrame * 1000 / 44_100).toDouble(), parked.heard.positionMs.toDouble(), 10.0)
+
+        a.flush()
+        val resumed = Streamer(listOf(a), feed, NoEvents, log, parked)
+        resumed.resume()
+        assertTrue(first.waitFor(3_000) { first.audio.size >= before.size + unheldSent + 40 })
+        resumed.stop()
+        val after = first.audio.drop(before.size)
+        assertTrue(after.first().marker)
+        // The replay is the very packets not heard, in order...
+        for (i in 0 until unheldSent) {
+            assertTrue("packet $i", after[i].payload.contentEquals(before[heardPacket + i].payload))
+        }
+        // ...and what follows is new sound, none of it sent before.
+        val fresh = after[unheldSent]
+        assertTrue(before.none { it.payload.contentEquals(fresh.payload) })
+        a.teardown()
+    }
+
     /** When the speaker plays RTP time [rtp], by [sync]: its NTP moment for `rtpLessLatency`, on from there. */
     private fun playsAt(sync: FakeReceiver.Sync, rtp: Long): Double {
         val ntp = (sync.ntp ushr 32) + (sync.ntp and 0xffffffffL) / 4_294_967_296.0

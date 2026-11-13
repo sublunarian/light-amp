@@ -67,6 +67,19 @@ interface Output {
     /** One grouped speaker's own level, 0 to 1. */
     fun setMemberVolume(targetId: String, level: Float) {}
 
+    /** Whether [target] has to be paired first, with a code it shows on its screen. */
+    fun needsCode(target: OutputTarget): Boolean = false
+
+    /**
+     * Ask [target] to show its code. Blocks: never on Main. False when it
+     * couldn't be asked — after which [needsCode] may be false, when it
+     * turned out to need none.
+     */
+    fun showCode(target: OutputTarget): Boolean = false
+
+    /** Pair with [target] using the [code] typed in. Blocks: never on Main. True when it took. */
+    fun enterCode(target: OutputTarget, code: String): Boolean = false
+
     /**
      * The phone's own level moved — the rocker, or the system's slider — and
      * the fader already shows it. From the handle's collector, off Main.
@@ -369,6 +382,9 @@ interface OutputHost {
 
     /** A folder for [output]'s working files (a family's id), made if missing. Nothing else writes there. */
     fun workDir(output: String): java.io.File
+
+    /** A folder for what [output] keeps from one run to the next (a pairing), made if missing. */
+    fun keepDir(output: String): java.io.File
 
     /**
      * [output]'s far end ran out of queue: back to the first track, paused, as

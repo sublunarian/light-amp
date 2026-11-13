@@ -1,6 +1,7 @@
 package com.sublunar.amp.ui.components
 
 import androidx.compose.material.icons.Icons as Material
+import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.automirrored.filled.Sort
@@ -124,6 +125,7 @@ class MaterialGlyphsTest {
          * `null` here and run the test: it fails with the source to paste.
          */
         val GLYPHS: List<Pair<ImageVector, ImageVector?>> = listOf(
+            Material.AutoMirrored.Filled.Backspace to Icons.AutoMirrored.Filled.Backspace,
             Material.Filled.Add to Icons.Filled.Add,
             Material.Filled.AddCircleOutline to Icons.Filled.AddCircleOutline,
             Material.Filled.Album to Icons.Filled.Album,

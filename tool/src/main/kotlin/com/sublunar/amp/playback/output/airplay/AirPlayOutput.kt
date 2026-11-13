@@ -94,6 +94,97 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
     /** Speakers that turned a stream away until they were sent auth-setup — see [RaopSession]. */
     private val wantsAuthSetup = HashSet<String>()
 
+    // --- Pairing (Apple TV) ----------------------------------------------------
+
+    /** Each paired receiver's keys, a line each: its device id, then [PairedKeys.encode]. */
+    private val pairingsFile: File get() = File(host.keepDir("airplay"), "pairings")
+
+    /** A pairing begun (its code on the screen), waiting for the code: the receiver, its connection, the state. */
+    @Volatile
+    private var pairing: Triple<String, Rtsp, AirPlayPairing.Pending>? = null
+
+    @Synchronized
+    private fun pairedKeys(r: AirPlayReceiver): PairedKeys? =
+        readPairings()[r.deviceId]?.let(PairedKeys::decode)
+
+    @Synchronized
+    private fun keepPairing(r: AirPlayReceiver, keys: PairedKeys?) {
+        val all = readPairings().toMutableMap()
+        if (keys == null) all.remove(r.deviceId) else all[r.deviceId] = keys.encode()
+        val file = pairingsFile
+        val next = File(file.parentFile, file.name + ".new")
+        next.writeText(all.entries.joinToString("") { "${it.key} ${it.value}\n" })
+        next.renameTo(file)
+    }
+
+    private fun readPairings(): Map<String, String> = runCatching {
+        pairingsFile.takeIf { it.exists() }?.readLines().orEmpty()
+            .mapNotNull { line -> line.split(' ', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }
+            .toMap()
+    }.getOrDefault(emptyMap())
+
+    /** Receivers that wouldn't show a code but took pairing without one: they're played to that way. */
+    private val noCodeNeeded: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    override fun needsCode(target: OutputTarget): Boolean {
+        val r = (target as? AirPlayTarget)?.receiver ?: return false
+        return r.pairsWithCode && r.id !in noCodeNeeded && pairedKeys(r) == null
+    }
+
+    override fun showCode(target: OutputTarget): Boolean {
+        val r = (target as? AirPlayTarget)?.receiver ?: return false
+        pairing?.second?.close()
+        pairing = null
+        return try {
+            val rtsp = Rtsp.connect(r.address, r.port, RaopSession.AIRPLAY2_USER_AGENT, remote.id, PAIRING_TIMEOUT_MS)
+            try {
+                pairing = Triple(r.id, rtsp, AirPlayPairing.start(rtsp))
+            } catch (e: IOException) {
+                rtsp.close()
+                throw e
+            }
+            log("${r.name}: showing its code")
+            true
+        } catch (e: IOException) {
+            log("${r.name}: couldn't ask for its code (${e::class.simpleName})")
+            // One that won't show a code may take pairing without one, as a HomePod does.
+            if (e is AirPlayPairing.NotPaired && takesNoCode(r)) {
+                log("${r.name}: pairs without a code")
+                noCodeNeeded += r.id
+            }
+            false
+        }
+    }
+
+    private fun takesNoCode(r: AirPlayReceiver): Boolean = try {
+        val rtsp = Rtsp.connect(r.address, r.port, RaopSession.AIRPLAY2_USER_AGENT, remote.id, CONNECT_MS)
+        try {
+            AirPlayPairing.transient(rtsp)
+            true
+        } finally {
+            rtsp.close()
+        }
+    } catch (e: IOException) {
+        log("${r.name}: won't pair without a code either (${e::class.simpleName})")
+        false
+    }
+
+    override fun enterCode(target: OutputTarget, code: String): Boolean {
+        val r = (target as? AirPlayTarget)?.receiver ?: return false
+        val (id, rtsp, pending) = pairing?.takeIf { it.first == r.id } ?: return false
+        pairing = null
+        return try {
+            keepPairing(r, AirPlayPairing.finish(rtsp, pending, code.filter(Char::isDigit), PAIRED_NAME))
+            log("${r.name}: paired")
+            true
+        } catch (e: IOException) {
+            log("${r.name}: pairing didn't take (${e::class.simpleName})")
+            false
+        } finally {
+            rtsp.close()
+        }
+    }
+
     /** The level each speaker was last set to, for when it's chosen again. */
     private val levels = ConcurrentHashMap<String, Float>()
 
@@ -128,6 +219,22 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
     /** Each open session's Active-Remote, and whose it is: what a speaker's call says it's about. */
     private val remoteFor = ConcurrentHashMap<String, String>()
 
+
+    /**
+     * A pause's run, kept: its feed still decoding ahead, and what the
+     * speaker held unplayed. A play from the same place carries on with it
+     * rather than opening the track again (a server asked to start partway
+     * through takes seconds). Anything else lets it go.
+     */
+    private class Paused(val feed: Feed, val parked: Streamer.Parked, val row: Int, val at: Long = System.nanoTime())
+
+    // Worker-thread state.
+    private var paused: Paused? = null
+
+    private fun dropPaused() {
+        paused?.feed?.stop()
+        paused = null
+    }
 
     private class Run(val streamer: Streamer, val feed: Feed, val press: Int) {
         val startedAt = System.nanoTime()
@@ -499,7 +606,7 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
 
     /** Any AirPlay speaker not playing now — the one the cast was made to as well, after it left. */
     override fun canGroup(target: OutputTarget): Boolean =
-        target is AirPlayTarget && steered() != null && memberList.none { it.id == target.id }
+        target is AirPlayTarget && steered() != null && memberList.none { it.id == target.id } && !needsCode(target)
 
     /** Play on [target] as well: at once, in step, if the sound is going; else from the next play. */
     override fun addToGroup(target: OutputTarget) {
@@ -624,6 +731,8 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
      */
     private fun startAt(row: Int, ms: Long, press: Int) {
         if (press != presses.get()) return
+        val kept = paused
+        paused = null
         stopRun()
         val target = steered() ?: return
         val castId = target.receiver.id
@@ -652,8 +761,13 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
             // Superseded while a speaker was being reached: the later press has the say.
             if (press != presses.get() || steered()?.receiver?.id != castId) return
         }
-        if (opened.isEmpty()) return
-        val feed = Feed(
+        if (opened.isEmpty()) {
+            kept?.feed?.stop()
+            return
+        }
+        val resume = kept?.takeIf { it.carriesOn(row, track, ms) }
+        if (resume == null) kept?.feed?.stop()
+        val feed = resume?.feed ?: Feed(
             open = ::openTrack,
             following = { segment ->
                 val queue = host.queue.value
@@ -665,17 +779,25 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
             prefetch = ::prefetch,
         )
         lateinit var started: Run
-        val streamer = Streamer(opened, feed, events { started }, ::log)
+        val streamer = Streamer(opened, feed, events { started }, ::log, resume?.parked)
         started = Run(streamer, feed, press)
         run = started
         pausedOn = null
         host.showPlaying(true)
-        streamer.start()
-        log("playing row $row from $ms ms")
+        if (resume != null) streamer.resume() else streamer.start()
+        log(if (resume != null) "playing row $row from $ms ms, carrying on from the pause" else "playing row $row from $ms ms")
     }
+
+    /** Whether a play of [track] at [row] from [ms] is where this pause left off, not long ago. */
+    private fun Paused.carriesOn(row: Int, track: Track, ms: Long): Boolean =
+        this.row == row && parked.heard.segment.track.id == track.id &&
+            abs(parked.heard.positionMs - ms) <= RESUME_SLACK_MS &&
+            System.nanoTime() - at < KEEP_PAUSED_NS &&
+            feed.ended.let { it == null || it == Feed.End.QUEUE }
 
     /** Stop sending: what the speaker had got to, or null with nothing running. */
     private fun stopRun(): Heard? {
+        dropPaused()
         val current = run ?: return null
         run = null
         return current.streamer.stop()
@@ -687,7 +809,12 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
     }
 
     private fun pauseHere(press: Int) {
-        val heard = stopRun()
+        dropPaused()
+        val current = run
+        run = null
+        val parked = current?.streamer?.park()
+        if (parked != null) paused = Paused(current.feed, parked, rowOf(parked.heard.segment))
+        val heard = parked?.heard ?: current?.streamer?.heardNow()
         // Whatever was shown since — a start that finished after this press
         // was made — the pause is the last word on playing.
         if (steered() != null) host.showPaused()
@@ -702,8 +829,26 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
 
     private fun openSession(r: AirPlayReceiver): RaopSession? {
         val userAgent = "Amp/${BuildConfig.VERSION_NAME}"
+        val pairing = when {
+            r.pairsWithCode && r.id in noCodeNeeded -> Ap2Pairing.Transient
+            r.pairsWithCode -> Ap2Pairing.Kept(
+                pairedKeys(r) ?: run {
+                    log("${r.name}: not paired")
+                    couldNotOpen(r, busy = false)
+                    return null
+                },
+            )
+            r.pairsWithoutCode -> Ap2Pairing.Transient
+            else -> null
+        }
         val opened = try {
-            RaopSession.open(r, userAgent, authSetup = r.id in wantsAuthSetup, log = ::log, dacpId = remote.id)
+            RaopSession.open(r, userAgent, authSetup = r.id in wantsAuthSetup, log = ::log, dacpId = remote.id, pairing = pairing)
+        } catch (e: AirPlayPairing.NotPaired) {
+            // Unpaired on the TV's side: a tap on it asks for a code again.
+            log("${r.name}: no longer paired")
+            keepPairing(r, null)
+            couldNotOpen(r, busy = false)
+            return null
         } catch (e: RaopRefused) {
             // Some speakers turn a stream away until a sender starts the
             // handshake they offer (see RaopSession.authSetup); asked once more.
@@ -1096,6 +1241,20 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
         const val MASK32 = 0xffffffffL
         const val FORBIDDEN = 403
         const val BUSY = 453
+
+        /** A play this close to where a pause was heard carries on from it. */
+        const val RESUME_SLACK_MS = 500L
+
+        /** How long a pause's decoding is kept for a quick resume; a stream left longer may have been let go. */
+        val KEEP_PAUSED_NS = TimeUnit.MINUTES.toNanos(10)
+
+        const val CONNECT_MS = 5_000
+
+        /** Pairing waits on a person reading a code off a TV and typing it. */
+        const val PAIRING_TIMEOUT_MS = 120_000
+
+        /** What an Apple TV lists Amp under once paired. */
+        const val PAIRED_NAME = "Amp"
 
         /** AirPlay's volume runs from −30 dB to 0, with −144 for silence. */
         fun dbFor(level: Float): Double = if (level <= 0f) RaopSession.MUTE_DB else -30.0 + 30.0 * level.coerceAtMost(1f)

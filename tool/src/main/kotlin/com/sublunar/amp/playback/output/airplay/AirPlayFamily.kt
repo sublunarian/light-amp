@@ -6,6 +6,7 @@ import com.sublunar.amp.playback.output.OutputFamily
 import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
@@ -54,19 +55,35 @@ object AirPlayFamily : OutputFamily {
     /** The speakers Amp can play to, after a few seconds of listening. None off Wi-Fi. */
     internal suspend fun discover(): List<AirPlayReceiver> = withContext(Dispatchers.IO) {
         if (!allowsNetwork()) return@withContext emptyList()
+        // The AirPlay record beside each speaker's says who it lets in; heard at the same time.
+        val access = async { runCatching { Mdns.browse(AIRPLAY_SERVICE, LISTEN_MS) }.getOrDefault(emptyList()) }
         val services = try {
             Mdns.browse(SERVICE, LISTEN_MS)
         } catch (e: IOException) {
             Log.i(logTag, "search failed (${e::class.simpleName})")
             return@withContext emptyList()
         }
+        val ownerOnly = ownerOnly(access.await())
         services.mapNotNull { service ->
-            AirPlayReceiver.whyNot(service)?.let { why ->
-                Log.i(logTag, "left out ${service.instance.substringBefore("._raop.").substringAfter('@')}: $why")
+            val name = service.instance.substringBefore("._raop.").substringAfter('@')
+            AirPlayReceiver.whyNot(service)?.let { why -> Log.i(logTag, "left out $name: $why") }
+            AirPlayReceiver.from(service)?.takeUnless { r ->
+                (r.deviceId in ownerOnly).also { if (it) Log.i(logTag, "left out $name: it lets only its owner's account play") }
             }
-            AirPlayReceiver.from(service)
         }.distinctBy { it.id }
     }
+
+    /**
+     * The device ids (as in a speaker's RAOP name, lower-case hex) of those
+     * that let only their owner's account AirPlay to them: a Mac set to
+     * "Current User" says `act=2`, and turns everyone else away.
+     */
+    internal fun ownerOnly(airplay: List<Mdns.Service>): Set<String> =
+        airplay.filter { it.txt["act"] == "2" }
+            .mapNotNull { it.txt["deviceid"]?.replace(":", "")?.lowercase() }
+            .toSet()
+
+    private const val AIRPLAY_SERVICE = "_airplay._tcp.local"
 }
 
 /** A speaker found on the network. */

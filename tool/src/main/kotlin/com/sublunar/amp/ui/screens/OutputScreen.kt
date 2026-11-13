@@ -43,6 +43,7 @@ import com.sublunar.amp.ui.components.listPadding
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SealedLightActivity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
@@ -65,6 +66,39 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     override fun willShow() {
         App.playback.forgetPausedSpeaker()
     }
+
+    /**
+     * An Apple TV not yet paired: its code goes up on its screen and is
+     * typed in here, then it plays. A wrong code brings up a new one.
+     */
+    private fun pairThenCast(family: OutputFamily, target: OutputTarget, again: Boolean = false) {
+        App.scope.launch(Dispatchers.Main) {
+            turnedAway = null
+            if (!App.playback.showCode(family, target)) {
+                // It needed no code after all, or it won't take Amp at all.
+                if (!App.playback.needsCode(family, target)) App.playback.castTo(family, target) else turnedAway = target.name
+                return@launch
+            }
+            val title = if (again) "Wrong code. Enter the new one" else "Code on ${target.name}"
+            navigateTo<String?>(
+                { CodeEntryScreen(it, title = title) },
+                resultCallback = { code ->
+                    if (code != null) {
+                        App.scope.launch(Dispatchers.Main) {
+                            if (App.playback.enterCode(family, target, code)) {
+                                App.playback.castTo(family, target)
+                            } else {
+                                pairThenCast(family, target, again = true)
+                            }
+                        }
+                    }
+                },
+            )
+        }
+    }
+
+    /** A receiver that wouldn't pair with Amp at all, named under the list until the next try. */
+    private var turnedAway by mutableStateOf<String?>(null)
 
     @Composable
     override fun Content() {
@@ -206,6 +240,8 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         ) {
                             if (selected) {
                                 if (group.isNotEmpty()) App.playback.removeFromGroup(target) else App.playback.playHere()
+                            } else if (App.playback.needsCode(family, target)) {
+                                pairThenCast(family, target)
                             } else if (!App.playback.castTo(family, target)) {
                                 // Out of reach after all (the network went, or
                                 // nothing can steer it): the row goes, and
@@ -219,6 +255,9 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 }
                 val onlyUnplayable = rows.isEmpty() &&
                     families.listOrder.any { !steerable(it) && found[it.id].orEmpty().isNotEmpty() }
+                turnedAway?.let { name ->
+                    item { OutputNote("$name won't let Amp play. A Mac lets it when AirPlay Receiver allows anyone on the network.") }
+                }
                 if (lanHidden) {
                     item { OutputNote("Network speakers need Wi-Fi.") }
                 } else if (!scanning && onlyUnplayable) {
