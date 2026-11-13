@@ -54,6 +54,10 @@ class MoreScreen(
 
     @Composable
     override fun Content() {
+        // Stays up through a library change (made from its Source row), but the
+        // page it was opened over may not be in the new library: back from here
+        // then goes to the root list rather than to that page.
+        val stale = libraryChangedSinceOpened()
         val active by App.settings.activeSource.state.collectAsState()
         // Read here rather than at the row: a list's items are built outside
         // composition, where a @Composable can't be called.
@@ -79,7 +83,7 @@ class MoreScreen(
                     // Named after the page it belongs to, as the sort menus are.
                     title = pageTitle ?: defaultTitle(page),
                     fitTitle = true,
-                    onBack = { goBack() },
+                    onBack = { if (stale) backToRoot() else goBack() },
                     rightAction = HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
                 )
                 CompositionLocalProvider(LocalMenuHeading provides true) {

@@ -51,6 +51,7 @@ import com.sublunar.amp.log.logRef
 import com.sublunar.amp.log.loggableWord
 import com.sublunar.amp.playback.LateUnbindGuard
 import com.sublunar.amp.playback.PlaybackController
+import com.sublunar.amp.ui.screens.LibraryNav
 import com.sublunar.amp.ui.components.NOTICE_MS
 import com.sublunar.amp.ui.components.indexLetterOf
 import com.thelightphone.sdk.LightWork
@@ -721,6 +722,13 @@ object App {
             // order — see [swapSource].
             scope.launch {
                 settings.activeSource.collect { active -> swapSource(active) }
+            }
+            // Another source or other libraries: the pages and places browsed so
+            // far belong to the library left behind — see LibraryNav.libraryChanged.
+            scope.launch(Dispatchers.Main) {
+                _source.map { it.id to it.selectedLibraries }.distinctUntilChanged().drop(1).collect {
+                    LibraryNav.libraryChanged()
+                }
             }
             // Any source's mode changing (the Offline page sets it per server)
             // starts fetching without waiting for the next sync.

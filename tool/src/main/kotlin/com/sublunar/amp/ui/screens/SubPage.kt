@@ -46,6 +46,7 @@ fun SimpleLightScreen<*>.libraryCornerAction(
  */
 @Composable
 fun SimpleLightScreen<*>.LibrarySubPage(content: @Composable ColumnScope.() -> Unit) {
+    leaveOnLibraryChange()
     PlayerTheme(library = true) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {

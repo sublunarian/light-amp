@@ -100,7 +100,6 @@ fun SimpleLightScreen<*>.LibraryShell() {
     val currentTab by LibraryNav.currentTab.collectAsState()
     val libraryIndex by LibraryNav.libraryIndex.collectAsState()
     val searchActive by LibraryNav.searchActive.collectAsState()
-    val typing by LibraryNav.typing.collectAsState()
     PlayerTheme(library = true) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
@@ -112,17 +111,16 @@ fun SimpleLightScreen<*>.LibraryShell() {
                     TabContent(currentTab)
                 }
             }
-            // Not while typing, where the keyboard takes the bottom. Over the
-            // results it is back: with no tab lit, as search is none of them,
-            // and under Simplified with search lit.
-            if (!searchActive || !typing) {
+            // Search is a page of its own, with no bar in either layout.
+            if (!searchActive) {
                 Navbar(
-                    current = if (libraryIndex || searchActive) null else currentTab,
+                    current = if (libraryIndex) null else currentTab,
                     onSelect = { LibraryNav.tapTab(it) },
                     onSearch = { startSearch() },
                     onNowPlaying = { go { NowPlayingScreen(it) } },
                     onBrowse = { LibraryNav.pressLibrary() },
-                    libraryLit = !searchActive,
+                    // The home page is the library: no button for it there.
+                    showLibrary = !libraryIndex,
                 )
             }
         }

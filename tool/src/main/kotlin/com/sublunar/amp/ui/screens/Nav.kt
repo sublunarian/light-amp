@@ -10,6 +10,12 @@ import com.sublunar.amp.ui.components.Selections
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import java.util.WeakHashMap
 import kotlinx.coroutines.launch
 
 /**
@@ -24,11 +30,16 @@ object LibraryNav {
     val searchActive = MutableStateFlow(false)
     val searchQuery = MutableStateFlow("")
 
+    /** The query the search results' scroll place belongs to: a new query starts them at the top. */
+    internal var resultsQuery = ""
+
     /**
      * Show the search page, empty: a search starts afresh rather than on the
      * last one. Straight to typing [withKeyboard] (the header's magnifier).
      */
     fun openSearch(withKeyboard: Boolean = false) {
+        ScrollAnchors.clear("search")
+        resultsQuery = ""
         searchQuery.value = ""
         searchActive.value = true
         typing.value = withKeyboard
@@ -54,6 +65,22 @@ object LibraryNav {
      * backing out of one lands here too.
      */
     val libraryIndex = MutableStateFlow(false)
+
+    /**
+     * Moves on each time the library being browsed changes, another source or
+     * other libraries of it. A page opened before then goes back to the root
+     * list (see [leaveOnLibraryChange]), and every list starts at its top.
+     */
+    val libraryGeneration = MutableStateFlow(0)
+
+    /** The generation each library page was first drawn in, so it knows on its return that it is stale. */
+    internal val openedIn = WeakHashMap<SimpleLightScreen<*>, Int>()
+
+    internal fun libraryChanged() {
+        ScrollAnchors.clearAll()
+        closeSearch()
+        libraryGeneration.value++
+    }
 
     /** Show the index, leaving whatever was showing. */
     fun openLibraryIndex() {
@@ -265,6 +292,24 @@ sealed interface Parent {
 fun SimpleLightScreen<*>.playFromRow(tracks: List<Track>, index: Int) {
     if (App.playback.currentTrack.value?.id != tracks.getOrNull(index)?.id) App.playback.playQueue(tracks, index)
     go { NowPlayingScreen(it) }
+}
+
+/**
+ * For a page of the library being browsed (an album, an artist, a playlist):
+ * opened before the library changed, it goes back to the root
+ * list, which the new library has. Its own records may not be in it.
+ */
+@Composable
+fun SimpleLightScreen<*>.leaveOnLibraryChange() {
+    if (libraryChangedSinceOpened()) LaunchedEffect(Unit) { backToRoot() }
+}
+
+/** Whether the library being browsed has changed since this page was first drawn. */
+@Composable
+fun SimpleLightScreen<*>.libraryChangedSinceOpened(): Boolean {
+    val generation by LibraryNav.libraryGeneration.collectAsState()
+    val opened = remember(this) { LibraryNav.openedIn.getOrPut(this) { generation } }
+    return generation != opened
 }
 
 fun SimpleLightScreen<*>.backToRoot() {

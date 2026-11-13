@@ -49,9 +49,6 @@ import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.HEADER_BAR_PX
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import com.sublunar.amp.ui.components.ListScrollBar
-import com.sublunar.amp.ui.components.ROW_ACTION_ICON_PX
-import com.sublunar.amp.ui.components.ROW_GAP_PX
-import com.sublunar.amp.ui.components.LIST_LEAD_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
@@ -63,6 +60,8 @@ import com.sublunar.amp.ui.components.rememberListAnchor
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightThemeTokens
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -93,6 +92,14 @@ internal fun SimpleLightScreen<*>.SearchView() {
         results = withContext(Dispatchers.Default) { App.library.search(live) }
     }
     val listState = rememberListAnchor("search")
+    // Each new query's results from the top; the same query, come back to from a
+    // page it opened, keeps its place.
+    LaunchedEffect(live) {
+        if (live != LibraryNav.resultsQuery) {
+            LibraryNav.resultsQuery = live
+            listState.scrollToItem(0)
+        }
+    }
     // Scrolling the results puts the keyboard away, so the whole list shows.
     LaunchedEffect(listState, typing) {
         if (!typing) return@LaunchedEffect
@@ -104,13 +111,19 @@ internal fun SimpleLightScreen<*>.SearchView() {
     // The rows take the scrollbar's lane back individually, so the list itself
     // keeps equal margins.
     val lane = px(SCROLLBAR_LANE_PX) - px(LIST_EDGE_PX)
-    // The cross abandons the search, query included: back to the list it was
+    // Back abandons the search, query included: back to the list it was
     // started from, as if it never happened.
     val cancel = {
         state.clearText()
         LibraryNav.setQuery("")
         LibraryNav.typing.value = false
         LibraryNav.closeSearch()
+    }
+    // The cross empties the field and brings the keyboard back for another try.
+    val clear = {
+        state.clearText()
+        LibraryNav.setQuery("")
+        LibraryNav.typing.value = true
     }
     Column(Modifier.fillMaxSize()) {
         SearchHeader(
@@ -123,7 +136,8 @@ internal fun SimpleLightScreen<*>.SearchView() {
                 LibraryNav.typing.value = true
             },
             onEdit = { LibraryNav.typing.value = true },
-            onCancel = cancel,
+            onBack = cancel,
+            onClear = clear,
         )
         Box(modifier = Modifier.weight(1f)) {
             // Nothing typed yet, so nothing listed: results come with the first
@@ -146,10 +160,8 @@ internal fun SimpleLightScreen<*>.SearchView() {
                                 name = artist.name,
                                 imageId = artist.imageId,
                                 modifier = Modifier.padding(end = lane),
-                                onClick = {
-                                    LibraryNav.closeSearch()
-                                    openArtist(artist.name, Parent.tab(LibraryTab.ARTISTS))
-                                },
+                                // Over the results, so back returns to them.
+                                onClick = { openArtist(artist.name, Parent.Here) },
                             )
                         }
                     }
@@ -162,14 +174,8 @@ internal fun SimpleLightScreen<*>.SearchView() {
                                 coverArtId = album.coverArtId,
                                 fallback = AppIcons.Album,
                                 modifier = Modifier.padding(end = lane),
-                                onClick = {
-                                    LibraryNav.closeSearch()
-                                    openAlbum(album.id, Parent.artist(album.artist))
-                                },
-                                onLongClick = {
-                                    LibraryNav.closeSearch()
-                                    go { AlbumActionsScreen(it, album.id) }
-                                },
+                                onClick = { openAlbum(album.id, Parent.Here) },
+                                onLongClick = { go { AlbumActionsScreen(it, album.id) } },
                             )
                         }
                     }
@@ -226,7 +232,8 @@ private fun SearchHeader(
     /** Moves the cursor to a tapped spot in the query; null leaves taps to [onEdit]. */
     onPlaceCursor: ((Int) -> Unit)?,
     onEdit: () -> Unit,
-    onCancel: () -> Unit,
+    onBack: () -> Unit,
+    onClear: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -234,6 +241,16 @@ private fun SearchHeader(
             .height(px(HEADER_BAR_PX)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Back where every page has it, AppHeader's 160px corner square and the
+        // phone's own chevron.
+        Box(
+            modifier = Modifier
+                .size(px(HEADER_BAR_PX))
+                .appClickable(onClick = onBack),
+            contentAlignment = Alignment.Center,
+        ) {
+            LightIcon(LightIcons.BACK, size = 2f)
+        }
         Row(
             modifier = Modifier
                 .weight(1f)
@@ -241,20 +258,18 @@ private fun SearchHeader(
                 .appClickable(onClick = onEdit),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Spacer(Modifier.width(px(LIST_EDGE_PX + LIST_LEAD_PX)))
-            AppIcon(AppIcons.Search, size = px(SEARCH_GLYPH_PX))
-            Spacer(Modifier.width(px(ROW_GAP_PX)))
             QueryField(query, cursor, onPlaceCursor, Modifier.weight(1f))
         }
-        // The cross in the header's corner, AppHeader's 160px square: search
-        // has no menu of its own, so the way out is where More is elsewhere.
+        // The cross where More is elsewhere: it clears the field, so it shows
+        // only while there is something in it. Its square stays, so the query
+        // doesn't move when it comes and goes.
         Box(
             modifier = Modifier
                 .size(px(HEADER_BAR_PX))
-                .appClickable(onClick = onCancel),
+                .then(if (query.isEmpty()) Modifier else Modifier.appClickable(onClick = onClear)),
             contentAlignment = Alignment.Center,
         ) {
-            AppIcon(AppIcons.Close, size = px(CORNER_ICON_PX))
+            if (query.isNotEmpty()) AppIcon(AppIcons.Close, size = px(CORNER_ICON_PX))
         }
     }
 }
@@ -332,8 +347,5 @@ private fun QueryField(
 /** The SDK editor's cursor: 2dp, 6px on the LP3. */
 private const val CURSOR_WIDTH_PX = 6
 
-/** Where the search glyph sits: the list's edge plus a row's lead. */
-
-/** The search header's type and glyph, in the rows' sizes so it matches the rows beneath. */
+/** The search header's type, in the rows' size so it matches the rows beneath. */
 private const val SEARCH_TEXT_PX = ROW_TITLE_PX
-private const val SEARCH_GLYPH_PX = ROW_ACTION_ICON_PX

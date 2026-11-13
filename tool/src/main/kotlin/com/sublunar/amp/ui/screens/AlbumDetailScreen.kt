@@ -68,7 +68,6 @@ class AlbumDetailScreen(
         val album = remember(albums, albumId) { albums.firstOrNull { it.id == albumId } }
         val current by App.playback.currentTrack.collectAsState()
         val artworkHidden by App.hideArtwork.collectAsState()
-        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
 
         var tracks by remember(albumId) { mutableStateOf<List<Track>?>(null) }
         LaunchedEffect(albumId) {
@@ -154,7 +153,6 @@ class AlbumDetailScreen(
                             selected = if (selection.active) track.id in selection.selected else null,
                             coverArtId = track.coverArtId,
                             numberColumn = numberColumn,
-                            downloaded = track.id in downloadedIds,
                             onClick = {
                                 if (selection.active) {
                                     selection.toggle(track.id)

@@ -66,6 +66,11 @@ object ScrollAnchors {
     fun clear(owner: String) {
         anchors.keys.removeAll { key -> key == owner || key.startsWith("$owner/") }
     }
+
+    /** Forget every list's place: a different library makes them all point at the wrong rows. */
+    fun clearAll() {
+        anchors.clear()
+    }
 }
 
 /**

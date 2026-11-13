@@ -198,7 +198,7 @@ fun TrackRow(
 
 /** The download mark itself, where [downloaded] and the marks aren't switched off. */
 @Composable
-private fun DownloadGlyph(downloaded: Boolean, modifier: Modifier = Modifier, grey: Boolean = false) {
+private fun DownloadGlyph(downloaded: Boolean, modifier: Modifier = Modifier) {
     val marks = !App.settings.hideDownloadIcons.state.collectAsState().value
     if (!downloaded || !marks) return
     // Light's own arrow (as the stock Podcasts tool marks a download), at one
@@ -206,7 +206,7 @@ private fun DownloadGlyph(downloaded: Boolean, modifier: Modifier = Modifier, gr
     Icon(
         painterResource(LightIcons.DOWNLOADED_ARROW.drawableResource),
         contentDescription = null,
-        tint = if (grey) LightThemeTokens.colors.contentSecondary else LightThemeTokens.colors.content,
+        tint = LightThemeTokens.colors.content,
         modifier = modifier.size(1f.gridUnitsAsDp()),
     )
 }
@@ -298,9 +298,6 @@ const val ROW_ART_PX = 128
 internal const val TALL_ROW_H_PX = ROW_H_PX
 private const val TALL_ROW_ART_PX = TALL_ROW_H_PX - (ROW_H_PX - ROW_ART_PX)
 const val ROW_GAP_PX = 32
-
-/** How far the middle of a title's letters sits below the middle of its line (measured against the stock Podcasts tool). */
-private const val MARK_INK_DROP_PX = 5
 
 /** An action row's icon, centred in the cover's box where a list has covers. */
 const val ROW_ACTION_ICON_PX = 57
@@ -547,14 +544,7 @@ fun NumberedRow(
     coverArtId: String? = null,
     /** The album's widest number: see [rememberNumberColumn]. */
     numberColumn: Dp,
-    /**
-     * A download mark at the row's right end, on the title's line, in the SDK's
-     * grey: on an album page everything but the titles is grey, and a white
-     * arrow at the edge would read as a button.
-     */
-    downloaded: Boolean = false,
 ) {
-    val marks = !App.settings.hideDownloadIcons.state.collectAsState().value
     val numberLead = numberColumn + px(NUMBER_GAP_PX)
     Row(
         modifier = Modifier
@@ -609,14 +599,6 @@ fun NumberedRow(
                     exact = true,
                     modifier = Modifier.weight(1f).alignByBaseline(),
                 )
-                if (downloaded && marks) {
-                    Spacer(Modifier.width(px(ROW_GAP_PX)))
-                    DownloadGlyph(
-                        downloaded,
-                        Modifier.align(Alignment.CenterVertically).offset(y = px(MARK_INK_DROP_PX)),
-                        grey = true,
-                    )
-                }
             }
             if (subtitle.isNotBlank()) {
                 AppText(
