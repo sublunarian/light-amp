@@ -349,9 +349,6 @@ data class MusicSource(
      */
     val supportsRadio: Boolean get() = capabilities.radio
 
-    /** Whether a playlist can be started empty and filled later — not on Plex. */
-    val supportsEmptyPlaylists: Boolean get() = capabilities.emptyPlaylists
-
     /**
      * Downloading only means something when the audio is somewhere else.
      *

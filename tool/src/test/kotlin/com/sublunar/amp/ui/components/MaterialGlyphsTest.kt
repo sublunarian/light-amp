@@ -2,27 +2,19 @@ package com.sublunar.amp.ui.components
 
 import androidx.compose.material.icons.Icons as Material
 import androidx.compose.material.icons.automirrored.filled.Backspace
-import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Speaker
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Dehaze
-import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Star
@@ -32,13 +24,9 @@ import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Smartphone
@@ -126,22 +114,14 @@ class MaterialGlyphsTest {
          */
         val GLYPHS: List<Pair<ImageVector, ImageVector?>> = listOf(
             Material.AutoMirrored.Filled.Backspace to Icons.AutoMirrored.Filled.Backspace,
-            Material.Filled.Add to Icons.Filled.Add,
-            Material.Filled.AddCircleOutline to Icons.Filled.AddCircleOutline,
             Material.Filled.Album to Icons.Filled.Album,
             Material.Filled.ArrowDownward to Icons.Filled.ArrowDownward,
             Material.Filled.ArrowUpward to Icons.Filled.ArrowUpward,
-            Material.Filled.Bluetooth to Icons.Filled.Bluetooth,
             Material.Filled.Cast to Icons.Filled.Cast,
             Material.Filled.Speaker to Icons.Filled.Speaker,
-            Material.Filled.CheckCircle to Icons.Filled.CheckCircle,
-            Material.Filled.Close to Icons.Filled.Close,
             Material.Filled.CloudOff to Icons.Filled.CloudOff,
             Material.Filled.Dehaze to Icons.Filled.Dehaze,
-            Material.Filled.DeleteOutline to Icons.Filled.DeleteOutline,
             Material.Filled.Dns to Icons.Filled.Dns,
-            Material.Filled.FastForward to Icons.Filled.FastForward,
-            Material.Filled.FastRewind to Icons.Filled.FastRewind,
             Material.Filled.Favorite to Icons.Filled.Favorite,
             Material.Filled.FavoriteBorder to Icons.Filled.FavoriteBorder,
             Material.Filled.Star to Icons.Filled.Star,
@@ -151,17 +131,7 @@ class MaterialGlyphsTest {
             Material.Filled.Whatshot to Icons.Filled.Whatshot,
             Material.Filled.MoreVert to Icons.Filled.MoreVert,
             Material.Filled.MusicNote to Icons.Filled.MusicNote,
-            Material.Filled.Pause to Icons.Filled.Pause,
-            Material.Filled.PlayArrow to Icons.Filled.PlayArrow,
-            Material.Filled.RadioButtonUnchecked to Icons.Filled.RadioButtonUnchecked,
-            Material.Filled.Refresh to Icons.Filled.Refresh,
-            Material.Filled.Repeat to Icons.Filled.Repeat,
-            Material.Filled.RepeatOne to Icons.Filled.RepeatOne,
-            Material.Filled.Search to Icons.Filled.Search,
-            Material.Filled.Settings to Icons.Filled.Settings,
-            Material.Filled.Shuffle to Icons.Filled.Shuffle,
             Material.Filled.Smartphone to Icons.Filled.Smartphone,
-            Material.AutoMirrored.Filled.FormatListBulleted to Icons.AutoMirrored.Filled.FormatListBulleted,
             Material.AutoMirrored.Filled.QueueMusic to Icons.AutoMirrored.Filled.QueueMusic,
             Material.AutoMirrored.Filled.Sort to Icons.AutoMirrored.Filled.Sort,
             Material.AutoMirrored.Filled.VolumeDown to Icons.AutoMirrored.Filled.VolumeDown,

@@ -46,7 +46,6 @@ import com.sublunar.amp.ui.CANVAS_W_PX
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
-import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightThemeTokens
 
@@ -158,7 +157,16 @@ fun TrackRow(
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RowLead(downloaded)
+        // Without artwork the mark sits on the title's line, half the subtitle's line above the middle.
+        val noArt = artworkHidden && selected == null
+        RowLead(
+            downloaded,
+            inkDropPx = when {
+                !noArt -> null
+                subtitle.isNotBlank() -> MARK_INK_DROP_PX - type.subLinePx / 2
+                else -> TITLE_ONLY_INK_DROP_PX
+            },
+        )
         if (number != null && selected == null) {
             // Dim, and centred on the row as the cover is.
             Box(Modifier.width(numberColumn), contentAlignment = Alignment.Center) {
@@ -201,13 +209,13 @@ fun TrackRow(
 private fun DownloadGlyph(downloaded: Boolean, modifier: Modifier = Modifier) {
     val marks = !App.settings.hideDownloadIcons.state.collectAsState().value
     if (!downloaded || !marks) return
-    // Light's own arrow (as the stock Podcasts tool marks a download), at one
-    // grid unit, white as the row's own text.
+    // Light's own arrow (as the stock Podcasts tool marks a download), white as
+    // the row's own text.
     Icon(
         painterResource(LightIcons.DOWNLOADED_ARROW.drawableResource),
         contentDescription = null,
         tint = LightThemeTokens.colors.content,
-        modifier = modifier.size(1f.gridUnitsAsDp()),
+        modifier = modifier.size(px(DOWNLOAD_MARK_PX)),
     )
 }
 
@@ -299,6 +307,15 @@ internal const val TALL_ROW_H_PX = ROW_H_PX
 private const val TALL_ROW_ART_PX = TALL_ROW_H_PX - (ROW_H_PX - ROW_ART_PX)
 const val ROW_GAP_PX = 32
 
+/** How far the middle of a title's capitals sits below the middle of its line, with a subtitle under it (measured on the phone). */
+private const val MARK_INK_DROP_PX = 5
+
+/** The same in a row of the title alone, where the capitals sit a little above the row's middle (measured on the phone). */
+private const val TITLE_ONLY_INK_DROP_PX = -1
+
+/** The download mark: Light's 40px arrow beside its 44px capitals, scaled to Amp's 37px ones (11dp, so it stays sharp). */
+private const val DOWNLOAD_MARK_PX = 33
+
 /** An action row's icon, centred in the cover's box where a list has covers. */
 const val ROW_ACTION_ICON_PX = 57
 const val ROW_ACTION_H_PX = 102
@@ -312,11 +329,15 @@ const val ROW_LEAD_PX = 40 - LIST_EDGE_PX
 /** Where a library list row's content starts, 72px from the screen's edge: the download mark sits in the room it makes. */
 const val LIST_LEAD_PX = 72 - LIST_EDGE_PX
 
-/** The lead before a row's content, holding its download mark. */
+/**
+ * The lead before a row's content, holding its download mark: centred on the row
+ * beside artwork, and without it moved [inkDropPx] from the middle to sit centred
+ * on the title's capitals, as Light's music tool sets it.
+ */
 @Composable
-private fun RowLead(downloaded: Boolean) {
+private fun RowLead(downloaded: Boolean, inkDropPx: Int? = null) {
     Box(Modifier.width(px(LIST_LEAD_PX)), contentAlignment = Alignment.CenterStart) {
-        DownloadGlyph(downloaded)
+        DownloadGlyph(downloaded, if (inkDropPx == null) Modifier else Modifier.offset(y = px(inkDropPx)))
     }
 }
 
@@ -351,7 +372,8 @@ fun ArtistRow(
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RowLead(downloaded)
+        // Without pictures the mark sits on the name's first line.
+        RowLead(downloaded, inkDropPx = if (covers) null else TITLE_ONLY_INK_DROP_PX - (nameLines - 1) * type.titleLinePx / 2)
         if (covers) {
             // Round where an album is square, so the shape says what this is and a
             // face doesn't read as a sleeve that failed to load.

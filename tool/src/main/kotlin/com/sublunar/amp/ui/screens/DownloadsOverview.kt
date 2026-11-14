@@ -146,7 +146,7 @@ class DownloadsOverviewScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sea
                                     "${"%,d".format(progress.pending)} left".takeIf { progress.pending > 1 },
                                 ).joinToString(" · "),
                                 onClick = { App.downloader.setUserPaused(!paused) },
-                                trailing = { AppIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause, size = px(61)) },
+                                trailing = { AppIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause, size = px(38)) },
                             )
                         }
                     }

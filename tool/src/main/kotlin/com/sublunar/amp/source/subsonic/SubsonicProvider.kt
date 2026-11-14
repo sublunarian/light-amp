@@ -56,7 +56,6 @@ object SubsonicProvider : SourceProvider {
         likes = true,
         ratings = features.allows(ServerFeatures.SET_RATING),
         radio = features.allows(ServerFeatures.SIMILAR_SONGS),
-        emptyPlaylists = true,
         downloads = true,
         originalDownload = features.allows(ServerFeatures.DOWNLOAD),
         serverScan = features.allows(ServerFeatures.SCAN_STATUS),

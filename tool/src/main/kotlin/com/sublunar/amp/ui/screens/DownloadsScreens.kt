@@ -34,7 +34,7 @@ private fun offlineModeDetail(mode: OfflineMode): String = when (mode) {
 }
 
 fun dataModeLabel(mode: DataMode): String = when (mode) {
-    DataMode.MAKE_IT_HURT -> "Make it Hurt"
+    DataMode.MAKE_IT_HURT -> "Unrestricted"
     DataMode.LOW_DATA -> "Low Data"
     DataMode.WIFI_ONLY -> "Wi-Fi Only"
 }
@@ -44,7 +44,7 @@ private const val MODE_DETAIL_LINES = Int.MAX_VALUE
 
 private fun dataModeDetail(mode: DataMode): String = when (mode) {
     DataMode.MAKE_IT_HURT -> "No limits. Amp uses cellular data for everything when there's no Wi-Fi"
-    DataMode.LOW_DATA -> "Uses cellular data for music, lyrics and the artwork you look at. Downloads wait for Wi-Fi"
+    DataMode.LOW_DATA -> "Uses cellular data for music, lyrics and artwork. Downloads wait for Wi-Fi"
     DataMode.WIFI_ONLY -> "Never uses cellular data"
 }
 

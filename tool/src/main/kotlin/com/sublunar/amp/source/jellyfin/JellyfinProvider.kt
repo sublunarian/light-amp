@@ -52,7 +52,6 @@ object JellyfinProvider : SourceProvider {
         likes = true,
         ratings = false,
         radio = true,
-        emptyPlaylists = true,
         downloads = true,
         originalDownload = true,
         serverScan = true,

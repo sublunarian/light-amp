@@ -40,6 +40,7 @@ import com.sublunar.amp.ui.components.ROW_LEAD_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.ScrollableList
+import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.formatRunTime
@@ -133,6 +134,8 @@ class AlbumDetailScreen(
                 }
                 val numbers = remember(list) { list.mapIndexed { i, t -> t.trackNumber ?: (i + 1) } }
                 val numberColumn = rememberNumberColumn(numbers)
+                // A record on more than one disc lists each under its own heading.
+                val discs = remember(list) { list.mapNotNull { it.discNumber }.distinct() }
                 ScrollableList(state = listState) {
                     if (card != null) {
                         item {
@@ -144,6 +147,10 @@ class AlbumDetailScreen(
                         }
                     }
                     itemsIndexed(list, key = { _, t -> t.id }) { index, track ->
+                        val disc = track.discNumber
+                        if (discs.size > 1 && disc != null && (index == 0 || list[index - 1].discNumber != disc)) {
+                            SectionLabel("Disc $disc", dim = false)
+                        }
                         NumberedRow(
                             number = numbers[index],
                             title = track.title,

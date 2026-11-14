@@ -217,7 +217,7 @@ fun SimpleLightScreen<Unit>.replaceWithPlayer() {
  * Ask for a name and make a playlist of it holding [trackIds]. [onCreated] runs
  * once a name was given; backing out makes nothing.
  */
-fun SimpleLightScreen<*>.newPlaylist(trackIds: List<String> = emptyList(), onCreated: () -> Unit = {}) {
+fun SimpleLightScreen<*>.newPlaylist(trackIds: List<String>, onCreated: () -> Unit) {
     editText("New Playlist", "") { name ->
         if (name.isBlank()) return@editText
         // The songs are part of the create, not a second pass: Plex makes

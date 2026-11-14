@@ -60,7 +60,7 @@ class LibraryPlaylists(
     private val serverClient: StateFlow<MusicServer?>,
     /** Whether the server may be spoken to at all — see App.metadataAllowed. */
     private val metadataAllowed: () -> Boolean,
-    /** Whether bulk background fetching is worth the link now: false on a metered link outside Make it Hurt. */
+    /** Whether bulk background fetching is worth the link now: false on a metered link outside Unrestricted. */
     private val bulkAllowed: () -> Boolean,
     /** Suspends while the player starts a stream, so background work steps aside — see App.yieldToPlayback. */
     private val yieldToPlayback: suspend () -> Unit,
@@ -443,7 +443,7 @@ class LibraryPlaylists(
      */
     suspend fun primePlaylistTrackIds(ids: List<String>) = coroutineScope {
         // Every playlist's whole contents is the heaviest thing a launch does
-        // after the sync, so on a metered link outside Make it Hurt it waits for
+        // after the sync, so on a metered link outside Unrestricted it waits for
         // Wi-Fi (opening one playlist goes by metadataAllowed instead). Until
         // then the playlist_tracks rows serve — see storeMembership.
         if (!bulkAllowed() && phonePlaylists() == null) return@coroutineScope

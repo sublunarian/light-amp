@@ -26,7 +26,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.LayoutMode
@@ -42,10 +41,10 @@ import com.sublunar.amp.ui.components.AlphabetIndex
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
-import com.sublunar.amp.ui.components.MENU_INSET_PX
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.ArtistRow
 import com.sublunar.amp.ui.components.HeaderAction
+import com.sublunar.amp.ui.components.LIST_LEAD_PX
 import com.sublunar.amp.ui.components.INDEX_STRIP_PX
 import com.sublunar.amp.ui.components.LatestList
 import com.sublunar.amp.ui.components.ListScrollBar
@@ -55,7 +54,6 @@ import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.ShuffleRow
-import com.sublunar.amp.ui.components.TabGlyphs
 import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.TitleCard
 import com.sublunar.amp.ui.components.TrackRow
@@ -68,6 +66,9 @@ import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.components.rowClickable
 import com.sublunar.amp.ui.px
 import com.sublunar.amp.ui.pxSp
+import com.sublunar.amp.ui.components.appClickable
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.rememberPermissionRequestLauncher
 import kotlinx.coroutines.Dispatchers
@@ -84,13 +85,6 @@ enum class LibraryTab(val title: String) {
     ALBUMS("Albums"),
 }
 
-internal fun iconFor(tab: LibraryTab): ImageVector = when (tab) {
-    LibraryTab.PLAYLISTS -> AppIcons.QueueMusic
-    LibraryTab.ARTISTS -> TabGlyphs.Microphone
-    LibraryTab.SONGS -> AppIcons.MusicNote
-    LibraryTab.ALBUMS -> AppIcons.AlbumStack
-}
-
 /**
  * The library: a tab list, search or Simplified's index, over the bottom bar.
  * Drawn by the root screen, so everything it opens is pushed from there.
@@ -101,8 +95,6 @@ fun SimpleLightScreen<*>.LibraryShell() {
     val libraryIndex by LibraryNav.libraryIndex.collectAsState()
     val searchActive by LibraryNav.searchActive.collectAsState()
     val typing by LibraryNav.typing.collectAsState()
-    val searchTab = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED &&
-        !App.settings.tablessFooter.state.collectAsState().value
     PlayerTheme(library = true) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
@@ -114,18 +106,17 @@ fun SimpleLightScreen<*>.LibraryShell() {
                     TabContent(currentTab)
                 }
             }
-            // Search is a page of its own with no bar, except where the simple
-            // layout's bar is tabs: there search is one, lit over the results,
-            // and the keyboard takes the bottom while typing.
-            if (!searchActive || (searchTab && !typing)) {
+            // Over search's results the bar is back, in both layouts: the simple
+            // one lights search, the tabs none, as search is none of them. While
+            // typing the keyboard takes the bottom.
+            if (!searchActive || !typing) {
                 Navbar(
-                    current = if (libraryIndex) null else currentTab,
+                    current = if (libraryIndex || searchActive) null else currentTab,
                     onSelect = { LibraryNav.tapTab(it) },
                     onSearch = { startSearch() },
                     onNowPlaying = { go { NowPlayingScreen(it) } },
                     onBrowse = { LibraryNav.pressLibrary() },
-                    searchLit = searchActive,
-                    onHome = libraryIndex,
+                    libraryLit = !searchActive,
                 )
             }
         }
@@ -541,7 +532,6 @@ private fun SimpleLightScreen<*>.PlaylistsTab(header: Boolean = true) {
         App.playlists.primePlaylistTrackIds(every.map { it.id })
     }
     val source = App.source.collectAsState().value
-    val canCreateEmpty = source.supportsEmptyPlaylists
     // Keyed on the source: playlists are dropped when it changes, and a shell
     // that stayed composed through the switch would otherwise sit on an empty
     // list for ever.
@@ -552,22 +542,9 @@ private fun SimpleLightScreen<*>.PlaylistsTab(header: Boolean = true) {
         IndexedList(
             anchor = "tab:playlists",
             letters = letters,
-            headerCount = if (canCreateEmpty) 1 else 0,
+            headerCount = 0,
             reversed = reversed,
         ) {
-            // A server that can't hold an empty playlist has no use for a bare
-            // "New Playlist" — see MusicSource.supportsEmptyPlaylists.
-            if (canCreateEmpty) {
-                item {
-                    PlayAllRow(
-                        AppIcons.Add,
-                        "New Playlist",
-                        headsList = true,
-                        oneLineList = true,
-                        artworkHidden = artworkHidden,
-                    ) { newPlaylist() }
-                }
-            }
             items(playlists, key = { it.id }) { playlist ->
                 TrackRow(
                     title = playlist.name,
@@ -600,18 +577,18 @@ private fun SimpleLightScreen<*>.LibraryIndex() {
 
     // A Column of its own: the shell hands each page a Box.
     Column(modifier = Modifier.fillMaxSize()) {
+        // The source's name with the SDK's chevron, a picker as the library's
+        // name is at the top of Plexamp, and Settings in the corner.
         AppHeader(
-            title = "Library",
-            fitTitle = true,
-            // The page's own More, as on every other library page.
-            rightAction = libraryCornerAction(LibraryPage.LIBRARY),
+            titleContent = { SourceTitle(source.name) { go { SourcesScreen(it) } } },
+            rightAction = HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
         )
         // Seven rows to exactly the space under the header.
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val pitch = maxHeight / INDEX_ROWS_PER_SCREEN
             ScrollableList {
                 HOME_ORDER.forEach { tab ->
-                    item { IndexLine(tab.title, iconFor(tab), pitch) { openNarrowed(tab, liked = false) } }
+                    item { IndexLine(tab.title, pitch) { openNarrowed(tab, liked = false) } }
                 }
                 // The same three again, narrowed, as a block under the whole set.
                 LIKED_ORDER.forEach { tab ->
@@ -621,7 +598,7 @@ private fun SimpleLightScreen<*>.LibraryIndex() {
                         else -> likedTracks
                     }
                     if (likes && any) {
-                        item { IndexLine("Liked ${tab.title}", AppIcons.Favorite, pitch) { openNarrowed(tab, liked = true) } }
+                        item { IndexLine("Liked ${tab.title}", pitch) { openNarrowed(tab, liked = true) } }
                     }
                 }
             }
@@ -659,17 +636,16 @@ private const val NARROWED_WAIT_MS = 500L
 
 /** A row of the home list, as 0.8.2 drew it: the glyph, then the name at Copy, [pitch] tall. */
 @Composable
-private fun IndexLine(title: String, icon: ImageVector, pitch: Dp, onClick: () -> Unit) {
+private fun IndexLine(title: String, pitch: Dp, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(pitch)
             .rowClickable(onClick = onClick)
-            .padding(start = px(MENU_INSET_PX)),
+            // Where every library list's names start, 72px from the screen's edge.
+            .padding(start = px(LIST_LEAD_PX)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppIcon(icon, size = px(INDEX_GLYPH_PX))
-        Spacer(Modifier.width(px(INDEX_GLYPH_GAP_PX)))
         AppText(
             title,
             pxSp(LightType.COPY_PX),
@@ -680,10 +656,7 @@ private fun IndexLine(title: String, icon: ImageVector, pitch: Dp, onClick: () -
     }
 }
 
-/** The glyph 56px, a unit before the name. */
 private const val INDEX_ROWS_PER_SCREEN = 7
-private const val INDEX_GLYPH_PX = 56
-private const val INDEX_GLYPH_GAP_PX = 40
 
 /** Whether this tab is narrowed to what is downloaded — see AppSettings.downloadedAlbumsOnly. */
 @Composable
@@ -729,3 +702,27 @@ fun setLikedOnly(tab: LibraryTab, value: Boolean) {
         LibraryTab.PLAYLISTS -> Unit
     }
 }
+
+@Composable
+private fun SourceTitle(name: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxWidth().appClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AppText(
+                name,
+                pxSp(LightType.FINE_PX),
+                role = TextRole.Subheading,
+                maxLines = 1,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Spacer(Modifier.width(px(SOURCE_CHEVRON_GAP_PX)))
+            LightIcon(LightIcons.DOWN, size = SOURCE_CHEVRON_UNITS, contentDescription = "Choose source")
+        }
+    }
+}
+
+/** The chevron at one grid unit, about the title's cap height, a little apart from it. */
+private const val SOURCE_CHEVRON_UNITS = 1f
+private const val SOURCE_CHEVRON_GAP_PX = 16

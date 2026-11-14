@@ -59,6 +59,8 @@ enum class DataMode {
      * Nothing waits for Wi-Fi: downloads, covers and streams all run on any
      * connection. The one exception is a track already downloaded, which still
      * plays from its file — a copy on the phone beats paying for the same song.
+     * Shown as "Unrestricted"; the constant keeps its first name because the
+     * setting is stored by it.
      */
     MAKE_IT_HURT,
 
@@ -460,9 +462,6 @@ class AppSettings(
 
     /** Whether to use the simplified or standard layout mode. */
     val layoutMode: Pref<LayoutMode> = enum(LAYOUT_MODE.name, LayoutMode.SIMPLIFIED)
-
-    /** The simple layout's bar as plain buttons, none lit, rather than tabs; search then has no bar. */
-    val tablessFooter: Pref<Boolean> = bool("pref.tablessFooter", false)
 
     /** Where the app was when it was last closed — see [LastSection]. */
     val lastSection: Pref<LastSection> = enum("pref.lastSection", LastSection.LIBRARY)

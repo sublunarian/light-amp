@@ -36,7 +36,7 @@ data class LinkRules(
     val mayStream: Boolean
         get() = mayTalkToServer && serverReachable
 
-    /** Downloads and the library's cover art: free on an unmetered link, otherwise only Make it Hurt. */
+    /** Downloads and the library's cover art: free on an unmetered link, otherwise only Unrestricted. */
     val mayMoveHeavyBytes: Boolean
         get() = connected && (unmetered || mode == DataMode.MAKE_IT_HURT)
 

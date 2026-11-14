@@ -56,7 +56,7 @@ class LibrarySync(
     private val libraryId: Flow<String?>,
     /** Whether the server may be spoken to at all — see App.metadataAllowed. */
     private val metadataAllowed: () -> Boolean,
-    /** Whether bulk background fetching is worth the link now: false on a metered link outside Make it Hurt. */
+    /** Whether bulk background fetching is worth the link now: false on a metered link outside Unrestricted. */
     private val bulkAllowed: () -> Boolean,
     /** Suspends while the player starts a stream, so background work steps aside — see App.yieldToPlayback. */
     private val yieldToPlayback: suspend () -> Unit,

@@ -32,7 +32,7 @@ class CapabilitySnapshotTest {
         MusicSource(id = "s", kind = kind, name = "Source", features = features)
 
     /**
-     * likes · ratings · radio · empty playlists · downloads ·
+     * likes · ratings · radio · downloads ·
      * refused · may download · original download · server scan · libraries,
      * then what it streams | what it downloads.
      */
@@ -41,7 +41,6 @@ class CapabilitySnapshotTest {
             source.supportsLikes,
             source.supportsRatings,
             source.supportsRadio,
-            source.supportsEmptyPlaylists,
             source.supportsDownloads,
             source.downloadsRefused,
             source.mayDownload,
@@ -61,34 +60,34 @@ class CapabilitySnapshotTest {
         }
         assertEquals(
             """
-            SUBSONIC, never asked: YYYYY.YYYY mp3 opus raw | mp3 opus raw
-            SUBSONIC, nothing missing: YYYYY.YYYY mp3 opus raw | mp3 opus raw
-            SUBSONIC, no probes: Y..YY.Y..Y mp3 opus raw | mp3 opus
-            SUBSONIC, no copies: YYYYYY.YYY mp3 opus raw | mp3 opus raw
-            SUBSONIC, neither: Y..YYY...Y mp3 opus raw | mp3 opus
-            SUBSONIC, MP3 only: YYYYY.YYYY mp3 raw | mp3 raw
-            SUBSONIC, no conversions: YYYYY.YYYY raw | raw
-            PLEX, never asked: .YYYY.YYYY raw mp3 | raw mp3
-            PLEX, nothing missing: .YYYY.YYYY raw mp3 | raw mp3
-            PLEX, no probes: .YYYY.YYYY raw mp3 | raw mp3
-            PLEX, no copies: .YYYYY.YYY raw mp3 | raw mp3
-            PLEX, neither: .YYYYY.YYY raw mp3 | raw mp3
-            PLEX, MP3 only: .YYYY.YYYY raw mp3 | raw mp3
-            PLEX, no conversions: .YYYY.YYYY raw | raw
-            JELLYFIN, never asked: Y.YYY.YYYY mp3 opus raw | mp3 opus raw
-            JELLYFIN, nothing missing: Y.YYY.YYYY mp3 opus raw | mp3 opus raw
-            JELLYFIN, no probes: Y.YYY.YYYY mp3 opus raw | mp3 opus raw
-            JELLYFIN, no copies: Y.YYYY.YYY mp3 opus raw | mp3 opus raw
-            JELLYFIN, neither: Y.YYYY.YYY mp3 opus raw | mp3 opus raw
-            JELLYFIN, MP3 only: Y.YYY.YYYY mp3 raw | mp3 raw
-            JELLYFIN, no conversions: Y.YYY.YYYY raw | raw
-            LOCAL, never asked: ...Y...Y.. - | -
-            LOCAL, nothing missing: ...Y...Y.. - | -
-            LOCAL, no probes: ...Y...Y.. - | -
-            LOCAL, no copies: ...Y.Y.Y.. - | -
-            LOCAL, neither: ...Y.Y.Y.. - | -
-            LOCAL, MP3 only: ...Y...Y.. - | -
-            LOCAL, no conversions: ...Y...Y.. - | -
+            SUBSONIC, never asked: YYYY.YYYY mp3 opus raw | mp3 opus raw
+            SUBSONIC, nothing missing: YYYY.YYYY mp3 opus raw | mp3 opus raw
+            SUBSONIC, no probes: Y..Y.Y..Y mp3 opus raw | mp3 opus
+            SUBSONIC, no copies: YYYYY.YYY mp3 opus raw | mp3 opus raw
+            SUBSONIC, neither: Y..YY...Y mp3 opus raw | mp3 opus
+            SUBSONIC, MP3 only: YYYY.YYYY mp3 raw | mp3 raw
+            SUBSONIC, no conversions: YYYY.YYYY raw | raw
+            PLEX, never asked: .YYY.YYYY raw mp3 | raw mp3
+            PLEX, nothing missing: .YYY.YYYY raw mp3 | raw mp3
+            PLEX, no probes: .YYY.YYYY raw mp3 | raw mp3
+            PLEX, no copies: .YYYY.YYY raw mp3 | raw mp3
+            PLEX, neither: .YYYY.YYY raw mp3 | raw mp3
+            PLEX, MP3 only: .YYY.YYYY raw mp3 | raw mp3
+            PLEX, no conversions: .YYY.YYYY raw | raw
+            JELLYFIN, never asked: Y.YY.YYYY mp3 opus raw | mp3 opus raw
+            JELLYFIN, nothing missing: Y.YY.YYYY mp3 opus raw | mp3 opus raw
+            JELLYFIN, no probes: Y.YY.YYYY mp3 opus raw | mp3 opus raw
+            JELLYFIN, no copies: Y.YYY.YYY mp3 opus raw | mp3 opus raw
+            JELLYFIN, neither: Y.YYY.YYY mp3 opus raw | mp3 opus raw
+            JELLYFIN, MP3 only: Y.YY.YYYY mp3 raw | mp3 raw
+            JELLYFIN, no conversions: Y.YY.YYYY raw | raw
+            LOCAL, never asked: ......Y.. - | -
+            LOCAL, nothing missing: ......Y.. - | -
+            LOCAL, no probes: ......Y.. - | -
+            LOCAL, no copies: ....Y.Y.. - | -
+            LOCAL, neither: ....Y.Y.. - | -
+            LOCAL, MP3 only: ......Y.. - | -
+            LOCAL, no conversions: ......Y.. - | -
             """.trimIndent(),
             snapshot.joinToString("\n"),
         )

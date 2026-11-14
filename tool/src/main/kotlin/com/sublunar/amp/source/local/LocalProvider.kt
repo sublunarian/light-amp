@@ -43,7 +43,6 @@ object LocalProvider : SourceProvider {
         likes = false,
         ratings = false,
         radio = false,
-        emptyPlaylists = true,
         downloads = false,
         originalDownload = true,
         serverScan = false,

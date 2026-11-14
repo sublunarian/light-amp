@@ -22,6 +22,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -40,11 +43,9 @@ import androidx.compose.ui.unit.IntOffset
 import com.sublunar.amp.App
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.ui.components.AppHeader
-import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.ArtistRow
-import com.sublunar.amp.ui.components.CORNER_ICON_PX
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.HEADER_BAR_PX
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
@@ -119,12 +120,9 @@ internal fun SimpleLightScreen<*>.SearchView() {
         LibraryNav.typing.value = false
         LibraryNav.closeSearch()
     }
-    // The cross empties the field and brings the keyboard back for another try.
-    val clear = {
-        state.clearText()
-        LibraryNav.setQuery("")
-        LibraryNav.typing.value = true
-    }
+    // With the keyboard down the page is the results: back returns to typing
+    // the same query, and the query is centred as a page's title.
+    val backToTyping = { LibraryNav.typing.value = true }
     Column(Modifier.fillMaxSize()) {
         SearchHeader(
             query = live,
@@ -136,13 +134,14 @@ internal fun SimpleLightScreen<*>.SearchView() {
                 LibraryNav.typing.value = true
             },
             onEdit = { LibraryNav.typing.value = true },
-            onBack = cancel,
-            onClear = clear,
+            onBack = if (typing) cancel else backToTyping,
+            centred = !typing,
         )
         Box(modifier = Modifier.weight(1f)) {
-            // Nothing typed yet, so nothing listed: results come with the first
-            // keystroke.
-            if (live.isNotBlank()) {
+            // While typing with nothing typed yet, nothing listed: results come
+            // with the first keystroke. With the keyboard down it is the results
+            // page, "No results" included.
+            if (live.isNotBlank() || !typing) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -211,26 +210,20 @@ internal fun SimpleLightScreen<*>.SearchView() {
         }
         if (typing) {
             // Return puts the keyboard away to show the results, "No results"
-            // included, so the bar is back to choose from. With nothing typed
-            // there is nothing to show, so it goes back to the library.
+            // included (nothing typed too), so the bar is back to choose from.
             SearchKeyboard(state) {
-                if (state.text.isBlank()) {
-                    LibraryNav.closeSearch()
-                } else {
-                    LibraryNav.typing.value = false
-                }
+                LibraryNav.typing.value = false
             }
         }
     }
 }
 
 /**
- * The search page's header: the query, and a way out.
+ * The search page's header: the back arrow and the query. [centred] sets the
+ * query as a page's title, between the arrow's square and one to match it.
  *
  * The same header whether or not the keyboard is up: Return puts the keyboard
  * away and the field stays where it was, with the results scrolling under it.
- * The magnifier sits where every cover and glyph below starts, and the page's
- * menu keeps the corner it has everywhere else.
  */
 @Composable
 private fun SearchHeader(
@@ -241,7 +234,7 @@ private fun SearchHeader(
     onPlaceCursor: ((Int) -> Unit)?,
     onEdit: () -> Unit,
     onBack: () -> Unit,
-    onClear: () -> Unit,
+    centred: Boolean,
 ) {
     Row(
         modifier = Modifier
@@ -266,19 +259,11 @@ private fun SearchHeader(
                 .appClickable(onClick = onEdit),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            QueryField(query, cursor, onPlaceCursor, Modifier.weight(1f))
+            QueryField(query, cursor, onPlaceCursor, centred, Modifier.weight(1f))
         }
-        // The cross where More is elsewhere: it clears the field, so it shows
-        // only while there is something in it. Its square stays, so the query
-        // doesn't move when it comes and goes.
-        Box(
-            modifier = Modifier
-                .size(px(HEADER_BAR_PX))
-                .then(if (query.isEmpty()) Modifier else Modifier.appClickable(onClick = onClear)),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (query.isNotEmpty()) AppIcon(AppIcons.Close, size = px(CORNER_ICON_PX))
-        }
+        // Centred, the right square matches the arrow's; otherwise the query
+        // runs to the list's edge.
+        Spacer(Modifier.width(px(if (centred) HEADER_BAR_PX else LIST_EDGE_PX)))
     }
 }
 
@@ -292,15 +277,18 @@ private fun QueryField(
     query: String,
     cursor: Int?,
     onPlaceCursor: ((Int) -> Unit)?,
+    centred: Boolean,
     modifier: Modifier,
 ) {
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    // Where the text starts in the field: centred, a tap's x is measured from there.
+    var textLeft by remember { mutableFloatStateOf(0f) }
     // Only the finger's x matters on one line; the y is the line's middle, so
     // the whole header's height is the field.
     fun offsetAt(x: Float): Int {
         if (query.isEmpty()) return 0
         val line = layout ?: return query.length
-        return line.getOffsetForPosition(Offset(x, line.size.height / 2f)).coerceIn(0, query.length)
+        return line.getOffsetForPosition(Offset(x - textLeft, line.size.height / 2f)).coerceIn(0, query.length)
     }
     Box(
         modifier = modifier
@@ -321,9 +309,9 @@ private fun QueryField(
                     }
                 },
             ),
-        contentAlignment = Alignment.CenterStart,
+        contentAlignment = if (centred) Alignment.Center else Alignment.CenterStart,
     ) {
-        Box {
+        Box(Modifier.onPlaced { textLeft = it.positionInParent().x }) {
             AppText(
                 text = query.ifEmpty { "Search" },
                 size = pxSp(SEARCH_TEXT_PX),

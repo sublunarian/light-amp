@@ -44,12 +44,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import com.sublunar.amp.App
 import com.sublunar.amp.ui.GREY_ALPHA
+import com.sublunar.amp.ui.sdkGreyAlpha
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.LastSection
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.LightType
-import com.sublunar.amp.ui.LocalDimTextAlpha
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
@@ -168,7 +168,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     }
 
     @Composable
-    private fun ScrubButton(icon: ImageVector, direction: Int, onSkip: () -> Unit) {
+    private fun ScrubButton(icon: ImageVector, direction: Int, boxPx: Int, onSkip: () -> Unit) {
         val scope = rememberCoroutineScope()
         Box(
             // Fills the cell so tap-to-skip and hold-to-scrub get the whole square.
@@ -193,7 +193,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             },
             contentAlignment = Alignment.Center,
         ) {
-            AppIcon(icon, size = px(SEEK_BOX_PX))
+            AppIcon(icon, size = px(boxPx))
         }
     }
 
@@ -268,8 +268,8 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     // A new song starts the line afresh, its drag dropped.
                     key(current.id) { SeekBand(alpha = if (coverOnly) ON_COVER_ALPHA else 1f) }
                     TransportRow()
-                    // The page's grey, as its text.
-                    SecondaryRow(current, alpha = if (coverOnly) dim else LocalDimTextAlpha.current)
+                    // The SDK's own grey, a step lighter than the page's text.
+                    SecondaryRow(current, alpha = if (coverOnly) dim else sdkGreyAlpha())
                 }
             }
         }
@@ -502,7 +502,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val isPlaying by App.playback.isPlaying.collectAsState()
         Band(TRANSPORT_UP_PX, TRANSPORT_ROW_PX) {
             Slot(SlotAt.FromStart(SIDE_X_PX)) {
-                ScrubButton(AppIcons.FastRewind, direction = -1) {
+                ScrubButton(AppIcons.FastRewind, direction = -1, boxPx = SEEK_BOX_PX) {
                     App.playback.previous()
                 }
             }
@@ -510,10 +510,13 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 AppIcon(
                     if (isPlaying) AppIcons.Pause else AppIcons.PlayArrow,
                     size = px(PLAY_BOX_PX),
+                    // Light's play is centred on its outline; Material's sits right
+                    // of centre so the triangle looks centred. The same nudge here.
+                    modifier = if (isPlaying) Modifier else Modifier.offset(x = px(PLAY_NUDGE_PX)),
                 )
             }
             Slot(SlotAt.FromEnd(SIDE_X_PX)) {
-                ScrubButton(AppIcons.FastForward, direction = 1) {
+                ScrubButton(AppIcons.FastForward, direction = 1, boxPx = SEEK_BOX_PX) {
                     App.playback.next()
                 }
             }
@@ -533,9 +536,11 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             // "+" rather than a heart: liking is one of several ways to file the
             // track. Ringed once it is liked, so the button keeps its meaning.
             Slot(SlotAt.FromStart(SIDE_X_PX), onClick = { go { AddActionsScreen(it, current.id) } }) {
+                // Light's ringed plus fills its box, so it takes a smaller one: its
+                // ring 46px across, as Material's was.
                 AppIcon(
                     if (liked) AppIcons.AddCircle else AppIcons.Add,
-                    size = size,
+                    size = if (liked) px(ADD_CIRCLE_BOX_PX) else size,
                     modifier = Modifier.alpha(alpha),
                 )
             }
@@ -754,9 +759,20 @@ private const val SLOT_W_PX = 200
  * arrows 12/24, the bottom row's glyphs 18/24). The comments give what a ruler
  * finds on screen.
  */
-private const val PLAY_BOX_PX = 138      // 80px of ink
-private const val SEEK_BOX_PX = 114      // 57px
+/**
+ * LightOS's transport glyphs fill their box, so the boxes are the ink: play and
+ * pause 80px tall, the skip arrows 87 by 52px, as much ink as the Material pair
+ * they replaced (measured on the phone).
+ */
+private const val PLAY_BOX_PX = 80
+private const val SEEK_BOX_PX = 87
+
+/** How far right of centre play sits so the triangle looks centred, as Material's did. */
+private const val PLAY_NUDGE_PX = 8
 private const val SECONDARY_BOX_PX = 54
+
+/** Light's ringed plus, boxed so its ring is 46px across, as Material's was (measured on the phone). */
+private const val ADD_CIRCLE_BOX_PX = 47
 
 /** The tile the queue glyph inverts into while that page is on screen. */
 private const val QUEUE_TILE_PX = 66

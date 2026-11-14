@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -20,6 +21,7 @@ import com.sublunar.amp.ui.DISABLED_ALPHA
 import com.sublunar.amp.ui.LocalDimTextAlpha
 import com.sublunar.amp.ui.LocalGreyText
 import com.sublunar.amp.ui.px
+import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightProgressBar
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.designVerticalPxToSp
@@ -35,7 +37,7 @@ object AppIcons {
      */
     val AlbumStack = Icons.Filled.FilterNone
 
-    /** The library, on the three-button bar's Library Button trial. */
+    /** The library, on the simple layout's bar. */
     val Library = Icons.Filled.LibraryMusic
 
     /** An artist's popular songs. */
@@ -56,37 +58,49 @@ object AppIcons {
     val FavoriteBorder = Icons.Filled.FavoriteBorder
     val Star = Icons.Filled.Star
     val StarBorder = Icons.Filled.StarBorder
-    val Shuffle = Icons.Filled.Shuffle
-    val PlayArrow = Icons.Filled.PlayArrow
-    val Pause = Icons.Filled.Pause
-    val FastRewind = Icons.Filled.FastRewind
-    val FastForward = Icons.Filled.FastForward
-    val Repeat = Icons.Filled.Repeat
-    val RepeatOne = Icons.Filled.RepeatOne
-    val Add = Icons.Filled.Add
 
-    /** The same plus, ringed: what the player shows for a liked track. */
-    val AddCircle = Icons.Filled.AddCircleOutline
+    /** LightOS's own shuffle and loop, from the SDK's icons. LightOS has no repeat-one: the queue marks it with a 1 inside the loop. */
+    val Shuffle: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.SHUFFLE.drawableResource)
+    val Repeat: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.LOOP.drawableResource)
 
-    /** Selection state in multi-select mode: filled when picked, ring when not. */
-    val Selected = Icons.Filled.CheckCircle
-    val Unselected = Icons.Filled.RadioButtonUnchecked
-    val Close = Icons.Filled.Close
-    val Search = Icons.Filled.Search
-    val Settings = Icons.Filled.Settings
+    /** LightOS's own transport glyphs, from the SDK's icons. */
+    val PlayArrow: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.PLAY.drawableResource)
+    val Pause: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.PAUSE.drawableResource)
+    val FastRewind: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.REWIND.drawableResource)
+    val FastForward: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.FAST_FORWARD.drawableResource)
+
+    /** Light's plus without its ring, see [PlusSymbol]. */
+    val Add = PlusSymbol
+
+    /** Light's ringed plus: what the player shows for a liked track. */
+    val AddCircle: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.ADD.drawableResource)
+
+    /** Selection state in multi-select mode, LightOS's own: filled when picked, ring when not. */
+    val Selected: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.SELECT_ON.drawableResource)
+    val Unselected: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.SELECT_OFF.drawableResource)
+
+    /** LightOS's own cross and magnifier, from the SDK's icons. */
+    val Close: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.CLOSE.drawableResource)
+    val Search: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.SEARCH.drawableResource)
+
+    /** LightOS's own gear, from the SDK's icons. */
+    val Settings: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.SETTINGS.drawableResource)
+
     val Dehaze = Icons.Filled.Dehaze
-    val FormatListBulleted = Icons.AutoMirrored.Filled.FormatListBulleted
+    /** LightOS's own bulleted list. */
+    val FormatListBulleted: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.LIST.drawableResource)
     val VolumeUp = Icons.AutoMirrored.Filled.VolumeUp
     val VolumeDown = Icons.AutoMirrored.Filled.VolumeDown
-    val Bluetooth = Icons.Filled.Bluetooth
+    val Bluetooth: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.BLUETOOTH.drawableResource)
     val Smartphone = Icons.Filled.Smartphone
     val Speaker = Icons.Filled.Speaker
     val Dns = Icons.Filled.Dns
-    val DeleteOutline = Icons.Filled.DeleteOutline
+    /** LightOS's own trash. */
+    val DeleteOutline: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.TRASH.drawableResource)
     val ArrowUpward = Icons.Filled.ArrowUpward
     val ArrowDownward = Icons.Filled.ArrowDownward
     val Cast = Icons.Filled.Cast
-    val Refresh = Icons.Filled.Refresh
+    val Refresh: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.REFRESH.drawableResource)
 
     /** Light marks a downloaded row with the same arrow it downloads with. */
     val CloudOff = Icons.Filled.CloudOff

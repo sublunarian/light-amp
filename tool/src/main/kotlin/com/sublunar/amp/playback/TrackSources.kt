@@ -201,7 +201,7 @@ internal class TrackSources(
     /**
      * Where to play a track from. A download wins, and is passed over only
      * when the chosen streaming format is better than the copy and the bytes
-     * are free: an unmetered link, whatever the mode. Even Make it Hurt plays
+     * are free: an unmetered link, whatever the mode. Even Unrestricted plays
      * a download from its file.
      */
     fun source(track: Track): LightAudioSource {

@@ -497,7 +497,7 @@ object App {
 
     /**
      * Whether real bytes may move (downloads, cover art): on an unmetered link,
-     * or on a metered one in Make it Hurt, whose name is the consent.
+     * or on a metered one in Unrestricted, which the user chose for exactly that.
      */
     private fun heavyDataAllowed(): Boolean = rules.value.mayMoveHeavyBytes
 
@@ -860,7 +860,7 @@ object App {
         // Bulk work put off on a metered link is picked up the moment bytes may move.
         if (now.mayMoveHeavyBytes && !before.mayMoveHeavyBytes) scope.launch { topUpDownloads() }
         // The covers a sync on cellular couldn't fetch, or a run cut short. Its
-        // own edge: Make it Hurt moves heavy bytes on cellular too, and the
+        // own edge: Unrestricted moves heavy bytes on cellular too, and the
         // cover sync is for free bytes whatever the mode.
         if (now.maySyncCovers && !before.maySyncCovers) covers.sync("link free")
         // Being allowed to ask the server is a reason to ask: a *mode* change

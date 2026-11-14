@@ -73,6 +73,16 @@ val LocalDimTextAlpha = compositionLocalOf { GREY_ALPHA }
  */
 const val GREY_ALPHA = 0.59f
 
+/**
+ * The SDK's own grey (#BBBBBB on black, #666666 on white) as an alpha on the
+ * content colour, so a glyph faded by it lands on exactly that grey in either theme.
+ */
+@Composable
+fun sdkGreyAlpha(): Float {
+    val sdk = if (App.settings.invertColors.state.collectAsState().value) LightThemeColors.Light else LightThemeColors.Dark
+    return (sdk.contentSecondary.red - sdk.background.red) / (sdk.content.red - sdk.background.red)
+}
+
 /** What can't be used right now (an index letter with nothing under it, a row with no choice to make): the grey. */
 const val DISABLED_ALPHA = GREY_ALPHA
 

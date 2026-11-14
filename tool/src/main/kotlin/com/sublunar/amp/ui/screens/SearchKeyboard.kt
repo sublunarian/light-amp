@@ -12,6 +12,9 @@ import androidx.compose.ui.text.TextRange
 import com.sublunar.amp.ui.px
 import com.thelightphone.lp3Keyboard.ui.SpecialKey
 import com.thelightphone.lp3Keyboard.ui.viewmodel.Lp3RepeatableKeyboardCallback
+import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightBottomBar
+import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.keyboard.LightEmbeddedLp3Keyboard
 
 /**
@@ -38,7 +41,15 @@ fun SearchKeyboard(state: TextFieldState, onReturn: () -> Unit) {
                 }
             },
     ) {
-        AtLp3Scale { LightEmbeddedLp3Keyboard(viewModel = rememberEditingKeyboard(state, onReturn)) }
+        AtLp3Scale {
+            // The SDK editor's own button under the keys, as LightTextInputEditor
+            // lays it out, worded for what it does here.
+            LightEmbeddedLp3Keyboard(
+                viewModel = rememberEditingKeyboard(state, onReturn),
+                additionalBottomHeight = 5f.gridUnitsAsDp(),
+                bottomBar = { LightBottomBar(items = listOf(LightBarButton.Text(text = "SEARCH", onClick = onReturn))) },
+            )
+        }
     }
 }
 

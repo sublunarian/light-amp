@@ -40,7 +40,6 @@ object PlexProvider : SourceProvider {
         likes = false,
         ratings = true,
         radio = true,
-        emptyPlaylists = true,
         downloads = true,
         originalDownload = true,
         serverScan = true,

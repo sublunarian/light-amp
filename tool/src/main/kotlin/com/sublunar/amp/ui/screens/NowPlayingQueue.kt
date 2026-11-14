@@ -48,6 +48,7 @@ import com.sublunar.amp.ui.components.AutoScroll
 import com.sublunar.amp.ui.components.DRAG_HANDLE_INSET_PX
 import com.sublunar.amp.ui.components.DRAG_HANDLE_SLOT_PX
 import com.sublunar.amp.ui.components.DragHandle
+import com.sublunar.amp.ui.components.DRAG_HANDLE_SLOT_PX
 import com.sublunar.amp.ui.components.DropIndicatorLine
 import com.sublunar.amp.ui.components.HEADER_BAR_PX
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
@@ -181,8 +182,9 @@ internal fun SimpleLightScreen<*>.QueuePlayer(queue: List<Track>, index: Int, on
             QueueToggle(AppIcons.Shuffle, active = shuffle) { App.playback.toggleShuffle() }
             Spacer(Modifier.weight(1f))
             QueueToggle(
-                if (repeat == RepeatMode.TRACK) AppIcons.RepeatOne else AppIcons.Repeat,
+                AppIcons.Repeat,
                 active = repeat != RepeatMode.OFF,
+                one = repeat == RepeatMode.TRACK,
             ) { App.playback.cycleRepeat() }
         }
     }
@@ -203,13 +205,16 @@ private fun QueueTitle(title: String, subtitle: String?) {
  * made an available control look disabled.
  */
 @Composable
-private fun QueueToggle(icon: ImageVector, active: Boolean, onClick: () -> Unit) {
+private fun QueueToggle(icon: ImageVector, active: Boolean, one: Boolean = false, onClick: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = Modifier.size(px(HEADER_BAR_PX)).appClickable(onClick = onClick),
     ) {
-        AppIcon(icon, size = px(QUEUE_TOGGLE_ICON_PX))
+        Box(contentAlignment = Alignment.Center) {
+            AppIcon(icon, size = px(QUEUE_TOGGLE_ICON_PX))
+            if (one) AppText("1", pxSp(REPEAT_ONE_PX), role = TextRole.Detail)
+        }
         Box(
             modifier = Modifier
                 .padding(top = px(UNDERLINE_GAP_PX))
@@ -316,8 +321,11 @@ private fun SimpleLightScreen<*>.QueueView(
                     ) {
                         QueueRowContent(track, isCurrent, selection, artworkHidden)
                         // Drag handle for reordering within the upcoming part of the queue.
+                        // The rest keep its slot empty, so every title ends at the same place.
                         if (!isPast && !isCurrent) {
                             DragHandle { drag.iconCoords[rowKey] = it }
+                        } else {
+                            Spacer(Modifier.width(px(DRAG_HANDLE_SLOT_PX)))
                         }
                     }
                     if (dropTarget?.beforeKey == rowKey) DropIndicatorLine(Modifier.align(Alignment.TopStart))
@@ -418,14 +426,21 @@ private fun SimpleLightScreen<*>.openQueueOptions(index: Int, selection: Selecti
 private const val QUEUE_TOP_PX = HEADER_BAR_PX
 private const val QUEUE_END_PX = HEADER_BAR_PX
 
-/** The underline that marks a queue toggle as on. */
+/**
+ * The underline that marks a queue toggle as on, as Light's music tool draws it:
+ * the glyph's full width, 8px thick, 10px under the glyph's ink. The glyph sits
+ * about 8px inside its square at the bottom, hence the smaller gap here.
+ */
 private const val UNDERLINE_GAP_PX = 3
-private const val UNDERLINE_W_PX = 51
-private const val UNDERLINE_H_PX = 3
+private const val UNDERLINE_W_PX = 80
+private const val UNDERLINE_H_PX = 8
 
 /**
  * Shuffle and repeat at the foot of the queue, sized off the Light music app's
  * own pair: they are the page's only controls, and at header size they read as
  * an afterthought.
  */
-private const val QUEUE_TOGGLE_ICON_PX = 90
+private const val QUEUE_TOGGLE_ICON_PX = 80
+
+/** Repeat-one's 1, small enough to sit inside the loop. */
+private const val REPEAT_ONE_PX = 30

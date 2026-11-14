@@ -310,10 +310,8 @@ interface MusicServer {
      * Make a playlist and return its id.
      *
      * [songIds] are the playlist's opening contents, not a hint: a caller that
-     * passes them must not add them again. Plex won't create an empty playlist
-     * at all — it has no call for it — so the songs have to go in as part of
-     * the same request, and [MusicSource.supportsEmptyPlaylists] says whether
-     * leaving them out is even an option.
+     * passes them must not add them again. Plex makes playlists no other way,
+     * so the songs go in as part of the same request.
      *
      * Throws on failure, as the three after it do; a null id is not one. Some
      * servers make the playlist and answer a bare "ok" without saying which.

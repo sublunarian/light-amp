@@ -2,6 +2,7 @@ package com.sublunar.amp.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -178,7 +179,7 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     ) { App.playback.playHere() }
                 }
                 item {
-                    OutputRow(AppIcons.Bluetooth, "Bluetooth", selected = false, enabled = false)
+                    OutputRow(AppIcons.Bluetooth, "Bluetooth", selected = false, enabled = false, glyphPx = SDK_BLUETOOTH_PX)
                 }
 
                 item { SectionLabel(if (scanning && searchable) "Network — searching…" else "Network") }
@@ -274,7 +275,7 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 }
                 if (!scanning && searchable) {
                     item {
-                        OutputRow(AppIcons.Refresh, "Scan again", selected = false) { scanToken++ }
+                        OutputRow(AppIcons.Refresh, "Scan again", selected = false, glyphPx = SDK_REFRESH_PX) { scanToken++ }
                     }
                 }
 
@@ -345,13 +346,17 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         label: String,
         selected: Boolean,
         enabled: Boolean = true,
+        /** The glyph's own size in its square; the SDK's fill their box where Material's leave a margin. */
+        glyphPx: Int = OUTPUT_GLYPH_PX,
         onLongClick: (() -> Unit)? = null,
         onClick: (() -> Unit)? = null,
     ) {
         TextRow(
             title = label,
             leading = {
-                AppIcon(icon, size = px(56), modifier = if (enabled) Modifier else Modifier.alpha(DISABLED_ALPHA))
+                Box(Modifier.size(px(OUTPUT_GLYPH_PX)), contentAlignment = Alignment.Center) {
+                    AppIcon(icon, size = px(glyphPx), modifier = if (enabled) Modifier else Modifier.alpha(DISABLED_ALPHA))
+                }
             },
             checked = selected,
             onClick = if (enabled) onClick else null,
@@ -359,3 +364,8 @@ class OutputScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         )
     }
 }
+
+/** An output row's glyph square, and the SDK glyphs' sizes in it: as tall as Material's ink beside them. */
+private const val OUTPUT_GLYPH_PX = 56
+private const val SDK_BLUETOOTH_PX = 47
+private const val SDK_REFRESH_PX = 39

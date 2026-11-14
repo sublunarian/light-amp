@@ -30,6 +30,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -260,8 +261,11 @@ fun TextRow(
     subtitleLines: Int = 1,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
-    /** The choice in effect on a picker, ticked at the row's end where there is no [trailing]. */
-    checked: Boolean = false,
+    /**
+     * On a picker, whether this is the choice in effect, ticked at the row's end
+     * where there is no [trailing]; null on a row that isn't a choice.
+     */
+    checked: Boolean? = null,
     /** TRIAL: the line one SDK step up, at the stock menus' Heading. */
     heading: Boolean = LocalMenuHeading.current,
     /** A hold, for a row that does a second thing (only with [onClick]). Before [onClick], so a trailing lambda stays the tap. */
@@ -318,7 +322,10 @@ fun TextRow(
         }
         when {
             trailing != null -> trailing()
-            checked -> LightIcon(LightIcons.ACCEPT, size = CHECK_SCALE)
+            checked == true -> LightIcon(LightIcons.ACCEPT, size = CHECK_SCALE)
+            // A picker's other choices keep the tick's room, so their text wraps
+            // where the chosen one's does, as the queue keeps the grab bar's.
+            checked == false -> LightIcon(LightIcons.ACCEPT, size = CHECK_SCALE, modifier = Modifier.alpha(0f), contentDescription = null)
         }
     }
 }

@@ -109,7 +109,6 @@ data class SourceCapabilities(
     val likes: Boolean,
     val ratings: Boolean,
     val radio: Boolean,
-    val emptyPlaylists: Boolean,
     val downloads: Boolean,
     val originalDownload: Boolean,
     val serverScan: Boolean,

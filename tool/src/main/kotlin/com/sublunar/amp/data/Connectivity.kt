@@ -88,7 +88,7 @@ object Connectivity {
     /**
      * Emits whenever the connection becomes something different — coming back
      * after an outage, or changing what it costs. Both: cellular to Wi-Fi never
-     * stops being connected, and a plane landing in Make it Hurt never changes
+     * stops being connected, and a plane landing in Unrestricted never changes
      * the price.
      */
     val changed: Flow<Pair<Boolean, Boolean>> =

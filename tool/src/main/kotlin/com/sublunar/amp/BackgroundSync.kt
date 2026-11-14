@@ -12,7 +12,7 @@ import com.thelightphone.sdk.LightJobResult
  */
 @LightJob("library-sync")
 val librarySyncJob: LightJobHandler = { _, _ ->
-    // Bulk work, so on a metered link outside Make it Hurt it waits rather
+    // Bulk work, so on a metered link outside Unrestricted it waits rather
     // than walk the album index against the stream being played. Asked of the
     // system, not the last callback: a callback that missed Wi-Fi arriving is
     // caught here, and the fresh rules restart a download queue held for Wi-Fi.
