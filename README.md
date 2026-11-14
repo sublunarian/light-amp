@@ -131,7 +131,8 @@ ideas: [CONTRIBUTING](CONTRIBUTING.md).
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE): free to use, change and share for
-anything but commercial use. Light may also ship it in LightOS and its Tool
-Library. Light's SDK stays MIT, © The Light Phone. Amp
-0.8.2 and earlier were released under MIT.
+[GNU GPL 3.0](LICENSE): free to use, change and share, as long as what you
+share stays open under the same license. Light's SDK stays MIT, © The Light
+Phone; see [NOTICE](NOTICE) for the parts under other licenses. Amp 0.8.2 and
+earlier were released under MIT, and 0.9.0 to 0.9.2 under PolyForm
+Noncommercial 1.0.0.
