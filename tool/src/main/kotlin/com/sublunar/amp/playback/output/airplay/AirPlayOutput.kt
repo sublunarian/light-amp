@@ -192,6 +192,23 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
     @Volatile
     private var lostAt: Pair<Int, Long>? = null
 
+    /** The speakers playing when the link went, and when it went: played to again on its return. */
+    @Volatile
+    private var lostGroup: List<AirPlayReceiver> = emptyList()
+
+    @Volatile
+    private var lostAtNs = 0L
+
+    /** How often each speaker has been asked again since the link came back — see [joinAgainSoon]. */
+    private val rejoinTries = ConcurrentHashMap<String, Int>()
+
+    /** Each speaker that left the group, and when: for [lostGroup]. */
+    private val leftAt = ConcurrentHashMap<String, Pair<AirPlayReceiver, Long>>()
+
+    /** [lostGroup] as found again, for [rejoin]. */
+    @Volatile
+    private var refound: List<AirPlayReceiver> = emptyList()
+
     /**
      * The track a pause (or a failure) left the sound on. A play that finds
      * another at the queue's place — the paused one was taken out — starts
@@ -317,6 +334,15 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
                 sessions.values.forEach { it.close() }
                 sessions.clear()
                 remoteFor.clear()
+                // The group is kept, levels and all, to be played to again (see
+                // rejoin). Sending fails a moment before the link is said to be
+                // gone, and each speaker it failed for has left the group by
+                // then: those that left just now are counted back in.
+                val now = System.nanoTime()
+                val justLeft = leftAt.values.filter { (_, at) -> now - at < JUST_LEFT_NS }.map { it.first }
+                lostGroup = (memberList + justLeft).distinctBy { it.id }
+                lostAtNs = now
+                rejoinTries.clear()
                 receiver?.let { setMembers(listOf(it)) }
                 remote.stop()
                 streams.clear()
@@ -350,9 +376,20 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
     override suspend fun findAgain(target: OutputTarget): Refound? {
         val gone = (target as AirPlayTarget).receiver
         val (row, ms) = lostAt ?: return null
+        // Gone only a moment (the phone's Wi-Fi blinking): the speakers are
+        // where they were, and a search would only add to the wait.
+        if (System.nanoTime() - lostAtNs < QUICK_REJOIN_NS) {
+            refound = lostGroup
+            return Refound(target, row, ms)
+        }
         repeat(FIND_AGAIN_ROUNDS) {
-            val found = AirPlayFamily.discover().firstOrNull { it.id == gone.id }
-            if (found != null) return Refound(AirPlayTarget(found), row, ms)
+            val all = AirPlayFamily.discover()
+            val found = all.firstOrNull { it.id == gone.id }
+            if (found != null) {
+                // The rest of the group as found now, each where it answers.
+                refound = lostGroup.mapNotNull { member -> all.firstOrNull { it.id == member.id } }
+                return Refound(AirPlayTarget(found), row, ms)
+            }
         }
         return null
     }
@@ -362,12 +399,15 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
         // The fader was the phone's while the link was gone: back to the
         // speaker's level, so the rocker doesn't jump it.
         showLevel(back)
+        val group = listOf(back) + refound.filter { it.id != back.id }
         onWorker {
             receiver = back
-            setMembers(listOf(back))
+            setMembers(group)
             lostAt = null
+            lostGroup = emptyList()
+            refound = emptyList()
             pausedOn = host.queue.value.getOrNull(host.index.value)?.id
-            log("found ${back.name} again → waits for play")
+            log("found ${group.joinToString { it.name }} again → waits for play")
         }
     }
 
@@ -637,7 +677,9 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
 
     /** [id] no longer plays: its session goes, the rest play on. */
     private fun dropMember(id: String, say: Boolean) {
-        members.remove(id) ?: return
+        val gone = members.remove(id) ?: return
+        // One taken out by hand stays out; one that failed may have gone with the link.
+        if (!say) leftAt[id] = gone to System.nanoTime()
         setMembers(members.values.toList())
         // The top fader is the one left's own again, or the loudest of those left.
         shares.remove(id)
@@ -895,6 +937,7 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
         if (members.size > 1) {
             log("${r.name} leaves the group")
             dropMember(r.id, say = false)
+            joinAgainSoon(r)
             return
         }
         if (busy && playedSinceConnect) {
@@ -902,6 +945,31 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
         } else {
             giveUp(r)
         }
+    }
+
+    /**
+     * Just after the link came back, a speaker may still be letting go of the
+     * session the drop cut, and turn a new one away for a few seconds (the
+     * AirPort Express does): asked again a few times, it rejoins the group.
+     */
+    private fun joinAgainSoon(r: AirPlayReceiver) {
+        if (lostAtNs == 0L || System.nanoTime() - lostAtNs > REJOIN_RETRY_WINDOW_NS) return
+        val tries = (rejoinTries[r.id] ?: 0) + 1
+        if (tries > REJOIN_RETRIES) return
+        rejoinTries[r.id] = tries
+        worker.schedule({
+            if (steered() == null || run == null || members.containsKey(r.id)) return@schedule
+            log("${r.name}: asked again (${tries}/$REJOIN_RETRIES)")
+            setMembers(members.values + r)
+            rememberShares()
+            showMaster()
+            val current = run ?: return@schedule
+            val s = openSession(r) ?: return@schedule
+            if (run === current && members.containsKey(r.id)) {
+                current.streamer.join(s)
+                rejoinTries.remove(r.id)
+            }
+        }, REJOIN_RETRY_EVERY_S, TimeUnit.SECONDS)
     }
 
     /** The speaker couldn't be had: before anything played there, the cast is given up; after, it ended there. */
@@ -1241,6 +1309,17 @@ internal class AirPlayOutput(private val host: OutputHost) : Output {
         const val MASK32 = 0xffffffffL
         const val FORBIDDEN = 403
         const val BUSY = 453
+
+        /** After a short drop, a speaker that turns Amp away is asked again this often, this many times, for this long. */
+        const val REJOIN_RETRY_EVERY_S = 4L
+        const val REJOIN_RETRIES = 3
+        val REJOIN_RETRY_WINDOW_NS = TimeUnit.SECONDS.toNanos(40)
+
+        /** A speaker that left the group this shortly before the link went is taken to have left with it. */
+        val JUST_LEFT_NS = TimeUnit.SECONDS.toNanos(5)
+
+        /** Back this soon after the link went, the speakers are taken to be where they were. */
+        val QUICK_REJOIN_NS = TimeUnit.SECONDS.toNanos(15)
 
         /** A play this close to where a pause was heard carries on from it. */
         const val RESUME_SLACK_MS = 500L

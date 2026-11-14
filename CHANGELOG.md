@@ -5,7 +5,8 @@
 ### Changed
 
 - Resuming on an AirPlay speaker takes about half as long.
-
+- A cast rides out a short Wi-Fi drop: it plays on by itself once Wi-Fi is
+  back, with every speaker of a group.
 - Built on Light's SDK 0.2.7.
 - Amp is open source again, under the GNU GPL 3.0. Light's SDK stays MIT.
 

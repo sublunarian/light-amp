@@ -3017,6 +3017,7 @@ class PlaybackController(
                 index = _index.value,
                 positionMs = at,
                 atMs = SystemClock.elapsedRealtime(),
+                wasPlaying = wasPlaying,
             )
         }
         faderBackToPhone()
@@ -3096,6 +3097,8 @@ class PlaybackController(
         val index: Int,
         val positionMs: Long,
         val atMs: Long,
+        /** Playing when the link went: after a short drop it plays on — see [rejoin]. */
+        val wasPlaying: Boolean,
     )
 
     /** Whatever the link took away is not to be taken back: another choice was made here. */
@@ -3109,7 +3112,8 @@ class PlaybackController(
      * and take it back as an iPhone does. Whatever of this queue it still
      * plays is stopped at once, so the server never has two streams of one
      * song going (the speaker turned the second away), and it is chosen again
-     * paused where it got to; a play sends the song afresh. Only while nothing
+     * paused where it got to; a play sends the song afresh. After a short drop
+     * that play is made at once (see [SHORT_DROP_MS]). Only while nothing
      * here would be undone by it (see [movedOn]), and only for
      * [LOST_OUTPUT_KEPT_MS]: given up quietly then, or when it can't be found
      * or is busy with someone else's sound.
@@ -3154,7 +3158,7 @@ class PlaybackController(
             abs(_positionMs.value - gone.positionMs) > REJOIN_POSITION_SLACK_MS ||
             _isPlaying.value || _buffering.value || player?.playWhenReady == true
 
-    /** Make [gone]'s output the one with the sound again, paused where [found] says it got to. Main only. */
+    /** Make [gone]'s output the one with the sound again where [found] says it got to: paused, or playing on after a short drop. Main only. */
     private fun rejoin(gone: Lost, found: Refound) {
         val out = gone.active.output
         Log.i(
@@ -3179,6 +3183,12 @@ class PlaybackController(
         }
         out.rejoin(found)
         standIn.start(player)
+        // A drop of a few seconds (the phone's Wi-Fi blinking, not a walk out
+        // of range) is ridden out: what was playing plays on, by itself.
+        if (gone.wasPlaying && SystemClock.elapsedRealtime() - gone.atMs <= SHORT_DROP_MS) {
+            Log.i(gone.active.family.logTag, "a short drop: playing on")
+            play()
+        }
     }
 
     /** What every output is given of this controller — see [OutputHost]. */
@@ -3465,6 +3475,9 @@ class PlaybackController(
 
         /** How long an output the link took away is kept: a walk out of range, not an afternoon out. */
         private const val LOST_OUTPUT_KEPT_MS = 10 * 60 * 1000L
+
+        /** A link gone no longer than this was a blink: the cast plays on when it's back — see [rejoin]. */
+        private const val SHORT_DROP_MS = 15_000L
 
         /** How long the search for a lost output may take once the link is back. */
         private const val REJOIN_SEARCH_MS = 30_000L
