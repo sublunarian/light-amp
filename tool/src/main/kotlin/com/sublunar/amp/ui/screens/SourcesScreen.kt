@@ -37,9 +37,8 @@ import kotlinx.coroutines.withContext
 
 /**
  * Which library the app is showing, and nothing else: every source's libraries,
- * one tap each, and Sync Now (Rescan Library for the phone's own music) for the
- * one in use. Adding or changing a source is in Settings — see
- * [SourceListScreen] — away from the switch you make often.
+ * one tap each. Adding or changing a source, and syncing the one in use, is in
+ * Settings — see [SourceListScreen] — away from the switch you make often.
  *
  * Each source keeps its own cache, downloads and likes, so switching is a swap
  * rather than a re-sync.
@@ -61,7 +60,6 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
         val active by App.settings.activeSource.state.collectAsState()
-        val sync by App.librarySync.syncState.collectAsState()
         val current = choice ?: active?.let { Choice(it.id, it.selectedLibraries) }
 
         ListScreen(onBack = { goBack() }, title = "Sources") {
@@ -78,25 +76,6 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                             name = entry.name,
                             selected = current != null && ticked(source, current, entry.libraryId),
                             onClick = { choice = tap(source, current, entry.libraryId) },
-                        )
-                    }
-                }
-                // Upkeep after the choosing, rarely needed: Amp syncs on every open
-                // and switch. It refreshes the source in use, the only one a sync
-                // can work on (switching syncs the new one as it opens), and names
-                // it: ticking another source's library doesn't change it until the
-                // page closes.
-                active?.let { inUse ->
-                    item(key = "sync") {
-                        val phone = inUse.phoneLibrary != null
-                        TextRow(
-                            title = when {
-                                sync.syncing -> if (phone) "Scanning ${inUse.name}…" else "Syncing ${inUse.name}…"
-                                phone -> "Rescan ${inUse.name}"
-                                else -> "Sync ${inUse.name}"
-                            },
-                            subtitle = syncStatus(inUse, sync).replaceFirstChar { it.uppercase() },
-                            onClick = { if (!sync.syncing) App.librarySync.scanAndSyncInBackground() },
                         )
                     }
                 }
@@ -148,21 +127,6 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         App.useSource(source, picked.libraries) {}
     }
 
-    /** How the source in use stands, for the line under Sync Now. */
-    private fun syncStatus(source: MusicSource, sync: SyncState): String = when {
-        sync.syncing -> sync.phase.ifBlank { "Syncing" }
-        sync.error != null -> sync.error
-        // Worth saying every time: new files on the server won't appear until
-        // the server itself is set to look for them.
-        App.librarySync.scanRefused -> "won't scan on request — last synced ${relativeTime(sync.lastSyncedMs)}"
-        sync.lastSyncedMs > 0L && source.phoneLibrary != null -> "last scanned ${relativeTime(sync.lastSyncedMs)}"
-        sync.lastSyncedMs > 0L -> "last synced ${relativeTime(sync.lastSyncedMs)}"
-        source.phoneLibrary != null -> "rescan this phone's music"
-        // A server with no scan call of its own is only ever read from — see
-        // MusicSource.supportsServerScan.
-        !source.supportsServerScan -> "fetch the library again"
-        else -> "scan the server, then refresh"
-    }
 
     /** A row belonging to the source above it: one of its folders, or its page. */
     @Composable
@@ -325,9 +289,12 @@ class SourceListScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val sources by App.settings.sources.state.collectAsState()
+        val active by App.settings.activeSource.state.collectAsState()
+        val sync by App.librarySync.syncState.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Sources", headingRows = true) {
             ScrollableList {
+                active?.let { inUse -> item(key = "sync") { SyncRow(inUse, sync) } }
                 items(sources, key = { it.id }) { source ->
                     TextRow(
                         title = source.name,
@@ -345,6 +312,44 @@ class SourceListScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             }
         }
     }
+}
+
+/**
+ * Sync (Rescan for the phone's own music) of the source in use, with how it
+ * stands under it, at the top of Settings > Sources. Amp syncs on every open and
+ * switch, so this is upkeep, and only the source in use can be synced
+ * (switching syncs the new one as it opens).
+ */
+@Composable
+internal fun SyncRow(inUse: MusicSource, sync: SyncState) {
+    val phone = inUse.phoneLibrary != null
+    TextRow(
+        title = when {
+            sync.syncing -> if (phone) "Scanning ${inUse.name}…" else "Syncing ${inUse.name}…"
+            phone -> "Rescan ${inUse.name}"
+            else -> "Sync ${inUse.name}"
+        },
+        subtitle = syncStatus(inUse, sync).replaceFirstChar { it.uppercase() },
+        // Add Source's glyph size, the other row here with one.
+        leading = { AppIcon(AppIcons.Sync, size = px(56)) },
+        onClick = { if (!sync.syncing) App.librarySync.scanAndSyncInBackground() },
+    )
+}
+
+/** How the source in use stands, for the line under its Sync row. */
+private fun syncStatus(source: MusicSource, sync: SyncState): String = when {
+    sync.syncing -> sync.phase.ifBlank { "Syncing" }
+    sync.error != null -> sync.error
+    // Worth saying every time: new files on the server won't appear until
+    // the server itself is set to look for them.
+    App.librarySync.scanRefused -> "won't scan on request — last synced ${relativeTime(sync.lastSyncedMs)}"
+    sync.lastSyncedMs > 0L && source.phoneLibrary != null -> "last scanned ${relativeTime(sync.lastSyncedMs)}"
+    sync.lastSyncedMs > 0L -> "last synced ${relativeTime(sync.lastSyncedMs)}"
+    source.phoneLibrary != null -> "rescan this phone's music"
+    // A server with no scan call of its own is only ever read from — see
+    // MusicSource.supportsServerScan.
+    !source.supportsServerScan -> "fetch the library again"
+    else -> "scan the server, then refresh"
 }
 
 /** Every kind of source, offered as equals — from [Providers.addEntries], as first run is. */

@@ -211,12 +211,13 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     private fun ArtPlayer(current: Track) {
         val artwork by App.settings.artwork.state.collectAsState()
-        // Parked (see PlaybackController.waitingFor) or buffering: the credit
-        // line says so, or the screen looks like a paused player and gets
-        // tapped again.
+        // Parked (see PlaybackController.waitingFor) or buffering: a line says
+        // so, or the screen looks like a paused player and gets tapped again.
+        // Under a cover it's the credit's; with none, the album's at the bottom.
         val waiting by App.playback.waitingFor.collectAsState()
         val buffering by App.playback.buffering.collectAsState()
-        val credit = waiting ?: if (buffering) "Buffering…" else current.artist
+        val status = waiting ?: if (buffering) "Buffering…" else null
+        val credit = status ?: current.artist
         // Decoded at the panel's own width, which a full-bleed cover fills, and
         // fetched wherever the music itself is — see ArtworkNeed.
         val cover = rememberArtworkLoad(current.coverArtId, currentScale().windowWidthPx, ArtworkNeed.FOCUSED)
@@ -258,7 +259,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     onTap = { if (coverOnly) NowPlayingNav.coverChrome.value = !chrome },
                     onLongPress = { NowPlayingNav.setCoverOnly(!coverOnly) },
                 )
-                if (heroTitle) TitleBlock(current, credit)
+                if (heroTitle) TitleBlock(current, status)
                 if (!coverOnly || chrome) {
                     // On the cover everything steps back a little, but by less
                     // than the secondary row on black: over a picture it has to
@@ -361,7 +362,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
      * small title card reads as a caption for nothing.
      */
     @Composable
-    private fun BoxScope.TitleBlock(current: Track, credit: String) {
+    private fun BoxScope.TitleBlock(current: Track, status: String?) {
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -373,19 +374,16 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Holding the text opens it whole, as the cover's hold opens the
-                // cover whole. A tap does nothing, as on a cover.
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .slowLongPress(onClick = {}, onLongPress = { go { SongInfoScreen(it, current) } }),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     // Artist above the song, album below it, each one line, cut
-                    // where too long: only the title takes a second.
-                    HeroLine(credit, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
+                    // where too long: only the title takes a second. A status
+                    // ("Buffering…") stands in for the album.
+                    HeroLine(current.artist, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
                     HeroTitle(current.title)
-                    HeroLine(current.album, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
+                    HeroLine(status ?: current.album, HERO_SIDE_PX, HERO_SIDE_LINE_PX, dim = true)
                 }
             }
         }

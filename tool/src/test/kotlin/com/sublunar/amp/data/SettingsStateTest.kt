@@ -19,12 +19,12 @@ class SettingsStateTest {
     fun `a setting's state starts from what is stored, not from its default`() {
         val settings = MemoryDataStore(
             preferencesOf(
-                booleanPreferencesKey("pref.invertColors") to true,
+                booleanPreferencesKey("pref.karaokeLyrics") to false,
                 stringPreferencesKey("pref.artworkMode") to "SMALL",
                 stringPreferencesKey("pref.dataMode") to "WIFI_ONLY",
             ),
         ).settings()
-        assertEquals(true, settings.invertColors.value)
+        assertEquals(false, settings.syncedLyrics.value)
         assertEquals(ArtworkMode.SMALL, settings.artwork.value)
         assertEquals(DataMode.WIFI_ONLY, settings.dataMode.value)
         // Never written: the default.

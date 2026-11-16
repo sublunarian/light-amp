@@ -36,7 +36,9 @@ import com.sublunar.amp.ui.components.CenteredNote
 import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.NumberedRow
 import com.sublunar.amp.ui.components.ROW_GAP_PX
+import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import com.sublunar.amp.ui.components.ROW_LEAD_PX
+import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.ScrollableList
@@ -306,7 +308,9 @@ class AlbumDetailScreen(
     /**
      * The card with artwork turned off, centred: no cover's height to keep to, so
      * the title and credit wrap as far as they need, the credit a step up from
-     * the one beside a cover, as the title is.
+     * the one beside a cover, as the title is. Centred on the screen, under the
+     * header's title: the list's right edge keeps the scroll bar's lane, so the
+     * card keeps the same on its left.
      */
     @Composable
     private fun TextCard(album: Album, onTitleBottom: (Int) -> Unit) {
@@ -314,7 +318,7 @@ class AlbumDetailScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = px(ROW_LEAD_PX), bottom = px(cardGapPx())),
+                .padding(start = px(SCROLLBAR_LANE_PX - LIST_EDGE_PX), bottom = px(cardGapPx())),
             horizontalAlignment = if (centred) Alignment.CenterHorizontally else Alignment.Start,
         ) {
             CardTitle(album.title, centred = centred, maxLines = Int.MAX_VALUE, onTitleBottom = onTitleBottom)

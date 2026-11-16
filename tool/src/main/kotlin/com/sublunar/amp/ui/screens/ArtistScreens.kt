@@ -26,7 +26,6 @@ import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.ROW_LEAD_PX
 import com.sublunar.amp.ui.components.SplitActionRow
-import com.sublunar.amp.ui.components.rememberNumberColumn
 import com.sublunar.amp.ui.components.formatTime
 import androidx.compose.foundation.layout.Column
 import com.sublunar.amp.ui.components.rowClickable
@@ -82,13 +81,12 @@ class ArtistDetailScreen(
     /**
      * After grouped records: All Songs as a heading that opens the list; then
      * Popular, a heading of the same kind, and its first [POPULAR_PREVIEW] songs
-     * to play from, each numbered by its rank before its cover, its length under
+     * to play from, each numbered by its rank in the margin, its length under
      * the title.
      */
     @Composable
-    private fun SongsAtEnd(popular: List<Track>, downloadedIds: Set<String>) {
+    private fun SongsAtEnd(popular: List<Track>) {
         val shown = popular.take(POPULAR_PREVIEW)
-        val numberColumn = rememberNumberColumn(remember(shown.size) { List(shown.size) { it + 1 } })
         HeadingRow("All Songs", ROW_H_PX) { go { ArtistSongsScreen(it, name, credit = credit) } }
         if (popular.isEmpty()) return
         HeadingRow("Popular", ROW_H_PX) {
@@ -99,11 +97,11 @@ class ArtistDetailScreen(
                 title = track.title,
                 subtitle = formatTime(track.durationMs),
                 coverArtId = track.coverArtId,
-                downloaded = track.id in downloadedIds,
+                // A preview of what the artist is known for, not a list to keep: no download marks.
+                downloaded = false,
                 onClick = { playFromRow(popular, index) },
                 onLongClick = { openTrackActions(track.id, null, onArtistPage = name) },
                 number = index + 1,
-                numberColumn = numberColumn,
             )
         }
     }
@@ -114,7 +112,6 @@ class ArtistDetailScreen(
         val albums by App.library.albums.collectAsState()
         val artistAlbums = remember(tracks, albums, name) { App.library.albumsForArtist(name, credit) }
         val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
-        val downloadedIds by App.library.downloadedTrackIds.collectAsState()
 
         // Empty where the server has none (Navidrome needs Last.fm set up).
         // Not asked for where the source has no such list.
@@ -169,7 +166,7 @@ class ArtistDetailScreen(
                     footer = {
                         if (groups != null) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
-                                Column { SongsAtEnd(popular, downloadedIds) }
+                                Column { SongsAtEnd(popular) }
                             }
                         }
                     },
@@ -214,7 +211,7 @@ class ArtistDetailScreen(
                     }
                 }
                 if (groups != null) {
-                    item(key = "songs-at-end") { Column { SongsAtEnd(popular, downloadedIds) } }
+                    item(key = "songs-at-end") { Column { SongsAtEnd(popular) } }
                 }
             }
         }

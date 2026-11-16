@@ -74,7 +74,6 @@ class SettingsKeysTest {
 
     @Test
     fun `display and playback`() = runBlocking {
-        settings.invertColors.set(true)
         settings.syncedLyrics.set(false)
         settings.latinLyrics.set(true)
         settings.layoutMode.set(LayoutMode.SIMPLIFIED)
@@ -87,7 +86,6 @@ class SettingsKeysTest {
         settings.artwork.set(ArtworkMode.NONE)
         assertEquals(
             mapOf(
-                "pref.invertColors" to true,
                 "pref.karaokeLyrics" to false,
                 "pref.latinLyrics" to true,
                 "pref.layoutMode" to "SIMPLIFIED",

@@ -3,6 +3,8 @@ package com.sublunar.amp.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -24,6 +26,7 @@ import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.HeaderAction
+import com.sublunar.amp.ui.components.SETTINGS_GLYPH_PX
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.LocalMenuHeading
 import com.sublunar.amp.ui.components.ScrollableList
@@ -84,7 +87,7 @@ class MoreScreen(
                     title = pageTitle ?: defaultTitle(page),
                     fitTitle = true,
                     onBack = { if (stale) backToRoot() else goBack() },
-                    rightAction = HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
+                    rightAction = HeaderAction(AppIcons.Settings, iconPx = SETTINGS_GLYPH_PX) { go { SettingsScreen(it) } },
                 )
                 CompositionLocalProvider(LocalMenuHeading provides true) {
                     ScrollableList {
@@ -387,7 +390,10 @@ class AboutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     AppText("Amp", pxSp(LightType.HEADING_PX))
-                    AppText("Version ${BuildConfig.VERSION_NAME}", pxSp(LightType.DETAIL_PX), dim = true)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        AppText("Version ${BuildConfig.VERSION_NAME}", pxSp(LightType.DETAIL_PX), dim = true)
+                        AppText("by sublunarian", pxSp(LightType.DETAIL_PX), dim = true)
+                    }
                 }
                 // Only when the loopback stream proxy failed, and why: nothing
                 // streams without it, and it can't be seen any other way without a cable.
@@ -405,7 +411,14 @@ class AboutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     modifier = Modifier.padding(top = px(54)),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    AppText("Buy Me a Coffee", pxSp(LightType.PARAGRAPH_PX))
+                    AppText(
+                        "Amp will always remain free and private for all Light users. " +
+                            "Please consider supporting me by buying me a vinyl!",
+                        pxSp(LightType.DETAIL_PX),
+                        lineHeight = pxSp(LightType.DETAIL_LINE_PX),
+                        align = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(px(26)))
                     AppText("buymeacoffee.com/sublunarian", pxSp(LightType.PARAGRAPH_PX), dim = true)
                 }
             }

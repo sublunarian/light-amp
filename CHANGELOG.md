@@ -7,6 +7,13 @@
 - Resuming on an AirPlay speaker takes about half as long.
 - A cast rides out a short Wi-Fi drop: it plays on by itself once Wi-Fi is
   back, with every speaker of a group.
+- The simple layout's home list has its glyphs back, and the source picker
+  shows only when there's more than one library to choose. Sync is now at the
+  top of Settings > Sources.
+- Settings: Hide Download Icons and Synchronized Lyrics, and Invert Colors is gone.
+- Smaller touches: a lighter settings gear, an artless album page centred under
+  its header, Buffering in the artless player's album line, and an artist's
+  Popular songs ranked in the margin.
 - Built on Light's SDK 0.2.7.
 - Amp is open source again, under the GNU GPL 3.0. Light's SDK stays MIT.
 

@@ -35,9 +35,19 @@ import com.thelightphone.sdk.ui.LightIcons
  */
 data class HeaderAction(
     val icon: ImageVector,
+    /** The glyph's box: [CORNER_ICON_PX], or the gear's own — see [SETTINGS_GLYPH_PX]. */
+    val iconPx: Int = CORNER_ICON_PX,
     val onLongClick: (() -> Unit)? = null,
     val onClick: () -> Unit,
 )
+
+/**
+ * The settings gear's box, a size under the corner's. Light's gear fills its
+ * box edge to edge, a solid disc where the back arrow and the More dots are
+ * lines, so at the corner's size it read the largest glyph in the header; at
+ * this its ink is about the back arrow's height.
+ */
+const val SETTINGS_GLYPH_PX = 58
 
 /**
  * The inner slot beside the right corner: search on the tabs, delete while
@@ -188,7 +198,7 @@ fun AppHeader(
             onLongClick = rightAction?.onLongClick,
         ) {
             if (rightAction != null) {
-                AppIcon(rightAction.icon, size = px(CORNER_ICON_PX))
+                AppIcon(rightAction.icon, size = px(rightAction.iconPx))
             }
         }
     }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
@@ -141,9 +142,8 @@ fun TrackRow(
     coverSource: String? = null,
     /** An album list's row: five to the page rather than six, the cover grown with the row. */
     tall: Boolean = false,
-    /** A rank before the cover (an artist's popular songs), centred in [numberColumn] — see [rememberNumberColumn]. */
+    /** A rank (an artist's popular songs), in the download mark's place, centred in the 72px margin. */
     number: Int? = null,
-    numberColumn: Dp = 0.dp,
     /** A list with its own artwork switch says so — see App.hidePlaylistArtwork. */
     artworkHidden: Boolean = App.hideListArtwork.collectAsState().value,
 ) {
@@ -159,29 +159,17 @@ fun TrackRow(
     ) {
         // Without artwork the mark sits on the title's line, half the subtitle's line above the middle.
         val noArt = artworkHidden && selected == null
-        RowLead(
-            downloaded,
-            inkDropPx = when {
-                !noArt -> null
-                subtitle.isNotBlank() -> MARK_INK_DROP_PX - type.subLinePx / 2
-                else -> TITLE_ONLY_INK_DROP_PX
-            },
-        )
         if (number != null && selected == null) {
-            // Dim, and centred on the row as the cover is.
-            Box(Modifier.width(numberColumn), contentAlignment = Alignment.Center) {
-                AppText(
-                    number.toString(),
-                    pxSp(type.titlePx),
-                    lineHeight = pxSp(type.titleLinePx),
-                    role = type.titleRole,
-                    exact = true,
-                    dim = true,
-                    maxLines = 1,
-                    align = TextAlign.Center,
-                )
-            }
-            Spacer(Modifier.width(px(NUMBER_GAP_PX)))
+            NumberLead(number, type)
+        } else {
+            RowLead(
+                downloaded,
+                inkDropPx = when {
+                    !noArt -> null
+                    subtitle.isNotBlank() -> MARK_INK_DROP_PX - type.subLinePx / 2
+                    else -> TITLE_ONLY_INK_DROP_PX
+                },
+            )
         }
         if (selected != null) {
             SelectionArtwork(coverArtId, selected)
@@ -340,6 +328,33 @@ private fun RowLead(downloaded: Boolean, inkDropPx: Int? = null) {
         DownloadGlyph(downloaded, if (inkDropPx == null) Modifier else Modifier.offset(y = px(inkDropPx)))
     }
 }
+
+/**
+ * A rank where [RowLead] would be, so what follows starts 72px from the screen's
+ * edge as in every list: dim, centred on the row as the cover is, and centred
+ * across those 72px (the list's own edge is part of them).
+ */
+@Composable
+private fun NumberLead(number: Int, type: RowType) {
+    Box(Modifier.width(px(LIST_LEAD_PX)), contentAlignment = Alignment.CenterStart) {
+        Box(Modifier.width(px(2 * MARGIN_MIDDLE_IN_LEAD_PX)), contentAlignment = Alignment.Center) {
+            AppText(
+                number.toString(),
+                pxSp(type.titlePx),
+                lineHeight = pxSp(type.titleLinePx),
+                role = type.titleRole,
+                exact = true,
+                dim = true,
+                maxLines = 1,
+                align = TextAlign.Center,
+                modifier = Modifier.wrapContentWidth(unbounded = true),
+            )
+        }
+    }
+}
+
+/** The middle of the 72px margin, measured from the list's own edge. */
+private const val MARGIN_MIDDLE_IN_LEAD_PX = (LIST_LEAD_PX + LIST_EDGE_PX) / 2 - LIST_EDGE_PX
 
 /** An artist row: a track row's metrics, with the artist's picture where a server has one. */
 @Composable

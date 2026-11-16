@@ -61,6 +61,9 @@ object AppIcons {
 
     /** LightOS's own shuffle and loop, from the SDK's icons. LightOS has no repeat-one: the queue marks it with a 1 inside the loop. */
     val Shuffle: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.SHUFFLE.drawableResource)
+
+    /** Light's circling arrows, its glyph for refreshing: Amp's Sync. */
+    val Sync: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.REFRESH.drawableResource)
     val Repeat: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.LOOP.drawableResource)
 
     /** LightOS's own transport glyphs, from the SDK's icons. */

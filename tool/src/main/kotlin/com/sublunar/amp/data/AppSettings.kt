@@ -432,8 +432,6 @@ class AppSettings(
 
     // --- Display and playback ------------------------------------------------
 
-    val invertColors: Pref<Boolean> = bool("pref.invertColors", false)
-
     val syncedLyrics: Pref<Boolean> = bool("pref.karaokeLyrics", true)
 
     /** Lyrics in another script shown in Latin letters, chosen at the end of such lyrics. */

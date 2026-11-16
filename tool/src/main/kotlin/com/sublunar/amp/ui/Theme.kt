@@ -28,10 +28,9 @@ fun PlayerTheme(
     library: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val invert by App.settings.invertColors.state.collectAsState()
     // Menus and settings have no grey.
     val dimAlpha = if (library) GREY_ALPHA else 1f
-    val sdk = if (invert) LightThemeColors.Light else LightThemeColors.Dark
+    val sdk = LightThemeColors.Dark
     // Amp's one grey in place of the SDK's, so its own components draw it too.
     val colors = sdk.copy(contentSecondary = lerp(sdk.background, sdk.content, GREY_ALPHA))
     LightTheme(colors = colors) {
@@ -74,12 +73,12 @@ val LocalDimTextAlpha = compositionLocalOf { GREY_ALPHA }
 const val GREY_ALPHA = 0.59f
 
 /**
- * The SDK's own grey (#BBBBBB on black, #666666 on white) as an alpha on the
- * content colour, so a glyph faded by it lands on exactly that grey in either theme.
+ * The SDK's own grey (#BBBBBB on black) as an alpha on the content colour, so a
+ * glyph faded by it lands on exactly that grey.
  */
 @Composable
 fun sdkGreyAlpha(): Float {
-    val sdk = if (App.settings.invertColors.state.collectAsState().value) LightThemeColors.Light else LightThemeColors.Dark
+    val sdk = LightThemeColors.Dark
     return (sdk.contentSecondary.red - sdk.background.red) / (sdk.content.red - sdk.background.red)
 }
 

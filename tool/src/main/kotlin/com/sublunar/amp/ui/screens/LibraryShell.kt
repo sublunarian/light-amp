@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
+import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.SyncState
@@ -44,7 +45,12 @@ import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.ArtistRow
 import com.sublunar.amp.ui.components.HeaderAction
+import com.sublunar.amp.ui.components.SETTINGS_GLYPH_PX
 import com.sublunar.amp.ui.components.LIST_LEAD_PX
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.sublunar.amp.ui.components.TabGlyphs
+import com.sublunar.amp.ui.components.ROW_ACTION_ICON_PX
+import com.sublunar.amp.ui.components.ROW_GAP_PX
 import com.sublunar.amp.ui.components.INDEX_STRIP_PX
 import com.sublunar.amp.ui.components.LatestList
 import com.sublunar.amp.ui.components.ListScrollBar
@@ -574,21 +580,25 @@ private fun SimpleLightScreen<*>.LibraryIndex() {
     val likedAlbums by App.library.hasLikedAlbums.collectAsState()
     val likedTracks by App.library.hasLikedTracks.collectAsState()
     val likes = source.supportsLikes
+    val sources by App.settings.sources.state.collectAsState()
 
     // A Column of its own: the shell hands each page a Box.
     Column(modifier = Modifier.fillMaxSize()) {
         // The source's name with the SDK's chevron, a picker as the library's
-        // name is at the top of Plexamp, and Settings in the corner.
+        // name is at the top of Plexamp, and Settings in the corner. With
+        // nothing else to pick, the name alone: Sync is in Settings > Sources.
         AppHeader(
-            titleContent = { SourceTitle(source.name) { go { SourcesScreen(it) } } },
-            rightAction = HeaderAction(AppIcons.Settings) { go { SettingsScreen(it) } },
+            title = source.name.takeUnless { hasChoice(sources) },
+            fitTitle = true,
+            titleContent = if (hasChoice(sources)) ({ SourceTitle(source.name) { go { SourcesScreen(it) } } }) else null,
+            rightAction = HeaderAction(AppIcons.Settings, iconPx = SETTINGS_GLYPH_PX) { go { SettingsScreen(it) } },
         )
         // Seven rows to exactly the space under the header.
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val pitch = maxHeight / INDEX_ROWS_PER_SCREEN
             ScrollableList {
                 HOME_ORDER.forEach { tab ->
-                    item { IndexLine(tab.title, pitch) { openNarrowed(tab, liked = false) } }
+                    item { IndexLine(tab.title, iconFor(tab), pitch) { openNarrowed(tab, liked = false) } }
                 }
                 // The same three again, narrowed, as a block under the whole set.
                 LIKED_ORDER.forEach { tab ->
@@ -598,13 +608,17 @@ private fun SimpleLightScreen<*>.LibraryIndex() {
                         else -> likedTracks
                     }
                     if (likes && any) {
-                        item { IndexLine("Liked ${tab.title}", pitch) { openNarrowed(tab, liked = true) } }
+                        item { IndexLine("Liked ${tab.title}", AppIcons.Favorite, pitch) { openNarrowed(tab, liked = true) } }
                     }
                 }
             }
         }
     }
 }
+
+/** Whether the source picker has anything to pick: another source, or more than one library of this one. */
+private fun hasChoice(sources: List<MusicSource>): Boolean =
+    sources.size > 1 || sources.any { it.phoneLibrary == null && it.visibleLibraries.size >= 2 }
 
 /** The home list's order. */
 private val HOME_ORDER = listOf(LibraryTab.PLAYLISTS, LibraryTab.ARTISTS, LibraryTab.ALBUMS, LibraryTab.SONGS)
@@ -634,18 +648,28 @@ private fun openNarrowed(tab: LibraryTab, liked: Boolean) {
 
 private const val NARROWED_WAIT_MS = 500L
 
+/** A tab's glyph, as the tab bar draws it. */
+private fun iconFor(tab: LibraryTab): ImageVector = when (tab) {
+    LibraryTab.PLAYLISTS -> AppIcons.QueueMusic
+    LibraryTab.ARTISTS -> TabGlyphs.Microphone
+    LibraryTab.ALBUMS -> AppIcons.AlbumStack
+    LibraryTab.SONGS -> AppIcons.MusicNote
+}
+
 /** A row of the home list, as 0.8.2 drew it: the glyph, then the name at Copy, [pitch] tall. */
 @Composable
-private fun IndexLine(title: String, pitch: Dp, onClick: () -> Unit) {
+private fun IndexLine(title: String, icon: ImageVector, pitch: Dp, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(pitch)
             .rowClickable(onClick = onClick)
-            // Where every library list's names start, 72px from the screen's edge.
+            // The glyph where every library list's content starts, 72px from the screen's edge.
             .padding(start = px(LIST_LEAD_PX)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        AppIcon(icon, size = px(INDEX_GLYPH_PX))
+        Spacer(Modifier.width(px(INDEX_GLYPH_GAP_PX)))
         AppText(
             title,
             pxSp(LightType.COPY_PX),
@@ -657,6 +681,13 @@ private fun IndexLine(title: String, pitch: Dp, onClick: () -> Unit) {
 }
 
 private const val INDEX_ROWS_PER_SCREEN = 7
+
+/**
+ * The glyph and the air after it, as an action row (Shuffle, All Songs) sets
+ * them beside its name, scaled from that row's Fine to this list's Copy.
+ */
+private const val INDEX_GLYPH_PX = ROW_ACTION_ICON_PX * LightType.COPY_PX / LightType.FINE_PX
+private const val INDEX_GLYPH_GAP_PX = ROW_GAP_PX * LightType.COPY_PX / LightType.FINE_PX
 
 /** Whether this tab is narrowed to what is downloaded — see AppSettings.downloadedAlbumsOnly. */
 @Composable

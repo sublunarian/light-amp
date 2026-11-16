@@ -84,7 +84,6 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
-        val invert by App.settings.invertColors.state.collectAsState()
         val syncedLyrics by App.settings.syncedLyrics.state.collectAsState()
         val hideDownloadIcons by App.settings.hideDownloadIcons.state.collectAsState()
         val sources by App.settings.sources.state.collectAsState()
@@ -98,7 +97,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     item {
                         // The marks go; the layout does not move with them — see
                         // AppSettings.hideDownloadIcons.
-                        ToggleRow("Download Icons", !hideDownloadIcons) {
+                        ToggleRow("Hide Download Icons", hideDownloadIcons) {
                             App.scope.launch {
                                 App.settings.hideDownloadIcons.set(!hideDownloadIcons)
                             }
@@ -106,13 +105,8 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     }
                 }
                 item {
-                    ToggleRow("Synced Lyrics", syncedLyrics) {
+                    ToggleRow("Synchronized Lyrics", syncedLyrics) {
                         App.scope.launch { App.settings.syncedLyrics.set(!syncedLyrics) }
-                    }
-                }
-                item {
-                    ToggleRow("Invert Colors", invert) {
-                        App.scope.launch { App.settings.invertColors.set(!invert) }
                     }
                 }
                 item {
