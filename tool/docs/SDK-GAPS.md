@@ -51,25 +51,28 @@ minutes, where the spike held on indefinitely.
 - **Revert:** delete `LightTransferService.kt`, its calls in `Downloader.kt`, and
   the service and permission from the SDK manifest.
 
-### Hardware volume keys
+### Hardware volume keys — CLOSED by LightOS, 16 Nov 2026
 
-- **Need:** the rocker changes playback volume, with the LightOS volume panel.
-- **Fixed in LightOS 572:** the keys reach a side-loaded tool now. Before, the
-  token was rejected and the press did nothing.
-- **Still wrong:** forwarded keys move the **ringer**, even with music playing.
-  LightOS chooses the stream in its own process, where nothing is playing.
-- **Nothing on our side can say otherwise:** `DeviceKeyEvent` carries keyCode,
-  action and characters — no stream. Setting `volumeControlStream` on the
-  foreground activity does not cross the process boundary (tried, 20 Aug 2026).
-- **Now:** we keep volume keys away from the server and let them fall through to
-  Android, which turns media volume while something plays. That loses the
-  LightOS volume panel, and it is a spike, so a store build still turns the
-  ringer.
-- **Would fix it:** route forwarded volume keys to the active media session, or
-  carry the foreground tool's `volumeControlStream` in `DeviceKeyEvent`.
-- **Requested upstream:**
-  [#189](https://github.com/lightphone/light-sdk/issues/189).
-  Light calls it a LightOS fix and "high on the list" (8 Oct 2026).
+The rocker used to turn the ringer when a tool forwarded it, so Amp kept the
+keys from LightOS and let Android turn media volume, without the LightOS panel
+([#189](https://github.com/lightphone/light-sdk/issues/189)). On the LightOS
+that shipped with SDK 0.2.7 a forwarded press turns media volume and shows the
+panel, in front and behind. The pass-through is gone; Amp forwards the keys like
+any tool. #189 is still open upstream.
+
+### Opening on the player from the lock screen — to ask
+
+- **Need:** tapping the song or artist on LightOS's lock-screen now-playing
+  opens the tool on its player, the way the stock Music tool does.
+- **Now:** the tool opens wherever it was left. The SDK's `sessionActivity` is
+  the plain launch intent, the same one the launcher sends, and a tool never
+  sees intents, so it can't tell the two apart.
+- **Would fix it:** the SDK tags the `sessionActivity` intent and tells the tool
+  when a launch carries the tag (the activity is `singleTask`, so a warm launch
+  arrives in `onNewIntent`). For example a `StateFlow` the tool watches and
+  consumes, or a screen callback. Built and tested on the phone 16 Nov 2026,
+  then removed: it added four store-build errors.
+- **Requested upstream:** not yet.
 
 ### Colour
 
@@ -315,9 +318,7 @@ minutes, where the spike held on indefinitely.
 plugin emits the service and its permissions into the tool manifest. Every one
 of our player additions rides the `Player` interface, which the detached
 `MediaController` implements. The background-audio section above has what
-little remains ours. Still open: whether hardware volume keys route through
-the SDK's session (the `LightActivity` pass-through spike stays until the
-phone answers).
+little remains ours. Volume keys: see Hardware volume keys above (closed).
 
 ### Connectivity — PR #166: adopted, gap closed
 

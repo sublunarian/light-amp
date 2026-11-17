@@ -1,5 +1,5 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
-index 6709c68..0867d9c 100644
+index faaa5da..b0cd455 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
 @@ -1,5 +1,6 @@
@@ -9,48 +9,7 @@ index 6709c68..0867d9c 100644
  import android.content.Context
  import android.os.Bundle
  import android.view.KeyEvent
-@@ -149,6 +150,13 @@ class LightActivity internal constructor() : ComponentActivity() {
-     private val Int.isSystemKeyCode: Boolean
-         get() = (this == KeyEvent.KEYCODE_BACK || this == KeyEvent.KEYCODE_HOME)
- 
-+    // SPIKE (hardware volume): let volume keys fall through to the system so the
-+    // active MediaSession adjusts playback volume, instead of forwarding them to
-+    // LightOS (which rejects a side-loaded tool's token anyway). Revert together
-+    // with the media service when Light supports device keys for side-loaded tools.
-+    private fun isVolumeKey(keyCode: Int): Boolean =
-+        keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
-+
-     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-         // don't do anything with android keys
-         // back button override handled elsewhere and home button won't get dispatched to external tools
-@@ -157,7 +165,7 @@ class LightActivity internal constructor() : ComponentActivity() {
-         } else if (currentScreen.value?.screen?.onKeyDown(keyCode, event) == true) {
-             // let the active screen handle the button if it wants to
-             true
--        } else if (LightDeviceKeys.mapping.containsKey(keyCode)) {
-+        } else if (LightDeviceKeys.mapping.containsKey(keyCode) && !isVolumeKey(keyCode)) {
-             // otherwise see if the server wants to use it
-             forwardKeyEventToServer(keyCode, event)
-             true
-@@ -175,7 +183,7 @@ class LightActivity internal constructor() : ComponentActivity() {
-             super.onKeyMultiple(keyCode, repeatCount, event)
-         } else if (currentScreen.value?.screen?.onKeyMultiple(keyCode, repeatCount, event) == true) {
-             true
--        } else if (LightDeviceKeys.mapping.containsKey(keyCode)) {
-+        } else if (LightDeviceKeys.mapping.containsKey(keyCode) && !isVolumeKey(keyCode)) {
-             forwardKeyEventToServer(keyCode, event)
-             true
-         } else {
-@@ -188,7 +196,7 @@ class LightActivity internal constructor() : ComponentActivity() {
-             super.onKeyUp(keyCode, event)
-         } else if (currentScreen.value?.screen?.onKeyUp(keyCode, event) == true) {
-             true
--        } else if (LightDeviceKeys.mapping.containsKey(keyCode)) {
-+        } else if (LightDeviceKeys.mapping.containsKey(keyCode) && !isVolumeKey(keyCode)) {
-             forwardKeyEventToServer(keyCode, event)
-             true
-         } else {
-@@ -217,11 +225,16 @@ class LightActivity internal constructor() : ComponentActivity() {
+@@ -217,11 +218,16 @@ class LightActivity internal constructor() : ComponentActivity() {
  
      override fun onPause() {
          super.onPause()

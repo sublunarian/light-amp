@@ -195,12 +195,12 @@ LightOS read it; since 0.2.3 the SDK sets one itself, to the tool's launch inten
 `dataSync` foreground service so downloads aren't throttled ~9× when the tool is
 backgrounded.
 
-### 13. `LightActivity` — volume key pass-through
+### 13. ~~`LightActivity` — volume key pass-through~~ — removed 16 Nov 2026
 
-Volume keys a screen doesn't use fall through to Android, which turns media
-volume while something plays, instead of going to LightOS, which turns the
-ringer. While casting, Amp's screens take the keys themselves for the speaker
-(`PlaybackController.handleVolumeKey`), which needs no patch.
+Volume keys used to fall through to Android instead of going to LightOS, which
+turned the ringer. LightOS now turns media volume and shows its panel, so the
+keys go to LightOS again. While casting, Amp's screens still take them for the
+speaker (`PlaybackController.handleVolumeKey`), which needs no patch.
 
 ### 14. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
 
