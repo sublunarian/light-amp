@@ -141,7 +141,7 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val hideHomeGlyphs by App.settings.hideHomeGlyphs.state.collectAsState()
-        val hideMoreSourceSettings by App.settings.hideMoreSourceSettings.state.collectAsState()
+        val trimMoreMenu by App.settings.trimMoreMenu.state.collectAsState()
 
         // Rows a step below the other settings pages', so a trial's whole name fits.
         ListScreen(onBack = { goBack() }, title = "Test") {
@@ -152,8 +152,8 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     }
                 }
                 item {
-                    ToggleRow("Hide Source & Settings", hideMoreSourceSettings) {
-                        App.scope.launch { App.settings.hideMoreSourceSettings.set(!hideMoreSourceSettings) }
+                    ToggleRow("Hide Source, Settings, Genre", trimMoreMenu) {
+                        App.scope.launch { App.settings.trimMoreMenu.set(!trimMoreMenu) }
                     }
                 }
             }

@@ -78,8 +78,8 @@ class MoreScreen(
         val visit = ArtistSongsVisit.view.collectAsState().value.takeIf { page == LibraryPage.ARTIST_SONGS }
         val source = App.source.collectAsState().value
         val grouping = App.settings.groupReleaseTypes.state.collectAsState().value
-        // The simple layout's home header has both; the tabs' layout has no other way to them.
-        val hideSourceSettings = App.settings.hideMoreSourceSettings.state.collectAsState().value &&
+        // The simple layout's home reaches all three; the tabs' layout has no other way to them.
+        val trimmed = App.settings.trimMoreMenu.state.collectAsState().value &&
             App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
 
         // Covers the tab bar: a menu that leaves the navigation showing reads as
@@ -91,7 +91,7 @@ class MoreScreen(
                     title = pageTitle ?: defaultTitle(page),
                     fitTitle = true,
                     onBack = { if (stale) backToRoot() else goBack() },
-                    rightAction = if (hideSourceSettings) {
+                    rightAction = if (trimmed) {
                         null
                     } else {
                         HeaderAction(AppIcons.Settings, iconPx = SETTINGS_GLYPH_PX) { go { SettingsScreen(it) } }
@@ -109,7 +109,7 @@ class MoreScreen(
                         }
                         // There even with one source and one library: the page
                         // it opens is also where Sync Now lives.
-                        if (!hideSourceSettings) {
+                        if (!trimmed) {
                             item {
                                 TextRow(
                                     title = "Source",
@@ -162,7 +162,7 @@ class MoreScreen(
                                 }
                             }
                         }
-                        if (genre != null) item { Setting("Genre", genre, stay = true) }
+                        if (genre != null && !trimmed) item { Setting("Genre", genre, stay = true) }
                     }
                 }
             }
