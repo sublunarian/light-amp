@@ -190,8 +190,8 @@ class ArtworkLoader(
         forDownloadOf: String? = null,
     ): ByteArray? {
         // A local track's cover id is its own path: the sleeve is inside the
-        // file, and there is no server to ask for it.
-        PhoneFiles.fileOf(coverArtId)?.let { return embedded(it) }
+        // file, or else beside it, and there is no server to ask for it.
+        PhoneFiles.fileOf(coverArtId)?.let { return embedded(it) ?: folderCover(it) }
         // A cover is a quarter-megabyte at panel size: nothing next to the song
         // playing, but a listful is not. The rules say which may cost cellular.
         if (!fetchAllowed(need, small)) {
@@ -297,6 +297,26 @@ class ArtworkLoader(
             runCatching { retriever.release() }
         }
     }
+
+    /**
+     * The cover image in [file]'s folder (cover.jpg and its kin), or in the
+     * album's folder when the file sits in a disc folder of its own. Images
+     * are invisible without the photos permission: the folder lists none.
+     */
+    private fun folderCover(file: File): ByteArray? {
+        val folder = file.parentFile ?: return null
+        val albumFolder = folder.parentFile?.takeIf { DISC_FOLDER.matches(folder.name) }
+        return listOfNotNull(folder, albumFolder).firstNotNullOfOrNull { dir ->
+            val images = dir.listFiles()?.filter { it.isFile && it.extension.lowercase() in COVER_EXTENSIONS }.orEmpty()
+            COVER_NAMES.firstNotNullOfOrNull { name ->
+                images.firstOrNull { it.nameWithoutExtension.equals(name, ignoreCase = true) }
+            }
+        }?.let { runCatching { it.readBytes() }.getOrNull() }
+    }
+
+    private val COVER_NAMES = listOf("cover", "folder", "front", "album")
+    private val COVER_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp")
+    private val DISC_FOLDER = Regex("""(cd|disc|disk)\s*\d+.*""", RegexOption.IGNORE_CASE)
 
     private fun diskFile(sourceId: String, coverArtId: String, small: Boolean) =
         File(diskDir, fileNameFor(sourceId, coverArtId) + if (small) SMALL_SUFFIX else "")

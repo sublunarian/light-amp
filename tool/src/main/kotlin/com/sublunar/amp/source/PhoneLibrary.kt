@@ -25,6 +25,12 @@ interface PhoneLibrary {
     /** Whether the app may read the folder now, and if not, why. */
     suspend fun access(): PhoneAccess
 
+    /** The permission that makes cover images beside the music readable. */
+    val coverPermission: String
+
+    /** Whether the app may read those cover images now. */
+    fun hasCoverAccess(): Boolean
+
     /** Every track and album in the folder, with [onProgress] told the count as it goes. */
     suspend fun scan(onProgress: (Int) -> Unit): PhoneScan
 

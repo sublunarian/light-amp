@@ -45,6 +45,10 @@ object LocalLibrary : PhoneLibrary {
 
     override val permission: String get() = "android.permission.READ_MEDIA_AUDIO"
 
+    override val coverPermission: String get() = "android.permission.READ_MEDIA_IMAGES"
+
+    override fun hasCoverAccess(): Boolean = hasRuntimePermission(coverPermission) == true
+
     override val playlists: PhonePlaylists get() = LocalPlaylists
 
     /** [FOLDER] on the phone's shared storage. */

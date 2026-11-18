@@ -547,6 +547,9 @@ class AppSettings(
      * The queue as it stood when the app last went away, as [saveQueue] wrote
      * it, in one read; null when it holds no tracks.
      *
+    /** Whether "Show Folder Covers?" has been tapped: it is offered until then, never after. */
+    val folderCoverOfferTapped: Pref<Boolean> = bool("pref.folderCoverQuestionAnswered", false)
+
      * Ids rather than rows — the library cache already holds the tracks, and a
      * long queue of full records has no business in DataStore. Capped at
      * [MAX_SAVED_QUEUE] so "play everything" can't write a megabyte of ids on

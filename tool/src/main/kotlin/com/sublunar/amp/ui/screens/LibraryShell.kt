@@ -1,6 +1,12 @@
 package com.sublunar.amp.ui.screens
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
+import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.size
@@ -322,6 +328,7 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
                     }
                     notices.forEach { notice -> item(span = { GridItemSpan(maxLineSpan) }) { notice() } }
                 }
+            if (header) rememberFolderCoverAsk()?.let { FolderCoverQuestion(it) }
             }
         } else {
             IndexedList(
@@ -349,6 +356,7 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
                         tall = true,
                     )
                 }
+                asksFolderCovers = header,
             }
         }
     }
@@ -399,16 +407,24 @@ private fun ColumnScope.IndexedList(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             // Keeps titles clear of whichever bar is down the right edge; without
-            // it a long album name ran underneath the letters.
-            contentPadding = listPadding(
+            // it a long album name ran underneath the letters. The question sits
+            // over the top, not above the box, so the strip keeps its height.
+            contentPadding = PaddingValues(
+                start = px(LIST_EDGE_PX),
+                top = questionHeight,
                 end = px(if (indexed) INDEX_STRIP_PX else SCROLLBAR_LANE_PX),
             ),
             content = content,
         )
         if (!indexed) ListScrollBar(listState)
+    /** A tab's own list: "Show Folder Covers?" is pinned over its top while it's asked. */
+    asksFolderCovers: Boolean = false,
         // A descending list keeps its index; the strip just reads Z→A to match.
         if (indexed) {
             AlphabetIndex(
+    val askFolderCovers = if (asksFolderCovers) rememberFolderCoverAsk() else null
+    var questionPx by remember { mutableIntStateOf(0) }
+    val questionHeight = with(LocalDensity.current) { if (askFolderCovers != null) questionPx.toDp() else 0.dp }
                 letters = letters,
                 target = rememberScrollTarget(listState),
                 headerCount = headerCount,
@@ -421,6 +437,9 @@ private fun ColumnScope.IndexedList(
 
 @Composable
 private fun SimpleLightScreen<*>.SongsTab(header: Boolean = true) {
+        askFolderCovers?.let { ask ->
+            FolderCoverQuestion(ask, Modifier.align(Alignment.TopCenter).onSizeChanged { questionPx = it.height })
+        }
     val view by App.sortedSongs.collectAsState()
     val sorted = view.items
     val rows = rememberLatest(sorted)
@@ -461,6 +480,7 @@ private fun SimpleLightScreen<*>.SongsTab(header: Boolean = true) {
                 TrackRow(
                     title = track.title,
                     subtitle = track.artist,
+            asksFolderCovers = header,
                     coverArtId = track.coverArtId,
                     downloaded = track.id in downloadedIds,
                     selected = if (selection.active) track.id in selection.selected else null,
@@ -520,6 +540,7 @@ private fun SimpleLightScreen<*>.ArtistsTab(header: Boolean = true) {
     }
 }
 
+            asksFolderCovers = header,
 @Composable
 private fun SimpleLightScreen<*>.PlaylistsTab(header: Boolean = true) {
     val view by App.sortedPlaylists.collectAsState()
@@ -566,6 +587,7 @@ private fun SimpleLightScreen<*>.PlaylistsTab(header: Boolean = true) {
         }
     }
 }
+            asksFolderCovers = header,
 
 /**
  * Everything there is to browse, in one list: the simplified layout's library
