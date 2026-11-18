@@ -81,13 +81,13 @@ class CapabilitySnapshotTest {
             JELLYFIN, neither: Y.YYY.YYY mp3 opus raw | mp3 opus raw
             JELLYFIN, MP3 only: Y.YY.YYYY mp3 raw | mp3 raw
             JELLYFIN, no conversions: Y.YY.YYYY raw | raw
-            LOCAL, never asked: ......Y.. - | -
-            LOCAL, nothing missing: ......Y.. - | -
-            LOCAL, no probes: ......Y.. - | -
-            LOCAL, no copies: ....Y.Y.. - | -
-            LOCAL, neither: ....Y.Y.. - | -
-            LOCAL, MP3 only: ......Y.. - | -
-            LOCAL, no conversions: ......Y.. - | -
+            LOCAL, never asked: Y.....Y.. - | -
+            LOCAL, nothing missing: Y.....Y.. - | -
+            LOCAL, no probes: Y.....Y.. - | -
+            LOCAL, no copies: Y...Y.Y.. - | -
+            LOCAL, neither: Y...Y.Y.. - | -
+            LOCAL, MP3 only: Y.....Y.. - | -
+            LOCAL, no conversions: Y.....Y.. - | -
             """.trimIndent(),
             snapshot.joinToString("\n"),
         )

@@ -70,6 +70,12 @@ APE, WavPack and DSD files are skipped.
 Playlists live in `Music/Amp/Playlists` as `.m3u8`. One you drop in there shows
 up in Amp, but Amp can't change or delete it.
 
+Local likes are saved in `Music/Amp/Playlists/_AmpFavorites.m3u8`. Copy the whole
+`Music/Amp` folder and the liked songs open as a playlist in other players. Liked
+albums and artists are listed in the same file as `#AMP-ALBUM` and `#AMP-ARTIST`
+lines. If Amp can't change a copy you brought back, it saves a numbered one
+beside it and uses the newest.
+
 Adding music through Light's Tool Manager, instead of adb, is on the to-do list.
 
 ## Color

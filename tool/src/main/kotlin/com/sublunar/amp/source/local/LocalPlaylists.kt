@@ -38,14 +38,14 @@ object LocalPlaylists : PhonePlaylists {
     /** Files that couldn't be read, so one is logged once rather than at every listing. Never logged themselves. */
     private val unreadable = ConcurrentHashMap.newKeySet<String>()
 
-    private fun folder(): File = File(LocalLibrary.MUSIC_DIR, "Playlists")
+    internal fun folder(): File = File(LocalLibrary.MUSIC_DIR, "Playlists")
 
     private fun idFor(file: File): String = ID_PREFIX + file.absolutePath
 
     /** Only a file [list] could have offered: what this returns gets written, renamed and deleted. */
     private fun fileOf(id: String): File? =
         if (id.startsWith(ID_PREFIX)) {
-            File(id.removePrefix(ID_PREFIX)).takeIf { it.parentFile == folder() && it.name.endsWith(EXTENSION, ignoreCase = true) }
+            File(id.removePrefix(ID_PREFIX)).takeIf { it.parentFile == folder() && isPlaylistFile(it.name) }
         } else {
             null
         }
@@ -53,16 +53,21 @@ object LocalPlaylists : PhonePlaylists {
     /**
      * A name safe to be a filename. The name *is* the filename, with no sidecar
      * recording the real one, so anything the filesystem would choke on goes.
+     * So does the underscore of a name the favorites file keeps for itself: a
+     * playlist called that would never be listed.
      */
-    private fun fileNameFor(name: String): String {
+    internal fun fileNameFor(name: String): String {
         val cleaned = name.trim().replace(UNSAFE_IN_NAME, "_").take(120)
-        return (cleaned.ifBlank { "Playlist" }) + EXTENSION
+        val free = if (FavoritesFile.isFavoritesFile(cleaned)) cleaned.trimStart('_') else cleaned
+        return (free.ifBlank { "Playlist" }) + EXTENSION
     }
 
+    /** A playlist's file: the favorites file sits beside them, but it isn't one. */
+    private fun isPlaylistFile(fileName: String): Boolean =
+        fileName.endsWith(EXTENSION, ignoreCase = true) && !FavoritesFile.isFavoritesFile(fileName)
+
     override suspend fun list(): List<Playlist> = withContext(Dispatchers.IO) {
-        val files = folder().listFiles()?.filter {
-            it.isFile && it.name.endsWith(EXTENSION, ignoreCase = true)
-        }.orEmpty()
+        val files = folder().listFiles()?.filter { it.isFile && isPlaylistFile(it.name) }.orEmpty()
         files.sortedBy { it.name.lowercase() }.map { file ->
             val ids = readIds(file)
             Playlist(
@@ -151,28 +156,33 @@ object LocalPlaylists : PhonePlaylists {
      * Track ids from a playlist file. Comments and blank lines are skipped
      * (`#EXTM3U`, `#EXTINF`), and relative paths resolve against the file's
      * own folder, as other tools write them.
-     *
-     * Paths are canonicalised: `/sdcard` is a symlink to `/storage/emulated/0`
-     * and ids are compared as text, so `/sdcard/...` entries would otherwise
-     * match nothing in the library and quietly disappear.
      */
     private fun readIds(file: File): List<String> = runCatching {
         file.readLines()
             .map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("#") }
-            .map { line ->
-                val entry = if (line.startsWith("/")) File(line) else File(file.parentFile, line)
-                // canonicalPath throws if it can't resolve, and a missing file
-                // still belongs in the list so the count is honest.
-                val path = runCatching { entry.canonicalPath }
-                    .getOrElse { entry.normalize().absolutePath }
-                PhoneFiles.ID_PREFIX + path
-            }
+            .map { line -> trackIdOfEntry(line, file.parentFile) }
     }.onSuccess {
         if (unreadable.remove(file.path)) Log.i(TAG, "a playlist file is readable again")
     }.getOrElse {
         if (unreadable.add(file.path)) Log.w(TAG, "couldn't read a playlist file: ${it.logName()}")
         emptyList()
+    }
+
+    /**
+     * The track a playlist line in [folder] names.
+     *
+     * Paths are canonicalised: `/sdcard` is a symlink to `/storage/emulated/0`
+     * and ids are compared as text, so `/sdcard/...` entries would otherwise
+     * match nothing in the library and quietly disappear.
+     */
+    internal fun trackIdOfEntry(line: String, folder: File?): String {
+        val entry = if (line.startsWith("/")) File(line) else File(folder, line)
+        // canonicalPath throws if it can't resolve, and a missing file
+        // still belongs in the list so the count is honest.
+        val path = runCatching { entry.canonicalPath }
+            .getOrElse { entry.normalize().absolutePath }
+        return PhoneFiles.ID_PREFIX + path
     }
 
     /** Absolute paths, one per line, under a header that marks the encoding. */

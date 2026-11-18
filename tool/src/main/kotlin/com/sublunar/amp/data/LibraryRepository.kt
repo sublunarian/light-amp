@@ -10,6 +10,9 @@ import com.sublunar.amp.data.db.TopSongEntity
 import com.sublunar.amp.data.db.toAlbum
 import com.sublunar.amp.log.Log
 import com.sublunar.amp.log.logName
+import com.sublunar.amp.source.PhoneAccess
+import com.sublunar.amp.source.PhoneFavorites
+import com.sublunar.amp.source.PhoneLibrary
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -775,12 +778,36 @@ class LibraryRepository(
     }
 
     /**
+     * A like of the phone's own music: there is no server to tell, and the
+     * favorites file is what outlasts a rescan, so it is saved there first and
+     * [show]n only once it has been.
+     */
+    private suspend fun likeOnPhone(
+        phone: PhoneLibrary,
+        save: suspend (PhoneFavorites) -> Boolean,
+        show: suspend () -> Unit,
+    ) {
+        // Without music access a file Amp didn't write can't be seen, and a new one would hide it.
+        if (phone.access() == PhoneAccess.GRANTED && save(phone.favorites)) {
+            show()
+            wroteHere()
+        } else {
+            tell("Couldn't save\nCouldn't change the favorites file")
+        }
+    }
+
+    private suspend fun activePhoneLibrary(): PhoneLibrary? = settings.activeSource.first()?.phoneLibrary
+
+    /**
      * Like or unlike a song. The local row is the truth the moment it's tapped,
      * and stays so when the server can't be told — it is told later. A server
      * that answers no is different: that like is taken back and said — see [mirror].
      */
     suspend fun setTrackLiked(track: Track, liked: Boolean) {
         val pinned = dao
+        activePhoneLibrary()?.let { phone ->
+            return likeOnPhone(phone, { it.setSong(track, liked) }) { pinned.setTrackLiked(track.id, liked) }
+        }
         val client = reachableClient()
         pinned.setTrackLiked(track.id, liked)
         wroteHere()
@@ -802,6 +829,11 @@ class LibraryRepository(
      */
     suspend fun setArtistLiked(name: String, liked: Boolean) {
         val pinned = dao
+        activePhoneLibrary()?.let { phone ->
+            return likeOnPhone(phone, { it.setArtist(name, liked) }) {
+                if (liked) pinned.likeArtists(listOf(LikedArtistEntity(name))) else pinned.unlikeArtist(name)
+            }
+        }
         val client = reachableClient()
         if (liked) pinned.likeArtists(listOf(LikedArtistEntity(name))) else pinned.unlikeArtist(name)
         val source = settings.activeSource.first()?.id
@@ -828,6 +860,9 @@ class LibraryRepository(
 
     suspend fun setAlbumLiked(album: Album, liked: Boolean) {
         val pinned = dao
+        activePhoneLibrary()?.let { phone ->
+            return likeOnPhone(phone, { it.setAlbum(album, liked) }) { pinned.setAlbumLiked(album.id, liked) }
+        }
         val client = reachableClient()
         pinned.setAlbumLiked(album.id, liked)
         wroteHere()

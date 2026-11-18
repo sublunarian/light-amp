@@ -352,6 +352,9 @@ interface LibraryDao {
     @Query("SELECT id FROM tracks WHERE liked = 1")
     suspend fun likedTrackIds(): List<String>
 
+    @Query("SELECT id FROM albums WHERE liked = 1")
+    suspend fun likedAlbumIds(): List<String>
+
     @Query("UPDATE tracks SET liked = :liked WHERE id = :id")
     suspend fun setTrackLiked(id: String, liked: Boolean)
 

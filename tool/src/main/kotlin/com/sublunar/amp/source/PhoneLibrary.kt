@@ -39,6 +39,32 @@ interface PhoneLibrary {
 
     /** The phone's own playlists, kept as files beside the music. */
     val playlists: PhonePlaylists
+
+    /** What is liked here, kept in a file that can leave the phone with the music. */
+    val favorites: PhoneFavorites
+}
+
+/** The songs, albums and artists liked on this phone. */
+data class PhoneLikes(
+    val songIds: Set<String>,
+    val albumIds: Set<String>,
+    val artistNames: Set<String>,
+)
+
+/** Likes kept as a file on this phone. Each change answers whether it reached the file. */
+interface PhoneFavorites {
+    /**
+     * [block] with what is saved, null if it can't be read. A like made
+     * meanwhile waits for [block] to finish, so rows rebuilt inside it can't
+     * miss one.
+     */
+    suspend fun <T> whileHeld(block: suspend (PhoneLikes?) -> T): T
+
+    suspend fun setSong(track: Track, liked: Boolean): Boolean
+
+    suspend fun setAlbum(album: Album, liked: Boolean): Boolean
+
+    suspend fun setArtist(name: String, liked: Boolean): Boolean
 }
 
 /** What stands between the app and the music folder, if anything. */

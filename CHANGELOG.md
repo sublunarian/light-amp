@@ -21,6 +21,8 @@
 
 - Play to an Apple TV or a Mac over AirPlay, lossless at CD quality: pair
   once with the code it shows. HomePods too.
+- Like songs, albums and artists in your local music. They're saved in a file
+  you can take with you.
 
 ## 0.9.2
 

@@ -4,6 +4,7 @@ import android.media.MediaMetadataRetriever
 import com.sublunar.amp.log.Log
 import com.sublunar.amp.log.logName
 import com.sublunar.amp.source.PhoneAccess
+import com.sublunar.amp.source.PhoneFavorites
 import com.sublunar.amp.source.PhoneLibrary
 import com.sublunar.amp.source.PhonePlaylists
 import com.sublunar.amp.source.PhoneScan
@@ -50,6 +51,8 @@ object LocalLibrary : PhoneLibrary {
     override fun hasCoverAccess(): Boolean = hasRuntimePermission(coverPermission) == true
 
     override val playlists: PhonePlaylists get() = LocalPlaylists
+
+    override val favorites: PhoneFavorites by lazy { FavoritesFile(LocalPlaylists.folder()) }
 
     /** [FOLDER] on the phone's shared storage. */
     internal val MUSIC_DIR = File("/storage/emulated/0", FOLDER)
@@ -255,7 +258,7 @@ object LocalLibrary : PhoneLibrary {
         PhoneFiles.fileOf(trackId)?.let { CustomTags.lyrics(CustomTags.read(it)) }
     }
 
-    private fun albumId(albumArtist: String, album: String): String =
+    internal fun albumId(albumArtist: String, album: String): String =
         PhoneFiles.ID_PREFIX + "album/" + albumArtist.lowercase() + "/" + album.lowercase()
 
     private const val UNKNOWN_ARTIST = "Unknown Artist"

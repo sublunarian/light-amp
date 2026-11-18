@@ -9,6 +9,7 @@ import com.sublunar.amp.log.logRef
 import com.sublunar.amp.log.loggableWord
 import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.PhoneLibrary
+import com.sublunar.amp.source.PhoneLikes
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -578,7 +579,8 @@ class LibrarySync(
     /**
      * Rebuild the library from the files on this phone — wholesale: the
      * filesystem *is* the index, a scan takes seconds, and a local source has no
-     * likes, ratings or play counts to reconcile.
+     * ratings or play counts to reconcile. Likes come from the favorites file,
+     * or stay as they were if it can't be read this time.
      */
     private suspend fun runLocalScan(dao: LibraryDao, sourceId: String, phone: PhoneLibrary) {
         _syncState.update { it.copy(syncing = true, error = null, phase = "Reading this phone") }
@@ -602,11 +604,20 @@ class LibrarySync(
                 _syncState.update { it.copy(phase = "$count tracks") }
             }
             val coversBefore = coverIdsOrNull(dao)
-            dao.clearTracks()
-            dao.clearAlbums()
-            dao.upsertAlbums(scan.albums.map { it.toEntity() })
-            logReleaseTypes("the phone", scan.albums)
-            dao.upsertTracks(scan.tracks)
+            val likes = phone.favorites.whileHeld { saved ->
+                val likes = saved ?: PhoneLikes(
+                    songIds = dao.likedTrackIds().toSet(),
+                    albumIds = dao.likedAlbumIds().toSet(),
+                    artistNames = dao.likedArtistNames().toSet(),
+                )
+                dao.clearTracks()
+                dao.clearAlbums()
+                dao.upsertAlbums(scan.albums.map { it.copy(liked = it.id in likes.albumIds).toEntity() })
+                logReleaseTypes("the phone", scan.albums)
+                dao.upsertTracks(scan.tracks.map { it.copy(liked = it.id in likes.songIds) })
+                dao.replaceLikedArtists(likes.artistNames)
+                likes
+            }
             reportDroppedCovers(dao, sourceId, coversBefore)
             rereadLists(tracks = true)
             val finishedAt = System.currentTimeMillis()
@@ -617,7 +628,8 @@ class LibrarySync(
             runCatching { settings.setLastSyncedMs(sourceId, finishedAt) }
             Log.i(
                 "AmpSync",
-                "phone scan done in ${monotonicMs() - startedMs} ms: ${scan.tracks.size} tracks, ${scan.albums.size} albums",
+                "phone scan done in ${monotonicMs() - startedMs} ms: ${scan.tracks.size} tracks, ${scan.albums.size} albums; " +
+                    "favorites: ${likes.songIds.size} songs, ${likes.albumIds.size} albums, ${likes.artistNames.size} artists",
             )
             onSyncSucceeded()
         } catch (e: CancellationException) {

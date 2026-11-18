@@ -32,15 +32,15 @@ object LocalProvider : SourceProvider {
     override val streamFormats: List<StreamFormat> get() = emptyList()
 
     /**
-     * There is no server behind it, so everything that lives on one — likes,
-     * ratings, radio, a scan to ask for — is unavailable, and downloading
-     * means nothing when the audio is already here. Playlists are the
-     * phone's own m3u8 files, which can start empty. The original download
-     * reads as possible only because there is nothing to narrow: no screen
-     * offers a download here.
+     * There is no server behind it, so everything that lives on one — ratings,
+     * radio, a scan to ask for — is unavailable, and downloading means nothing
+     * when the audio is already here. Playlists are the phone's own m3u8 files,
+     * which can start empty, and likes are kept in a file beside them. The
+     * original download reads as possible only because there is nothing to
+     * narrow: no screen offers a download here.
      */
     override fun capabilities(features: ServerFeatures?) = SourceCapabilities(
-        likes = false,
+        likes = true,
         ratings = false,
         radio = false,
         downloads = false,
