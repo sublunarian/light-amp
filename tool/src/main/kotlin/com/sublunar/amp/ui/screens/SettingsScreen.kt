@@ -74,6 +74,7 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     item { TextRow(title = "Streams & Downloads") { go { StreamsDownloadsScreen(it) } } }
                 }
                 item { TextRow(title = "About") { go { AboutScreen(it) } } }
+                item { TextRow(title = "Test") { go { TestScreen(it) } } }
             }
         }
     }
@@ -125,6 +126,26 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     }
                 }
                 item { TextRow(title = "Artwork") { go { ArtworkScreen(it) } } }
+            }
+        }
+    }
+}
+
+/** Trials, before each is kept or dropped. */
+class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
+
+    @Composable
+    override fun Content() {
+        val hideHomeGlyphs by App.settings.hideHomeGlyphs.state.collectAsState()
+
+        // Rows a step below the other settings pages', so a trial's whole name fits.
+        ListScreen(onBack = { goBack() }, title = "Test") {
+            ScrollableList {
+                item {
+                    ToggleRow("Hide Home Glyphs", hideHomeGlyphs) {
+                        App.scope.launch { App.settings.hideHomeGlyphs.set(!hideHomeGlyphs) }
+                    }
+                }
             }
         }
     }

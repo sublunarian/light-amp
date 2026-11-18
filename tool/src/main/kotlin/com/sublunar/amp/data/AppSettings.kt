@@ -501,6 +501,9 @@ class AppSettings(
      */
     val hideDownloadIcons: Pref<Boolean> = bool("pref.hideDownloadIcons", false)
 
+    /** Trial: the simple layout's home list as names alone, starting where the glyphs did. */
+    val hideHomeGlyphs: Pref<Boolean> = bool("pref.hideHomeGlyphs", false)
+
     /**
      * Covers beside list rows (library, search, playlists, queue). Off keeps them
      * on the player, the album page and the grid view, and lists take the

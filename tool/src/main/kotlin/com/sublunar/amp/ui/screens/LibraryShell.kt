@@ -581,6 +581,7 @@ private fun SimpleLightScreen<*>.LibraryIndex() {
     val likedTracks by App.library.hasLikedTracks.collectAsState()
     val likes = source.supportsLikes
     val sources by App.settings.sources.state.collectAsState()
+    val hideGlyphs by App.settings.hideHomeGlyphs.state.collectAsState()
 
     // A Column of its own: the shell hands each page a Box.
     Column(modifier = Modifier.fillMaxSize()) {
@@ -598,7 +599,7 @@ private fun SimpleLightScreen<*>.LibraryIndex() {
             val pitch = maxHeight / INDEX_ROWS_PER_SCREEN
             ScrollableList {
                 HOME_ORDER.forEach { tab ->
-                    item { IndexLine(tab.title, iconFor(tab), pitch) { openNarrowed(tab, liked = false) } }
+                    item { IndexLine(tab.title, iconFor(tab).takeUnless { hideGlyphs }, pitch) { openNarrowed(tab, liked = false) } }
                 }
                 // The same three again, narrowed, as a block under the whole set.
                 LIKED_ORDER.forEach { tab ->
@@ -608,7 +609,7 @@ private fun SimpleLightScreen<*>.LibraryIndex() {
                         else -> likedTracks
                     }
                     if (likes && any) {
-                        item { IndexLine("Liked ${tab.title}", AppIcons.Favorite, pitch) { openNarrowed(tab, liked = true) } }
+                        item { IndexLine("Liked ${tab.title}", AppIcons.Favorite.takeUnless { hideGlyphs }, pitch) { openNarrowed(tab, liked = true) } }
                     }
                 }
             }
@@ -658,7 +659,7 @@ private fun iconFor(tab: LibraryTab): ImageVector = when (tab) {
 
 /** A row of the home list, as 0.8.2 drew it: the glyph, then the name at Copy, [pitch] tall. */
 @Composable
-private fun IndexLine(title: String, icon: ImageVector, pitch: Dp, onClick: () -> Unit) {
+private fun IndexLine(title: String, icon: ImageVector?, pitch: Dp, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -668,8 +669,10 @@ private fun IndexLine(title: String, icon: ImageVector, pitch: Dp, onClick: () -
             .padding(start = px(LIST_LEAD_PX)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppIcon(icon, size = px(INDEX_GLYPH_PX))
-        Spacer(Modifier.width(px(INDEX_GLYPH_GAP_PX)))
+        if (icon != null) {
+            AppIcon(icon, size = px(INDEX_GLYPH_PX))
+            Spacer(Modifier.width(px(INDEX_GLYPH_GAP_PX)))
+        }
         AppText(
             title,
             pxSp(LightType.COPY_PX),
