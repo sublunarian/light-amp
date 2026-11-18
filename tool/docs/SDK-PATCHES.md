@@ -199,8 +199,8 @@ backgrounded.
 
 Volume keys used to fall through to Android instead of going to LightOS, which
 turned the ringer. LightOS now turns media volume and shows its panel, so the
-keys go to LightOS again. While casting, Amp's screens still take them for the
-speaker (`PlaybackController.handleVolumeKey`), which needs no patch.
+keys go to LightOS again, casting included: the output follows the phone's
+media volume, which needs no patch.
 
 ### 14. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
 

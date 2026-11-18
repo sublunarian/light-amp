@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.os.SystemClock
-import android.view.KeyEvent
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -2802,22 +2801,6 @@ class PlaybackController(
         if (p.repeatMode != wanted) p.repeatMode = wanted
     }
 
-    /**
-     * A hardware volume key; true when it was handled here. While casting each
-     * press steps the output's volume (see [setVolume]); otherwise the key is
-     * left to the system.
-     */
-    fun handleVolumeKey(keyCode: Int): Boolean {
-        if (!isCasting) return false
-        val step = when (keyCode) {
-            KeyEvent.KEYCODE_VOLUME_UP -> VOLUME_KEY_STEP
-            KeyEvent.KEYCODE_VOLUME_DOWN -> -VOLUME_KEY_STEP
-            else -> return false
-        }
-        setVolume(_volume.value + step)
-        return true
-    }
-
     /** Set the volume of whatever has the sound: the output, or the phone's media stream. */
     fun setVolume(fraction: Float) {
         val v = fraction.coerceIn(0f, 1f)
@@ -3466,7 +3449,6 @@ class PlaybackController(
         // Outputs.
 
         /** One press of the rocker, as a fraction of full scale. */
-        private const val VOLUME_KEY_STEP = 0.05f
 
         private const val FORGET_PAUSED_SPEAKER_MS = 10 * 60 * 1000L
 

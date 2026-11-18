@@ -1,6 +1,5 @@
 package com.sublunar.amp.ui.screens
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -87,11 +86,6 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
     override val viewModelClass: Class<BootViewModel> get() = BootViewModel::class.java
 
     override fun createViewModel(): BootViewModel = BootViewModel()
-
-    // The library is where the rocker is usually pressed, and the root isn't an
-    // AmpScreen, so it forwards the keys itself — see AmpScreen.
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        App.playback.handleVolumeKey(keyCode) || super.onKeyDown(keyCode, event)
 
     // Named on the way out: a newer activity may have taken the player over
     // by then, and this back-out must not release it — see App.shutdown.
