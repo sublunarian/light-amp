@@ -412,7 +412,7 @@ const val MENU_ROW_INSET_PX = MENU_INSET_PX - LIST_EDGE_PX
 private const val MENU_PAD_PX = 32
 
 /** Seven to the 1080px under the header, rather than the 160 the padding would give. */
-private const val HEADING_ROW_PX = 154
+internal const val HEADING_ROW_PX = 154
 
 /** Between a leading glyph and the text: one unit. */
 private const val MENU_GAP_PX = 40

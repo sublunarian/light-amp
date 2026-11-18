@@ -66,6 +66,12 @@ object LibraryNav {
      */
     val libraryIndex = MutableStateFlow(false)
 
+    /** Which of the index's pages shows while [libraryIndex] is set: the home list, or one it leads to. */
+    val indexPage = MutableStateFlow(IndexPage.HOME)
+
+    /** The index page the current tab was opened from, where its back arrow leads. */
+    internal var tabParent = IndexPage.HOME
+
     /**
      * Moves on each time the library being browsed changes, another source or
      * other libraries of it. A page opened before then goes back to the root
@@ -79,13 +85,23 @@ object LibraryNav {
     internal fun libraryChanged() {
         ScrollAnchors.clearAll()
         closeSearch()
+        // Another library may have no Downloaded or Favorites to stand on.
+        indexPage.value = IndexPage.HOME
+        tabParent = IndexPage.HOME
         libraryGeneration.value++
     }
 
-    /** Show the index, leaving whatever was showing. */
-    fun openLibraryIndex() {
+    /** Show the index at [page], leaving whatever was showing. */
+    fun openLibraryIndex(page: IndexPage = IndexPage.HOME) {
         closeSearch()
+        indexPage.value = page
         libraryIndex.value = true
+    }
+
+    /** [tab], chosen on the index's [page]: its back arrow returns there. */
+    fun openFromIndex(tab: LibraryTab, page: IndexPage) {
+        selectTab(tab)
+        tabParent = page
     }
 
     /**
@@ -100,6 +116,7 @@ object LibraryNav {
             closeSearch()
             return
         }
+        indexPage.value = IndexPage.HOME
         libraryIndex.value = true
     }
 
@@ -143,12 +160,33 @@ object LibraryNav {
         closeSearch()
         // Choosing from the index is leaving it — see [libraryIndex].
         libraryIndex.value = false
+        tabParent = IndexPage.HOME
         // A selection belongs to the list it was made in: changing tabs abandons
         // it rather than leaving a stale count waiting on some other page.
         Selections.clearAll()
         // The tab keeps its scroll position. Asking for the top is [tapTab]'s job.
         currentTab.value = tab
         if (App.isReady) App.scope.launch { App.settings.lastTab.set(tab.name) }
+    }
+}
+
+/**
+ * A page of the simplified layout's library index. [downloaded]: under the
+ * home list's Downloaded, so everything it opens is narrowed to downloads.
+ */
+data class IndexPage(val kind: Kind, val downloaded: Boolean = false) {
+    enum class Kind { HOME, FAVORITES, GENRES, COMPOSERS }
+
+    /** Where its back arrow leads; null for the home list, which has none. */
+    val parent: IndexPage?
+        get() = when {
+            kind != Kind.HOME -> IndexPage(Kind.HOME, downloaded)
+            downloaded -> HOME
+            else -> null
+        }
+
+    companion object {
+        val HOME = IndexPage(Kind.HOME)
     }
 }
 

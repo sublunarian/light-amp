@@ -29,6 +29,7 @@ import com.sublunar.amp.data.Reachability
 import com.sublunar.amp.data.SongSort
 import com.sublunar.amp.data.SourceRoute
 import com.sublunar.amp.data.StreamProxy
+import com.sublunar.amp.data.ReleaseType
 import com.sublunar.amp.data.TagFilter
 import com.sublunar.amp.data.albumArtistNames
 import com.sublunar.amp.data.songArtistNames
@@ -38,7 +39,6 @@ import com.sublunar.amp.data.db.DownloadFile
 import com.sublunar.amp.data.db.LibraryDatabase
 import com.sublunar.amp.data.db.MAX_BOUND_IDS
 import com.sublunar.amp.data.db.libraryDatabaseName
-import com.sublunar.amp.data.hasGenre
 import com.sublunar.amp.data.noteOom
 import com.sublunar.amp.data.sortAlbums
 import com.sublunar.amp.data.sortArtists
@@ -873,21 +873,29 @@ object App {
      * A sorted library view plus its A–Z buckets, computed once per change on
      * [scope], off the main thread. Sorting a large library takes long enough
      * that doing it in a tab's composition, on every visit, froze the app.
-     * [liked] says whether it is the liked-only view, so a page can wait for the
-     * one it is about to show.
+     * [narrowing] says which view it is, so a page can wait for the one it is
+     * about to show.
      */
     data class SortedView<T>(
         val items: List<T> = emptyList(),
         val letters: List<Char> = emptyList(),
-        val liked: Boolean = false,
+        val narrowing: Narrowing = Narrowing(),
     )
 
-    /** Which genre each list is narrowed to. Blank means no filter. */
-    val songsTagFilter: StateFlow<TagFilter> by lazy { tagFilterOf(settings.songsGenre.state) }
-    val albumsTagFilter: StateFlow<TagFilter> by lazy { tagFilterOf(settings.albumsGenre.state) }
+    /** What a library list is narrowed to — see [SortedView.narrowing]. */
+    data class Narrowing(
+        val liked: Boolean = false,
+        val downloaded: Boolean = false,
+        val tags: TagFilter = TagFilter(),
+        val compilations: Boolean = false,
+    )
 
-    private fun tagFilterOf(genre: StateFlow<String>): StateFlow<TagFilter> =
-        genre.map(::TagFilter).stateIn(scope, SharingStarted.Eagerly, TagFilter(genre.value))
+    /** Which genre each list is narrowed to, and the songs to which composer. Blank means no filter. */
+    val songsTagFilter: StateFlow<TagFilter> by lazy { held(settings.songsGenre.state, settings.songsComposer.state, ::TagFilter) }
+    val albumsTagFilter: StateFlow<TagFilter> by lazy {
+        val genre = settings.albumsGenre.state
+        genre.map { TagFilter(it) }.stateIn(scope, SharingStarted.Eagerly, TagFilter(genre.value))
+    }
 
     /**
      * [a] and [b] combined by [f], held, starting from what they hold now: the
@@ -901,14 +909,14 @@ object App {
      * Derived from the songs: an album carries one genre of its own, while its
      * songs can carry several, and a song's genre is what puts the album in.
      */
-    private val albumsMatchingTags: StateFlow<Set<String>?> by lazy {
+    private val albumsMatchingTags: StateFlow<Pair<TagFilter, Set<String>?>> by lazy {
         combine(library.tracks, albumsTagFilter) { tracks, filter ->
-            if (filter.isEmpty) return@combine null
-            tracks.asSequence()
+            if (filter.isEmpty) return@combine filter to null
+            filter to tracks.asSequence()
                 .filter { filter.admits(it) }
                 .mapNotNull { it.albumId }
                 .toSet()
-        }.stateIn(scope, SharingStarted.Eagerly, null)
+        }.stateIn(scope, SharingStarted.Eagerly, TagFilter() to null)
     }
 
     /** The albums, album artists and song artists with at least one downloaded song. */
@@ -969,13 +977,10 @@ object App {
                     SongSort.ARTIST -> sorted.map { indexLetterOf(sortName(it.artist)) }
                     else -> emptyList()
                 },
-                liked,
+                Narrowing(liked, downloadedOnly, tags),
             )
         }.stateIn(scope, SharingStarted.Eagerly, SortedView())
     }
-
-    /** Whether [track] has the filter's genre, a blank one matching all. */
-    private fun TagFilter.admits(track: Track): Boolean = genre.isEmpty() || track.hasGenre(genre)
 
     /**
      * Whether covers are switched off, as state: every row in a long list asks,
@@ -1028,16 +1033,22 @@ object App {
             settings.shuffleNonce.state,
             ::Triple,
         )
-        val narrowing = combine(settings.likedAlbumsOnly.state, settings.downloadedAlbumsOnly.state, downloadedOwners) {
-                liked, downloadedOnly, owners ->
-            Pair(liked, if (downloadedOnly) owners.albums else null)
+        val narrowing = combine(
+            settings.likedAlbumsOnly.state,
+            settings.downloadedAlbumsOnly.state,
+            downloadedOwners,
+            settings.albumsCompilations.state,
+        ) { liked, downloadedOnly, owners, compilations ->
+            Triple(Narrowing(liked, downloadedOnly, compilations = compilations), if (downloadedOnly) owners.albums else null, compilations)
         }
         combine(library.albums, order, narrowing, albumsMatchingTags) {
-                list, (sort, rev, nonce), (liked, downloaded), tagged ->
-            val narrowed = list.filter {
-                (!liked || it.liked) && (downloaded == null || it.id in downloaded) && (tagged == null || it.id in tagged)
+                list, (sort, rev, nonce), (narrowed, downloaded, compilations), (tags, tagged) ->
+            val liked = narrowed.liked
+            val shown = list.filter {
+                (!liked || it.liked) && (downloaded == null || it.id in downloaded) && (tagged == null || it.id in tagged) &&
+                    (!compilations || it.releaseType == ReleaseType.COMPILATION)
             }
-            val sorted = sortAlbums(narrowed, sort, rev, nonce)
+            val sorted = sortAlbums(shown, sort, rev, nonce)
             // The letters follow the sort's own key, or they would disagree
             // with the order.
             SortedView(
@@ -1047,7 +1058,7 @@ object App {
                     AlbumSort.ARTIST -> sorted.map { indexLetterOf(sortName(it.artist)) }
                     else -> emptyList()
                 },
-                liked,
+                narrowed.copy(tags = tags),
             )
         }.stateIn(scope, SharingStarted.Eagerly, SortedView())
     }
@@ -1070,7 +1081,7 @@ object App {
             SortedView(
                 sorted,
                 if (sort != ArtistSort.MOST_PLAYED) sorted.map { indexLetterOf(sortName(it.name)) } else emptyList(),
-                liked,
+                Narrowing(liked, downloaded != null),
             )
         }.stateIn(scope, SharingStarted.Eagerly, SortedView())
     }
@@ -1086,6 +1097,7 @@ object App {
             SortedView(
                 sorted,
                 if (sort == PlaylistSort.NAME) sorted.map { indexLetterOf(titleKey(it.name)) } else emptyList(),
+                Narrowing(downloaded = downloaded != null),
             )
         }.stateIn(scope, SharingStarted.Eagerly, SortedView())
     }

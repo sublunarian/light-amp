@@ -39,6 +39,12 @@ object AppIcons {
 
     /** The library, on the simple layout's bar. */
     val Library = Icons.Filled.LibraryMusic
+    val Category = Icons.Filled.Category
+    val Piano = Icons.Filled.Piano
+    val Group = Icons.Filled.Group
+
+    /** Light's mark for something downloaded, as the rows wear it. */
+    val Downloaded: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.DOWNLOADED_ARROW.drawableResource)
 
     /** An artist's popular songs. */
     val Popular = Icons.Filled.Whatshot

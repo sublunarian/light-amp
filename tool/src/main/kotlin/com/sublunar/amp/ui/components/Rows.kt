@@ -106,16 +106,22 @@ fun SelectionArtwork(coverArtId: String?, selected: Boolean) {
     val covers = !App.hideListArtwork.collectAsState().value
     Box(Modifier.size(px(ROW_ART_PX)), contentAlignment = Alignment.Center) {
         if (covers) AppArtwork(coverArtId, size = px(ROW_ART_PX), modifier = Modifier.alpha(EDIT_ARTWORK_ALPHA))
-        AppIcon(
-            if (selected) AppIcons.Selected else AppIcons.Unselected,
-            size = px(66),
-            tint = if (selected) {
-                LightThemeTokens.colors.content
-            } else {
-                LightThemeTokens.colors.contentSecondary
-            },
-        )
+        SelectionMark(selected)
     }
+}
+
+/** The check bubble alone, for a row with no artwork to wear it on. */
+@Composable
+fun SelectionMark(selected: Boolean) {
+    AppIcon(
+        if (selected) AppIcons.Selected else AppIcons.Unselected,
+        size = px(66),
+        tint = if (selected) {
+            LightThemeTokens.colors.content
+        } else {
+            LightThemeTokens.colors.contentSecondary
+        },
+    )
 }
 
 /**

@@ -50,6 +50,8 @@ class SettingsKeysTest {
         settings.likedArtistsOnly.set(true)
         settings.albumsGenre.set("Jazz")
         settings.songsGenre.set("Folk")
+        settings.albumsCompilations.set(true)
+        settings.songsComposer.set("Bach")
         settings.bumpShuffleNonce()
         assertEquals(
             mapOf(
@@ -66,6 +68,8 @@ class SettingsKeysTest {
                 "pref.likedArtistsOnly" to true,
                 "pref.albumsGenre" to "Jazz",
                 "pref.songsGenre" to "Folk",
+                "pref.albumsCompilations" to true,
+                "pref.songsComposer" to "Bach",
                 "pref.shuffleNonce" to 1,
             ),
             store.all(),
@@ -84,6 +88,7 @@ class SettingsKeysTest {
         settings.hideArtistImages.set(false)
         settings.hideDownloadIcons.set(true)
         settings.artwork.set(ArtworkMode.NONE)
+        settings.homeLayout.set(HomeLayout.DEFAULT.toggled(HomeCategory.GENRES).moved(HomeCategory.GENRES, 0))
         assertEquals(
             mapOf(
                 "pref.karaokeLyrics" to false,
@@ -96,6 +101,8 @@ class SettingsKeysTest {
                 "pref.hideArtistImages" to false,
                 "pref.hideDownloadIcons" to true,
                 "pref.artworkMode" to "NONE",
+                "pref.homeCategories" to
+                    "GENRES,PLAYLISTS,ARTISTS,ALBUMS,SONGS,-COMPILATIONS,-COMPOSERS,-FAVORITES,-DOWNLOADED",
             ),
             store.all(),
         )

@@ -125,6 +125,10 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         }
                     }
                 }
+                // The home list is the simple layout's alone: the tabs' bar is fixed.
+                if (layoutMode == LayoutMode.SIMPLIFIED) {
+                    item { TextRow(title = "Library Home") { go { HomeLayoutScreen(it) } } }
+                }
                 item { TextRow(title = "Artwork") { go { ArtworkScreen(it) } } }
             }
         }
@@ -137,6 +141,7 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val hideHomeGlyphs by App.settings.hideHomeGlyphs.state.collectAsState()
+        val hideHomeHeaderButtons by App.settings.hideHomeHeaderButtons.state.collectAsState()
 
         // Rows a step below the other settings pages', so a trial's whole name fits.
         ListScreen(onBack = { goBack() }, title = "Test") {
@@ -144,6 +149,11 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 item {
                     ToggleRow("Hide Home Glyphs", hideHomeGlyphs) {
                         App.scope.launch { App.settings.hideHomeGlyphs.set(!hideHomeGlyphs) }
+                    }
+                }
+                item {
+                    ToggleRow("Hide Home Header Buttons", hideHomeHeaderButtons) {
+                        App.scope.launch { App.settings.hideHomeHeaderButtons.set(!hideHomeHeaderButtons) }
                     }
                 }
             }

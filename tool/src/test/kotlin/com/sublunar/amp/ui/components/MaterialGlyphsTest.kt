@@ -11,6 +11,9 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Piano
 import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Dehaze
@@ -118,6 +121,9 @@ class MaterialGlyphsTest {
             Material.Filled.ArrowDownward to Icons.Filled.ArrowDownward,
             Material.Filled.ArrowUpward to Icons.Filled.ArrowUpward,
             Material.Filled.Cast to Icons.Filled.Cast,
+            Material.Filled.Category to Icons.Filled.Category,
+            Material.Filled.Group to Icons.Filled.Group,
+            Material.Filled.Piano to Icons.Filled.Piano,
             Material.Filled.Speaker to Icons.Filled.Speaker,
             Material.Filled.CloudOff to Icons.Filled.CloudOff,
             Material.Filled.Dehaze to Icons.Filled.Dehaze,

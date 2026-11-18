@@ -414,13 +414,16 @@ class LibraryRepository(
      */
     private val tagValues = mutableListOf<MutableStateFlow<List<String>>>()
 
-    val genres: StateFlow<List<String>> = tagValuesOf { it.genre }
+    val genres: StateFlow<List<String>> = tagValuesOf { splitTagValues(it.genre) }
+
+    /** The composers, as [genres] are the genres: the library home's Composers list. */
+    val composers: StateFlow<List<String>> = tagValuesOf { splitComposers(it.composer) }
 
     /**
      * What stateIn with WhileSubscribed does, by hand: a stateIn's value can't
      * be emptied from outside, and a source switch has to — see forgetDerived.
      */
-    private fun tagValuesOf(select: (Track) -> String): StateFlow<List<String>> {
+    private fun tagValuesOf(select: (Track) -> List<String>): StateFlow<List<String>> {
         val values = MutableStateFlow(emptyList<String>())
         tagValues += values
         scope.launch {
@@ -432,14 +435,8 @@ class LibraryRepository(
         return values.asStateFlow()
     }
 
-    private fun tracksFlowOf(select: (Track) -> String): Flow<List<String>> =
-        tracks.map { list ->
-            list.asSequence()
-                .flatMap { splitTagValues(select(it)) }
-                .distinct()
-                .sortedBy { nameKey(it) }
-                .toList()
-        }
+    private fun tracksFlowOf(select: (Track) -> List<String>): Flow<List<String>> =
+        tracks.map { list -> tagValuesIn(list, select) }
 
     /**
      * The artists liked on the server. Not derived from [artists], which narrows
@@ -551,6 +548,18 @@ class LibraryRepository(
 
     val hasLikedAlbums: StateFlow<Boolean> =
         albums.map { list -> list.any { it.liked } }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    // Whether the library home has anything to list under these: a source
+    // that doesn't fill the field leaves the category off.
+    val hasGenres: StateFlow<Boolean> =
+        tracks.map { list -> list.any { it.genre.isNotBlank() } }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    val hasComposers: StateFlow<Boolean> =
+        tracks.map { list -> list.any { it.composer.isNotBlank() } }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    val hasCompilations: StateFlow<Boolean> =
+        albums.map { list -> list.any { it.releaseType == ReleaseType.COMPILATION } }
+            .stateIn(scope, SharingStarted.Eagerly, false)
 
     // Artist name -> server artist id, resolved once and reused for liking.
     private var artistIds: Map<String, String>? = null

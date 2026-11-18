@@ -394,11 +394,12 @@ class AppSettings(
     val songsGenre: Pref<String> = string("pref.songsGenre")
 
     /**
-     * Drop every narrowing of the library lists — the liked switches and the
-     * genre filters — in one write. See App.swapSource: these
-     * are facts about one library, and a genre chosen on one server applied
-     * to the next empties its lists with nothing on screen to say why.
+     * The narrowings only the library home's lists set: Albums to compilations,
+     * Songs to one composer. Kept with the genres, for the same reasons.
      */
+    val albumsCompilations: Pref<Boolean> = bool("pref.albumsCompilations", false)
+    val songsComposer: Pref<String> = string("pref.songsComposer")
+
     /**
      * Drop the genre filters, at each start of the app: a one-off
      * narrowing ("Jazz, for now") lasts the session, while the liked and
@@ -406,15 +407,21 @@ class AppSettings(
      * otherwise still be narrowing a tab.
      */
     suspend fun clearTagFilters() {
-        val filters = listOf(albumsGenre, songsGenre)
+        val filters = listOf(albumsGenre, songsGenre, albumsCompilations, songsComposer)
         dataStore.edit { p -> filters.forEach { p.remove(it.key) } }
     }
 
+    /**
+     * Drop every narrowing of the library lists — the liked switches and the
+     * genre filters — in one write. See App.swapSource: these
+     * are facts about one library, and a genre chosen on one server applied
+     * to the next empties its lists with nothing on screen to say why.
+     */
     suspend fun clearLibraryFilters() {
         val filters = listOf(
             likedAlbumsOnly, likedSongsOnly, likedArtistsOnly,
             downloadedAlbumsOnly, downloadedSongsOnly, downloadedArtistsOnly, downloadedPlaylistsOnly,
-            albumsGenre, songsGenre,
+            albumsGenre, songsGenre, albumsCompilations, songsComposer,
         )
         dataStore.edit { p -> filters.forEach { p.remove(it.key) } }
     }
@@ -504,6 +511,13 @@ class AppSettings(
     /** Trial: the simple layout's home list as names alone, starting where the glyphs did. */
     val hideHomeGlyphs: Pref<Boolean> = bool("pref.hideHomeGlyphs", false)
 
+    /** Trial: the simple layout's home header as the source's name alone, without the picker or Settings. */
+    val hideHomeHeaderButtons: Pref<Boolean> = bool("pref.hideHomeHeaderButtons", false)
+
+    /** Which categories the simple layout's library home lists, and in what order — see [HomeLayout]. */
+    val homeLayout: Pref<HomeLayout> =
+        pref(stringPreferencesKey("pref.homeCategories"), HomeLayout.DEFAULT, HomeLayout::decode, HomeLayout::encode)
+
     /**
      * Covers beside list rows (library, search, playlists, queue). Off keeps them
      * on the player, the album page and the grid view, and lists take the
@@ -536,6 +550,9 @@ class AppSettings(
     /** The user's own hold on downloading, kept across launches. */
     val downloadsPaused: Pref<Boolean> = bool("pref.downloadsPaused", false)
 
+    /** Whether "Show Folder Covers?" has been tapped: it is offered until then, never after. */
+    val folderCoverOfferTapped: Pref<Boolean> = bool("pref.folderCoverQuestionAnswered", false)
+
     // After the last stored value: one declared below this would find no snapshot.
     init {
         launchSnapshot = null
@@ -547,9 +564,6 @@ class AppSettings(
      * The queue as it stood when the app last went away, as [saveQueue] wrote
      * it, in one read; null when it holds no tracks.
      *
-    /** Whether "Show Folder Covers?" has been tapped: it is offered until then, never after. */
-    val folderCoverOfferTapped: Pref<Boolean> = bool("pref.folderCoverQuestionAnswered", false)
-
      * Ids rather than rows — the library cache already holds the tracks, and a
      * long queue of full records has no business in DataStore. Capped at
      * [MAX_SAVED_QUEUE] so "play everything" can't write a megabyte of ids on

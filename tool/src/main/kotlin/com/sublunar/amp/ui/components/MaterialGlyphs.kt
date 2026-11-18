@@ -117,6 +117,28 @@ object Icons {
             }
         }
 
+        val Category: ImageVector by glyph("Filled.Category") {
+            shape {
+                moveTo(12.0f, 2.0f)
+                lineToRelative(-5.5f, 9.0f)
+                horizontalLineToRelative(11.0f)
+                close()
+            }
+            shape {
+                moveTo(17.5f, 17.5f)
+                moveToRelative(-4.5f, 0.0f)
+                arcToRelative(4.5f, 4.5f, 0.0f, true, true, 9.0f, 0.0f)
+                arcToRelative(4.5f, 4.5f, 0.0f, true, true, -9.0f, 0.0f)
+            }
+            shape {
+                moveTo(3.0f, 13.5f)
+                horizontalLineToRelative(8.0f)
+                verticalLineToRelative(8.0f)
+                horizontalLineTo(3.0f)
+                close()
+            }
+        }
+
         val CloudOff: ImageVector by glyph("Filled.CloudOff") {
             shape {
                 moveTo(19.35f, 10.04f)
@@ -254,6 +276,38 @@ object Icons {
             }
         }
 
+        val Group: ImageVector by glyph("Filled.Group") {
+            shape {
+                moveTo(16.0f, 11.0f)
+                curveToRelative(1.66f, 0.0f, 2.99f, -1.34f, 2.99f, -3.0f)
+                reflectiveCurveTo(17.66f, 5.0f, 16.0f, 5.0f)
+                curveToRelative(-1.66f, 0.0f, -3.0f, 1.34f, -3.0f, 3.0f)
+                reflectiveCurveToRelative(1.34f, 3.0f, 3.0f, 3.0f)
+                close()
+                moveTo(8.0f, 11.0f)
+                curveToRelative(1.66f, 0.0f, 2.99f, -1.34f, 2.99f, -3.0f)
+                reflectiveCurveTo(9.66f, 5.0f, 8.0f, 5.0f)
+                curveTo(6.34f, 5.0f, 5.0f, 6.34f, 5.0f, 8.0f)
+                reflectiveCurveToRelative(1.34f, 3.0f, 3.0f, 3.0f)
+                close()
+                moveTo(8.0f, 13.0f)
+                curveToRelative(-2.33f, 0.0f, -7.0f, 1.17f, -7.0f, 3.5f)
+                lineTo(1.0f, 19.0f)
+                horizontalLineToRelative(14.0f)
+                verticalLineToRelative(-2.5f)
+                curveToRelative(0.0f, -2.33f, -4.67f, -3.5f, -7.0f, -3.5f)
+                close()
+                moveTo(16.0f, 13.0f)
+                curveToRelative(-0.29f, 0.0f, -0.62f, 0.02f, -0.97f, 0.05f)
+                curveToRelative(1.16f, 0.84f, 1.97f, 1.97f, 1.97f, 3.45f)
+                lineTo(17.0f, 19.0f)
+                horizontalLineToRelative(6.0f)
+                verticalLineToRelative(-2.5f)
+                curveToRelative(0.0f, -2.33f, -4.67f, -3.5f, -7.0f, -3.5f)
+                close()
+            }
+        }
+
         val LibraryMusic: ImageVector by glyph("Filled.LibraryMusic") {
             shape {
                 moveTo(20.0f, 2.0f)
@@ -376,6 +430,51 @@ object Icons {
                 horizontalLineToRelative(4.0f)
                 verticalLineTo(3.0f)
                 horizontalLineToRelative(-6.0f)
+                close()
+            }
+        }
+
+        val Piano: ImageVector by glyph("Filled.Piano") {
+            shape {
+                moveTo(19.0f, 3.0f)
+                horizontalLineTo(5.0f)
+                curveTo(3.9f, 3.0f, 3.0f, 3.9f, 3.0f, 5.0f)
+                verticalLineToRelative(14.0f)
+                curveToRelative(0.0f, 1.1f, 0.9f, 2.0f, 2.0f, 2.0f)
+                horizontalLineToRelative(14.0f)
+                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
+                verticalLineTo(5.0f)
+                curveTo(21.0f, 3.9f, 20.1f, 3.0f, 19.0f, 3.0f)
+                close()
+                moveTo(14.0f, 14.5f)
+                horizontalLineToRelative(0.25f)
+                verticalLineTo(19.0f)
+                horizontalLineToRelative(-4.5f)
+                verticalLineToRelative(-4.5f)
+                horizontalLineTo(10.0f)
+                curveToRelative(0.55f, 0.0f, 1.0f, -0.45f, 1.0f, -1.0f)
+                verticalLineTo(5.0f)
+                horizontalLineToRelative(2.0f)
+                verticalLineToRelative(8.5f)
+                curveTo(13.0f, 14.05f, 13.45f, 14.5f, 14.0f, 14.5f)
+                close()
+                moveTo(5.0f, 5.0f)
+                horizontalLineToRelative(2.0f)
+                verticalLineToRelative(8.5f)
+                curveToRelative(0.0f, 0.55f, 0.45f, 1.0f, 1.0f, 1.0f)
+                horizontalLineToRelative(0.25f)
+                verticalLineTo(19.0f)
+                horizontalLineTo(5.0f)
+                verticalLineTo(5.0f)
+                close()
+                moveTo(19.0f, 19.0f)
+                horizontalLineToRelative(-3.25f)
+                verticalLineToRelative(-4.5f)
+                horizontalLineTo(16.0f)
+                curveToRelative(0.55f, 0.0f, 1.0f, -0.45f, 1.0f, -1.0f)
+                verticalLineTo(5.0f)
+                horizontalLineToRelative(2.0f)
+                verticalLineTo(19.0f)
                 close()
             }
         }

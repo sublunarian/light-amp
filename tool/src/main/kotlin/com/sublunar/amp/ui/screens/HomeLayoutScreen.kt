@@ -1,0 +1,125 @@
+package com.sublunar.amp.ui.screens
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import com.sublunar.amp.App
+import com.sublunar.amp.data.HomeCategory
+import com.sublunar.amp.data.HomeLayout
+import com.sublunar.amp.ui.components.AutoScroll
+import com.sublunar.amp.ui.components.DragHandle
+import com.sublunar.amp.ui.components.HEADING_ROW_PX
+import com.sublunar.amp.ui.components.LIST_EDGE_PX
+import com.sublunar.amp.ui.components.ListScreen
+import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
+import com.sublunar.amp.ui.components.ScrollableList
+import com.sublunar.amp.ui.components.SelectionMark
+import com.sublunar.amp.ui.components.TextRow
+import com.sublunar.amp.ui.components.dragReorderContainer
+import com.sublunar.amp.ui.components.gapShift
+import com.sublunar.amp.ui.components.rememberDragReorderState
+import com.sublunar.amp.ui.px
+import com.thelightphone.sdk.SealedLightActivity
+
+/**
+ * What the simple layout's library home lists: each category ticked on or off
+ * with the bubble at its start, as a multi-selection is, and put in order with
+ * the grab bar at its end, as the queue's songs are.
+ */
+class HomeLayoutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
+
+    @Composable
+    override fun Content() {
+        val layout by App.settings.homeLayout.state.collectAsState()
+        val order = layout.order
+        val drag = rememberDragReorderState<HomeCategory>()
+        val rowPx = with(LocalDensity.current) { px(HEADING_ROW_PX).toPx() }
+        val listState = rememberLazyListState()
+        drag.AutoScroll(listState, rowPx)
+
+        ListScreen(onBack = { goBack() }, title = "Library Home", headingRows = true) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .dragReorderContainer(
+                        state = drag,
+                        enabled = true,
+                        restartKey = order,
+                        orderedKeys = order,
+                        rowPx = rowPx,
+                        onDrop = { moving, insertAt ->
+                            val category = order[moving.first()]
+                            // At once: the stored write lands a frame late, and the row would jump back first.
+                            App.settings.homeLayout.setNow(layout.moved(category, insertAt))
+                        },
+                    ),
+            ) {
+                ScrollableList(state = listState) {
+                    itemsIndexed(order, key = { _, c -> c }) { index, category ->
+                        DisposableEffect(category) { onDispose { drag.clear(category) } }
+                        val gap = drag.gapShift(index, order.size, rowPx)
+                        Box(Modifier.fillMaxWidth().graphicsLayer { translationY = gap }) {
+                            CategoryRow(
+                                category,
+                                layout,
+                                modifier = Modifier
+                                    .onGloballyPositioned { drag.rowCoords[category] = it }
+                                    // The floating copy below stands in for it while it moves.
+                                    .alpha(if (category in drag.draggingKeys) 0f else 1f),
+                                onHandle = { drag.iconCoords[category] = it },
+                            )
+                        }
+                    }
+                }
+                drag.anchorKey?.let { held ->
+                    val top = drag.dragStartTops[held]
+                    if (top != null) FloatingRow(held, layout, top + drag.fingerOffsetY)
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun CategoryRow(
+        category: HomeCategory,
+        layout: HomeLayout,
+        modifier: Modifier = Modifier,
+        onHandle: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = {},
+    ) {
+        TextRow(
+            title = category.title,
+            modifier = modifier,
+            leading = { SelectionMark(category in layout.shown) },
+            trailing = { DragHandle(onHandle) },
+        ) {
+            App.settings.homeLayout.setNow(layout.toggled(category))
+        }
+    }
+
+    /** The row being dragged, drawn over the list so it follows the finger. */
+    @Composable
+    private fun BoxScope.FloatingRow(category: HomeCategory, layout: HomeLayout, topPx: Float) {
+        CategoryRow(
+            category,
+            layout,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .graphicsLayer { translationY = topPx }
+                .padding(start = px(LIST_EDGE_PX), end = px(SCROLLBAR_LANE_PX)),
+        )
+    }
+}
