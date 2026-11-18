@@ -17,6 +17,7 @@ import com.sublunar.amp.App
 import com.sublunar.amp.BuildConfig
 import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.ArtistAlbumOrder
+import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.StreamProxy
 import com.sublunar.amp.data.descendingByNature
 import com.sublunar.amp.ui.LightType
@@ -77,6 +78,9 @@ class MoreScreen(
         val visit = ArtistSongsVisit.view.collectAsState().value.takeIf { page == LibraryPage.ARTIST_SONGS }
         val source = App.source.collectAsState().value
         val grouping = App.settings.groupReleaseTypes.state.collectAsState().value
+        // The simple layout's home header has both; the tabs' layout has no other way to them.
+        val hideSourceSettings = App.settings.hideMoreSourceSettings.state.collectAsState().value &&
+            App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
 
         // Covers the tab bar: a menu that leaves the navigation showing reads as
         // another page rather than something on top of the one you were on.
@@ -87,7 +91,11 @@ class MoreScreen(
                     title = pageTitle ?: defaultTitle(page),
                     fitTitle = true,
                     onBack = { if (stale) backToRoot() else goBack() },
-                    rightAction = HeaderAction(AppIcons.Settings, iconPx = SETTINGS_GLYPH_PX) { go { SettingsScreen(it) } },
+                    rightAction = if (hideSourceSettings) {
+                        null
+                    } else {
+                        HeaderAction(AppIcons.Settings, iconPx = SETTINGS_GLYPH_PX) { go { SettingsScreen(it) } }
+                    },
                 )
                 CompositionLocalProvider(LocalMenuHeading provides true) {
                     ScrollableList {
@@ -99,14 +107,16 @@ class MoreScreen(
                                 }
                             }
                         }
-                        // Always there, even with one source and one library: the
-                        // page it opens is also where Sync Now lives.
-                        item {
-                            TextRow(
-                                title = "Source",
-                                value = active?.name,
-                                onClick = { go { SourcesScreen(it) } },
-                            )
+                        // There even with one source and one library: the page
+                        // it opens is also where Sync Now lives.
+                        if (!hideSourceSettings) {
+                            item {
+                                TextRow(
+                                    title = "Source",
+                                    value = active?.name,
+                                    onClick = { go { SourcesScreen(it) } },
+                                )
+                            }
                         }
                         // Only where there is something to choose: a fixed order (a
                         // record plays as it was cut) is better said by the list.

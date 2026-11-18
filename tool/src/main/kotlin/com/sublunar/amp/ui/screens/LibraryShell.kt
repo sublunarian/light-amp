@@ -659,19 +659,13 @@ private class IndexEntry(val title: String, val icon: ImageVector?, val onClick:
 private fun SimpleLightScreen<*>.IndexHeader(page: IndexPage) {
     val source by App.source.collectAsState()
     val sources by App.settings.sources.state.collectAsState()
-    val hideButtons by App.settings.hideHomeHeaderButtons.state.collectAsState()
     val parent = page.parent
     if (parent == null) {
-        val picker = hasChoice(sources) && !hideButtons
         AppHeader(
-            title = source.name.takeUnless { picker },
+            title = source.name.takeUnless { hasChoice(sources) },
             fitTitle = true,
-            titleContent = if (picker) ({ SourceTitle(source.name) { go { SourcesScreen(it) } } }) else null,
-            rightAction = if (hideButtons) {
-                null
-            } else {
-                HeaderAction(AppIcons.Settings, iconPx = SETTINGS_GLYPH_PX) { go { SettingsScreen(it) } }
-            },
+            titleContent = if (hasChoice(sources)) ({ SourceTitle(source.name) { go { SourcesScreen(it) } } }) else null,
+            rightAction = HeaderAction(AppIcons.Settings, iconPx = SETTINGS_GLYPH_PX) { go { SettingsScreen(it) } },
         )
         return
     }

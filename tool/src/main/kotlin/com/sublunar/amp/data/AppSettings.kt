@@ -511,8 +511,8 @@ class AppSettings(
     /** Trial: the simple layout's home list as names alone, starting where the glyphs did. */
     val hideHomeGlyphs: Pref<Boolean> = bool("pref.hideHomeGlyphs", false)
 
-    /** Trial: the simple layout's home header as the source's name alone, without the picker or Settings. */
-    val hideHomeHeaderButtons: Pref<Boolean> = bool("pref.hideHomeHeaderButtons", false)
+    /** Trial: the simple layout's More pages without their Source row and Settings button. */
+    val hideMoreSourceSettings: Pref<Boolean> = bool("pref.hideMoreSourceSettings", false)
 
     /** Which categories the simple layout's library home lists, and in what order — see [HomeLayout]. */
     val homeLayout: Pref<HomeLayout> =
