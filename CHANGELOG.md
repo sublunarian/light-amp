@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Casting to a DLNA speaker keeps your server login on the phone. The music
+  now passes through the phone, so keep it on the same Wi-Fi while casting.
 - Resuming on an AirPlay speaker takes about half as long.
 - A cast rides out a short Wi-Fi drop: it plays on by itself once Wi-Fi is
   back, with every speaker of a group.

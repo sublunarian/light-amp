@@ -6,9 +6,9 @@ import com.sublunar.amp.playback.output.OutputHost
 import com.sublunar.amp.playback.output.OutputTarget
 
 /**
- * DLNA speakers and receivers: a renderer on the local network is handed the
- * server's stream URL and steered over UPnP. [DlnaCast] speaks the protocol,
- * [DlnaOutput] does the playing.
+ * DLNA speakers and receivers: a renderer on the local network is steered over
+ * UPnP and fetches the server's stream through this phone. [DlnaCast] speaks
+ * the protocol, [DlnaOutput] does the playing, [SpeakerRelay] carries the music.
  *
  * All of DLNA is Amp's own code in this folder, needing nothing the sandbox
  * withholds. Nothing outside it names it but Outputs, so taking DLNA out is
@@ -24,7 +24,7 @@ object DlnaFamily : OutputFamily {
 
     override val needsLan = true
 
-    // The renderer is handed the server's address.
+    // The music comes from the server.
     override val needsServer = true
 
     override fun create(host: OutputHost): Output {

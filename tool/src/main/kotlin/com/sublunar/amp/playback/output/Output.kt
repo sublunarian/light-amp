@@ -336,8 +336,8 @@ interface OutputHost {
 
     /**
      * The server's own address for [track] in [format], or null with no
-     * server. Never the loopback proxy's: the far end fetches for itself and
-     * can't reach a door on this phone.
+     * server. It has the login in it, so it is for this phone's own requests
+     * and never to be handed to another device as it is: see SpeakerRelay.
      */
     fun streamUrl(
         track: Track,

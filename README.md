@@ -26,7 +26,8 @@ server.
   on, for every song it downloads.
 - Song radio, on servers that have it.
 - Play counts, ratings, likes and playlist edits sync back to the server.
-- Cast to a DLNA speaker or receiver.
+- Cast to a DLNA speaker or receiver. The music passes through the phone, so
+  your server login stays on it. Keep the phone on the same Wi-Fi while casting.
 - Two looks, in Settings → Appearance. New installs start simple: the phone's
   own three buttons and no artwork. Turn on Library Tabs and Enable Artwork for
   tabs along the bottom and album covers.
@@ -98,8 +99,6 @@ without adb is waiting on Light
   ([light-sdk#192](https://github.com/lightphone/light-sdk/issues/192)). Until
   then, stream and download in Opus or MP3 (MP3 on Plex), or convert the files
   to FLAC.
-- Casting to a DLNA speaker hands it your server login, and other devices on
-  that network can read it. Cast only on networks and to speakers you trust.
 
 Also waiting on Light:
 
