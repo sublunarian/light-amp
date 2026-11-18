@@ -28,6 +28,9 @@ interface PhoneLibrary {
     /** Every track and album in the folder, with [onProgress] told the count as it goes. */
     suspend fun scan(onProgress: (Int) -> Unit): PhoneScan
 
+    /** The lyrics tagged into [trackId]'s file, as written there, or null. */
+    suspend fun taggedLyrics(trackId: String): String?
+
     /** The phone's own playlists, kept as files beside the music. */
     val playlists: PhonePlaylists
 }

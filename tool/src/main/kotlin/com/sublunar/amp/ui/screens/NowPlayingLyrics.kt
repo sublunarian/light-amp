@@ -58,6 +58,7 @@ internal fun LyricsOverlay(current: Track, modifier: Modifier) {
             App.serverClient.value,
             allowNetwork = App.metadataAllowed(),
             dao = App.browsedDao(),
+            phone = App.source.value.phoneLibrary,
         )
         loading = false
     }

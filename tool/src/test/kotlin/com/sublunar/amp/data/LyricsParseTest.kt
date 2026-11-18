@@ -81,4 +81,15 @@ class LyricsParseTest {
         )
         assertFalse(parsed.synced)
     }
+
+    @Test
+    fun `a file's lyrics tag is timed when it carries stamps, plain when not`() {
+        val timed = LyricsRepository.parseTagged("[00:05.58] And disciplinary\n[00:08.10] Yes")
+        assertTrue(timed!!.synced)
+        assertEquals(listOf(LyricLine(5580, "And disciplinary"), LyricLine(8100, "Yes")), timed.lines)
+        val plain = LyricsRepository.parseTagged("First line\n\nSecond line\n")
+        assertFalse(plain!!.synced)
+        assertEquals(listOf(LyricLine(null, "First line"), LyricLine(null, "Second line")), plain.lines)
+        assertNull(LyricsRepository.parseTagged("  \n "))
+    }
 }

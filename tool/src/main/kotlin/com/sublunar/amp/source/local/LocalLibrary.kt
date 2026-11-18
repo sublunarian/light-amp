@@ -200,7 +200,8 @@ object LocalLibrary : PhoneLibrary {
                 .substringBefore('/').trim().toIntOrNull(),
             discNumber = tag(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)
                 .substringBefore('/').trim().toIntOrNull(),
-            year = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.take(4)?.toIntOrNull(),
+            year = CustomTags.year(custom)
+                ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.take(4)?.toIntOrNull(),
             // No server keeps a tally here, and a local one would make Most
             // Played mean something different from every other source.
             playCount = 0,
@@ -245,6 +246,10 @@ object LocalLibrary : PhoneLibrary {
                         .minByOrNull { it.specificity } ?: ReleaseType.ALBUM,
                 )
             }
+
+    override suspend fun taggedLyrics(trackId: String): String? = withContext(Dispatchers.IO) {
+        PhoneFiles.fileOf(trackId)?.let { CustomTags.lyrics(CustomTags.read(it)) }
+    }
 
     private fun albumId(albumArtist: String, album: String): String =
         PhoneFiles.ID_PREFIX + "album/" + albumArtist.lowercase() + "/" + album.lowercase()

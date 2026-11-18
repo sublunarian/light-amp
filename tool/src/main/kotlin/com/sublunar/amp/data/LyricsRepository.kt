@@ -5,6 +5,7 @@ import com.sublunar.amp.data.db.LibraryDao
 import com.sublunar.amp.data.db.LyricsEntity
 import com.sublunar.amp.log.Log
 import com.sublunar.amp.log.logName
+import com.sublunar.amp.source.PhoneLibrary
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -64,10 +65,12 @@ object LyricsRepository {
         allowNetwork: Boolean = true,
         /** The source's tables, where lookups are kept between launches; null keeps them in memory only. */
         dao: LibraryDao? = null,
+        /** The phone's music, whose files may carry their own lyrics. */
+        phone: PhoneLibrary? = null,
     ): Outcome {
         val key = sourceId to track.id
         synchronized(cache) { cache[key] }?.let { return it }
-        val resolved = resolve(track, client, allowNetwork, dao)
+        val resolved = resolve(track, client, allowNetwork, dao, phone)
         // An outage and a question never asked are not answers to remember.
         if (resolved != Outcome.Unavailable && resolved != Outcome.NotFetched) {
             synchronized(cache) { cache[key] = resolved }
@@ -80,10 +83,12 @@ object LyricsRepository {
         client: MusicServer?,
         allowNetwork: Boolean,
         dao: LibraryDao?,
+        phone: PhoneLibrary?,
     ): Outcome {
-        // Downloaded lyrics first: they cost nothing and work with no network.
+        // Downloaded or tagged into the file first: they cost nothing and work with no network.
         val cached = runCatching { App.downloader.cachedLyrics(track.id) }.getOrNull()
-        val stored = parseStored(cached)
+        val tagged = phone?.let { runCatching { it.taggedLyrics(track.id) }.getOrNull() }
+        val stored = parseStored(cached) ?: tagged?.let(::parseTagged)
         stored?.let { if (it.synced) return Outcome.Found(it) }
 
         // Then the last lookup's answer, kept. "None" only while it's recent:
@@ -183,6 +188,12 @@ object LyricsRepository {
         if (lines.isEmpty()) return null
         return Lyrics(lines, synced = lines.all { it.timeMs != null })
     }
+
+    /** A file's lyrics tag: LRC when it carries timestamps, plain lines when not. */
+    internal fun parseTagged(raw: String): Lyrics? =
+        parseLrc(raw) ?: raw.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            .takeIf { it.isNotEmpty() }
+            ?.let { lines -> Lyrics(lines.map { LyricLine(null, it) }, synced = false) }
 
     /** Timed lyrics from lrclib, or null — used when downloading for Synced Lyrics. */
     suspend fun timedFromLrclib(track: Track): Lyrics? =

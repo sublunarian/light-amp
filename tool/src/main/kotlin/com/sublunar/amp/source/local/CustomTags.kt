@@ -66,6 +66,18 @@ object CustomTags {
         return ReleaseType.of(types, compilation = flagged)
     }
 
+    /**
+     * The year the album first came out, from the date tags the platform
+     * ignores: it only answers a Vorbis `YEAR`, where FLAC taggers write
+     * `DATE`. The original release wins because `DATE` is often a reissue's.
+     */
+    fun year(tags: Map<String, String>): Int? =
+        YEAR_KEYS.firstNotNullOfOrNull { key -> tags[key]?.trim()?.take(4)?.toIntOrNull()?.takeIf { it > 0 } }
+
+    /** Lyrics tagged into the file, timed (LRC) or plain, which the platform never reads. */
+    fun lyrics(tags: Map<String, String>): String? =
+        LYRICS_KEYS.firstNotNullOfOrNull { key -> tags[key]?.takeIf { it.isNotBlank() } }
+
     // --- picking a value out of the collected tags ---------------------------
 
     private fun pick(tags: Map<String, String>): Float? {
@@ -472,4 +484,6 @@ object CustomTags {
 
     /** Where a release type is written, by tool and container — see [releaseType]. */
     private val RELEASE_TYPE_KEYS = listOf("RELEASETYPE", "MUSICBRAINZ_ALBUMTYPE", "MUSICBRAINZ ALBUM TYPE")
+    private val YEAR_KEYS = listOf("ORIGINALDATE", "ORIGINALYEAR", "DATE", "YEAR")
+    private val LYRICS_KEYS = listOf("LYRICS", "UNSYNCEDLYRICS")
 }

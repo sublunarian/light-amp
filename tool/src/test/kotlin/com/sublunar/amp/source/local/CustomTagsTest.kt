@@ -251,4 +251,21 @@ class CustomTagsTest {
         assertEquals(ReleaseType.COMPILATION, CustomTags.releaseType(plain, compilation = true))
         assertEquals(ReleaseType.COMPILATION, CustomTags.releaseType(CustomTags.read(write("r6.flac", flac("COMPILATION=1"))), compilation = false))
     }
+
+    @Test
+    fun `the year is the original release's, then the date's`() {
+        val reissue = CustomTags.read(write("y1.flac", flac("DATE=2016-09-23", "ORIGINALDATE=1970-10-10")))
+        assertEquals(1970, CustomTags.year(reissue))
+        assertEquals(1975, CustomTags.year(CustomTags.read(write("y2.flac", flac("DATE=1975-01-01")))))
+        assertEquals(1969, CustomTags.year(CustomTags.read(write("y3.mp3", mp3("originalyear" to "1969")))))
+        assertNull(CustomTags.year(CustomTags.read(write("y4.flac", flac("DATE=unknown")))))
+    }
+
+    @Test
+    fun `lyrics come from the lyrics tag`() {
+        val tags = CustomTags.read(write("l1.flac", flac("LYRICS=[00:05.58] And disciplinary\n[00:08.10] Yes")))
+        assertEquals("[00:05.58] And disciplinary\n[00:08.10] Yes", CustomTags.lyrics(tags))
+        assertEquals("Plain words", CustomTags.lyrics(CustomTags.read(write("l2.ogg", oggVorbis("UNSYNCEDLYRICS=Plain words")))))
+        assertNull(CustomTags.lyrics(CustomTags.read(write("l3.flac", flac("TITLE=Instrumental")))))
+    }
 }
