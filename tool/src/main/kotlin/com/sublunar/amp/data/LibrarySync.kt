@@ -282,7 +282,11 @@ class LibrarySync(
             } else {
                 folders.orEmpty().map { it.id }.filterNot { it in hidden }.ifEmpty { listOf(null) }
             }
-            val starred = readStarred(client, folderIds)
+            // Likes from every library, chosen or not, hidden ones too: the
+            // reconcile below unlikes whatever this lacks, so one library's likes
+            // alone would unlike the others' until a sync with them chosen.
+            val likesFrom: List<String?> = folders?.map { it.id }?.ifEmpty { null } ?: folderIds
+            val starred = readStarred(client, likesFrom)
             val cached = dao.allAlbumsSnapshot().associateBy { it.id }
 
             // Blank, read "Syncing": every sync reads the album index, new albums or not.

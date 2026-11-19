@@ -108,7 +108,7 @@ object AppIcons {
     val VolumeDown = Icons.AutoMirrored.Filled.VolumeDown
     val Bluetooth: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.BLUETOOTH.drawableResource)
     val Smartphone = Icons.Filled.Smartphone
-    val Speaker: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.SPEAKER.drawableResource)
+    val Speaker = Icons.Filled.Speaker
     val Dns = Icons.Filled.Dns
     /** LightOS's own trash. */
     val DeleteOutline: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.TRASH.drawableResource)

@@ -288,6 +288,39 @@ object Icons {
             }
         }
 
+        val Speaker: ImageVector by glyph("Filled.Speaker") {
+            shape {
+                moveTo(17.0f, 2.0f)
+                lineTo(7.0f, 2.0f)
+                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
+                verticalLineToRelative(16.0f)
+                curveToRelative(0.0f, 1.1f, 0.9f, 1.99f, 2.0f, 1.99f)
+                lineTo(17.0f, 22.0f)
+                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
+                lineTo(19.0f, 4.0f)
+                curveToRelative(0.0f, -1.1f, -0.9f, -2.0f, -2.0f, -2.0f)
+                close()
+                moveTo(12.0f, 4.0f)
+                curveToRelative(1.1f, 0.0f, 2.0f, 0.9f, 2.0f, 2.0f)
+                reflectiveCurveToRelative(-0.9f, 2.0f, -2.0f, 2.0f)
+                curveToRelative(-1.11f, 0.0f, -2.0f, -0.9f, -2.0f, -2.0f)
+                reflectiveCurveToRelative(0.89f, -2.0f, 2.0f, -2.0f)
+                close()
+                moveTo(12.0f, 20.0f)
+                curveToRelative(-2.76f, 0.0f, -5.0f, -2.24f, -5.0f, -5.0f)
+                reflectiveCurveToRelative(2.24f, -5.0f, 5.0f, -5.0f)
+                reflectiveCurveToRelative(5.0f, 2.24f, 5.0f, 5.0f)
+                reflectiveCurveToRelative(-2.24f, 5.0f, -5.0f, 5.0f)
+                close()
+                moveTo(12.0f, 12.0f)
+                curveToRelative(-1.66f, 0.0f, -3.0f, 1.34f, -3.0f, 3.0f)
+                reflectiveCurveToRelative(1.34f, 3.0f, 3.0f, 3.0f)
+                reflectiveCurveToRelative(3.0f, -1.34f, 3.0f, -3.0f)
+                reflectiveCurveToRelative(-1.34f, -3.0f, -3.0f, -3.0f)
+                close()
+            }
+        }
+
         val Star: ImageVector by glyph("Filled.Star") {
             shape {
                 moveTo(12.0f, 17.27f)
