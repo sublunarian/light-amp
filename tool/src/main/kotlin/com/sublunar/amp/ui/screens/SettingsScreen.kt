@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import com.sublunar.amp.data.RowMark
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -86,27 +87,21 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val syncedLyrics by App.settings.syncedLyrics.state.collectAsState()
-        val hideDownloadIcons by App.settings.hideDownloadIcons.state.collectAsState()
+        val rowMark by App.settings.rowMark.state.collectAsState()
         val sources by App.settings.sources.state.collectAsState()
         val layoutMode by App.settings.layoutMode.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Appearance", headingRows = true) {
             ScrollableList {
-                // Only where something can be downloaded: the phone's own music
-                // is all on the phone, so it never wears the mark.
-                if (sources.any { it.supportsDownloads }) {
+                // Only where there is something to mark: likes, or music that
+                // can be downloaded rather than being on the phone already.
+                if (sources.any { it.supportsLikes || it.supportsDownloads }) {
                     item {
-                        // The marks go; the layout does not move with them — see
-                        // AppSettings.hideDownloadIcons.
-                        ToggleRow("Hide Download Icons", hideDownloadIcons) {
-                            App.scope.launch {
-                                App.settings.hideDownloadIcons.set(!hideDownloadIcons)
-                            }
-                        }
+                        TextRow(title = "Indicator Icon", value = rowMark.label) { go { RowMarkScreen(it) } }
                     }
                 }
                 item {
-                    ToggleRow("Synchronized Lyrics", syncedLyrics) {
+                    ToggleRow("Synced Lyrics", syncedLyrics) {
                         App.scope.launch { App.settings.syncedLyrics.set(!syncedLyrics) }
                     }
                 }
@@ -135,25 +130,62 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     }
 }
 
+/** What the margin before a list's rows marks — see [AppSettings.rowMark]. */
+class RowMarkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
+
+    @Composable
+    override fun Content() {
+        val current by App.settings.rowMark.state.collectAsState()
+        ListScreen(onBack = { goBack() }, title = "Indicator Icon", headingRows = true) {
+            ScrollableList {
+                items(RowMark.entries.toList()) { mark ->
+                    TextRow(title = mark.label, checked = mark == current) {
+                        App.scope.launch { App.settings.rowMark.set(mark) }
+                        goBack()
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** Trials, before each is kept or dropped. */
 class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
-        val hideHomeGlyphs by App.settings.hideHomeGlyphs.state.collectAsState()
         val trimMoreMenu by App.settings.trimMoreMenu.state.collectAsState()
+        val artistPlayButtons by App.settings.artistPlayButtons.state.collectAsState()
+        val albumPlayButtons by App.settings.albumPlayButtons.state.collectAsState()
+        val hidePopularButton by App.settings.hidePopularButton.state.collectAsState()
+        val mediaOutputGlyph by App.settings.mediaOutputGlyph.state.collectAsState()
 
         // Rows a step below the other settings pages', so a trial's whole name fits.
         ListScreen(onBack = { goBack() }, title = "Test") {
             ScrollableList {
                 item {
-                    ToggleRow("Hide Home Glyphs", hideHomeGlyphs) {
-                        App.scope.launch { App.settings.hideHomeGlyphs.set(!hideHomeGlyphs) }
+                    ToggleRow("Hide Source, Settings, Genre", trimMoreMenu) {
+                        App.scope.launch { App.settings.trimMoreMenu.set(!trimMoreMenu) }
                     }
                 }
                 item {
-                    ToggleRow("Hide Source, Settings, Genre", trimMoreMenu) {
-                        App.scope.launch { App.settings.trimMoreMenu.set(!trimMoreMenu) }
+                    ToggleRow("Artist Play & Shuffle", artistPlayButtons) {
+                        App.scope.launch { App.settings.artistPlayButtons.set(!artistPlayButtons) }
+                    }
+                }
+                item {
+                    ToggleRow("Album Play & Shuffle", albumPlayButtons) {
+                        App.scope.launch { App.settings.albumPlayButtons.set(!albumPlayButtons) }
+                    }
+                }
+                item {
+                    ToggleRow("Hide Popular Button", hidePopularButton) {
+                        App.scope.launch { App.settings.hidePopularButton.set(!hidePopularButton) }
+                    }
+                }
+                item {
+                    ToggleRow("Media Output Glyph", mediaOutputGlyph) {
+                        App.scope.launch { App.settings.mediaOutputGlyph.set(!mediaOutputGlyph) }
                     }
                 }
             }
@@ -483,11 +515,15 @@ fun ToggleRow(label: String, value: Boolean, onToggle: () -> Unit) {
     TextRow(
         title = label,
         onClick = onToggle,
-        leading = {
-            LightIcon(
-                icon = if (value) LightIcons.TOGGLE_STATE_ON else LightIcons.TOGGLE_STATE_OFF,
-                size = 2.2f,
-            )
-        },
+        leading = { ToggleMark(value) },
+    )
+}
+
+/** The switch alone, for a row that does more than toggle. */
+@Composable
+fun ToggleMark(on: Boolean) {
+    LightIcon(
+        icon = if (on) LightIcons.TOGGLE_STATE_ON else LightIcons.TOGGLE_STATE_OFF,
+        size = 2.2f,
     )
 }

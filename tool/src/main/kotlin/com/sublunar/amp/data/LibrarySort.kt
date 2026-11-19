@@ -1,37 +1,28 @@
 package com.sublunar.amp.data
 
 import java.text.Normalizer
-import kotlin.random.Random
 
 /**
- * Each sort key's natural direction — names A→Z, dates and play counts newest or
- * most first. The persisted `reversed` flag flips it, so re-tapping the selected
+ * Each sort key's natural direction — names A→Z, dates and ratings newest or
+ * highest first. The persisted `reversed` flag flips it, so re-tapping the selected
  * option always visibly inverts the list.
  */
 val AlbumSort.descendingByNature: Boolean
     get() = when (this) {
-        AlbumSort.TITLE, AlbumSort.ARTIST, AlbumSort.RANDOM -> false
-        AlbumSort.YEAR, AlbumSort.DATE_ADDED, AlbumSort.RECENTLY_PLAYED,
-        AlbumSort.MOST_PLAYED, AlbumSort.RATING -> true
+        AlbumSort.TITLE, AlbumSort.ARTIST -> false
+        AlbumSort.YEAR, AlbumSort.DATE_ADDED, AlbumSort.RECENTLY_PLAYED, AlbumSort.RATING -> true
     }
 
 val SongSort.descendingByNature: Boolean
     get() = when (this) {
         SongSort.TITLE, SongSort.ARTIST -> false
-        SongSort.DATE_ADDED, SongSort.RECENTLY_PLAYED,
-        SongSort.MOST_PLAYED, SongSort.RATING -> true
-    }
-
-val ArtistSort.descendingByNature: Boolean
-    get() = when (this) {
-        ArtistSort.NAME, ArtistSort.ARTIST -> false
-        ArtistSort.MOST_PLAYED -> true
+        SongSort.DATE_ADDED, SongSort.RECENTLY_PLAYED, SongSort.RATING -> true
     }
 
 val PlaylistSort.descendingByNature: Boolean
     get() = when (this) {
-        PlaylistSort.NAME -> false
-        PlaylistSort.DATE_CREATED, PlaylistSort.RECENTLY_UPDATED -> true
+        PlaylistSort.NAME, PlaylistSort.TYPE -> false
+        PlaylistSort.DATE_CREATED, PlaylistSort.RECENTLY_PLAYED, PlaylistSort.RECENTLY_UPDATED -> true
     }
 
 /** Leading articles ignored when sorting names, after Navidrome's `IgnoredArticles`. */
@@ -129,8 +120,6 @@ fun sortAlbums(
     albums: List<Album>,
     sort: AlbumSort,
     reversed: Boolean = false,
-    /** Re-deals Random when bumped — see AppSettings.shuffleNonce. */
-    shuffleNonce: Int = 0,
 ): List<Album> {
     val ordered = when (sort) {
         AlbumSort.TITLE -> albums.sortedByKeyOnce { nameKey(it.title) }
@@ -153,24 +142,10 @@ fun sortAlbums(
             primary = { it.lastPlayedMs },
             key = { nameKey(it.title) },
         )
-        AlbumSort.MOST_PLAYED -> albums.sortedByDescendingThenKey(
-            primary = { it.playCount.toLong() },
-            key = { nameKey(it.title) },
-        )
         // Highest first, and unrated (0) falls to the bottom on its own.
         AlbumSort.RATING -> albums.sortedByDescendingThenKey(
             primary = { it.rating.toLong() },
             key = { nameKey(it.title) },
-        )
-        // Seeded by the library and the nonce, so it is stable across
-        // recompositions (rows don't move under a scrolling finger) and only a
-        // re-tap of Random deals again.
-        AlbumSort.RANDOM -> albums.shuffled(
-            Random(
-                albums.size.toLong() * 31 +
-                    albums.firstOrNull()?.id.hashCode() +
-                    shuffleNonce * 1_000_003L,
-            ),
         )
     }
     return if (reversed) ordered.reversed() else ordered
@@ -200,10 +175,6 @@ fun sortSongs(
             primary = { it.lastPlayedMs },
             key = { nameKey(it.title) },
         )
-        SongSort.MOST_PLAYED -> tracks.sortedByDescendingThenKey(
-            primary = { it.playCount.toLong() },
-            key = { nameKey(it.title) },
-        )
         SongSort.RATING -> tracks.sortedByDescendingThenKey(
             primary = { it.rating.toLong() },
             key = { nameKey(it.title) },
@@ -225,14 +196,8 @@ fun sortSongs(
     return if (reversed) ordered.reversed() else ordered
 }
 
-fun sortArtists(artists: List<Artist>, sort: ArtistSort, reversed: Boolean = false): List<Artist> {
-    val ordered = when (sort) {
-        ArtistSort.NAME, ArtistSort.ARTIST -> artists.sortedByKeyOnce { sortNameKey(it.name) }
-        ArtistSort.MOST_PLAYED -> artists.sortedByDescendingThenKey(
-            primary = { it.playCount.toLong() },
-            key = { sortNameKey(it.name) },
-        )
-    }
+fun sortArtists(artists: List<Artist>, reversed: Boolean = false): List<Artist> {
+    val ordered = artists.sortedByKeyOnce { sortNameKey(it.name) }
     return if (reversed) ordered.reversed() else ordered
 }
 
@@ -240,11 +205,22 @@ fun sortPlaylists(
     playlists: List<Playlist>,
     sort: PlaylistSort,
     reversed: Boolean = false,
+    /** When each was last started, by id, for [PlaylistSort.RECENTLY_PLAYED]; one never started sorts last. */
+    plays: Map<String, Long> = emptyMap(),
 ): List<Playlist> {
     val ordered = when (sort) {
+        PlaylistSort.TYPE -> {
+            // Reversing swaps the groups alone: the titles in each still read A–Z.
+            val (smart, normal) = playlists.sortedByKeyOnce { nameKey(it.name) }.partition { it.smart }
+            return if (reversed) normal + smart else smart + normal
+        }
         PlaylistSort.NAME -> playlists.sortedByKeyOnce { nameKey(it.name) }
         PlaylistSort.DATE_CREATED -> playlists.sortedByDescendingThenKey(
             primary = { it.createdAt },
+            key = { nameKey(it.name) },
+        )
+        PlaylistSort.RECENTLY_PLAYED -> playlists.sortedByDescendingThenKey(
+            primary = { plays[it.id] ?: 0L },
             key = { nameKey(it.name) },
         )
         PlaylistSort.RECENTLY_UPDATED -> playlists.sortedByDescendingThenKey(
@@ -254,5 +230,9 @@ fun sortPlaylists(
     }
     return if (reversed) ordered.reversed() else ordered
 }
+
+/** Whether [PlaylistSort.TYPE] has anything to tell apart: smart playlists and normal ones both. */
+fun hasPlaylistTypes(playlists: List<Playlist>): Boolean =
+    playlists.any { it.smart } && playlists.any { !it.smart }
 
 fun shuffled(tracks: List<Track>): List<Track> = tracks.shuffled()

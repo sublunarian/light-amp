@@ -4,8 +4,6 @@ import androidx.datastore.preferences.core.preferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.sublunar.amp.data.HomeCategory.ALBUMS
 import com.sublunar.amp.data.HomeCategory.ARTISTS
-import com.sublunar.amp.data.HomeCategory.COMPILATIONS
-import com.sublunar.amp.data.HomeCategory.COMPOSERS
 import com.sublunar.amp.data.HomeCategory.DOWNLOADED
 import com.sublunar.amp.data.HomeCategory.FAVORITES
 import com.sublunar.amp.data.HomeCategory.GENRES
@@ -43,24 +41,38 @@ class HomeLayoutTest {
     }
 
     @Test
-    fun `a switched-off category keeps its place`() {
-        val off = HomeLayout.DEFAULT.moved(GENRES, 1).toggled(ARTISTS)
-        assertEquals(listOf(PLAYLISTS, ALBUMS, SONGS), off.listed)
-        val on = off.toggled(ARTISTS).toggled(GENRES)
-        assertEquals(listOf(PLAYLISTS, GENRES, ARTISTS, ALBUMS, SONGS), on.listed)
+    fun `a switched-off category leads those off, and one switched on ends those on`() {
+        val off = HomeLayout.DEFAULT.toggled(ARTISTS)
+        assertEquals(listOf(PLAYLISTS, ALBUMS, SONGS, ARTISTS, GENRES, FAVORITES, DOWNLOADED), off.order)
+        val on = off.toggled(DOWNLOADED)
+        assertEquals(listOf(PLAYLISTS, ALBUMS, SONGS, DOWNLOADED, ARTISTS, GENRES, FAVORITES), on.order)
     }
 
     @Test
-    fun `a move past either end lands at that end`() {
-        assertEquals(DOWNLOADED, HomeLayout.DEFAULT.moved(DOWNLOADED, -3).order.first())
-        assertEquals(PLAYLISTS, HomeLayout.DEFAULT.moved(PLAYLISTS, 99).order.last())
+    fun `a stored layout with one off among those on reads with it at the bottom`() {
+        assertEquals(
+            listOf(PLAYLISTS, ALBUMS, ARTISTS, SONGS, GENRES, FAVORITES, DOWNLOADED),
+            HomeLayout.decode("PLAYLISTS,-GENRES,ALBUMS").order,
+        )
+    }
+
+    @Test
+    fun `a move stays on its side of those on and those off`() {
+        assertEquals(
+            listOf(PLAYLISTS, ARTISTS, ALBUMS, SONGS, DOWNLOADED, GENRES, FAVORITES),
+            HomeLayout.DEFAULT.moved(DOWNLOADED, -3).order,
+        )
+        assertEquals(
+            listOf(ARTISTS, ALBUMS, SONGS, PLAYLISTS, GENRES, FAVORITES, DOWNLOADED),
+            HomeLayout.DEFAULT.moved(PLAYLISTS, 99).order,
+        )
     }
 
     @Test
     fun `an unknown name is skipped, a repeat counts once, and a missing category joins at the end`() {
-        val layout = HomeLayout.decode("SONGS,-PLAYLISTS,PODCASTS,SONGS, GENRES ,-ALBUMS")
+        val layout = HomeLayout.decode("SONGS,-PLAYLISTS,COMPOSERS,SONGS, GENRES ,-ALBUMS")
         assertEquals(
-            listOf(SONGS, PLAYLISTS, GENRES, ALBUMS, ARTISTS, COMPILATIONS, COMPOSERS, FAVORITES, DOWNLOADED),
+            listOf(SONGS, GENRES, ARTISTS, PLAYLISTS, ALBUMS, FAVORITES, DOWNLOADED),
             layout.order,
         )
         // A missing one comes in as its default has it: Artists on, the rest off.
@@ -82,16 +94,11 @@ class HomeLayoutTest {
         ).settings()
         assertEquals(listOf(ALBUMS, ARTISTS, SONGS), settings.homeLayout.value.listed)
         settings.homeLayout.set(settings.homeLayout.value.toggled(PLAYLISTS))
-        assertEquals(listOf(ALBUMS, PLAYLISTS, ARTISTS, SONGS), settings.homeLayout.value.listed)
+        assertEquals(listOf(ALBUMS, ARTISTS, SONGS, PLAYLISTS), settings.homeLayout.value.listed)
     }
 
     @Test
-    fun `composers split on tag separators and on Navidrome's bullet`() {
-        assertEquals(listOf("Bach", "Handel", "Vivaldi", "Purcell"), splitComposers("Bach; Handel • Vivaldi, Purcell"))
-    }
-
-    @Test
-    fun `a Genres or Composers list has each value once, whatever its case, in name order`() {
+    fun `a Genres list has each value once, whatever its case, in name order`() {
         val tracks = listOf(
             track("1", genre = "Rock; Jazz"),
             track("2", genre = "rock"),
@@ -101,17 +108,9 @@ class HomeLayoutTest {
         assertEquals(listOf("Jazz", "Rock", "The Blues"), tagValuesIn(tracks) { splitTagValues(it.genre) })
     }
 
-    @Test
-    fun `a composer filter admits every song a composer shares`() {
-        val shared = track("1", composer = "Lennon, McCartney")
-        assertEquals(true, TagFilter(composer = "mccartney").admits(shared))
-        assertEquals(false, TagFilter(composer = "Harrison").admits(shared))
-        assertEquals(true, TagFilter().admits(shared))
-    }
-
-    private fun track(id: String, genre: String = "", composer: String = "") = Track(
+    private fun track(id: String, genre: String = "") = Track(
         id = id, title = id, artist = "", album = "", albumArtist = "", albumId = null, coverArtId = null,
         durationMs = 0, trackNumber = null, discNumber = null, year = null,
-        playCount = 0, lastPlayedMs = 0, genre = genre, composer = composer,
+        playCount = 0, lastPlayedMs = 0, genre = genre,
     )
 }

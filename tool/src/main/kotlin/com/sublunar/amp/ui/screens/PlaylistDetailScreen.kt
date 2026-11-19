@@ -281,6 +281,7 @@ class PlaylistDetailScreen(
                 if (!editing) {
                     item {
                         ShuffleRow {
+                            notePlaylistPlayed(playlistId)
                             App.playback.playQueue(shuffled(list.map { it.track }), 0)
                             go { NowPlayingScreen(it) }
                         }
@@ -308,6 +309,7 @@ class PlaylistDetailScreen(
                                 if (editing) {
                                     selection.toggle(entry.key)
                                 } else {
+                                    notePlaylistPlayed(playlistId)
                                     playFromRow(list.map { it.track }, index)
                                 }
                             },
@@ -326,6 +328,7 @@ class PlaylistDetailScreen(
                                 }
                             },
                             downloaded = track.id in downloaded,
+                            liked = track.liked,
                             selected = if (editing) entry.key in selection.selected else null,
                             trailing = if (editing && canEdit() && reorderable) {
                                 { DragHandle { drag.iconCoords[entry.key] = it } }
@@ -373,6 +376,7 @@ class PlaylistDetailScreen(
                     .padding(start = px(LIST_EDGE_PX), end = px(SCROLLBAR_LANE_PX)),
                 onClick = {},
                 downloaded = entry.track.id in downloaded,
+                liked = entry.track.liked,
                 selected = entry.key in selection.selected,
                 trailing = { Spacer(Modifier.width(px(DRAG_HANDLE_SLOT_PX))) },
             )
@@ -495,6 +499,12 @@ private fun sortedEntries(
 
 /** Where a playlist's own sort is stored: by source as well, since two servers' ids can match. */
 fun playlistSortKey(playlistId: String): String = "${App.source.value.id}:$playlistId"
+
+/** A playlist was just started: what its Recently Played order goes by. */
+fun notePlaylistPlayed(playlistId: String) {
+    val sourceId = App.source.value.id
+    App.scope.launch { App.settings.setPlaylistPlayed(sourceId, playlistId, System.currentTimeMillis()) }
+}
 
 /** The playlist's sort as stored, Playlist Order where it has none. */
 @Composable

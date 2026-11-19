@@ -7,25 +7,16 @@ import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Album
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Cast
-import androidx.compose.material.icons.filled.Category
-import androidx.compose.material.icons.filled.Group
-import androidx.compose.material.icons.filled.Piano
-import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.Dehaze
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.FilterNone
-import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Whatshot
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Repeat
@@ -118,24 +109,15 @@ class MaterialGlyphsTest {
         val GLYPHS: List<Pair<ImageVector, ImageVector?>> = listOf(
             Material.AutoMirrored.Filled.Backspace to Icons.AutoMirrored.Filled.Backspace,
             Material.Filled.Album to Icons.Filled.Album,
-            Material.Filled.ArrowDownward to Icons.Filled.ArrowDownward,
-            Material.Filled.ArrowUpward to Icons.Filled.ArrowUpward,
             Material.Filled.Cast to Icons.Filled.Cast,
-            Material.Filled.Category to Icons.Filled.Category,
-            Material.Filled.Group to Icons.Filled.Group,
-            Material.Filled.Piano to Icons.Filled.Piano,
-            Material.Filled.Speaker to Icons.Filled.Speaker,
             Material.Filled.CloudOff to Icons.Filled.CloudOff,
-            Material.Filled.Dehaze to Icons.Filled.Dehaze,
             Material.Filled.Dns to Icons.Filled.Dns,
             Material.Filled.Favorite to Icons.Filled.Favorite,
             Material.Filled.FavoriteBorder to Icons.Filled.FavoriteBorder,
             Material.Filled.Star to Icons.Filled.Star,
             Material.Filled.StarBorder to Icons.Filled.StarBorder,
             Material.Filled.FilterNone to Icons.Filled.FilterNone,
-            Material.Filled.LibraryMusic to Icons.Filled.LibraryMusic,
             Material.Filled.Whatshot to Icons.Filled.Whatshot,
-            Material.Filled.MoreVert to Icons.Filled.MoreVert,
             Material.Filled.MusicNote to Icons.Filled.MusicNote,
             Material.Filled.Smartphone to Icons.Filled.Smartphone,
             Material.AutoMirrored.Filled.QueueMusic to Icons.AutoMirrored.Filled.QueueMusic,

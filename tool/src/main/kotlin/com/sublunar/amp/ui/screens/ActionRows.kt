@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import com.sublunar.amp.ui.components.RatingStars
 import androidx.compose.runtime.Composable
 import com.sublunar.amp.App
 import com.sublunar.amp.data.MusicSource
@@ -14,15 +15,25 @@ import kotlinx.coroutines.launch
 
 /** Play [tracks] in order, or shuffled: the player takes the sheet's place. */
 @Composable
-fun SimpleLightScreen<Unit>.PlayRows(tracks: List<Track>, queueName: String? = null) {
-    TextRow(title = "Play") {
-        if (tracks.isNotEmpty()) {
-            App.playback.playQueue(tracks, 0, name = queueName)
-            replaceWithPlayer()
+fun SimpleLightScreen<Unit>.PlayRows(
+    tracks: List<Track>,
+    queueName: String? = null,
+    onPlay: () -> Unit = {},
+    /** False for Shuffle alone. */
+    play: Boolean = true,
+) {
+    if (play) {
+        TextRow(title = "Play") {
+            if (tracks.isNotEmpty()) {
+                onPlay()
+                App.playback.playQueue(tracks, 0, name = queueName)
+                replaceWithPlayer()
+            }
         }
     }
     TextRow(title = "Shuffle") {
         if (tracks.isNotEmpty()) {
+            onPlay()
             App.playback.playQueue(shuffled(tracks), 0, name = queueName)
             replaceWithPlayer()
         }
@@ -39,7 +50,7 @@ fun SimpleLightScreen<Unit>.LikeTrackRow(track: Track) {
 
 @Composable
 fun SimpleLightScreen<*>.RatingRow(id: String, title: String, rating: Int, isAlbum: Boolean) {
-    TextRow(title = "Rating", value = ratingStars(rating)) {
+    TextRow(title = "Rating", value = "", valueContent = { RatingStars(rating) }) {
         go { RatingScreen(it, id, title, rating, isAlbum) }
     }
 }

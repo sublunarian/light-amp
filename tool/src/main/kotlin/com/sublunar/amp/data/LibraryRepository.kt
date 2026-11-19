@@ -419,9 +419,6 @@ class LibraryRepository(
 
     val genres: StateFlow<List<String>> = tagValuesOf { splitTagValues(it.genre) }
 
-    /** The composers, as [genres] are the genres: the library home's Composers list. */
-    val composers: StateFlow<List<String>> = tagValuesOf { splitComposers(it.composer) }
-
     /**
      * What stateIn with WhileSubscribed does, by hand: a stateIn's value can't
      * be emptied from outside, and a source switch has to — see forgetDerived.
@@ -557,13 +554,6 @@ class LibraryRepository(
     val hasGenres: StateFlow<Boolean> =
         tracks.map { list -> list.any { it.genre.isNotBlank() } }.stateIn(scope, SharingStarted.Eagerly, false)
 
-    val hasComposers: StateFlow<Boolean> =
-        tracks.map { list -> list.any { it.composer.isNotBlank() } }.stateIn(scope, SharingStarted.Eagerly, false)
-
-    val hasCompilations: StateFlow<Boolean> =
-        albums.map { list -> list.any { it.releaseType == ReleaseType.COMPILATION } }
-            .stateIn(scope, SharingStarted.Eagerly, false)
-
     // Artist name -> server artist id, resolved once and reused for liking.
     private var artistIds: Map<String, String>? = null
 
@@ -642,7 +632,7 @@ class LibraryRepository(
     /** All tracks for an artist, from cache, ordered by album then track. */
     fun tracksForArtist(name: String, credit: ArtistCredit = ArtistCredit.ALBUM): List<Track> =
         tracks.value.filter { name in credit.names(it) }
-            .sortedWith(compareBy({ it.album.lowercase() }, { it.discNumber ?: 0 }, { it.trackNumber ?: 0 }))
+            .sortedWith(compareBy({ titleKey(it.album) }, { it.discNumber ?: 0 }, { it.trackNumber ?: 0 }))
 
     /**
      * An artist's most popular songs, in popularity order: a short top-tracks

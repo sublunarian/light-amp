@@ -24,6 +24,8 @@ import com.sublunar.amp.ui.components.AlbumGrid
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.EmptyState
+import com.sublunar.amp.ui.components.CentredPlayRow
+import com.sublunar.amp.ui.components.PlayAllRow
 import com.sublunar.amp.ui.components.ROW_LEAD_PX
 import com.sublunar.amp.ui.components.SplitActionRow
 import com.sublunar.amp.ui.components.formatTime
@@ -43,6 +45,7 @@ import androidx.compose.foundation.layout.padding
 import com.sublunar.amp.ui.components.LibraryList
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.ScrollableList
+import com.sublunar.amp.ui.components.indexLetterOf
 import com.sublunar.amp.ui.components.SelectionHeader
 import com.sublunar.amp.ui.components.ShuffleRow
 import com.sublunar.amp.ui.components.TextRow
@@ -76,6 +79,36 @@ class ArtistDetailScreen(
             rightLabel = "Popular",
             onRight = { go { ArtistSongsScreen(it, name, popular = true, credit = credit) } },
         )
+    }
+
+    /** At the head of the records, grouped or not: all their songs to play, and Popular under that once it has come. */
+    @Composable
+    private fun PlayShortcuts(records: List<Album>, hasPopular: Boolean) {
+        Column {
+            CentredPlayRow(
+                onPlay = { playAll(songsInOrderOf(records)) },
+                onShuffle = { playAll(shuffled(songsInOrderOf(records))) },
+            )
+            if (hasPopular) {
+                PlayAllRow(AppIcons.Popular, "Popular", headsList = true) {
+                    go { ArtistSongsScreen(it, name, popular = true, credit = credit) }
+                }
+            }
+        }
+    }
+
+    /** Their songs record by record, as the page lists [records], each in disc and track order. */
+    private fun songsInOrderOf(records: List<Album>): List<Track> {
+        val place = records.withIndex().associate { it.value.id to it.index }
+        return App.library.tracksForArtist(name, credit).sortedWith(
+            compareBy({ place[it.albumId] ?: records.size }, { it.discNumber ?: 0 }, { it.trackNumber ?: 0 }),
+        )
+    }
+
+    private fun playAll(songs: List<Track>) {
+        if (songs.isEmpty()) return
+        App.playback.playQueue(songs, 0, name = name)
+        go { NowPlayingScreen(it) }
     }
 
     /**
@@ -116,8 +149,10 @@ class ArtistDetailScreen(
         // Empty where the server has none (Navidrome needs Last.fm set up).
         // Not asked for where the source has no such list.
         val offered = App.source.collectAsState().value.supportsPopularSongs
-        var popular by remember(name) { mutableStateOf<List<Track>>(emptyList()) }
-        LaunchedEffect(name, offered) { if (offered) popular = App.library.topSongsForArtist(name) }
+        var topSongs by remember(name) { mutableStateOf<List<Track>>(emptyList()) }
+        LaunchedEffect(name, offered) { if (offered) topSongs = App.library.topSongsForArtist(name) }
+        val hidePopular by App.settings.hidePopularButton.state.collectAsState()
+        val popular = if (hidePopular) emptyList() else topSongs
 
         val grid = App.artistAlbumGrid.collectAsState().value
         val order by App.settings.artistAlbumOrder.state.collectAsState()
@@ -133,6 +168,13 @@ class ArtistDetailScreen(
         val grouping = App.settings.groupReleaseTypes.state.collectAsState().value && typed
         val groups = remember(ordered, grouping) { if (grouping) recordGroups(ordered) else null }
         val shown = remember(groups, ordered) { groups?.flatMap { it.albums } ?: ordered }
+        val playButtons by App.settings.artistPlayButtons.state.collectAsState()
+        val shortcuts: (@Composable () -> Unit)? = when {
+            playButtons -> ({ PlayShortcuts(shown, popular.isNotEmpty()) })
+            groups == null -> ({ SongShortcuts(popular.isNotEmpty()) })
+            else -> null
+        }
+        val songsAtEnd = groups != null && !playButtons
 
         LibrarySubPage {
             AppHeader(
@@ -164,18 +206,14 @@ class ArtistDetailScreen(
                     // records, spanning the row.
                     state = rememberGridAnchor("artist-albums:$name/grid"),
                     footer = {
-                        if (groups != null) {
+                        if (songsAtEnd) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
                                 Column { SongsAtEnd(popular) }
                             }
                         }
                     },
                 ) {
-                    if (groups == null) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            SongShortcuts(popular.isNotEmpty())
-                        }
-                    }
+                    shortcuts?.let { row -> item(span = { GridItemSpan(maxLineSpan) }) { row() } }
                 }
                 return@LibrarySubPage
             }
@@ -185,9 +223,7 @@ class ArtistDetailScreen(
             ) {
                 // A discography, the ways into the songs after it: liking is on
                 // the artist's long-press.
-                if (groups == null) {
-                    item(key = "song-shortcuts") { SongShortcuts(popular.isNotEmpty()) }
-                }
+                shortcuts?.let { row -> item(key = "song-shortcuts") { row() } }
                 val sections = groups ?: listOf(RecordGroup(null, ordered))
                 sections.forEach { group ->
                     if (group.heading != null) {
@@ -204,13 +240,14 @@ class ArtistDetailScreen(
                             coverArtId = album.coverArtId,
                             fallback = AppIcons.Album,
                             downloaded = album.id in downloadedAlbums,
+                            liked = album.liked,
                             onClick = { openAlbum(album.id, Parent.Here) },
                             onLongClick = { go { AlbumActionsScreen(it, album.id, onArtistPage = name) } },
                             tall = true,
                         )
                     }
                 }
-                if (groups != null) {
+                if (songsAtEnd) {
                     item(key = "songs-at-end") { Column { SongsAtEnd(popular) } }
                 }
             }
@@ -283,6 +320,10 @@ class ArtistSongsScreen(
         val songs = remember(all, view, downloadedIds, albums) {
             if (popular || all == null) all else view.applyTo(all, downloadedIds, albums)
         }
+        val letters = remember(songs, view.sort) { if (popular) emptyList() else view.lettersOf(songs.orEmpty()) }
+        // Popular's menu holds only what this hides, so there is no menu left to open.
+        val trimmed = moreMenuTrimmed()
+        val hasMenu = !popular || !trimmed
         // Anchor and selection owner both: the two lists never share either.
         val owner = if (popular) "artist-top:$name" else "artist-songs:$name"
         val selection = rememberSelection(owner)
@@ -302,10 +343,11 @@ class ArtistSongsScreen(
                     onBack = { goBack() },
                     title = if (filters == null) name else null,
                     titleContent = filters?.let { line -> { TitleCard(name, line) } },
-                    rightAction = libraryCornerAction(
-                        if (popular) LibraryPage.ARTIST_POPULAR else LibraryPage.ARTIST_SONGS,
-                        name,
-                    ),
+                    rightAction = if (hasMenu) {
+                        libraryCornerAction(if (popular) LibraryPage.ARTIST_POPULAR else LibraryPage.ARTIST_SONGS, name)
+                    } else {
+                        null
+                    },
                     fitTitle = true,
                 )
             }
@@ -313,10 +355,10 @@ class ArtistSongsScreen(
                 songs == null -> EmptyState("Loading…")
                 popular && songs.isEmpty() -> EmptyState("No popular songs")
                 songs.isEmpty() && view.narrows -> EmptyState("No songs match")
-                else -> LibraryList(
+                else -> IndexedList(
                     anchor = owner,
+                    letters = letters,
                     headerCount = if (selection.active) 0 else 1,
-                    scrollBar = false,
                 ) {
                     if (!selection.active) {
                         item {
@@ -332,6 +374,7 @@ class ArtistSongsScreen(
                             subtitle = track.album,
                             coverArtId = track.coverArtId,
                             downloaded = track.id in downloadedIds,
+                            liked = track.liked,
                             selected = if (selection.active) track.id in selection.selected else null,
                             onClick = {
                                 if (selection.active) {
@@ -380,12 +423,20 @@ data class ArtistSongsView(
         return when (sort) {
             ArtistSongSort.ALBUM -> narrowed
             ArtistSongSort.TITLE -> narrowed.sortedBy { titleKey(it.title) }
-            ArtistSongSort.PLAYS -> narrowed.sortedByDescending { it.playCount }
+            ArtistSongSort.PLAYED -> narrowed.sortedByDescending { it.lastPlayedMs }
+            ArtistSongSort.RATING -> narrowed.sortedByDescending { it.rating }
             ArtistSongSort.ADDED -> {
                 val added = albums.associate { it.id to it.createdMs }
                 narrowed.sortedByDescending { added[it.albumId] ?: 0L }
             }
         }
+    }
+
+    /** Each of [songs]'s letter for the A–Z strip, or none where this order isn't alphabetical. */
+    fun lettersOf(songs: List<Track>): List<Char> = when (sort) {
+        ArtistSongSort.ALBUM -> songs.map { indexLetterOf(titleKey(it.album)) }
+        ArtistSongSort.TITLE -> songs.map { indexLetterOf(titleKey(it.title)) }
+        else -> emptyList()
     }
 
     /** The header's second line: what narrows the list, or null. */
@@ -398,8 +449,9 @@ data class ArtistSongsView(
 enum class ArtistSongSort(val label: String) {
     ALBUM("Album"),
     TITLE("Title"),
-    PLAYS("Most Played"),
     ADDED("Recently Added"),
+    PLAYED("Recently Played"),
+    RATING("Rating"),
 }
 
 /** The visit in progress — its More page reads and changes it. */
@@ -412,9 +464,11 @@ class ArtistSongSortScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed
     @Composable
     override fun Content() {
         val view by ArtistSongsVisit.view.collectAsState()
+        val supportsRatings = App.source.collectAsState().value.supportsRatings
+        val shown = ArtistSongSort.entries.filter { it != ArtistSongSort.RATING || supportsRatings }
         ListScreen(onBack = { goBack() }, title = "Sort by", subtitle = "Songs", headingRows = true) {
             ScrollableList {
-                items(ArtistSongSort.entries.toList()) { sort ->
+                items(shown) { sort ->
                     TextRow(title = sort.label, checked = sort == view.sort) {
                         ArtistSongsVisit.view.value = view.copy(sort = sort)
                         goBack(Unit)

@@ -76,8 +76,8 @@ enum class DataMode {
     WIFI_ONLY,
 }
 
-enum class AlbumSort { TITLE, ARTIST, YEAR, DATE_ADDED, RECENTLY_PLAYED, MOST_PLAYED, RATING, RANDOM }
-enum class SongSort { TITLE, ARTIST, DATE_ADDED, RECENTLY_PLAYED, MOST_PLAYED, RATING }
+enum class AlbumSort { TITLE, ARTIST, YEAR, DATE_ADDED, RECENTLY_PLAYED, RATING }
+enum class SongSort { TITLE, ARTIST, DATE_ADDED, RECENTLY_PLAYED, RATING }
 /**
  * The Artists list's orders. [NAME] is the album artists by name (stored under
  * that name from before [ARTIST] existed); [ARTIST] is everyone the songs credit.
@@ -85,7 +85,6 @@ enum class SongSort { TITLE, ARTIST, DATE_ADDED, RECENTLY_PLAYED, MOST_PLAYED, R
 enum class ArtistSort(val credit: ArtistCredit) {
     NAME(ArtistCredit.ALBUM),
     ARTIST(ArtistCredit.SONG),
-    MOST_PLAYED(ArtistCredit.ALBUM),
 }
 
 /** One playlist's order on its page — see [AppSettings.playlistSorts]. */
@@ -107,9 +106,18 @@ enum class PlaylistTrackSort(val label: String, val descendingByNature: Boolean 
 /** An artist's own records: by date or by name, in each release-type group where [AppSettings.groupReleaseTypes] is on. */
 enum class ArtistAlbumOrder(val label: String) {
     DATE_RELEASED("Date Released"),
-    NAME("Name"),
+    NAME("Title"),
 }
-enum class PlaylistSort { RECENTLY_UPDATED, NAME, DATE_CREATED }
+
+/** What the margin before a list's rows marks. Stored by name: never rename one. */
+enum class RowMark(val label: String) {
+    LIKED("Liked"),
+    DOWNLOADED("Downloaded"),
+    NONE("None"),
+}
+
+/** The Playlists list's orders, as its menu lists them. Stored by name: never rename one. */
+enum class PlaylistSort { NAME, DATE_CREATED, RECENTLY_PLAYED, RECENTLY_UPDATED, TYPE }
 
 /**
  * Which of the bar's three destinations was last showing.
@@ -247,6 +255,8 @@ class AppSettings(
             p.editSources { list -> list.filterNot { it.id == id } }
             if (p[ACTIVE_SOURCE] == id) p.remove(ACTIVE_SOURCE)
             p.remove(cachedPlaylistsKey(id))
+            val plays = p.playlistPlays()
+            if (id in plays) p[PLAYLIST_PLAYS] = sourcesJson.encodeToString(plays - id)
             p.remove(lastSyncedKey(id))
             p.remove(songCheckKey(id))
         }
@@ -357,7 +367,7 @@ class AppSettings(
     val albumSort: Pref<AlbumSort> = enum("pref.albumSort", AlbumSort.TITLE)
     val songSort: Pref<SongSort> = enum("pref.songSort", SongSort.TITLE)
     val artistSort: Pref<ArtistSort> = enum("pref.artistSort", ArtistSort.NAME)
-    val playlistSort: Pref<PlaylistSort> = enum("pref.playlistSort", PlaylistSort.RECENTLY_UPDATED)
+    val playlistSort: Pref<PlaylistSort> = enum("pref.playlistSort", PlaylistSort.NAME)
 
     // Inverts each tab's sort; re-tapping the selected option flips it.
     val albumSortReversed: Pref<Boolean> = bool("pref.albumSortReversed", false)
@@ -394,20 +404,13 @@ class AppSettings(
     val songsGenre: Pref<String> = string("pref.songsGenre")
 
     /**
-     * The narrowings only the library home's lists set: Albums to compilations,
-     * Songs to one composer. Kept with the genres, for the same reasons.
-     */
-    val albumsCompilations: Pref<Boolean> = bool("pref.albumsCompilations", false)
-    val songsComposer: Pref<String> = string("pref.songsComposer")
-
-    /**
      * Drop the genre filters, at each start of the app: a one-off
      * narrowing ("Jazz, for now") lasts the session, while the liked and
      * downloaded switches, standing choices, stay. A week-old genre would
      * otherwise still be narrowing a tab.
      */
     suspend fun clearTagFilters() {
-        val filters = listOf(albumsGenre, songsGenre, albumsCompilations, songsComposer)
+        val filters = listOf(albumsGenre, songsGenre)
         dataStore.edit { p -> filters.forEach { p.remove(it.key) } }
     }
 
@@ -421,20 +424,9 @@ class AppSettings(
         val filters = listOf(
             likedAlbumsOnly, likedSongsOnly, likedArtistsOnly,
             downloadedAlbumsOnly, downloadedSongsOnly, downloadedArtistsOnly, downloadedPlaylistsOnly,
-            albumsGenre, songsGenre, albumsCompilations, songsComposer,
+            albumsGenre, songsGenre,
         )
         dataStore.edit { p -> filters.forEach { p.remove(it.key) } }
-    }
-
-    /**
-     * Bumped each time Random is re-tapped for a new deal — see sortAlbums,
-     * whose shuffle is otherwise seeded by the library alone and would hand the
-     * same order back forever.
-     */
-    val shuffleNonce: Stored<Int> = stored { it[SHUFFLE_NONCE] ?: 0 }
-
-    suspend fun bumpShuffleNonce() {
-        dataStore.edit { it[SHUFFLE_NONCE] = (it[SHUFFLE_NONCE] ?: 0) + 1 }
     }
 
     // --- Display and playback ------------------------------------------------
@@ -464,6 +456,21 @@ class AppSettings(
             ?: emptyMap()
     }
 
+    /** When each playlist was last started on this phone, by source and then playlist id. */
+    val playlistPlays: Stored<Map<String, Map<String, Long>>> = stored { it.playlistPlays() }
+
+    private fun Preferences.playlistPlays(): Map<String, Map<String, Long>> =
+        this[PLAYLIST_PLAYS]
+            ?.let { runCatching { sourcesJson.decodeFromString<Map<String, Map<String, Long>>>(it) }.getOrNull() }
+            .orEmpty()
+
+    suspend fun setPlaylistPlayed(sourceId: String, playlistId: String, atMs: Long) {
+        dataStore.edit { p ->
+            val all = p.playlistPlays()
+            val ofSource = all[sourceId].orEmpty() + (playlistId to atMs)
+            p[PLAYLIST_PLAYS] = sourcesJson.encodeToString(all + (sourceId to ofSource))
+        }
+    }
 
     /** Whether to use the simplified or standard layout mode. */
     val layoutMode: Pref<LayoutMode> = enum(LAYOUT_MODE.name, LayoutMode.SIMPLIFIED)
@@ -503,13 +510,23 @@ class AppSettings(
     val hideArtistImages: Pref<Boolean> = bool("pref.hideArtistImages", true)
 
     /**
-     * Stop marking downloaded rows. The leading slot the mark sat in stays,
-     * because it is also what keeps every list's titles on one axis.
+     * What the margin before a row marks: what you have liked, what is
+     * downloaded, or nothing. The margin stays either way, because it is also
+     * what keeps every list's titles on one axis.
      */
-    val hideDownloadIcons: Pref<Boolean> = bool("pref.hideDownloadIcons", false)
+    val rowMark: Pref<RowMark> = enum(ROW_MARK.name, RowMark.DOWNLOADED)
 
-    /** Trial: the simple layout's home list as names alone, starting where the glyphs did. */
-    val hideHomeGlyphs: Pref<Boolean> = bool("pref.hideHomeGlyphs", false)
+    /** Trial: an artist's page opens with Play and Shuffle in All Songs' place, Popular on a row below them. */
+    val artistPlayButtons: Pref<Boolean> = bool("pref.artistPlayButtons", false)
+
+    /** Trial: Material Symbols' media output in the player's cast glyph's place. */
+    val mediaOutputGlyph: Pref<Boolean> = bool("pref.mediaOutputGlyph", false)
+
+    /** Trial: an artist's page without its way to their popular songs. */
+    val hidePopularButton: Pref<Boolean> = bool("pref.hidePopularButton", false)
+
+    /** Trial: Play and Shuffle between an album's card and its tracks. */
+    val albumPlayButtons: Pref<Boolean> = bool("pref.albumPlayButtons", false)
 
     /** Trial: the simple layout's More pages without their Source and Genre rows and Settings button. */
     val trimMoreMenu: Pref<Boolean> = bool("pref.hideMoreSourceSettings", false)
@@ -693,6 +710,8 @@ class AppSettings(
      */
     private suspend fun keepEarlierDefaults() {
         dataStore.edit { p ->
+            p.forgetRemovedSorts()
+            p.carryHiddenDownloadIcons()
             if (p[SOURCES] == null) return@edit
             for ((key, change) in CHANGED_DEFAULTS) if (p[key] !in change.known) p[key] = change.was
             // Release Type was an order until it became its own switch.
@@ -702,6 +721,24 @@ class AppSettings(
                 p[ARTIST_ALBUM_ORDER] = ArtistAlbumOrder.DATE_RELEASED.name
             }
         }
+    }
+
+    /** A list left on an order that no longer exists starts again from its default, the right way up. */
+    private fun MutablePreferences.forgetRemovedSorts() {
+        for ((list, removed) in REMOVED_SORTS) {
+            val sort = stringPreferencesKey("pref.${list}Sort")
+            if (this[sort] !in removed) continue
+            remove(sort)
+            remove(booleanPreferencesKey("pref.${list}SortReversed"))
+        }
+        remove(SHUFFLE_NONCE)
+    }
+
+    /** Hide Download Icons, switched on, became the row mark's None. */
+    private fun MutablePreferences.carryHiddenDownloadIcons() {
+        val hidden = this[HIDE_DOWNLOAD_ICONS] ?: return
+        remove(HIDE_DOWNLOAD_ICONS)
+        if (hidden && this[ROW_MARK] == null) this[ROW_MARK] = RowMark.NONE.name
     }
 
     /** A fresh install's first source: today's defaults written down, so [keepEarlierDefaults] never mistakes it for an old one. */
@@ -717,6 +754,16 @@ class AppSettings(
         private val ARTIST_ALBUM_ORDER = stringPreferencesKey("pref.artistAlbumOrder")
         private val GROUP_RELEASE_TYPES = booleanPreferencesKey("pref.groupReleaseTypes")
         private val PLAYLIST_SORTS = stringPreferencesKey("pref.playlistSorts")
+        private val PLAYLIST_PLAYS = stringPreferencesKey("pref.playlistPlays")
+        private val ROW_MARK = stringPreferencesKey("pref.rowMark")
+        private val HIDE_DOWNLOAD_ICONS = booleanPreferencesKey("pref.hideDownloadIcons")
+
+        /** The orders each list has had taken away, as they were stored. */
+        private val REMOVED_SORTS = mapOf(
+            "album" to setOf("MOST_PLAYED", "RANDOM"),
+            "song" to setOf("MOST_PLAYED"),
+            "artist" to setOf("MOST_PLAYED"),
+        )
 
         /**
          * A default that has changed. A stored value outside [known] (unset, or

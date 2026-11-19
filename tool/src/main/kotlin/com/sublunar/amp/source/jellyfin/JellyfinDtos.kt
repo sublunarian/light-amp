@@ -309,9 +309,9 @@ internal fun JellyfinItem.toTrack(): Track = Track(
     lastPlayedMs = jellyfinDateMs(userData?.lastPlayedDate),
     liked = userData?.isFavorite ?: false,
     genre = genres.firstOrNull().orEmpty(),
-    // Jellyfin files a composer as a credited person rather than a tag, so the
-    // Composers page is built out of People — see JellyfinItem.people. Joined
-    // with the separator the tag lists already split on.
+    // Jellyfin files a composer as a credited person rather than a tag, so it
+    // comes out of People — see JellyfinItem.people. Joined with the separator
+    // the tag lists already split on.
     composer = people.filter { it.type.equals("Composer", ignoreCase = true) }
         .joinToString("; ") { it.name }
         .trim(),

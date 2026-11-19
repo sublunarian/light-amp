@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -27,18 +28,19 @@ import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.ScrollableList
-import com.sublunar.amp.ui.components.SelectionMark
 import com.sublunar.amp.ui.components.TextRow
 import com.sublunar.amp.ui.components.dragReorderContainer
 import com.sublunar.amp.ui.components.gapShift
 import com.sublunar.amp.ui.components.rememberDragReorderState
 import com.sublunar.amp.ui.px
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.ui.LightThemeTokens
+import com.thelightphone.sdk.ui.LocalLightColors
 
 /**
- * What the simple layout's library home lists: each category ticked on or off
- * with the bubble at its start, as a multi-selection is, and put in order with
- * the grab bar at its end, as the queue's songs are.
+ * What the simple layout's library home lists: each category switched on or off
+ * at its start, those off grey below those on. Those on are put in order with the
+ * grab bar at their end, as the queue's songs are; those off keep theirs, out of reach.
  */
 class HomeLayoutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
@@ -46,6 +48,8 @@ class HomeLayoutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     override fun Content() {
         val layout by App.settings.homeLayout.state.collectAsState()
         val order = layout.order
+        // Only those on are dragged, and only among themselves: the ones off sit below, untouched.
+        val listed = layout.listed
         val drag = rememberDragReorderState<HomeCategory>()
         val rowPx = with(LocalDensity.current) { px(HEADING_ROW_PX).toPx() }
         val listState = rememberLazyListState()
@@ -59,10 +63,10 @@ class HomeLayoutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         state = drag,
                         enabled = true,
                         restartKey = order,
-                        orderedKeys = order,
+                        orderedKeys = listed,
                         rowPx = rowPx,
                         onDrop = { moving, insertAt ->
-                            val category = order[moving.first()]
+                            val category = listed[moving.first()]
                             // At once: the stored write lands a frame late, and the row would jump back first.
                             App.settings.homeLayout.setNow(layout.moved(category, insertAt))
                         },
@@ -71,7 +75,8 @@ class HomeLayoutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 ScrollableList(state = listState) {
                     itemsIndexed(order, key = { _, c -> c }) { index, category ->
                         DisposableEffect(category) { onDispose { drag.clear(category) } }
-                        val gap = drag.gapShift(index, order.size, rowPx)
+                        // Past the last one on, a row is never in the dragged one's way.
+                        val gap = drag.gapShift(index, listed.size, rowPx)
                         Box(Modifier.fillMaxWidth().graphicsLayer { translationY = gap }) {
                             CategoryRow(
                                 category,
@@ -100,13 +105,18 @@ class HomeLayoutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         modifier: Modifier = Modifier,
         onHandle: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = {},
     ) {
-        TextRow(
-            title = category.title,
-            modifier = modifier,
-            leading = { SelectionMark(category in layout.shown) },
-            trailing = { DragHandle(onHandle) },
-        ) {
-            App.settings.homeLayout.setNow(layout.toggled(category))
+        val on = category in layout.shown
+        val colors = LightThemeTokens.colors
+        // Off, the whole row takes the grey: its switch, name and grab bar.
+        CompositionLocalProvider(LocalLightColors provides if (on) colors else colors.copy(content = colors.contentSecondary)) {
+            TextRow(
+                title = category.title,
+                modifier = modifier,
+                leading = { ToggleMark(on) },
+                trailing = if (on) ({ DragHandle(onHandle) }) else null,
+            ) {
+                App.settings.homeLayout.setNow(layout.toggled(category))
+            }
         }
     }
 

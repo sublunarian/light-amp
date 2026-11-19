@@ -23,14 +23,14 @@ import kotlinx.coroutines.launch
 
 fun offlineModeLabel(mode: OfflineMode): String = when (mode) {
     OfflineMode.MANUAL -> "Manual"
-    OfflineMode.FAVORITES -> "Favorites"
+    OfflineMode.FAVORITES -> "Liked"
     OfflineMode.ALL -> "Everything"
 }
 
 private fun offlineModeDetail(mode: OfflineMode): String = when (mode) {
     OfflineMode.MANUAL -> "Hold a song, album or artist to download it"
     OfflineMode.FAVORITES -> "Liked albums, liked songs and playlists"
-    OfflineMode.ALL -> "Favorites first, then the rest of the library"
+    OfflineMode.ALL -> "Liked first, then the rest of the library"
 }
 
 fun dataModeLabel(mode: DataMode): String = when (mode) {

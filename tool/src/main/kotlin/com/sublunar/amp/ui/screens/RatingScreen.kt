@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import com.sublunar.amp.ui.components.RatingStars
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -15,10 +16,6 @@ import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-/** "★★★☆☆" for a rating, so the choice reads at a glance. */
-fun ratingStars(stars: Int): String =
-    "★".repeat(stars.coerceIn(0, 5)) + "☆".repeat((5 - stars).coerceIn(0, 5))
 
 /**
  * Pick a 1–5 star rating, or clear it. The rating shows at once and goes to the
@@ -53,7 +50,9 @@ class RatingScreen(
                     // Listed 5 stars down to none, so the common choices are first.
                     val stars = 5 - i
                     TextRow(
-                        title = if (stars == 0) "No rating" else ratingStars(stars),
+                        // Light's stars stand in for the words, so the choice reads at a glance.
+                        title = if (stars == 0) "No rating" else "",
+                        leading = if (stars > 0) ({ RatingStars(stars) }) else null,
                         onClick = {
                             if (saving) return@TextRow
                             saving = true

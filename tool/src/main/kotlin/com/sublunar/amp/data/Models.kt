@@ -112,23 +112,15 @@ fun Track.primaryAlbumArtist(): String =
 fun splitTagValues(raw: String): List<String> =
     raw.split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }
 
-/**
- * A composer field, split into its names: as a tag list, and on the " • "
- * Navidrome joins several with.
- */
-fun splitComposers(raw: String): List<String> =
-    raw.split(',', ';', '•').map { it.trim() }.filter { it.isNotEmpty() }
+/** The genre a library list has been narrowed to; blank means "not narrowed". */
+data class TagFilter(val genre: String = "") {
+    val isEmpty: Boolean get() = genre.isEmpty()
 
-/** The genre and composer a library list has been narrowed to; blank means "not narrowed". */
-data class TagFilter(val genre: String = "", val composer: String = "") {
-    val isEmpty: Boolean get() = genre.isEmpty() && composer.isEmpty()
-
-    /** Whether [track] has the genre and the composer, a blank one matching all. */
-    fun admits(track: Track): Boolean =
-        (genre.isEmpty() || track.hasGenre(genre)) && (composer.isEmpty() || track.hasComposer(composer))
+    /** Whether [track] has the genre, a blank one matching all. */
+    fun admits(track: Track): Boolean = genre.isEmpty() || track.hasGenre(genre)
 }
 
-/** Every value [select] gives across [tracks], once each, in name order: a Genres or Composers list. */
+/** Every value [select] gives across [tracks], once each, in name order: a Genres list. */
 fun tagValuesIn(tracks: List<Track>, select: (Track) -> List<String>): List<String> {
     val seen = HashMap<String, String>()
     for (track in tracks) for (value in select(track)) seen.putIfAbsent(value.lowercase(), value)
@@ -138,10 +130,6 @@ fun tagValuesIn(tracks: List<Track>, select: (Track) -> List<String>): List<Stri
 /** Whether this track carries [value] as one of its genres. */
 fun Track.hasGenre(value: String): Boolean =
     splitTagValues(genre).any { it.equals(value, ignoreCase = true) }
-
-/** Whether [value] is one of this track's composers. */
-fun Track.hasComposer(value: String): Boolean =
-    splitComposers(composer).any { it.equals(value, ignoreCase = true) }
 
 /** An album as listed by the server; its songs are fetched separately. */
 data class Album(
@@ -196,6 +184,8 @@ data class Playlist(
      * objects on the server, so a delete would really delete one.
      */
     val readOnly: Boolean = false,
+    /** Built by the server from a filter, where it says so: Plex and Navidrome. */
+    val smart: Boolean = false,
 )
 
 /** What the server has liked, read in one go by a sync. */

@@ -175,7 +175,7 @@ object LibraryNav {
  * home list's Downloaded, so everything it opens is narrowed to downloads.
  */
 data class IndexPage(val kind: Kind, val downloaded: Boolean = false) {
-    enum class Kind { HOME, FAVORITES, GENRES, COMPOSERS }
+    enum class Kind { HOME, FAVORITES, GENRES }
 
     /** Where its back arrow leads; null for the home list, which has none. */
     val parent: IndexPage?

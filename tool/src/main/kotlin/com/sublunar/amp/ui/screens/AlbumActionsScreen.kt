@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.sublunar.amp.App
+import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.CenteredNote
@@ -16,12 +17,14 @@ import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.launch
 
-/** Long-press actions for an album: play, queue or add it whole, like, rate, download, go to the artist. */
+/** An album's actions, from a long-press or its page's menu: play, queue or add it whole, like, rate, download, go to the artist. */
 class AlbumActionsScreen(
     sealed: SealedLightActivity,
     private val albumId: String,
     /** The artist page this was opened on: no Go to Artist where it would go there. */
     private val onArtistPage: String? = null,
+    /** Opened from the album page's corner, where the tabs' layout offers Settings as a list's More page does. */
+    private val fromAlbumPage: Boolean = false,
 ) : AmpScreen<Unit>(sealed) {
 
     @Composable
@@ -34,11 +37,17 @@ class AlbumActionsScreen(
         val list = tracks ?: emptyList()
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val fullyDownloaded = list.isNotEmpty() && list.all { it.id in downloadedIds }
+        val layout by App.settings.layoutMode.state.collectAsState()
 
         ListScreen(
             onBack = { goBack() },
             title = album?.title ?: "Album",
             headingRows = true,
+            rightAction = if (fromAlbumPage && layout == LayoutMode.STANDARD) {
+                settingsAction()
+            } else {
+                null
+            },
         ) {
             // Nothing until the songs are known, as on a playlist's menu: rows
             // that need them would arrive late and push the rest down.
@@ -47,7 +56,8 @@ class AlbumActionsScreen(
                 return@ListScreen
             }
             ActionList {
-                PlayRows(list)
+                // The album's own page plays from its first track already.
+                PlayRows(list, play = !fromAlbumPage)
                 TextRow(title = "Play Next") {
                     if (list.isNotEmpty()) App.playback.playNext(list)
                     goBack()

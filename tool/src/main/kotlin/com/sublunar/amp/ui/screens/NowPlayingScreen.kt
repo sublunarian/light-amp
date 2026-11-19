@@ -243,7 +243,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     // title lives on the stage instead — see heroTitle.
                     titleContent = if (heroTitle) null else ({ TitleCard(current.title, credit) }),
                     rightAction = HeaderAction(
-                        AppIcons.MoreVert,
+                        AppIcons.More,
                         onLongClick = { go { SettingsScreen(it) } },
                     ) { openOptions(current.id, hasCover = !noCover, coverOnly) },
                 )
@@ -543,7 +543,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 )
             }
             Slot(SlotAt.Centre, onClick = { openOutput() }) {
-                AppIcon(AppIcons.Cast, size = size, modifier = Modifier.alpha(alpha))
+                AppIcon(AppIcons.Output, size = size, modifier = Modifier.alpha(alpha))
             }
             Slot(
                 SlotAt.FromEnd(SIDE_X_PX),

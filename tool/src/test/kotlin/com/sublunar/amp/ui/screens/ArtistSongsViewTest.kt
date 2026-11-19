@@ -9,17 +9,17 @@ import kotlin.test.assertNull
 /** An artist's All Songs page, narrowed and ordered for one visit. */
 class ArtistSongsViewTest {
 
-    private fun track(id: String, title: String, album: String, plays: Int = 0, liked: Boolean = false) = Track(
+    private fun track(id: String, title: String, album: String, played: Long, rating: Int, liked: Boolean = false) = Track(
         id = id, title = title, artist = "A", album = album, albumArtist = "A", albumId = album,
         coverArtId = null, durationMs = 0, trackNumber = null, discNumber = null, year = null,
-        playCount = plays, lastPlayedMs = 0, liked = liked,
+        playCount = 0, lastPlayedMs = played, rating = rating, liked = liked,
     )
 
     // In the order they come: by album.
     private val songs = listOf(
-        track("1", "Beta", "old", plays = 2, liked = true),
-        track("2", "Alpha", "old", plays = 9),
-        track("3", "Gamma", "new", plays = 5, liked = true),
+        track("1", "Beta", "old", played = 2, rating = 1, liked = true),
+        track("2", "Alpha", "old", played = 9, rating = 3),
+        track("3", "Gamma", "new", played = 5, rating = 5, liked = true),
     )
     private val albums = listOf(
         Album("old", "Old", "A", null, 0, 2, null, createdMs = 1),
@@ -45,7 +45,17 @@ class ArtistSongsViewTest {
     @Test
     fun `each order`() {
         assertEquals(listOf("2", "1", "3"), ids(ArtistSongsView(sort = ArtistSongSort.TITLE)))
-        assertEquals(listOf("2", "3", "1"), ids(ArtistSongsView(sort = ArtistSongSort.PLAYS)))
+        assertEquals(listOf("2", "3", "1"), ids(ArtistSongsView(sort = ArtistSongSort.PLAYED)))
+        assertEquals(listOf("3", "2", "1"), ids(ArtistSongsView(sort = ArtistSongSort.RATING)))
         assertEquals(listOf("3", "1", "2"), ids(ArtistSongsView(sort = ArtistSongSort.ADDED)))
+    }
+
+    @Test
+    fun `the A-Z strip follows the alphabetical orders and only those`() {
+        assertEquals(listOf('O', 'O', 'N'), ArtistSongsView().lettersOf(songs))
+        assertEquals(listOf('B', 'A', 'G'), ArtistSongsView(sort = ArtistSongSort.TITLE).lettersOf(songs))
+        for (sort in listOf(ArtistSongSort.ADDED, ArtistSongSort.PLAYED, ArtistSongSort.RATING)) {
+            assertEquals(emptyList(), ArtistSongsView(sort = sort).lettersOf(songs))
+        }
     }
 }

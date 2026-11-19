@@ -798,6 +798,7 @@ class PlexClient(
                 updatedAt = (it.updatedAt ?: it.addedAt ?: 0L) * 1000L,
                 trackIds = emptyList(),
                 readOnly = it.isSmart,
+                smart = it.isSmart,
             )
         }
 

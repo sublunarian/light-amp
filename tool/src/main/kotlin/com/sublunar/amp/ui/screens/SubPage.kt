@@ -9,6 +9,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.ui.PlayerTheme
+import com.sublunar.amp.ui.components.SETTINGS_GLYPH_PX
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.HeaderAction
 import com.thelightphone.sdk.SimpleLightScreen
@@ -39,6 +40,13 @@ fun SimpleLightScreen<*>.libraryCornerAction(
         AppIcons.Sort,
         onLongClick = { go { SettingsScreen(it) } },
     ) { go { MoreScreen(it, page, pageTitle) } }
+
+/** The Settings gear in a header's corner: a tap or a hold both open Settings, as a hold on the corner's other buttons does. */
+@Composable
+fun SimpleLightScreen<*>.settingsAction(): HeaderAction {
+    val open = { go { SettingsScreen(it) } }
+    return HeaderAction(AppIcons.Settings, iconPx = SETTINGS_GLYPH_PX, onLongClick = open, onClick = open)
+}
 
 /**
  * Chrome for every library sub-page (album, artist, playlist, …): the page's own

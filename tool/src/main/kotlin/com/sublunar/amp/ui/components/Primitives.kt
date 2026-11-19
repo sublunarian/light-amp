@@ -1,5 +1,7 @@
 package com.sublunar.amp.ui.components
 
+import androidx.compose.runtime.collectAsState
+import com.sublunar.amp.App
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -38,10 +40,13 @@ object AppIcons {
     val AlbumStack = Icons.Filled.FilterNone
 
     /** The library, on the simple layout's bar. */
-    val Library = Icons.Filled.LibraryMusic
-    val Category = Icons.Filled.Category
-    val Piano = Icons.Filled.Piano
-    val Group = Icons.Filled.Group
+    val Library = LibraryMusicSymbol
+    /** Genres: the theatre masks. */
+    val Genres = TheaterComedySymbol
+
+    /** The player's way to a speaker: Material's cast, or on trial Material Symbols' media output. */
+    val Output: ImageVector @Composable get() =
+        if (App.settings.mediaOutputGlyph.state.collectAsState().value) MediaOutputSymbol else Cast
 
     /** Light's mark for something downloaded, as the rows wear it. */
     val Downloaded: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.DOWNLOADED_ARROW.drawableResource)
@@ -55,7 +60,9 @@ object AppIcons {
      * LightOS's own is a thin outline and reads as a hole in the row.
      */
     val QueueMusic = Icons.AutoMirrored.Filled.QueueMusic
-    val MoreVert = Icons.Filled.MoreVert
+
+    /** Light's own three dots, for a page's menu. */
+    val More: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.ELLIPSES.drawableResource)
 
     /** LightOS's own waveform, see [WaveformSymbol]. */
     val Waveform = WaveformSymbol
@@ -95,19 +102,19 @@ object AppIcons {
     /** LightOS's own gear, from the SDK's icons. */
     val Settings: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.SETTINGS.drawableResource)
 
-    val Dehaze = Icons.Filled.Dehaze
     /** LightOS's own bulleted list. */
     val FormatListBulleted: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.LIST.drawableResource)
     val VolumeUp = Icons.AutoMirrored.Filled.VolumeUp
     val VolumeDown = Icons.AutoMirrored.Filled.VolumeDown
     val Bluetooth: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.BLUETOOTH.drawableResource)
     val Smartphone = Icons.Filled.Smartphone
-    val Speaker = Icons.Filled.Speaker
+    val Speaker: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.SPEAKER.drawableResource)
     val Dns = Icons.Filled.Dns
     /** LightOS's own trash. */
     val DeleteOutline: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.TRASH.drawableResource)
-    val ArrowUpward = Icons.Filled.ArrowUpward
-    val ArrowDownward = Icons.Filled.ArrowDownward
+    /** A sort's direction, in Light's arrow — see LightArrowUp. */
+    val ArrowUpward = LightArrowUp
+    val ArrowDownward: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.ARROW_DOWN.drawableResource)
     val Cast = Icons.Filled.Cast
     val Refresh: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.REFRESH.drawableResource)
 

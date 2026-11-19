@@ -7,29 +7,35 @@ enum class HomeCategory(val title: String, val onByDefault: Boolean) {
     ALBUMS("Albums", true),
     SONGS("Songs", true),
     GENRES("Genres", false),
-    COMPILATIONS("Compilations", false),
-    COMPOSERS("Composers", false),
-    FAVORITES("Favorites", false),
+    FAVORITES("Liked", false),
     DOWNLOADED("Downloaded", false),
 }
 
 /**
  * The library home's categories in the order chosen, each shown or not. [order]
- * holds every category exactly once, so one switched off keeps its place for
- * when it is switched back on.
+ * holds every category exactly once: those shown first, then those switched off.
  */
 data class HomeLayout(val order: List<HomeCategory>, val shown: Set<HomeCategory>) {
 
     /** What the home list shows, in its order. */
     val listed: List<HomeCategory> get() = order.filter { it in shown }
 
-    fun toggled(category: HomeCategory): HomeLayout =
-        copy(shown = if (category in shown) shown - category else shown + category)
+    /**
+     * [category] switched, landing on the line between the two groups either way:
+     * back on, last of those shown; off, first of those switched off.
+     */
+    fun toggled(category: HomeCategory): HomeLayout {
+        val next = if (category in shown) shown - category else shown + category
+        val rest = (order - category).shownFirst(next)
+        val line = rest.count { it in next }
+        return HomeLayout(rest.toMutableList().apply { add(line, category) }, next)
+    }
 
-    /** [category] taken out and put back at [index] of the order. */
+    /** [category] taken out and put back at [index] of the order, staying on its side of the shown and the off. */
     fun moved(category: HomeCategory, index: Int): HomeLayout {
         val rest = order - category
-        return copy(order = rest.toMutableList().apply { add(index.coerceIn(0, rest.size), category) })
+        val placed = rest.toMutableList().apply { add(index.coerceIn(0, rest.size), category) }
+        return copy(order = placed.shownFirst(shown))
     }
 
     /** Every category in order, a switched-off one marked with a leading `-`: `PLAYLISTS,-GENRES,…`. */
@@ -60,7 +66,9 @@ data class HomeLayout(val order: List<HomeCategory>, val shown: Set<HomeCategory
                 order += category
                 if (category.onByDefault) shown += category
             }
-            return HomeLayout(order, shown)
+            return HomeLayout(order.shownFirst(shown), shown)
         }
+
+        private fun List<HomeCategory>.shownFirst(shown: Set<HomeCategory>) = sortedBy { it !in shown }
     }
 }

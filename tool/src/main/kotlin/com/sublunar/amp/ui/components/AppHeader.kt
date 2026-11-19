@@ -50,6 +50,12 @@ data class HeaderAction(
 const val SETTINGS_GLYPH_PX = 58
 
 /**
+ * The inner slot's glyphs, Light's magnifier and bin, fill their boxes as the gear
+ * does: at this they stand as wide as the sort lines beside them.
+ */
+const val INNER_GLYPH_PX = 52
+
+/**
  * The inner slot beside the right corner: search on the tabs, delete while
  * selecting. The two read as a pair: the corner keeps its full square (icon
  * centred at 1000px), and the inner slot is an 80px square hard against it, its
@@ -188,7 +194,7 @@ fun AppHeader(
                 onClick = innerAction.onClick,
                 onLongClick = innerAction.onLongClick,
             ) {
-                AppIcon(innerAction.icon, size = px(66))
+                AppIcon(innerAction.icon, size = px(innerAction.iconPx))
             }
         }
         HeaderSlot(

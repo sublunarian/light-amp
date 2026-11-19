@@ -15,7 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.sublunar.amp.App
 import com.sublunar.amp.BuildConfig
-import com.sublunar.amp.data.AlbumSort
 import com.sublunar.amp.data.ArtistAlbumOrder
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.StreamProxy
@@ -26,8 +25,6 @@ import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppText
-import com.sublunar.amp.ui.components.HeaderAction
-import com.sublunar.amp.ui.components.SETTINGS_GLYPH_PX
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.LocalMenuHeading
 import com.sublunar.amp.ui.components.ScrollableList
@@ -78,9 +75,7 @@ class MoreScreen(
         val visit = ArtistSongsVisit.view.collectAsState().value.takeIf { page == LibraryPage.ARTIST_SONGS }
         val source = App.source.collectAsState().value
         val grouping = App.settings.groupReleaseTypes.state.collectAsState().value
-        // The simple layout's home reaches all three; the tabs' layout has no other way to them.
-        val trimmed = App.settings.trimMoreMenu.state.collectAsState().value &&
-            App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
+        val trimmed = moreMenuTrimmed()
 
         // Covers the tab bar: a menu that leaves the navigation showing reads as
         // another page rather than something on top of the one you were on.
@@ -94,7 +89,7 @@ class MoreScreen(
                     rightAction = if (trimmed) {
                         null
                     } else {
-                        HeaderAction(AppIcons.Settings, iconPx = SETTINGS_GLYPH_PX) { go { SettingsScreen(it) } }
+                        settingsAction()
                     },
                 )
                 CompositionLocalProvider(LocalMenuHeading provides true) {
@@ -195,6 +190,17 @@ class MoreScreen(
     }
 }
 
+/**
+ * Whether the More pages go without their Source and Genre rows and Settings. The
+ * simple layout's alone: its home reaches all three, and the tabs have no other way.
+ */
+@Composable
+internal fun moreMenuTrimmed(): Boolean {
+    val trim by App.settings.trimMoreMenu.state.collectAsState()
+    val layout by App.settings.layoutMode.state.collectAsState()
+    return trim && layout == LayoutMode.SIMPLIFIED
+}
+
 /** What the page is called, for the pages whose name never changes. */
 @Composable
 private fun defaultTitle(page: LibraryPage): String = when (page) {
@@ -251,13 +257,7 @@ private fun sortOf(page: LibraryPage, playlistSortKey: String?): PageSetting = w
     LibraryPage.ALBUMS -> {
         val sort by App.settings.albumSort.state.collectAsState()
         val reversed by App.settings.albumSortReversed.state.collectAsState()
-        sortable(
-            albumSortLabel(sort),
-            sort.descendingByNature,
-            reversed,
-            // A shuffle has no direction for the arrow to claim.
-            directionless = sort == AlbumSort.RANDOM,
-        ) {
+        sortable(albumSortLabel(sort), sort.descendingByNature, reversed) {
             SortScreen(it, LibraryTab.ALBUMS)
         }
     }
@@ -273,7 +273,7 @@ private fun sortOf(page: LibraryPage, playlistSortKey: String?): PageSetting = w
     LibraryPage.ARTISTS -> {
         val sort by App.settings.artistSort.state.collectAsState()
         val reversed by App.settings.artistSortReversed.state.collectAsState()
-        sortable(artistSortLabel(sort), sort.descendingByNature, reversed) {
+        sortable(artistSortLabel(sort), naturallyDescending = false, reversed) {
             SortScreen(it, LibraryTab.ARTISTS)
         }
     }
@@ -310,8 +310,6 @@ private fun sortable(
     label: String,
     naturallyDescending: Boolean,
     reversed: Boolean,
-    /** True for an order with no direction — Random — which gets no arrow. */
-    directionless: Boolean = false,
     open: (SealedLightActivity) -> SimpleLightScreen<Unit>,
 ): PageSetting {
     // `reversed` inverts the option's natural direction, as in SortScreen.
@@ -319,15 +317,11 @@ private fun sortable(
     return PageSetting(
         value = label,
         open = open,
-        valueTrailing = if (directionless) {
-            null
-        } else {
-            {
-                AppIcon(
-                    if (descending) AppIcons.ArrowDownward else AppIcons.ArrowUpward,
-                    size = px(SORT_ARROW_PX),
-                )
-            }
+        valueTrailing = {
+            AppIcon(
+                if (descending) AppIcons.ArrowDownward else AppIcons.ArrowUpward,
+                size = px(SORT_ARROW_PX),
+            )
         },
     )
 }

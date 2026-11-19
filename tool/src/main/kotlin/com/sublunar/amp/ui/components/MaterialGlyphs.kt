@@ -48,38 +48,6 @@ object Icons {
             }
         }
 
-        val ArrowDownward: ImageVector by glyph("Filled.ArrowDownward") {
-            shape {
-                moveTo(20.0f, 12.0f)
-                lineToRelative(-1.41f, -1.41f)
-                lineTo(13.0f, 16.17f)
-                verticalLineTo(4.0f)
-                horizontalLineToRelative(-2.0f)
-                verticalLineToRelative(12.17f)
-                lineToRelative(-5.58f, -5.59f)
-                lineTo(4.0f, 12.0f)
-                lineToRelative(8.0f, 8.0f)
-                lineToRelative(8.0f, -8.0f)
-                close()
-            }
-        }
-
-        val ArrowUpward: ImageVector by glyph("Filled.ArrowUpward") {
-            shape {
-                moveTo(4.0f, 12.0f)
-                lineToRelative(1.41f, 1.41f)
-                lineTo(11.0f, 7.83f)
-                verticalLineTo(20.0f)
-                horizontalLineToRelative(2.0f)
-                verticalLineTo(7.83f)
-                lineToRelative(5.58f, 5.59f)
-                lineTo(20.0f, 12.0f)
-                lineToRelative(-8.0f, -8.0f)
-                lineToRelative(-8.0f, 8.0f)
-                close()
-            }
-        }
-
         val Cast: ImageVector by glyph("Filled.Cast") {
             shape {
                 moveTo(21.0f, 3.0f)
@@ -117,28 +85,6 @@ object Icons {
             }
         }
 
-        val Category: ImageVector by glyph("Filled.Category") {
-            shape {
-                moveTo(12.0f, 2.0f)
-                lineToRelative(-5.5f, 9.0f)
-                horizontalLineToRelative(11.0f)
-                close()
-            }
-            shape {
-                moveTo(17.5f, 17.5f)
-                moveToRelative(-4.5f, 0.0f)
-                arcToRelative(4.5f, 4.5f, 0.0f, true, true, 9.0f, 0.0f)
-                arcToRelative(4.5f, 4.5f, 0.0f, true, true, -9.0f, 0.0f)
-            }
-            shape {
-                moveTo(3.0f, 13.5f)
-                horizontalLineToRelative(8.0f)
-                verticalLineToRelative(8.0f)
-                horizontalLineTo(3.0f)
-                close()
-            }
-        }
-
         val CloudOff: ImageVector by glyph("Filled.CloudOff") {
             shape {
                 moveTo(19.35f, 10.04f)
@@ -171,29 +117,6 @@ object Icons {
                 curveToRelative(-2.21f, 0.0f, -4.0f, -1.79f, -4.0f, -4.0f)
                 reflectiveCurveToRelative(1.79f, -4.0f, 4.0f, -4.0f)
                 horizontalLineToRelative(1.73f)
-                close()
-            }
-        }
-
-        val Dehaze: ImageVector by glyph("Filled.Dehaze") {
-            shape {
-                moveTo(2.0f, 15.5f)
-                verticalLineToRelative(2.0f)
-                horizontalLineToRelative(20.0f)
-                verticalLineToRelative(-2.0f)
-                lineTo(2.0f, 15.5f)
-                close()
-                moveTo(2.0f, 10.5f)
-                verticalLineToRelative(2.0f)
-                horizontalLineToRelative(20.0f)
-                verticalLineToRelative(-2.0f)
-                lineTo(2.0f, 10.5f)
-                close()
-                moveTo(2.0f, 5.5f)
-                verticalLineToRelative(2.0f)
-                horizontalLineToRelative(20.0f)
-                verticalLineToRelative(-2.0f)
-                lineTo(2.0f, 5.5f)
                 close()
             }
         }
@@ -276,73 +199,6 @@ object Icons {
             }
         }
 
-        val Group: ImageVector by glyph("Filled.Group") {
-            shape {
-                moveTo(16.0f, 11.0f)
-                curveToRelative(1.66f, 0.0f, 2.99f, -1.34f, 2.99f, -3.0f)
-                reflectiveCurveTo(17.66f, 5.0f, 16.0f, 5.0f)
-                curveToRelative(-1.66f, 0.0f, -3.0f, 1.34f, -3.0f, 3.0f)
-                reflectiveCurveToRelative(1.34f, 3.0f, 3.0f, 3.0f)
-                close()
-                moveTo(8.0f, 11.0f)
-                curveToRelative(1.66f, 0.0f, 2.99f, -1.34f, 2.99f, -3.0f)
-                reflectiveCurveTo(9.66f, 5.0f, 8.0f, 5.0f)
-                curveTo(6.34f, 5.0f, 5.0f, 6.34f, 5.0f, 8.0f)
-                reflectiveCurveToRelative(1.34f, 3.0f, 3.0f, 3.0f)
-                close()
-                moveTo(8.0f, 13.0f)
-                curveToRelative(-2.33f, 0.0f, -7.0f, 1.17f, -7.0f, 3.5f)
-                lineTo(1.0f, 19.0f)
-                horizontalLineToRelative(14.0f)
-                verticalLineToRelative(-2.5f)
-                curveToRelative(0.0f, -2.33f, -4.67f, -3.5f, -7.0f, -3.5f)
-                close()
-                moveTo(16.0f, 13.0f)
-                curveToRelative(-0.29f, 0.0f, -0.62f, 0.02f, -0.97f, 0.05f)
-                curveToRelative(1.16f, 0.84f, 1.97f, 1.97f, 1.97f, 3.45f)
-                lineTo(17.0f, 19.0f)
-                horizontalLineToRelative(6.0f)
-                verticalLineToRelative(-2.5f)
-                curveToRelative(0.0f, -2.33f, -4.67f, -3.5f, -7.0f, -3.5f)
-                close()
-            }
-        }
-
-        val LibraryMusic: ImageVector by glyph("Filled.LibraryMusic") {
-            shape {
-                moveTo(20.0f, 2.0f)
-                lineTo(8.0f, 2.0f)
-                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
-                verticalLineToRelative(12.0f)
-                curveToRelative(0.0f, 1.1f, 0.9f, 2.0f, 2.0f, 2.0f)
-                horizontalLineToRelative(12.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
-                lineTo(22.0f, 4.0f)
-                curveToRelative(0.0f, -1.1f, -0.9f, -2.0f, -2.0f, -2.0f)
-                close()
-                moveTo(18.0f, 7.0f)
-                horizontalLineToRelative(-3.0f)
-                verticalLineToRelative(5.5f)
-                curveToRelative(0.0f, 1.38f, -1.12f, 2.5f, -2.5f, 2.5f)
-                reflectiveCurveTo(10.0f, 13.88f, 10.0f, 12.5f)
-                reflectiveCurveToRelative(1.12f, -2.5f, 2.5f, -2.5f)
-                curveToRelative(0.57f, 0.0f, 1.08f, 0.19f, 1.5f, 0.51f)
-                lineTo(14.0f, 5.0f)
-                horizontalLineToRelative(4.0f)
-                verticalLineToRelative(2.0f)
-                close()
-                moveTo(4.0f, 6.0f)
-                lineTo(2.0f, 6.0f)
-                verticalLineToRelative(14.0f)
-                curveToRelative(0.0f, 1.1f, 0.9f, 2.0f, 2.0f, 2.0f)
-                horizontalLineToRelative(14.0f)
-                verticalLineToRelative(-2.0f)
-                lineTo(4.0f, 20.0f)
-                lineTo(4.0f, 6.0f)
-                close()
-            }
-        }
-
         val Whatshot: ImageVector by glyph("Filled.Whatshot") {
             shape {
                 moveTo(13.5f, 0.67f)
@@ -395,29 +251,6 @@ object Icons {
             }
         }
 
-        val MoreVert: ImageVector by glyph("Filled.MoreVert") {
-            shape {
-                moveTo(12.0f, 8.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
-                reflectiveCurveToRelative(-0.9f, -2.0f, -2.0f, -2.0f)
-                reflectiveCurveToRelative(-2.0f, 0.9f, -2.0f, 2.0f)
-                reflectiveCurveToRelative(0.9f, 2.0f, 2.0f, 2.0f)
-                close()
-                moveTo(12.0f, 10.0f)
-                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
-                reflectiveCurveToRelative(0.9f, 2.0f, 2.0f, 2.0f)
-                reflectiveCurveToRelative(2.0f, -0.9f, 2.0f, -2.0f)
-                reflectiveCurveToRelative(-0.9f, -2.0f, -2.0f, -2.0f)
-                close()
-                moveTo(12.0f, 16.0f)
-                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
-                reflectiveCurveToRelative(0.9f, 2.0f, 2.0f, 2.0f)
-                reflectiveCurveToRelative(2.0f, -0.9f, 2.0f, -2.0f)
-                reflectiveCurveToRelative(-0.9f, -2.0f, -2.0f, -2.0f)
-                close()
-            }
-        }
-
         val MusicNote: ImageVector by glyph("Filled.MusicNote") {
             shape {
                 moveTo(12.0f, 3.0f)
@@ -430,51 +263,6 @@ object Icons {
                 horizontalLineToRelative(4.0f)
                 verticalLineTo(3.0f)
                 horizontalLineToRelative(-6.0f)
-                close()
-            }
-        }
-
-        val Piano: ImageVector by glyph("Filled.Piano") {
-            shape {
-                moveTo(19.0f, 3.0f)
-                horizontalLineTo(5.0f)
-                curveTo(3.9f, 3.0f, 3.0f, 3.9f, 3.0f, 5.0f)
-                verticalLineToRelative(14.0f)
-                curveToRelative(0.0f, 1.1f, 0.9f, 2.0f, 2.0f, 2.0f)
-                horizontalLineToRelative(14.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
-                verticalLineTo(5.0f)
-                curveTo(21.0f, 3.9f, 20.1f, 3.0f, 19.0f, 3.0f)
-                close()
-                moveTo(14.0f, 14.5f)
-                horizontalLineToRelative(0.25f)
-                verticalLineTo(19.0f)
-                horizontalLineToRelative(-4.5f)
-                verticalLineToRelative(-4.5f)
-                horizontalLineTo(10.0f)
-                curveToRelative(0.55f, 0.0f, 1.0f, -0.45f, 1.0f, -1.0f)
-                verticalLineTo(5.0f)
-                horizontalLineToRelative(2.0f)
-                verticalLineToRelative(8.5f)
-                curveTo(13.0f, 14.05f, 13.45f, 14.5f, 14.0f, 14.5f)
-                close()
-                moveTo(5.0f, 5.0f)
-                horizontalLineToRelative(2.0f)
-                verticalLineToRelative(8.5f)
-                curveToRelative(0.0f, 0.55f, 0.45f, 1.0f, 1.0f, 1.0f)
-                horizontalLineToRelative(0.25f)
-                verticalLineTo(19.0f)
-                horizontalLineTo(5.0f)
-                verticalLineTo(5.0f)
-                close()
-                moveTo(19.0f, 19.0f)
-                horizontalLineToRelative(-3.25f)
-                verticalLineToRelative(-4.5f)
-                horizontalLineTo(16.0f)
-                curveToRelative(0.55f, 0.0f, 1.0f, -0.45f, 1.0f, -1.0f)
-                verticalLineTo(5.0f)
-                horizontalLineToRelative(2.0f)
-                verticalLineTo(19.0f)
                 close()
             }
         }
@@ -496,39 +284,6 @@ object Icons {
                 verticalLineTo(5.0f)
                 horizontalLineToRelative(10.0f)
                 verticalLineToRelative(14.0f)
-                close()
-            }
-        }
-
-        val Speaker: ImageVector by glyph("Filled.Speaker") {
-            shape {
-                moveTo(17.0f, 2.0f)
-                lineTo(7.0f, 2.0f)
-                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
-                verticalLineToRelative(16.0f)
-                curveToRelative(0.0f, 1.1f, 0.9f, 1.99f, 2.0f, 1.99f)
-                lineTo(17.0f, 22.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
-                lineTo(19.0f, 4.0f)
-                curveToRelative(0.0f, -1.1f, -0.9f, -2.0f, -2.0f, -2.0f)
-                close()
-                moveTo(12.0f, 4.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, 0.9f, 2.0f, 2.0f)
-                reflectiveCurveToRelative(-0.9f, 2.0f, -2.0f, 2.0f)
-                curveToRelative(-1.11f, 0.0f, -2.0f, -0.9f, -2.0f, -2.0f)
-                reflectiveCurveToRelative(0.89f, -2.0f, 2.0f, -2.0f)
-                close()
-                moveTo(12.0f, 20.0f)
-                curveToRelative(-2.76f, 0.0f, -5.0f, -2.24f, -5.0f, -5.0f)
-                reflectiveCurveToRelative(2.24f, -5.0f, 5.0f, -5.0f)
-                reflectiveCurveToRelative(5.0f, 2.24f, 5.0f, 5.0f)
-                reflectiveCurveToRelative(-2.24f, 5.0f, -5.0f, 5.0f)
-                close()
-                moveTo(12.0f, 12.0f)
-                curveToRelative(-1.66f, 0.0f, -3.0f, 1.34f, -3.0f, 3.0f)
-                reflectiveCurveToRelative(1.34f, 3.0f, 3.0f, 3.0f)
-                reflectiveCurveToRelative(3.0f, -1.34f, 3.0f, -3.0f)
-                reflectiveCurveToRelative(-1.34f, -3.0f, -3.0f, -3.0f)
                 close()
             }
         }

@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,7 +53,7 @@ import com.sublunar.amp.ui.components.DRAG_HANDLE_SLOT_PX
 import com.sublunar.amp.ui.components.DropIndicatorLine
 import com.sublunar.amp.ui.components.HEADER_BAR_PX
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
-import com.sublunar.amp.ui.components.OverlayScrollBar
+import com.sublunar.amp.ui.components.ListScrollBar
 import com.sublunar.amp.ui.components.ROW_ART_PX
 import com.sublunar.amp.ui.components.ROW_GAP_PX
 import com.sublunar.amp.ui.components.ROW_H_PX
@@ -67,7 +68,6 @@ import com.sublunar.amp.ui.components.dragReorderContainer
 import com.sublunar.amp.ui.components.dropTarget
 import com.sublunar.amp.ui.components.gapShift
 import com.sublunar.amp.ui.components.rememberDragReorderState
-import com.sublunar.amp.ui.components.rememberScrollTarget
 import com.sublunar.amp.ui.components.rememberSelection
 import com.sublunar.amp.ui.components.rowClickable
 import com.sublunar.amp.ui.components.ROW_TYPE
@@ -76,15 +76,11 @@ import com.sublunar.amp.ui.pxSp
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightThemeTokens
 
-/** Where every other list's covers start: its edge and the download mark's slot. */
 /** The queue's rows start 72px in, its own margin round the drag handles, not the library lists' 40. */
 private const val QUEUE_START_PX = 72
 
-/**
- * The rows' right margin, mirroring the covers': the grab bar's glyph ends
- * [QUEUE_START_PX] from the right edge.
- */
-private const val QUEUE_HANDLE_END_PX = QUEUE_START_PX - DRAG_HANDLE_INSET_PX
+/** The rows' right margin: the scroll bar's lane, as a playlist's rows keep it while being edited. */
+private const val QUEUE_HANDLE_END_PX = SCROLLBAR_LANE_PX
 
 /** A queue row's key. The same track can be queued twice, so its place is part of it. */
 internal fun queueKey(index: Int, track: Track) = "$index-${track.id}"
@@ -158,9 +154,8 @@ internal fun SimpleLightScreen<*>.QueuePlayer(queue: List<Track>, index: Int, on
                 Modifier.fillMaxSize(),
                 listState = listState,
             )
-            // Over the rows, and only while the list moves: the handles keep the
-            // right edge to themselves the rest of the time.
-            OverlayScrollBar(rememberScrollTarget(listState), scrolling = listState.isScrollInProgress)
+            // In the margin past the grab bars, as every list keeps it.
+            ListScrollBar(listState)
         }
         // Shuffle and repeat as a bar of their own: the queue is where you set
         // how it will be played.

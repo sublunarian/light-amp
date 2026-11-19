@@ -62,7 +62,7 @@ class LibrarySortTest {
             .map { Artist(name = it, albumCount = 1, trackCount = 1) }
         assertEquals(
             listOf("Air", "Éthiopiques", "Ólafur Arnalds", "Wirtz", "Zappa"),
-            sortArtists(artists, ArtistSort.NAME).map { it.name },
+            sortArtists(artists).map { it.name },
         )
     }
 
@@ -107,6 +107,49 @@ class LibrarySortTest {
         assertEquals(
             listOf("a1-1", "a1-2", "a2-1", "a2-2", "b-1"),
             sortSongs(songs, SongSort.DATE_ADDED, albumAdded = added).map { it.id },
+        )
+    }
+
+    private fun playlist(id: String, smart: Boolean = false) =
+        Playlist(id, id, coverArtId = null, createdAt = 0, updatedAt = 0, trackIds = emptyList(), smart = smart)
+
+    private val mixed = listOf(
+        playlist("Road"),
+        playlist("Top Rated", smart = true),
+        playlist("Airport"),
+        playlist("Fresh", smart = true),
+    )
+
+    @Test
+    fun `playlist type puts smart playlists first, each group by title`() {
+        assertEquals(
+            listOf("Fresh", "Top Rated", "Airport", "Road"),
+            sortPlaylists(mixed, PlaylistSort.TYPE).map { it.name },
+        )
+    }
+
+    @Test
+    fun `reversing playlist type swaps the groups and keeps their titles in order`() {
+        assertEquals(
+            listOf("Airport", "Road", "Fresh", "Top Rated"),
+            sortPlaylists(mixed, PlaylistSort.TYPE, reversed = true).map { it.name },
+        )
+    }
+
+    @Test
+    fun `playlist type is only worth offering with smart and normal playlists both`() {
+        assertEquals(true, hasPlaylistTypes(mixed))
+        assertEquals(false, hasPlaylistTypes(mixed.filter { it.smart }))
+        assertEquals(false, hasPlaylistTypes(mixed.filterNot { it.smart }))
+        assertEquals(false, hasPlaylistTypes(emptyList()))
+    }
+
+    @Test
+    fun `recently played playlists come newest first, then the never played by title`() {
+        val plays = mapOf("Road" to 5L, "Fresh" to 9L)
+        assertEquals(
+            listOf("Fresh", "Road", "Airport", "Top Rated"),
+            sortPlaylists(mixed, PlaylistSort.RECENTLY_PLAYED, plays = plays).map { it.name },
         )
     }
 }

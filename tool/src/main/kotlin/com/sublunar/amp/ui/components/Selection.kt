@@ -74,7 +74,7 @@ fun SelectionHeader(
         leftAction = HeaderAction(AppIcons.Close) { selection.clear() },
         title = selectionTitle(selection.count),
         innerAction = onDelete?.let { delete ->
-            HeaderAction(AppIcons.DeleteOutline) { if (selection.count > 0) delete() }
+            HeaderAction(AppIcons.DeleteOutline, iconPx = INNER_GLYPH_PX) { if (selection.count > 0) delete() }
         },
         rightAction = HeaderAction(AppIcons.Add) { if (selection.count > 0) onConfirm() },
     )

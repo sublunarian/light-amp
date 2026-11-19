@@ -29,7 +29,6 @@ import com.sublunar.amp.data.Reachability
 import com.sublunar.amp.data.SongSort
 import com.sublunar.amp.data.SourceRoute
 import com.sublunar.amp.data.StreamProxy
-import com.sublunar.amp.data.ReleaseType
 import com.sublunar.amp.data.TagFilter
 import com.sublunar.amp.data.albumArtistNames
 import com.sublunar.amp.data.songArtistNames
@@ -887,15 +886,14 @@ object App {
         val liked: Boolean = false,
         val downloaded: Boolean = false,
         val tags: TagFilter = TagFilter(),
-        val compilations: Boolean = false,
     )
 
-    /** Which genre each list is narrowed to, and the songs to which composer. Blank means no filter. */
-    val songsTagFilter: StateFlow<TagFilter> by lazy { held(settings.songsGenre.state, settings.songsComposer.state, ::TagFilter) }
-    val albumsTagFilter: StateFlow<TagFilter> by lazy {
-        val genre = settings.albumsGenre.state
-        genre.map { TagFilter(it) }.stateIn(scope, SharingStarted.Eagerly, TagFilter(genre.value))
-    }
+    /** Which genre each list is narrowed to. Blank means no filter. */
+    val songsTagFilter: StateFlow<TagFilter> by lazy { tagFilterOf(settings.songsGenre.state) }
+    val albumsTagFilter: StateFlow<TagFilter> by lazy { tagFilterOf(settings.albumsGenre.state) }
+
+    private fun tagFilterOf(genre: StateFlow<String>): StateFlow<TagFilter> =
+        genre.map(::TagFilter).stateIn(scope, SharingStarted.Eagerly, TagFilter(genre.value))
 
     /**
      * [a] and [b] combined by [f], held, starting from what they hold now: the
@@ -1025,30 +1023,18 @@ object App {
     }
 
     val sortedAlbums: StateFlow<SortedView<Album>> by lazy {
-        // The three order settings fold into one flow first: combine takes five
-        // flows at most, and the reshuffle nonce made six.
-        val order = combine(
-            settings.albumSort.state,
-            settings.albumSortReversed.state,
-            settings.shuffleNonce.state,
-            ::Triple,
-        )
-        val narrowing = combine(
-            settings.likedAlbumsOnly.state,
-            settings.downloadedAlbumsOnly.state,
-            downloadedOwners,
-            settings.albumsCompilations.state,
-        ) { liked, downloadedOnly, owners, compilations ->
-            Triple(Narrowing(liked, downloadedOnly, compilations = compilations), if (downloadedOnly) owners.albums else null, compilations)
+        val order = combine(settings.albumSort.state, settings.albumSortReversed.state, ::Pair)
+        val narrowing = combine(settings.likedAlbumsOnly.state, settings.downloadedAlbumsOnly.state, downloadedOwners) {
+                liked, downloadedOnly, owners ->
+            Narrowing(liked, downloadedOnly) to if (downloadedOnly) owners.albums else null
         }
         combine(library.albums, order, narrowing, albumsMatchingTags) {
-                list, (sort, rev, nonce), (narrowed, downloaded, compilations), (tags, tagged) ->
+                list, (sort, rev), (narrowed, downloaded), (tags, tagged) ->
             val liked = narrowed.liked
             val shown = list.filter {
-                (!liked || it.liked) && (downloaded == null || it.id in downloaded) && (tagged == null || it.id in tagged) &&
-                    (!compilations || it.releaseType == ReleaseType.COMPILATION)
+                (!liked || it.liked) && (downloaded == null || it.id in downloaded) && (tagged == null || it.id in tagged)
             }
-            val sorted = sortAlbums(shown, sort, rev, nonce)
+            val sorted = sortAlbums(shown, sort, rev)
             // The letters follow the sort's own key, or they would disagree
             // with the order.
             SortedView(
@@ -1069,18 +1055,17 @@ object App {
         val artists = settings.artistSort.state.flatMapLatest { library.artists(it.credit) }
         combine(
             artists,
-            settings.artistSort.state,
             settings.artistSortReversed.state,
             settings.likedArtistsOnly.state,
             combine(settings.downloadedArtistsOnly.state, downloadedOwners, settings.artistSort.state) { on, owners, sort ->
                 if (on) owners.artists(sort.credit) else null
             },
-        ) { list, sort, rev, liked, downloaded ->
+        ) { list, rev, liked, downloaded ->
             val narrowed = list.filter { (!liked || it.liked) && (downloaded == null || it.name in downloaded) }
-            val sorted = sortArtists(narrowed, sort, rev)
+            val sorted = sortArtists(narrowed, rev)
             SortedView(
                 sorted,
-                if (sort != ArtistSort.MOST_PLAYED) sorted.map { indexLetterOf(sortName(it.name)) } else emptyList(),
+                sorted.map { indexLetterOf(sortName(it.name)) },
                 Narrowing(liked, downloaded != null),
             )
         }.stateIn(scope, SharingStarted.Eagerly, SortedView())
@@ -1090,10 +1075,11 @@ object App {
         val narrowing = combine(settings.downloadedPlaylistsOnly.state, playlists.downloadedPlaylistIds) { on, ids ->
             if (on) ids else null
         }
-        combine(playlists.playlists, settings.playlistSort.state, settings.playlistSortReversed.state, narrowing) {
-                list, sort, rev, downloaded ->
+        val played = combine(settings.playlistPlays.state, source) { plays, active -> plays[active.id].orEmpty() }
+        combine(playlists.playlists, settings.playlistSort.state, settings.playlistSortReversed.state, narrowing, played) {
+                list, sort, rev, downloaded, plays ->
             val shown = if (downloaded == null) list else list.filter { it.id in downloaded }
-            val sorted = sortPlaylists(shown, sort, rev)
+            val sorted = sortPlaylists(shown, sort, rev, plays)
             SortedView(
                 sorted,
                 if (sort == PlaylistSort.NAME) sorted.map { indexLetterOf(titleKey(it.name)) } else emptyList(),

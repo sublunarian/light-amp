@@ -39,7 +39,7 @@ class SettingsKeysTest {
     fun `the library lists`() = runBlocking {
         settings.albumSort.set(AlbumSort.YEAR)
         settings.songSort.set(SongSort.ARTIST)
-        settings.artistSort.set(ArtistSort.MOST_PLAYED)
+        settings.artistSort.set(ArtistSort.ARTIST)
         settings.playlistSort.set(PlaylistSort.NAME)
         settings.albumSortReversed.set(true)
         settings.songSortReversed.set(true)
@@ -50,14 +50,12 @@ class SettingsKeysTest {
         settings.likedArtistsOnly.set(true)
         settings.albumsGenre.set("Jazz")
         settings.songsGenre.set("Folk")
-        settings.albumsCompilations.set(true)
-        settings.songsComposer.set("Bach")
-        settings.bumpShuffleNonce()
+        settings.setPlaylistPlayed("src-1", "list-1", 5L)
         assertEquals(
             mapOf(
                 "pref.albumSort" to "YEAR",
                 "pref.songSort" to "ARTIST",
-                "pref.artistSort" to "MOST_PLAYED",
+                "pref.artistSort" to "ARTIST",
                 "pref.playlistSort" to "NAME",
                 "pref.albumSortReversed" to true,
                 "pref.songSortReversed" to true,
@@ -68,9 +66,7 @@ class SettingsKeysTest {
                 "pref.likedArtistsOnly" to true,
                 "pref.albumsGenre" to "Jazz",
                 "pref.songsGenre" to "Folk",
-                "pref.albumsCompilations" to true,
-                "pref.songsComposer" to "Bach",
-                "pref.shuffleNonce" to 1,
+                "pref.playlistPlays" to """{"src-1":{"list-1":5}}""",
             ),
             store.all(),
         )
@@ -86,7 +82,7 @@ class SettingsKeysTest {
         settings.albumGrid.set(true)
         settings.artistAlbumGrid.set(true)
         settings.hideArtistImages.set(false)
-        settings.hideDownloadIcons.set(true)
+        settings.rowMark.set(RowMark.LIKED)
         settings.artwork.set(ArtworkMode.NONE)
         settings.homeLayout.set(HomeLayout.DEFAULT.toggled(HomeCategory.GENRES).moved(HomeCategory.GENRES, 0))
         assertEquals(
@@ -99,10 +95,10 @@ class SettingsKeysTest {
                 "pref.albumGrid" to true,
                 "pref.artistAlbumGrid" to true,
                 "pref.hideArtistImages" to false,
-                "pref.hideDownloadIcons" to true,
+                "pref.rowMark" to "LIKED",
                 "pref.artworkMode" to "NONE",
                 "pref.homeCategories" to
-                    "GENRES,PLAYLISTS,ARTISTS,ALBUMS,SONGS,-COMPILATIONS,-COMPOSERS,-FAVORITES,-DOWNLOADED",
+                    "GENRES,PLAYLISTS,ARTISTS,ALBUMS,SONGS,-FAVORITES,-DOWNLOADED",
             ),
             store.all(),
         )

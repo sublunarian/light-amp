@@ -253,6 +253,8 @@ fun TextRow(
     value: String? = null,
     /** A glyph on the [value]'s line, just after it: a sort's direction. */
     valueTrailing: (@Composable () -> Unit)? = null,
+    /** Drawn in the [value]'s place, which still names it to anything reading the row. */
+    valueContent: (@Composable () -> Unit)? = null,
     /**
      * A line under the title saying what the row does or how it stands. One line
      * unless [subtitleLines] says otherwise, so a list of names doesn't go ragged.
@@ -306,7 +308,9 @@ fun TextRow(
         Column(modifier = Modifier.weight(1f)) {
             if (value != null) {
                 MenuLabel(title)
-                if (valueTrailing != null) {
+                if (valueContent != null) {
+                    valueContent()
+                } else if (valueTrailing != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         MenuLine(value, disabled = onClick == null, heading, list)
                         Spacer(Modifier.width(px(VALUE_GLYPH_GAP_PX)))

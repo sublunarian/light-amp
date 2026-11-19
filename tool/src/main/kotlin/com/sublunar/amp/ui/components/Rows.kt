@@ -7,12 +7,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.width
@@ -41,6 +43,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.sublunar.amp.data.RowMark
 import com.sublunar.amp.App
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.ui.CANVAS_W_PX
@@ -106,22 +109,16 @@ fun SelectionArtwork(coverArtId: String?, selected: Boolean) {
     val covers = !App.hideListArtwork.collectAsState().value
     Box(Modifier.size(px(ROW_ART_PX)), contentAlignment = Alignment.Center) {
         if (covers) AppArtwork(coverArtId, size = px(ROW_ART_PX), modifier = Modifier.alpha(EDIT_ARTWORK_ALPHA))
-        SelectionMark(selected)
+        AppIcon(
+            if (selected) AppIcons.Selected else AppIcons.Unselected,
+            size = px(66),
+            tint = if (selected) {
+                LightThemeTokens.colors.content
+            } else {
+                LightThemeTokens.colors.contentSecondary
+            },
+        )
     }
-}
-
-/** The check bubble alone, for a row with no artwork to wear it on. */
-@Composable
-fun SelectionMark(selected: Boolean) {
-    AppIcon(
-        if (selected) AppIcons.Selected else AppIcons.Unselected,
-        size = px(66),
-        tint = if (selected) {
-            LightThemeTokens.colors.content
-        } else {
-            LightThemeTokens.colors.contentSecondary
-        },
-    )
 }
 
 /**
@@ -140,6 +137,7 @@ fun TrackRow(
     onLongClick: (() -> Unit)? = null,
     /** A downloaded song or a complete album. */
     downloaded: Boolean = false,
+    liked: Boolean = false,
     /** Selection state, or null when the list isn't in multi-select mode. */
     selected: Boolean? = null,
     /** At the row's end, such as a drag handle. */
@@ -170,6 +168,7 @@ fun TrackRow(
         } else {
             RowLead(
                 downloaded,
+                liked,
                 inkDropPx = when {
                     !noArt -> null
                     subtitle.isNotBlank() -> MARK_INK_DROP_PX - type.subLinePx / 2
@@ -198,19 +197,23 @@ fun TrackRow(
     }
 }
 
-/** The download mark itself, where [downloaded] and the marks aren't switched off. */
+/** The row's mark, as [AppSettings.rowMark] chooses: a heart where [liked], Light's arrow where [downloaded]. */
 @Composable
-private fun DownloadGlyph(downloaded: Boolean, modifier: Modifier = Modifier) {
-    val marks = !App.settings.hideDownloadIcons.state.collectAsState().value
-    if (!downloaded || !marks) return
-    // Light's own arrow (as the stock Podcasts tool marks a download), white as
-    // the row's own text.
-    Icon(
-        painterResource(LightIcons.DOWNLOADED_ARROW.drawableResource),
-        contentDescription = null,
-        tint = LightThemeTokens.colors.content,
-        modifier = modifier.size(px(DOWNLOAD_MARK_PX)),
-    )
+private fun RowMarkGlyph(downloaded: Boolean, liked: Boolean, modifier: Modifier = Modifier) {
+    when (App.settings.rowMark.state.collectAsState().value) {
+        // Light's own arrow (as the stock Podcasts tool marks a download), white
+        // as the row's own text.
+        RowMark.DOWNLOADED -> if (downloaded) {
+            Icon(
+                painterResource(LightIcons.DOWNLOADED_ARROW.drawableResource),
+                contentDescription = null,
+                tint = LightThemeTokens.colors.content,
+                modifier = modifier.size(px(DOWNLOAD_MARK_PX)),
+            )
+        }
+        RowMark.LIKED -> if (liked) AppIcon(AppIcons.Favorite, size = px(DOWNLOAD_MARK_PX), modifier = modifier)
+        RowMark.NONE -> Unit
+    }
 }
 
 @Composable
@@ -312,6 +315,12 @@ private const val DOWNLOAD_MARK_PX = 33
 
 /** An action row's icon, centred in the cover's box where a list has covers. */
 const val ROW_ACTION_ICON_PX = 57
+
+/** Light's play triangle fills its box solid, so it takes less of it to stand level with Shuffle's lines. */
+private const val PLAY_GLYPH_PX = 40
+
+/** Kept clear at each side of the screen before [CentredPlayRow] halves what is left. */
+private const val PLAY_ROW_MARGIN_PX = 80
 const val ROW_ACTION_H_PX = 102
 
 /** List padding, so a row's own left edge lines up with Light's music list. */
@@ -329,9 +338,9 @@ const val LIST_LEAD_PX = 72 - LIST_EDGE_PX
  * on the title's capitals, as Light's music tool sets it.
  */
 @Composable
-private fun RowLead(downloaded: Boolean, inkDropPx: Int? = null) {
+private fun RowLead(downloaded: Boolean, liked: Boolean, inkDropPx: Int? = null) {
     Box(Modifier.width(px(LIST_LEAD_PX)), contentAlignment = Alignment.CenterStart) {
-        DownloadGlyph(downloaded, if (inkDropPx == null) Modifier else Modifier.offset(y = px(inkDropPx)))
+        RowMarkGlyph(downloaded, liked, if (inkDropPx == null) Modifier else Modifier.offset(y = px(inkDropPx)))
     }
 }
 
@@ -371,6 +380,7 @@ fun ArtistRow(
     onLongClick: (() -> Unit)? = null,
     /** Every track of the artist's is downloaded. */
     downloaded: Boolean = false,
+    liked: Boolean = false,
     /** The server's picture of them, where it has one (Artist.imageId). */
     imageId: String? = null,
 ) {
@@ -394,7 +404,7 @@ fun ArtistRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Without pictures the mark sits on the name's first line.
-        RowLead(downloaded, inkDropPx = if (covers) null else TITLE_ONLY_INK_DROP_PX - (nameLines - 1) * type.titleLinePx / 2)
+        RowLead(downloaded, liked, inkDropPx = if (covers) null else TITLE_ONLY_INK_DROP_PX - (nameLines - 1) * type.titleLinePx / 2)
         if (covers) {
             // Round where an album is square, so the shape says what this is and a
             // face doesn't read as a sleeve that failed to load.
@@ -468,8 +478,10 @@ fun SplitActionRow(
     rightIcon: ImageVector?,
     rightLabel: String,
     onRight: () -> Unit,
+    /** Each icon centred where a cover sits, as over a list of covers. */
+    inCoverBox: Boolean = !App.hideListArtwork.collectAsState().value,
+    leftIconPx: Int = ROW_ACTION_ICON_PX,
 ) {
-    val inCoverBox = !App.hideListArtwork.collectAsState().value
     Row(
         modifier = Modifier.fillMaxWidth().height(px(ROW_TYPE.rowPx)),
         verticalAlignment = Alignment.CenterVertically,
@@ -482,7 +494,7 @@ fun SplitActionRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Spacer(Modifier.width(px(LIST_LEAD_PX)))
-            ActionButton(leftIcon, leftLabel, inCoverBox)
+            ActionButton(leftIcon, leftLabel, inCoverBox, iconPx = leftIconPx)
         }
         if (rightIcon != null) {
             Row(
@@ -509,14 +521,63 @@ fun ShuffleRow(
     PlayAllRow(AppIcons.Shuffle, label, headsList = true, tallList = tallList, onClick = onClick)
 }
 
+/** Play and Shuffle as [SplitActionRow] lays out two buttons, the icons at the row's start rather than in a cover's place. */
 @Composable
-private fun ActionButton(icon: ImageVector, label: String, inCoverBox: Boolean, tall: Boolean = false) {
-    if (inCoverBox) {
-        Box(Modifier.size(px(if (tall) TALL_ROW_ART_PX else ROW_ART_PX)), contentAlignment = Alignment.Center) {
-            AppIcon(icon, size = px(ROW_ACTION_ICON_PX))
-        }
-    } else {
-        AppIcon(icon, size = px(ROW_ACTION_ICON_PX))
+fun PlayShuffleRow(onPlay: () -> Unit, onShuffle: () -> Unit) {
+    SplitActionRow(
+        leftIcon = AppIcons.PlayArrow,
+        leftLabel = "Play",
+        onLeft = onPlay,
+        rightIcon = AppIcons.Shuffle,
+        rightLabel = "Shuffle",
+        onRight = onShuffle,
+        inCoverBox = false,
+        leftIconPx = PLAY_GLYPH_PX,
+    )
+}
+
+/** Play and Shuffle, each centred in its own half of the screen inside [PLAY_ROW_MARGIN_PX]. */
+@Composable
+fun CentredPlayRow(onPlay: () -> Unit, onShuffle: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .height(px(ROW_TYPE.rowPx))
+            // The list insets its rows unevenly: the halves are the screen's, edge to edge.
+            .wrapContentWidth(Alignment.Start, unbounded = true)
+            .offset(x = -px(LIST_EDGE_PX))
+            .width(px(CANVAS_W_PX))
+            .padding(horizontal = px(PLAY_ROW_MARGIN_PX)),
+    ) {
+        HalfScreenAction(AppIcons.PlayArrow, "Play", PLAY_GLYPH_PX, onPlay)
+        HalfScreenAction(AppIcons.Shuffle, "Shuffle", ROW_ACTION_ICON_PX, onShuffle)
+    }
+}
+
+@Composable
+private fun RowScope.HalfScreenAction(icon: ImageVector, label: String, iconPx: Int, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.weight(1f).fillMaxHeight().appClickable(onClick = onClick),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppIcon(icon, size = px(iconPx))
+        Spacer(Modifier.width(px(ROW_GAP_PX)))
+        RowTitle(label, type = ROW_TYPE)
+    }
+}
+
+@Composable
+private fun ActionButton(
+    icon: ImageVector,
+    label: String,
+    inCoverBox: Boolean,
+    tall: Boolean = false,
+    /** The glyph within its box, which stays the same so the labels keep their line. */
+    iconPx: Int = ROW_ACTION_ICON_PX,
+) {
+    val boxPx = if (!inCoverBox) ROW_ACTION_ICON_PX else if (tall) TALL_ROW_ART_PX else ROW_ART_PX
+    Box(Modifier.size(px(boxPx)), contentAlignment = Alignment.Center) {
+        AppIcon(icon, size = px(iconPx))
     }
     Spacer(Modifier.width(px(ROW_GAP_PX)))
     // Not TextRole.Button: Bold at 0.15em shouts on a full-width row label.
@@ -707,8 +768,7 @@ fun ScrollableList(
 fun LibraryList(
     anchor: String,
     headerCount: Int = 0,
-    scrollBar: Boolean = true,
     content: LazyListScope.() -> Unit,
 ) {
-    ScrollableList(rememberListAnchor(anchor, headerCount), scrollBar, content)
+    ScrollableList(rememberListAnchor(anchor, headerCount), content = content)
 }

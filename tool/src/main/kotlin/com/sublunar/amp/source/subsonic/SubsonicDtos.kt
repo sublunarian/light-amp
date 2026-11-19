@@ -226,6 +226,8 @@ data class PlaylistDto(
     val created: String? = null,
     val changed: String? = null,
     val coverArt: String? = null,
+    /** OpenSubsonic: when a smart playlist is next rebuilt, so only Navidrome's smart ones carry it. */
+    val validUntil: String? = null,
     val entry: List<SongDto> = emptyList(),
 )
 
@@ -403,6 +405,7 @@ internal fun PlaylistDto.toPlaylist(): Playlist = Playlist(
     createdAt = parseInstantMs(created),
     updatedAt = parseInstantMs(changed),
     trackIds = emptyList(),
+    smart = validUntil != null,
 )
 
 private fun parseInstantMs(value: String?): Long {

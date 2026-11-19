@@ -1,5 +1,11 @@
 package com.sublunar.amp.ui.components
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.size
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -62,9 +68,36 @@ fun DragHandle(onPositioned: (LayoutCoordinates) -> Unit) {
             .onGloballyPositioned(onPositioned),
         contentAlignment = Alignment.CenterEnd,
     ) {
-        AppIcon(AppIcons.Dehaze, size = px(DRAG_HANDLE_PX))
+        Box(Modifier.size(px(DRAG_HANDLE_PX)), contentAlignment = Alignment.Center) {
+            AppIcon(GripSymbol, size = px(DRAG_HANDLE_PX - 2 * DRAG_HANDLE_INSET_PX))
+        }
     }
 }
+
+/** Light's list glyph without its bullets: the three bars alone, to take hold of. */
+val GripSymbol: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "GripSymbol",
+        defaultWidth = 30.dp,
+        defaultHeight = 18.4.dp,
+        viewportWidth = 30f,
+        viewportHeight = 18.4f,
+    ).apply {
+        // The bars start 6.5 units in, after the bullets' column.
+        addGroup(translationX = -6.5f)
+        GRIP_PATHS.forEach { d ->
+            addPath(pathData = PathParser().parsePathString(d).toNodes(), fill = SolidColor(Color.White))
+        }
+        clearGroup()
+    }.build()
+}
+
+/** The bars of the SDK's `ic_list_white`, as it draws them. */
+private val GRIP_PATHS = listOf(
+    "M8.1,3.2h26.8c0.883,0,1.6-0.717,1.6-1.6C36.5,0.717,35.783,0,34.9,0H8.1C7.216,0,6.5,0.717,6.5,1.6C6.5,2.483,7.216,3.2,8.1,3.2z",
+    "M34.9,7.6H8.1c-0.884,0-1.6,0.716-1.6,1.6s0.716,1.6,1.6,1.6h26.8c0.883,0,1.6-0.716,1.6-1.6S35.783,7.6,34.9,7.6z",
+    "M34.9,15.2H8.1c-0.884,0-1.6,0.717-1.6,1.6c0,0.884,0.716,1.601,1.6,1.601h26.8c0.883,0,1.6-0.717,1.6-1.601C36.5,15.917,35.783,15.2,34.9,15.2z",
+)
 
 /**
  * Marks where a dragged row (or group) will land if dropped now. Rows lay it over

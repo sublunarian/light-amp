@@ -16,9 +16,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.sublunar.amp.App
 import com.sublunar.amp.data.LayoutMode
+import com.sublunar.amp.ui.components.TabGlyphs
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
-import com.sublunar.amp.ui.components.TabGlyphs
 import com.sublunar.amp.ui.components.appClickable
 import com.sublunar.amp.ui.px
 import androidx.compose.material3.Icon
@@ -81,7 +81,7 @@ private fun SimplifiedNavbar(
     ) {
         BarSlot(Alignment.CenterStart) {
             BarButton(onBrowse) {
-                AppIcon(AppIcons.Library, size = px(SDK_GLYPH_PX), tint = if (libraryLit) lit else unlit)
+                AppIcon(AppIcons.Library, size = px(LIBRARY_GLYPH_PX), tint = if (libraryLit) lit else unlit)
             }
         }
         BarSlot(Alignment.Center) {
@@ -219,6 +219,13 @@ private const val LIGHT_MIC_DRAWN_PX = 108 // 38 of its 40 units
 
 /** The SDK's bar glyph: two grid units (LightBarButtonDefaults.ICON_SIZE_UNITS). */
 private const val SDK_GLYPH_PX = 80
+
+/**
+ * The library glyph's box. Its stack fills 18.5 of its 24 units, so at the SDK's
+ * 80 it drew 62px, the smallest of the three; at this it draws 70, and its lines
+ * come to the magnifier's weight.
+ */
+private const val LIBRARY_GLYPH_PX = 91
 
 /** Where the tall glyphs land: above the playlist's own 66, well under their 90. */
 private const val TALL_TARGET_PX = 72

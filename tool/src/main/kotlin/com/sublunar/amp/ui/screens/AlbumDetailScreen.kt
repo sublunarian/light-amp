@@ -27,6 +27,7 @@ import com.sublunar.amp.App
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.Track
+import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
@@ -44,6 +45,8 @@ import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.SelectionHeader
+import com.sublunar.amp.ui.components.CentredPlayRow
+import com.sublunar.amp.ui.components.PlayShuffleRow
 import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.formatRunTime
 import com.sublunar.amp.ui.components.formatTime
@@ -86,7 +89,11 @@ class AlbumDetailScreen(
         // A row above the tracks only where there is a card: an album opened
         // from a playlist or a radio track can be missing from the album list.
         val card = album?.takeIf { !selection.active }
-        val listState = rememberListAnchor("album:$albumId", headerCount = if (card != null) 1 else 0)
+        val playButtons = App.settings.albumPlayButtons.state.collectAsState().value && !selection.active
+        val listState = rememberListAnchor(
+            "album:$albumId",
+            headerCount = (if (card != null) 1 else 0) + (if (playButtons) 1 else 0),
+        )
         // The card names the album, and the header takes the name only once the
         // card's title has scrolled up under it. Unmeasured counts as never
         // reached, so the header doesn't flash the name first.
@@ -114,10 +121,10 @@ class AlbumDetailScreen(
                     // The album's own menu (a record has no order to choose), the
                     // same as a long-press on its row.
                     rightAction = HeaderAction(
-                        AppIcons.MoreVert,
+                        AppIcons.Sort,
                         onLongClick = { go { SettingsScreen(it) } },
                     ) {
-                        go { AlbumActionsScreen(it, albumId) }
+                        go { AlbumActionsScreen(it, albumId, fromAlbumPage = true) }
                     },
                     titleShown = headerTitleShown,
                 )
@@ -145,6 +152,18 @@ class AlbumDetailScreen(
                                 TextCard(card) { cardTitleBottomPx = it }
                             } else {
                                 AlbumCard(card) { cardTitleBottomPx = it }
+                            }
+                        }
+                    }
+                    if (playButtons) {
+                        item {
+                            val onPlay = { playAlbum(list, album?.title) }
+                            val onShuffle = { playAlbum(shuffled(list), album?.title) }
+                            if (artworkHidden) {
+                                CentredPlayRow(onPlay, onShuffle)
+                            } else {
+                                // From the cover's left edge, on the track numbers' axis.
+                                PlayShuffleRow(onPlay, onShuffle)
                             }
                         }
                     }
@@ -195,6 +214,12 @@ class AlbumDetailScreen(
                 }
             }
         }
+    }
+
+    private fun playAlbum(songs: List<Track>, name: String?) {
+        if (songs.isEmpty()) return
+        App.playback.playQueue(songs, 0, name = name)
+        go { NowPlayingScreen(it) }
     }
 
     /**
