@@ -28,6 +28,7 @@ object Mdns {
     const val TYPE_SRV = 33
 
     private const val FOLLOW_UPS = 3
+    private const val TRIES = 4
 
     /** One service instance, put together from the records that name it. */
     data class Service(
@@ -41,17 +42,41 @@ object Mdns {
 
     /**
      * Who offers [serviceType] (as `_raop._tcp.local`), listening [listenMs].
-     * The question goes out twice, since UDP may drop one; instances missing
-     * a record after the replies are asked for it directly.
+     * The question goes out [TRIES] times spread across the listening, since
+     * a speaker may miss one: the user's AirPort Express ignored about a
+     * third of them, and two copies sent at once were missed together.
+     * Each question also goes straight to the [known] addresses: Wi-Fi
+     * re-sends a message to one device until it arrives, but a message to
+     * all only once, and the Express answered every direct one.
+     * Instances missing a record after the replies are asked for it directly.
      */
-    fun browse(serviceType: String, listenMs: Long, socket: DatagramSocket = DatagramSocket()): List<Service> {
+    fun browse(
+        serviceType: String,
+        listenMs: Long,
+        known: Collection<String> = emptyList(),
+        socket: DatagramSocket = DatagramSocket(),
+    ): List<Service> {
         val records = ArrayList<Record>()
         socket.use {
-            it.soTimeout = 250
+            it.soTimeout = 100
             val group = InetAddress.getByName(GROUP)
+            val direct = known.mapNotNull { address -> runCatching { InetAddress.getByName(address) }.getOrNull() }
+            val send = { packet: ByteArray ->
+                for (to in listOf(group) + direct) {
+                    runCatching { it.send(DatagramPacket(packet, packet.size, to, PORT)) }
+                        .onFailure { e -> if (to == group) throw e }
+                }
+            }
             val question = query(listOf(serviceType to TYPE_PTR))
-            repeat(2) { _ -> it.send(DatagramPacket(question, question.size, group, PORT)) }
-            listen(it, listenMs, records)
+            val ask = { send(question) }
+            // The last try leaves time for an answer: the Express takes up to 0.2 s.
+            val gapMs = listenMs * 6 / 7 / (TRIES - 1)
+            ask()
+            repeat(TRIES - 1) { _ ->
+                listen(it, gapMs, records)
+                ask()
+            }
+            listen(it, listenMs - gapMs * (TRIES - 1), records)
 
             // A responder that sent only the pointer is asked for the rest:
             // its SRV and TXT, then the address of the host its SRV names.
@@ -61,7 +86,7 @@ object Mdns {
                 if (missing.isEmpty() || missing == asked) return@repeat
                 asked = missing
                 val followUp = queryLabels(missing.map { (name, type) -> labelsOf(name, serviceType) to type })
-                it.send(DatagramPacket(followUp, followUp.size, group, PORT))
+                send(followUp)
                 listen(it, listenMs / 2, records)
             }
         }

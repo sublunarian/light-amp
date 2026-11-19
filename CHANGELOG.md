@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- AirPlay speakers that were often missed, like an AirPort Express, are found
+  far more reliably.
+
 ### Changed
 
 - Resuming on an AirPlay speaker takes about half as long.

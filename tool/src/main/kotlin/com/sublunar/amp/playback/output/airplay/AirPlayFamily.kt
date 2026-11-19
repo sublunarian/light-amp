@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * AirPlay speakers, as AirPlay 1 (RAOP): the phone sends the sound itself,
@@ -56,14 +57,16 @@ object AirPlayFamily : OutputFamily {
     internal suspend fun discover(): List<AirPlayReceiver> = withContext(Dispatchers.IO) {
         if (!allowsNetwork()) return@withContext emptyList()
         // The AirPlay record beside each speaker's says who it lets in; heard at the same time.
-        val access = async { runCatching { Mdns.browse(AIRPLAY_SERVICE, LISTEN_MS) }.getOrDefault(emptyList()) }
+        val known = recentlySeen()
+        val access = async { runCatching { Mdns.browse(AIRPLAY_SERVICE, LISTEN_MS, known) }.getOrDefault(emptyList()) }
         val services = try {
-            Mdns.browse(SERVICE, LISTEN_MS)
+            Mdns.browse(SERVICE, LISTEN_MS, known)
         } catch (e: IOException) {
             Log.i(logTag, "search failed (${e::class.simpleName})")
             return@withContext emptyList()
         }
         val ownerOnly = ownerOnly(access.await())
+        remember(services.map { it.address })
         services.mapNotNull { service ->
             val name = service.instance.substringBefore("._raop.").substringAfter('@')
             AirPlayReceiver.whyNot(service)?.let { why -> Log.i(logTag, "left out $name: $why") }
@@ -84,6 +87,25 @@ object AirPlayFamily : OutputFamily {
             .toSet()
 
     private const val AIRPLAY_SERVICE = "_airplay._tcp.local"
+
+    /**
+     * Where speakers answered lately, kept only while Amp runs, so the next
+     * search can ask them directly. 75 minutes, as long as an iPhone keeps
+     * a speaker it heard: the life its record gives itself.
+     */
+    private val seen = ConcurrentHashMap<String, Long>()
+    private const val SEEN_FOR_NS = 75 * 60 * 1_000_000_000L
+
+    internal fun remember(addresses: List<String>, now: Long = System.nanoTime()) {
+        addresses.forEach { seen[it] = now }
+    }
+
+    internal fun recentlySeen(now: Long = System.nanoTime()): List<String> {
+        seen.entries.removeIf { now - it.value > SEEN_FOR_NS }
+        return seen.keys.toList()
+    }
+
+    internal fun forgetSeen() = seen.clear()
 }
 
 /** A speaker found on the network. */
