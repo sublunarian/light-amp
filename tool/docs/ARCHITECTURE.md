@@ -144,7 +144,10 @@ constants (log tag, whether the far end reports its own plays, whether it needs
 the LAN), so nothing builds an output to ask. DLNA is one, in
 `playback/output/dlna` — discovery, the SOAP calls (`DlnaCast`), the cast
 (`DlnaOutput`) and its poll's pure decision (`CastWatch`) — listed in
-`Outputs`, Amp's own code rather than an SDK patch. A cast remembers its format
+`Outputs`, Amp's own code rather than an SDK patch. A speaker is never given the
+server's address, which has the login in it and would cross the network in plain
+text: it fetches from `SpeakerRelay`, a door on this phone open to that speaker
+alone for as long as the cast lasts, which passes on what it asks unchanged. A cast remembers its format
 choice per renderer and format, and per track for Original, which is each file's
 own container (`formatChoiceKey`). A provider can offer families of its own
 (`SourceProvider.outputFamilies`, none today), and the Output page lists
@@ -163,9 +166,8 @@ gap. `Streamer` sends them in real time beside a sync each second;
 Speakers are found by legacy-unicast mDNS (`Mdns`), which needs no multicast
 lock, and only those that take plain AirPlay 1 are listed (`AirPlayReceiver`).
 A speaker that two families offer is one row, under the first in `Outputs` that
-can play the source that's on (`OutputFamilies.rows`): DLNA, where the speaker
-fetches the music itself, and AirPlay for what it can't fetch, the phone's own
-files.
+can play the source that's on (`OutputFamilies.rows`): DLNA for a server's
+music, and AirPlay for what DLNA isn't given, the phone's own files.
 
 While an output has the sound, the phone's own player plays a **stand-in**
 (`playback/StandIn.kt`): one silent MP3, named and timed like the output's song
@@ -302,7 +304,8 @@ A bare `HttpClient(OkHttp)` or `URL.openConnection()` anywhere else is a hole in
 that wall — the courtesy checks (`metadataAllowed`, `heavyDataAllowed`) only
 save work, they stop nothing. DLNA speakers are reached outside it, so
 `DlnaCast.allowsNetwork` stands in front of every call there: closed until
-`DlnaFamily.create` wires it to the link's rules.
+`DlnaFamily.create` wires it to the link's rules. What `SpeakerRelay` fetches
+for a speaker comes through the wall like everything else.
 
 **A protocol's folder is fenced.** `SourceBoundaryTest` fails when anything
 outside `source/<kind>/` names that package, except `Providers.kt` (its provider

@@ -1,6 +1,7 @@
 package com.sublunar.amp.playback.output.dlna
 
 import android.os.SystemClock
+import com.sublunar.amp.data.NetworkGate
 import com.sublunar.amp.data.StreamFormat
 import com.sublunar.amp.data.Track
 import com.sublunar.amp.log.Log
@@ -188,6 +189,22 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         seekGeneration++
     }
 
+    /** What the renderer fetches its music through, so it never holds the server's address and login. */
+    private val relay = SpeakerRelay(
+        upstream = { relayUpstream },
+        allowed = { DlnaCast.allowsNetwork() },
+        log = ::log,
+    )
+
+    // A cold transcode can take a while to say anything, and the speaker is left waiting either way.
+    private val relayUpstream by lazy { NetworkGate.transferClient(connectTimeoutMs = 7_000L, readTimeoutMs = 60_000L) }
+
+    private val DlnaRenderer.speakerHost: String? get() = runCatching { java.net.URL(controlUrl).host }.getOrNull()
+
+    private fun closeRelay(renderer: DlnaRenderer) {
+        renderer.speakerHost?.let(relay::release)
+    }
+
     /** The renderer this is steering, or null once it has been let go. */
     private fun steered(): DlnaRenderer? = (host.steering(this) as? DlnaTarget)?.renderer
 
@@ -198,7 +215,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     /** Renderers on the network, after a few seconds of listening. None off Wi-Fi: see DlnaCast.allowsNetwork. */
     override suspend fun find(): List<OutputTarget> = DlnaCast.discover().map(::DlnaTarget)
 
-    // A renderer is handed the server's address, so with no server — the
+    // A renderer plays what the server streams, so with no server — the
     // phone's own files — there's nothing to hand it.
     override fun canSteer(): Boolean = host.client() != null
 
@@ -234,6 +251,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                 // began, rather than naming a speaker that stays silent.
                 else -> {
                     log("couldn't start idx=${host.index.value} → back to the phone")
+                    closeRelay(renderer)
                     host.dropped(this@DlnaOutput, target)
                 }
             }
@@ -266,9 +284,11 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
                         undoHush(renderer)
                     }
                 }
+                closeRelay(renderer)
             }
             else -> {
                 forgetCast()
+                closeRelay(renderer)
                 host.scope.launch { DlnaCast.stop(renderer) }
             }
         }
@@ -289,6 +309,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         formats.clear()
         seekableStreams.clear()
         log("queue gone — renderer stopped, still the output")
+        closeRelay(renderer)
         host.scope.launch { DlnaCast.stop(renderer) }
     }
 
@@ -651,7 +672,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
             wanted == 0L -> 0L
             else -> if (seekable(track, format) == false) wanted else 0L
         }
-        val url = castUrl(track, format, offset)?.let { if (fresh) freshAddress(it) else it } ?: return false
+        val url = castUrl(renderer, track, format, offset)?.let { if (fresh) freshAddress(it) else it } ?: return false
         val started = if (offset == 0L && wanted > 0L) {
             when (playFrom(renderer, track, url, mime, wanted)) {
                 Start.PLAYING -> true
@@ -882,19 +903,22 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
      * declared length says, seconds early. Chunked plays to the end, and the
      * shown duration comes from the DIDL metadata anyway.
      *
-     * A session id of its own: the renderer fetches for itself, with no door
-     * to decide it first, and during a hand-off both tracks' transcodes are in
+     * A session id of its own: the relay asks what the renderer asks, with
+     * nothing to decide it first, and during a hand-off both tracks' transcodes are in
      * flight at once, where Plex tears down whichever shares an identifier
      * with the other — see OutputHost.ownStreamSession.
      */
-    private fun castUrl(track: Track, format: StreamFormat, offsetMs: Long = 0L): String? =
-        host.streamUrl(
+    private suspend fun castUrl(renderer: DlnaRenderer, track: Track, format: StreamFormat, offsetMs: Long = 0L): String? {
+        val url = host.streamUrl(
             track,
             format,
             estimateContentLength = false,
             timeOffsetSeconds = (offsetMs / 1000).toInt(),
             sessionId = host.ownStreamSession(track.id),
-        )
+        ) ?: return null
+        val speaker = renderer.speakerHost ?: return null
+        return withContext(Dispatchers.IO) { relay.address(url, speaker) }
+    }
 
     /**
      * Whether [track]'s stream in [format] can be seeked: remembered, else
@@ -961,7 +985,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         if (nextOffer.armedFor == after) return
         val (format, mime) = castFormatFor(renderer, track)
         // Its own session id, not the current track's — see castUrl.
-        val url = castUrl(track, format) ?: return
+        val url = castUrl(renderer, track, format) ?: return
         if (url == nextOffer.taken) return
         nextOffer.offer(after, track.id, url)
         val queued = DlnaCast.setNext(renderer, url, track, mime)
@@ -1284,7 +1308,7 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         val (format, mime) = castFormatFor(renderer, track)
         val byRenderer = seekable(track, format) == true && seeksBeforePlay[renderer.id] != false
         val offset = if (byRenderer) 0L else atMs / 1000 * 1000
-        val url = castUrl(track, format, offset) ?: return false
+        val url = castUrl(renderer, track, format, offset) ?: return false
         if (!DlnaCast.setUri(renderer, url, track, mime)) return false
         // Held now, whatever happens next: its readings are this track's, and
         // a play from its own remote is followed from wherever it starts.
