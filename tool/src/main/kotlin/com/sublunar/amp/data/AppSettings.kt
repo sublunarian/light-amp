@@ -530,8 +530,8 @@ class AppSettings(
      */
     val rowMark: Pref<RowMark> = enum(ROW_MARK.name, RowMark.DOWNLOADED)
 
-    /** An artist's popular songs at the end of their page, where the source can name them. */
-    val showPopularSongs: Pref<Boolean> = bool("pref.showPopularSongs", true)
+    /** An artist's popular songs at the end of their page, where the source can name them. Off until chosen. */
+    val showPopularSongs: Pref<Boolean> = bool("pref.showPopularSongs", false)
 
     /** Which categories the simple layout's library home lists, and in what order — see [HomeLayout]. */
     val homeLayout: Pref<HomeLayout> =
