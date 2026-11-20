@@ -43,14 +43,14 @@ fun Navbar(
     onNowPlaying: () -> Unit,
     /** Simplified's library button — see [LibraryNav.libraryIndex]. */
     onBrowse: () -> Unit,
-    /** Simplified's library button lit, as a tab is: everywhere but search. */
-    libraryLit: Boolean = true,
+    /** On the library's home page, where the library's slot stands empty. */
+    onHome: Boolean = false,
 ) {
     // The eager state rather than the preference Flow: the bar is on every
     // screen, and a fresh collect draws a frame of the wrong bar.
     val simplified = App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
     if (simplified) {
-        SimplifiedNavbar(onSearch, onNowPlaying, onBrowse, libraryLit)
+        SimplifiedNavbar(onSearch, onNowPlaying, onBrowse, onHome)
     } else {
         StandardNavbar(current, onSelect, onNowPlaying)
     }
@@ -60,18 +60,17 @@ fun Navbar(
  * Simplified layout: the library, search and the player as the phone's own three
  * buttons, laid out as the SDK's LightBottomBar lays out three: start, centre and
  * end, each glyph two grid units, its outer edge two units from the screen's.
- * Lit as tabs are: the one you are on white, the others the grey. The
- * player is never lit, since it hides this bar.
+ * Plain buttons, not tabs: all three white, none lit. On the home page the
+ * library's slot stands empty, the others keeping their places.
  */
 @Composable
 private fun SimplifiedNavbar(
     onSearch: () -> Unit,
     onNowPlaying: () -> Unit,
     onBrowse: () -> Unit,
-    libraryLit: Boolean,
+    onHome: Boolean,
 ) {
-    val lit = LightThemeTokens.colors.content
-    val unlit = LightThemeTokens.colors.contentSecondary
+    val white = LightThemeTokens.colors.content
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -80,8 +79,11 @@ private fun SimplifiedNavbar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BarSlot(Alignment.CenterStart) {
-            BarButton(onBrowse) {
-                AppIcon(AppIcons.Library, size = px(LIBRARY_GLYPH_PX), tint = if (libraryLit) lit else unlit)
+            // The home page is the library: no button for it there.
+            if (!onHome) {
+                BarButton(onBrowse) {
+                    AppIcon(AppIcons.Library, size = px(LIBRARY_GLYPH_PX), tint = white)
+                }
             }
         }
         BarSlot(Alignment.Center) {
@@ -89,14 +91,14 @@ private fun SimplifiedNavbar(
                 Icon(
                     painterResource(LightIcons.SEARCH.drawableResource),
                     contentDescription = "Search",
-                    tint = if (libraryLit) unlit else lit,
+                    tint = white,
                     modifier = Modifier.size(px(SDK_GLYPH_PX)),
                 )
             }
         }
         BarSlot(Alignment.CenterEnd) {
             BarButton(onNowPlaying) {
-                AppIcon(AppIcons.Waveform, size = px(SDK_GLYPH_PX), tint = unlit)
+                AppIcon(AppIcons.Waveform, size = px(SDK_GLYPH_PX), tint = white)
             }
         }
     }

@@ -55,6 +55,7 @@ class PlaylistActionsScreen(
             }
             ActionList {
                 PlayRows(list, onPlay = { notePlaylistPlayed(playlistId) })
+                QueueRows(list)
                 DownloadRow(source, list, fullyDownloaded, "Download Playlist")
                 if (!readOnly) {
                     TextRow(title = "Rename") { rename() }

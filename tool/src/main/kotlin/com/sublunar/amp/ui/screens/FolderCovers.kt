@@ -31,19 +31,21 @@ import kotlinx.coroutines.launch
  * Albums whose cover is a cover.jpg beside the music, not inside the files,
  * need the photos permission. LightOS's prompt can't say why it's asked, so
  * the question says it first, and the prompt opens only when it is tapped.
- * Offered for the phone's own music with artwork on and music access granted;
- * once tapped, it is gone whatever the answer.
+ * Offered for the phone's own music with artwork on and music access granted,
+ * and only once a song has turned up with no cover inside it; once tapped, it
+ * is gone whatever the answer.
  */
 @Composable
 internal fun rememberFolderCoverAsk(): (() -> Unit)? {
     val phone = App.source.collectAsState().value.phoneLibrary
     val artworkOn = !App.hideArtwork.collectAsState().value
     val tapped = App.settings.folderCoverOfferTapped.state.collectAsState().value
+    val needed = App.artwork.coverlessPhoneSong.collectAsState().value
     val lastSyncedMs = App.librarySync.syncState.collectAsState().value.lastSyncedMs
     val launcher = rememberPermissionRequestLauncher(phone?.coverPermission.orEmpty())
     var musicReadable by remember(phone) { mutableStateOf(false) }
     LaunchedEffect(phone, lastSyncedMs) { musicReadable = phone?.access() == PhoneAccess.GRANTED }
-    if (phone == null || launcher == null || !artworkOn || tapped || !musicReadable) return null
+    if (phone == null || launcher == null || !artworkOn || tapped || !needed || !musicReadable) return null
     if (phone.hasCoverAccess()) return null
     return {
         Log.i("AmpArt", "folder covers: asking for photos access")

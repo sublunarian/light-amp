@@ -111,7 +111,7 @@ enum class ArtistAlbumOrder(val label: String) {
 
 /** What the margin before a list's rows marks. Stored by name: never rename one. */
 enum class RowMark(val label: String) {
-    LIKED("Liked"),
+    LIKED("Favorites"),
     DOWNLOADED("Downloaded"),
     NONE("None"),
 }
@@ -259,6 +259,8 @@ class AppSettings(
             if (id in plays) p[PLAYLIST_PLAYS] = sourcesJson.encodeToString(plays - id)
             p.remove(lastSyncedKey(id))
             p.remove(songCheckKey(id))
+            val held = p.lastHoldings()
+            if (id in held) p[LAST_HOLDINGS] = sourcesJson.encodeToString(held - id)
         }
     }
 
@@ -456,6 +458,18 @@ class AppSettings(
             ?: emptyMap()
     }
 
+    /** Each source's last [Holdings], so the library home opens knowing what it has before the library is read. */
+    val lastHoldings: Stored<Map<String, Holdings>> = stored { it.lastHoldings() }
+
+    private fun Preferences.lastHoldings(): Map<String, Holdings> =
+        this[LAST_HOLDINGS]
+            ?.let { runCatching { sourcesJson.decodeFromString<Map<String, Holdings>>(it) }.getOrNull() }
+            .orEmpty()
+
+    suspend fun setLastHoldings(sourceId: String, held: Holdings) {
+        dataStore.edit { p -> p[LAST_HOLDINGS] = sourcesJson.encodeToString(p.lastHoldings() + (sourceId to held)) }
+    }
+
     /** When each playlist was last started on this phone, by source and then playlist id. */
     val playlistPlays: Stored<Map<String, Map<String, Long>>> = stored { it.playlistPlays() }
 
@@ -516,20 +530,8 @@ class AppSettings(
      */
     val rowMark: Pref<RowMark> = enum(ROW_MARK.name, RowMark.DOWNLOADED)
 
-    /** Trial: an artist's page opens with Play and Shuffle in All Songs' place, Popular on a row below them. */
-    val artistPlayButtons: Pref<Boolean> = bool("pref.artistPlayButtons", false)
-
-    /** Trial: Material Symbols' media output in the player's cast glyph's place. */
-    val mediaOutputGlyph: Pref<Boolean> = bool("pref.mediaOutputGlyph", false)
-
-    /** Trial: an artist's page without its way to their popular songs. */
-    val hidePopularButton: Pref<Boolean> = bool("pref.hidePopularButton", false)
-
-    /** Trial: Play and Shuffle between an album's card and its tracks. */
-    val albumPlayButtons: Pref<Boolean> = bool("pref.albumPlayButtons", false)
-
-    /** Trial: the simple layout's More pages without their Source and Genre rows and Settings button. */
-    val trimMoreMenu: Pref<Boolean> = bool("pref.hideMoreSourceSettings", false)
+    /** An artist's popular songs at the end of their page, where the source can name them. */
+    val showPopularSongs: Pref<Boolean> = bool("pref.showPopularSongs", true)
 
     /** Which categories the simple layout's library home lists, and in what order — see [HomeLayout]. */
     val homeLayout: Pref<HomeLayout> =
@@ -755,6 +757,7 @@ class AppSettings(
         private val GROUP_RELEASE_TYPES = booleanPreferencesKey("pref.groupReleaseTypes")
         private val PLAYLIST_SORTS = stringPreferencesKey("pref.playlistSorts")
         private val PLAYLIST_PLAYS = stringPreferencesKey("pref.playlistPlays")
+        private val LAST_HOLDINGS = stringPreferencesKey("state.holdings")
         private val ROW_MARK = stringPreferencesKey("pref.rowMark")
         private val HIDE_DOWNLOAD_ICONS = booleanPreferencesKey("pref.hideDownloadIcons")
 

@@ -1,5 +1,8 @@
 package com.sublunar.amp.ui.screens
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import com.thelightphone.sdk.ui.LightThemeColors
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -24,12 +27,10 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -241,7 +242,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     onBack = { goBack() },
                     // Nothing in the card's place in hero mode, where the
                     // title lives on the stage instead — see heroTitle.
-                    titleContent = if (heroTitle) null else ({ TitleCard(current.title, credit) }),
+                    titleContent = if (heroTitle) null else ({ TitleCard(current.title, credit, sdkGrey = true) }),
                     rightAction = HeaderAction(
                         AppIcons.More,
                         onLongClick = { go { SettingsScreen(it) } },
@@ -412,12 +413,13 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     private fun HeroLine(text: String, sizePx: Int, linePx: Int, dim: Boolean, maxLines: Int = 1) {
         if (text.isBlank()) return
+        // The dim lines in the SDK's own lighter grey, as the title card's.
         AppText(
             text,
             pxSp(sizePx),
             lineHeight = pxSp(linePx),
             role = TextRole.Subheading,
-            dim = dim,
+            color = if (dim) LightThemeColors.Dark.contentSecondary else LightThemeTokens.colors.content,
             // Cut, not scrolled, as the stock tools do; Song Info has it whole.
             maxLines = maxLines,
             align = TextAlign.Center,
@@ -734,11 +736,13 @@ private const val COVER_PANEL_END_PX = 440
 private const val BAR_UP_PX = 360
 private const val TIME_UP_PX = 320
 private const val TRANSPORT_UP_PX = 240
-private const val SECONDARY_UP_PX = 120
+
+/** The secondary row in the middle of a bar the library's pages' height, 160px. */
+private const val SECONDARY_UP_PX = 80
 
 /**
  * Band heights, sized so the touchable ones tile without overlapping: the seek
- * line owns 320–400, the transport 170–310 and the secondary row 70–170.
+ * line owns 320–400, the transport 170–310 and the secondary row 30–130.
  */
 private const val BAR_HIT_PX = 80
 private const val TIME_ROW_PX = 44

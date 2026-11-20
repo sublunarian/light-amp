@@ -64,15 +64,30 @@ class MoreScreen(
         // composition, where a @Composable can't be called.
         val view = viewOf(page)
         val sort = sortOf(page, playlistSortKey)
-        val likedTab = likedFilterTab(page)
-        val liked = likedOnly(likedTab)
+        // A switch only where it would narrow to something, or while it is on,
+        // so it can be turned off again.
+        val holdings = App.library.holdings.collectAsState().value
+        val playlistsDownloaded = App.playlists.downloadedPlaylistIds.collectAsState().value.isNotEmpty()
+        val likedOffered = likedFilterTab(page)
+        val liked = likedOnly(likedOffered)
+        val likedTab = likedOffered?.takeIf { tab ->
+            liked || when (tab) {
+                LibraryTab.ARTISTS -> holdings.likedArtists
+                LibraryTab.ALBUMS -> holdings.likedAlbums
+                else -> holdings.likedSongs
+            }
+        }
         val genre = genreSettingOf(page)
         // The phone's own music is all on the phone already: nothing to narrow to.
-        val downloadedTab = downloadedFilterTab(page)
+        val downloadedOffered = downloadedFilterTab(page)
             .takeIf { App.source.collectAsState().value.supportsDownloads }
-        val downloaded = downloadedOnly(downloadedTab)
+        val downloaded = downloadedOnly(downloadedOffered)
+        val downloadedTab = downloadedOffered?.takeIf { tab ->
+            downloaded || if (tab == LibraryTab.PLAYLISTS) playlistsDownloaded else holdings.downloads
+        }
         // An artist's songs carry their own, for the one visit — see ArtistSongsVisit.
         val visit = ArtistSongsVisit.view.collectAsState().value.takeIf { page == LibraryPage.ARTIST_SONGS }
+        val visitHeld = ArtistSongsVisit.held.collectAsState().value
         val source = App.source.collectAsState().value
         val grouping = App.settings.groupReleaseTypes.state.collectAsState().value
         val trimmed = moreMenuTrimmed()
@@ -129,9 +144,9 @@ class MoreScreen(
                         // several are often set together; back shows the narrowed list.
                         if (likedTab != null) {
                             item {
-                                // Plain "Liked", as "Downloaded" is: the page is already
-                                // this tab's, and the header says "Liked Albums" once on.
-                                ToggleRow("Liked", liked) {
+                                // Plain "Favorites", as "Downloaded" is: the page is already
+                                // this tab's, and the header says "Favorite Albums" once on.
+                                ToggleRow("Favorites", liked) {
                                     setLikedOnly(likedTab, !liked)
                                 }
                             }
@@ -143,14 +158,14 @@ class MoreScreen(
                                 }
                             }
                         }
-                        if (visit != null && source.supportsLikes) {
+                        if (visit != null && source.supportsLikes && (visit.liked || visitHeld.liked)) {
                             item {
-                                ToggleRow("Liked", visit.liked) {
+                                ToggleRow("Favorites", visit.liked) {
                                     ArtistSongsVisit.view.value = visit.copy(liked = !visit.liked)
                                 }
                             }
                         }
-                        if (visit != null && source.supportsDownloads) {
+                        if (visit != null && source.supportsDownloads && (visit.downloaded || visitHeld.downloaded)) {
                             item {
                                 ToggleRow("Downloaded", visit.downloaded) {
                                     ArtistSongsVisit.view.value = visit.copy(downloaded = !visit.downloaded)
@@ -191,15 +206,12 @@ class MoreScreen(
 }
 
 /**
- * Whether the More pages go without their Source and Genre rows and Settings. The
- * simple layout's alone: its home reaches all three, and the tabs have no other way.
+ * Whether the More pages go without their Source and Genre rows and Settings: in
+ * the simple layout, whose home reaches all three. The tabs have no other way.
  */
 @Composable
-internal fun moreMenuTrimmed(): Boolean {
-    val trim by App.settings.trimMoreMenu.state.collectAsState()
-    val layout by App.settings.layoutMode.state.collectAsState()
-    return trim && layout == LayoutMode.SIMPLIFIED
-}
+internal fun moreMenuTrimmed(): Boolean =
+    App.settings.layoutMode.state.collectAsState().value == LayoutMode.SIMPLIFIED
 
 /** What the page is called, for the pages whose name never changes. */
 @Composable
@@ -357,7 +369,7 @@ private fun filterTab(page: LibraryPage): LibraryTab? = when (page) {
 private fun genreSettingOf(page: LibraryPage): PageSetting? {
     // All read before the branch — see ARCHITECTURE.md on conditional
     // composable calls.
-    val values by App.library.genres.collectAsState()
+    val values = App.library.holdings.collectAsState().value.genres
     val albums = App.albumsTagFilter.collectAsState().value
     val songs = App.songsTagFilter.collectAsState().value
     val tab = when (page) {
@@ -431,4 +443,4 @@ class AboutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 }
 
 /** The sort direction's arrow: about the picker pages' tick, and a multiple of 3 to stay sharp on the LP3. */
-internal const val SORT_ARROW_PX = 60
+internal const val SORT_ARROW_PX = 76

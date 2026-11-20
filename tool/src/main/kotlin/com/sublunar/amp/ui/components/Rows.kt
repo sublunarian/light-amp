@@ -148,6 +148,8 @@ fun TrackRow(
     tall: Boolean = false,
     /** A rank (an artist's popular songs), in the download mark's place, centred in the 72px margin. */
     number: Int? = null,
+    /** The [number] on the list's 72px line instead, the row set in after it — Popular's preview on an artist's page. */
+    numberOnLine: Boolean = false,
     /** A list with its own artwork switch says so — see App.hidePlaylistArtwork. */
     artworkHidden: Boolean = App.hideListArtwork.collectAsState().value,
 ) {
@@ -164,7 +166,7 @@ fun TrackRow(
         // Without artwork the mark sits on the title's line, half the subtitle's line above the middle.
         val noArt = artworkHidden && selected == null
         if (number != null && selected == null) {
-            NumberLead(number, type)
+            if (numberOnLine) NumberOnLine(number, type, besideSubtitle = subtitle.isNotBlank()) else NumberLead(number, type)
         } else {
             RowLead(
                 downloaded,
@@ -211,7 +213,7 @@ private fun RowMarkGlyph(downloaded: Boolean, liked: Boolean, modifier: Modifier
                 modifier = modifier.size(px(DOWNLOAD_MARK_PX)),
             )
         }
-        RowMark.LIKED -> if (liked) AppIcon(AppIcons.Favorite, size = px(DOWNLOAD_MARK_PX), modifier = modifier)
+        RowMark.LIKED -> if (liked) AppIcon(AppIcons.LikedMark, size = px(DOWNLOAD_MARK_PX), modifier = modifier)
         RowMark.NONE -> Unit
     }
 }
@@ -349,6 +351,35 @@ private fun RowLead(downloaded: Boolean, liked: Boolean, inkDropPx: Int? = null)
  * edge as in every list: dim, centred on the row as the cover is, and centred
  * across those 72px (the list's own edge is part of them).
  */
+/**
+ * A rank starting on the list's 72px line, in a [RANK_SLOT_PX] slot the rest of
+ * the row starts after, on the title's line: half a subtitle line up from the
+ * row's middle where one sits under the title ([besideSubtitle]).
+ */
+@Composable
+private fun NumberOnLine(number: Int, type: RowType, besideSubtitle: Boolean) {
+    Spacer(Modifier.width(px(LIST_LEAD_PX)))
+    Box(
+        Modifier
+            .width(px(RANK_SLOT_PX))
+            .offset(y = -px(if (besideSubtitle) type.subLinePx / 2 else 0)),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        AppText(
+            number.toString(),
+            pxSp(type.titlePx),
+            lineHeight = pxSp(type.titleLinePx),
+            role = type.titleRole,
+            exact = true,
+            dim = true,
+            maxLines = 1,
+        )
+    }
+}
+
+/** [NumberOnLine]'s slot: the rank, and the air before the row it ranks. */
+private const val RANK_SLOT_PX = 56
+
 @Composable
 private fun NumberLead(number: Int, type: RowType) {
     Box(Modifier.width(px(LIST_LEAD_PX)), contentAlignment = Alignment.CenterStart) {
@@ -464,52 +495,6 @@ fun PlayAllRow(
     }
 }
 
-/**
- * Two action buttons side by side heading a list of covers, on a song row's
- * axes: the left sits as a song row would, its icon where the cover goes; the
- * right repeats that layout from the screen's middle, as if a cover started there.
- */
-@Composable
-fun SplitActionRow(
-    leftIcon: ImageVector,
-    leftLabel: String,
-    onLeft: () -> Unit,
-    /** The right-hand button, or null for the left one alone, where it stays put. */
-    rightIcon: ImageVector?,
-    rightLabel: String,
-    onRight: () -> Unit,
-    /** Each icon centred where a cover sits, as over a list of covers. */
-    inCoverBox: Boolean = !App.hideListArtwork.collectAsState().value,
-    leftIconPx: Int = ROW_ACTION_ICON_PX,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().height(px(ROW_TYPE.rowPx)),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            modifier = Modifier
-                .width(px(CANVAS_W_PX / 2 - LIST_EDGE_PX))
-                .fillMaxHeight()
-                .appClickable(onClick = onLeft),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Spacer(Modifier.width(px(LIST_LEAD_PX)))
-            ActionButton(leftIcon, leftLabel, inCoverBox, iconPx = leftIconPx)
-        }
-        if (rightIcon != null) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .appClickable(onClick = onRight),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ActionButton(rightIcon, rightLabel, inCoverBox)
-            }
-        }
-    }
-}
-
 /** The Shuffle row heading a list of covers. */
 @Composable
 fun ShuffleRow(
@@ -521,24 +506,9 @@ fun ShuffleRow(
     PlayAllRow(AppIcons.Shuffle, label, headsList = true, tallList = tallList, onClick = onClick)
 }
 
-/** Play and Shuffle as [SplitActionRow] lays out two buttons, the icons at the row's start rather than in a cover's place. */
-@Composable
-fun PlayShuffleRow(onPlay: () -> Unit, onShuffle: () -> Unit) {
-    SplitActionRow(
-        leftIcon = AppIcons.PlayArrow,
-        leftLabel = "Play",
-        onLeft = onPlay,
-        rightIcon = AppIcons.Shuffle,
-        rightLabel = "Shuffle",
-        onRight = onShuffle,
-        inCoverBox = false,
-        leftIconPx = PLAY_GLYPH_PX,
-    )
-}
-
 /** Play and Shuffle, each centred in its own half of the screen inside [PLAY_ROW_MARGIN_PX]. */
 @Composable
-fun CentredPlayRow(onPlay: () -> Unit, onShuffle: () -> Unit) {
+fun CentredPlayRow(onPlay: () -> Unit, onShuffle: () -> Unit, playLabel: String = "Play") {
     Row(
         modifier = Modifier
             .height(px(ROW_TYPE.rowPx))
@@ -548,7 +518,7 @@ fun CentredPlayRow(onPlay: () -> Unit, onShuffle: () -> Unit) {
             .width(px(CANVAS_W_PX))
             .padding(horizontal = px(PLAY_ROW_MARGIN_PX)),
     ) {
-        HalfScreenAction(AppIcons.PlayArrow, "Play", PLAY_GLYPH_PX, onPlay)
+        HalfScreenAction(AppIcons.PlayArrow, playLabel, PLAY_GLYPH_PX, onPlay)
         HalfScreenAction(AppIcons.Shuffle, "Shuffle", ROW_ACTION_ICON_PX, onShuffle)
     }
 }
@@ -748,6 +718,8 @@ fun ScrollableList(
     state: LazyListState = rememberLazyListState(),
     /** False for the few lists without the bar and its lane. */
     scrollBar: Boolean = true,
+    /** The bar only while the list moves, fading after, as the album grid's: the lane stays, so nothing shifts. */
+    fadingBar: Boolean = false,
     content: LazyListScope.() -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
@@ -759,7 +731,11 @@ fun ScrollableList(
             ),
             content = content,
         )
-        if (scrollBar) ListScrollBar(state)
+        if (scrollBar && fadingBar) {
+            OverlayScrollBar(rememberScrollTarget(state), scrolling = state.isScrollInProgress)
+        } else if (scrollBar) {
+            ListScrollBar(state)
+        }
     }
 }
 

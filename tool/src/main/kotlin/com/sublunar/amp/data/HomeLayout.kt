@@ -7,7 +7,7 @@ enum class HomeCategory(val title: String, val onByDefault: Boolean) {
     ALBUMS("Albums", true),
     SONGS("Songs", true),
     GENRES("Genres", false),
-    FAVORITES("Liked", false),
+    FAVORITES("Favorites", false),
     DOWNLOADED("Downloaded", false),
 }
 

@@ -8,11 +8,8 @@ import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Bluetooth
-import androidx.compose.material.icons.filled.Cast
-import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -110,11 +107,8 @@ class MaterialGlyphsTest {
         val GLYPHS: List<Pair<ImageVector, ImageVector?>> = listOf(
             Material.AutoMirrored.Filled.Backspace to Icons.AutoMirrored.Filled.Backspace,
             Material.Filled.Album to Icons.Filled.Album,
-            Material.Filled.Cast to Icons.Filled.Cast,
-            Material.Filled.Speaker to Icons.Filled.Speaker,
             Material.Filled.CloudOff to Icons.Filled.CloudOff,
             Material.Filled.Dns to Icons.Filled.Dns,
-            Material.Filled.Favorite to Icons.Filled.Favorite,
             Material.Filled.FavoriteBorder to Icons.Filled.FavoriteBorder,
             Material.Filled.Star to Icons.Filled.Star,
             Material.Filled.StarBorder to Icons.Filled.StarBorder,

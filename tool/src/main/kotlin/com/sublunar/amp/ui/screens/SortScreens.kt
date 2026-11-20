@@ -38,7 +38,7 @@ class TagFilterScreen(
 ) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
-        val values by App.library.genres.collectAsState()
+        val values = App.library.holdings.collectAsState().value.genres
         val current = tagFilter(tab).genre
         ListScreen(
             onBack = { goBack() },

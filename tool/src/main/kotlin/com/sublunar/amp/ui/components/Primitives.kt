@@ -44,9 +44,8 @@ object AppIcons {
     /** Genres: the theatre masks. */
     val Genres = TheaterComedySymbol
 
-    /** The player's way to a speaker: Material's cast, or on trial Material Symbols' media output. */
-    val Output: ImageVector @Composable get() =
-        if (App.settings.mediaOutputGlyph.state.collectAsState().value) MediaOutputSymbol else Cast
+    /** The player's way to a speaker: Material Symbols' media output. */
+    val Output = MediaOutputSymbol
 
     /** Light's mark for something downloaded, as the rows wear it. */
     val Downloaded: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.DOWNLOADED_ARROW.drawableResource)
@@ -67,7 +66,11 @@ object AppIcons {
     /** LightOS's own waveform, see [WaveformSymbol]. */
     val Waveform = WaveformSymbol
     val Sort = Icons.AutoMirrored.Filled.Sort
-    val Favorite = Icons.Filled.Favorite
+    /** Favorites on the library home: Light's outlined star. */
+    val Favorite: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.STAR_OUTLINE.drawableResource)
+
+    /** A favorite as a row's mark: Light's filled star. */
+    val LikedMark: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.STAR.drawableResource)
     val FavoriteBorder = Icons.Filled.FavoriteBorder
     val Star = Icons.Filled.Star
     val StarBorder = Icons.Filled.StarBorder
@@ -108,14 +111,15 @@ object AppIcons {
     val VolumeDown = Icons.AutoMirrored.Filled.VolumeDown
     val Bluetooth: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.BLUETOOTH.drawableResource)
     val Smartphone = Icons.Filled.Smartphone
-    val Speaker = Icons.Filled.Speaker
+    val Speaker = SpeakerSymbol
     val Dns = Icons.Filled.Dns
     /** LightOS's own trash. */
     val DeleteOutline: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.TRASH.drawableResource)
     /** A sort's direction, in Light's arrow — see LightArrowUp. */
     val ArrowUpward = LightArrowUp
     val ArrowDownward: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.ARROW_DOWN.drawableResource)
-    val Cast = Icons.Filled.Cast
+    /** Anything cast to that isn't a speaker (an Apple TV): Material Symbols' music cast. */
+    val Cast = MusicCastSymbol
     val Refresh: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.REFRESH.drawableResource)
 
     /** Light marks a downloaded row with the same arrow it downloads with. */

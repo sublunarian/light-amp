@@ -48,43 +48,6 @@ object Icons {
             }
         }
 
-        val Cast: ImageVector by glyph("Filled.Cast") {
-            shape {
-                moveTo(21.0f, 3.0f)
-                lineTo(3.0f, 3.0f)
-                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
-                verticalLineToRelative(3.0f)
-                horizontalLineToRelative(2.0f)
-                lineTo(3.0f, 5.0f)
-                horizontalLineToRelative(18.0f)
-                verticalLineToRelative(14.0f)
-                horizontalLineToRelative(-7.0f)
-                verticalLineToRelative(2.0f)
-                horizontalLineToRelative(7.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
-                lineTo(23.0f, 5.0f)
-                curveToRelative(0.0f, -1.1f, -0.9f, -2.0f, -2.0f, -2.0f)
-                close()
-                moveTo(1.0f, 18.0f)
-                verticalLineToRelative(3.0f)
-                horizontalLineToRelative(3.0f)
-                curveToRelative(0.0f, -1.66f, -1.34f, -3.0f, -3.0f, -3.0f)
-                close()
-                moveTo(1.0f, 14.0f)
-                verticalLineToRelative(2.0f)
-                curveToRelative(2.76f, 0.0f, 5.0f, 2.24f, 5.0f, 5.0f)
-                horizontalLineToRelative(2.0f)
-                curveToRelative(0.0f, -3.87f, -3.13f, -7.0f, -7.0f, -7.0f)
-                close()
-                moveTo(1.0f, 10.0f)
-                verticalLineToRelative(2.0f)
-                curveToRelative(4.97f, 0.0f, 9.0f, 4.03f, 9.0f, 9.0f)
-                horizontalLineToRelative(2.0f)
-                curveToRelative(0.0f, -6.08f, -4.93f, -11.0f, -11.0f, -11.0f)
-                close()
-            }
-        }
-
         val CloudOff: ImageVector by glyph("Filled.CloudOff") {
             shape {
                 moveTo(19.35f, 10.04f)
@@ -154,21 +117,6 @@ object Icons {
                 reflectiveCurveToRelative(0.9f, -2.0f, 2.0f, -2.0f)
                 reflectiveCurveToRelative(2.0f, 0.9f, 2.0f, 2.0f)
                 reflectiveCurveToRelative(-0.9f, 2.0f, -2.0f, 2.0f)
-                close()
-            }
-        }
-
-        val Favorite: ImageVector by glyph("Filled.Favorite") {
-            shape {
-                moveTo(12.0f, 21.35f)
-                lineToRelative(-1.45f, -1.32f)
-                curveTo(5.4f, 15.36f, 2.0f, 12.28f, 2.0f, 8.5f)
-                curveTo(2.0f, 5.42f, 4.42f, 3.0f, 7.5f, 3.0f)
-                curveToRelative(1.74f, 0.0f, 3.41f, 0.81f, 4.5f, 2.09f)
-                curveTo(13.09f, 3.81f, 14.76f, 3.0f, 16.5f, 3.0f)
-                curveTo(19.58f, 3.0f, 22.0f, 5.42f, 22.0f, 8.5f)
-                curveToRelative(0.0f, 3.78f, -3.4f, 6.86f, -8.55f, 11.54f)
-                lineTo(12.0f, 21.35f)
                 close()
             }
         }
@@ -284,39 +232,6 @@ object Icons {
                 verticalLineTo(5.0f)
                 horizontalLineToRelative(10.0f)
                 verticalLineToRelative(14.0f)
-                close()
-            }
-        }
-
-        val Speaker: ImageVector by glyph("Filled.Speaker") {
-            shape {
-                moveTo(17.0f, 2.0f)
-                lineTo(7.0f, 2.0f)
-                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
-                verticalLineToRelative(16.0f)
-                curveToRelative(0.0f, 1.1f, 0.9f, 1.99f, 2.0f, 1.99f)
-                lineTo(17.0f, 22.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
-                lineTo(19.0f, 4.0f)
-                curveToRelative(0.0f, -1.1f, -0.9f, -2.0f, -2.0f, -2.0f)
-                close()
-                moveTo(12.0f, 4.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, 0.9f, 2.0f, 2.0f)
-                reflectiveCurveToRelative(-0.9f, 2.0f, -2.0f, 2.0f)
-                curveToRelative(-1.11f, 0.0f, -2.0f, -0.9f, -2.0f, -2.0f)
-                reflectiveCurveToRelative(0.89f, -2.0f, 2.0f, -2.0f)
-                close()
-                moveTo(12.0f, 20.0f)
-                curveToRelative(-2.76f, 0.0f, -5.0f, -2.24f, -5.0f, -5.0f)
-                reflectiveCurveToRelative(2.24f, -5.0f, 5.0f, -5.0f)
-                reflectiveCurveToRelative(5.0f, 2.24f, 5.0f, 5.0f)
-                reflectiveCurveToRelative(-2.24f, 5.0f, -5.0f, 5.0f)
-                close()
-                moveTo(12.0f, 12.0f)
-                curveToRelative(-1.66f, 0.0f, -3.0f, 1.34f, -3.0f, 3.0f)
-                reflectiveCurveToRelative(1.34f, 3.0f, 3.0f, 3.0f)
-                reflectiveCurveToRelative(3.0f, -1.34f, 3.0f, -3.0f)
-                reflectiveCurveToRelative(-1.34f, -3.0f, -3.0f, -3.0f)
                 close()
             }
         }

@@ -1,5 +1,9 @@
 package com.sublunar.amp.data
 
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.transformLatest
 import com.sublunar.amp.data.db.AlbumEntity
 import com.sublunar.amp.data.db.ArtistImageEntity
 import com.sublunar.amp.data.db.DownloadFile
@@ -19,11 +23,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingCommand
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
@@ -406,39 +408,6 @@ class LibraryRepository(
         }
 
     /**
-     * The genres this library actually uses, derived from the cache. Empty means
-     * the server doesn't fill that field, which is how the More page decides
-     * whether to offer it.
-     *
-     * Worked out only while a page shows them, not on every read of the library.
-     * Stopped, they keep their last answer for the next page to show meanwhile —
-     * unless the source has changed, which empties them (another server's values
-     * could set a filter this library can't match).
-     */
-    private val tagValues = mutableListOf<MutableStateFlow<List<String>>>()
-
-    val genres: StateFlow<List<String>> = tagValuesOf { splitTagValues(it.genre) }
-
-    /**
-     * What stateIn with WhileSubscribed does, by hand: a stateIn's value can't
-     * be emptied from outside, and a source switch has to — see forgetDerived.
-     */
-    private fun tagValuesOf(select: (Track) -> List<String>): StateFlow<List<String>> {
-        val values = MutableStateFlow(emptyList<String>())
-        tagValues += values
-        scope.launch {
-            SharingStarted.WhileSubscribed(TAG_VALUES_KEEP_MS).command(values.subscriptionCount)
-                .collectLatest { command ->
-                    if (command == SharingCommand.START) tracksFlowOf(select).collect { values.value = it }
-                }
-        }
-        return values.asStateFlow()
-    }
-
-    private fun tracksFlowOf(select: (Track) -> List<String>): Flow<List<String>> =
-        tracks.map { list -> tagValuesIn(list, select) }
-
-    /**
      * The artists liked on the server. Not derived from [artists], which narrows
      * with the offline view and the chosen library: a like is not a fact about
      * what is on screen.
@@ -549,11 +518,66 @@ class LibraryRepository(
     val hasLikedAlbums: StateFlow<Boolean> =
         albums.map { list -> list.any { it.liked } }.stateIn(scope, SharingStarted.Eagerly, false)
 
+    /** The last [holdings] shown, which a new one is weighed against; the source's saved one at launch. */
+    @Volatile private var shownHoldings: Holdings =
+        settings.activeSource.value?.id?.let { settings.lastHoldings.value[it] } ?: Holdings()
+
+    /** [Holdings] as the lists stand this moment, the source's last answer while they are empty. */
+    private val currentHoldings: Flow<Holdings> =
+        combine(tracks, albums, artists, downloadedTrackIds, settings.activeSource.state) { songs, albumList, artistList, downloaded, source ->
+            if (songs.isEmpty()) {
+                source?.id?.let { settings.lastHoldings.value[it] } ?: Holdings()
+            } else {
+                Holdings.of(songs, albumList, artistList, downloaded)
+            }
+        }
+
+
+    /**
+     * See [Holdings]. A source changed to shows its last answer at once — at
+     * launch too, before the library has been read — so the library home
+     * doesn't draw without its Liked, Downloaded and Genres and then gain them.
+     *
+     * A change of source or library then hands the lists over one at a time —
+     * the songs, the albums, the artists, the downloads — and for a moment they
+     * disagree. So an answer counts only once the lists have stood still for
+     * [HOLDINGS_SETTLE_MS], and a row goes away only once it has had nothing for
+     * [HOLDINGS_HIDE_MS] more: a list still on its way never takes a row out
+     * and puts it straight back.
+     */
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    val holdings: StateFlow<Holdings> =
+        settings.activeSource.state.map { it?.id }.distinctUntilChanged().flatMapLatest { id ->
+            val saved = id?.let { settings.lastHoldings.value[it] }
+            flow {
+                if (saved != null) {
+                    shownHoldings = saved
+                    emit(saved)
+                }
+                emitAll(
+                    currentHoldings.debounce(HOLDINGS_SETTLE_MS).transformLatest { next ->
+                        if (next.hidesAnyOf(shownHoldings)) delay(HOLDINGS_HIDE_MS)
+                        shownHoldings = next
+                        emit(next)
+                    },
+                )
+            }
+        }.stateIn(scope, SharingStarted.Eagerly, shownHoldings)
+
+    /**
+     * Kept for next launch once it has stood a while: by then the lists are all
+     * the chosen source's, where a moment into a switch they can still be the last one's.
+     */
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private val holdingsSaver = scope.launch {
+        holdings.debounce(HOLDINGS_SAVE_MS).collect { held ->
+            val id = settings.activeSource.value?.id ?: return@collect
+            if (settings.lastHoldings.value[id] != held) settings.setLastHoldings(id, held)
+        }
+    }
+
     // Whether the library home has anything to list under these: a source
     // that doesn't fill the field leaves the category off.
-    val hasGenres: StateFlow<Boolean> =
-        tracks.map { list -> list.any { it.genre.isNotBlank() } }.stateIn(scope, SharingStarted.Eagerly, false)
-
     // Artist name -> server artist id, resolved once and reused for liking.
     private var artistIds: Map<String, String>? = null
 
@@ -980,8 +1004,6 @@ class LibraryRepository(
         // Not lastTracksRead: the database hasn't changed over yet, and a write
         // the cancelled sync lands first is read against it; cachedTracks drops it
         // when the lists change over, and [indexed] goes with them.
-        // Stopped, these would still offer the last source's — see genres.
-        tagValues.forEach { it.value = emptyList() }
     }
 
     companion object {
@@ -991,10 +1013,16 @@ class LibraryRepository(
         /** At most one read of the library this often while its own sync writes. See pacedWhileSyncing. */
         private const val SYNC_REREAD_MS = 10_000L
 
-        /** How long the tag lists go on after the last page showing them, so one page leading to the next doesn't start them over. */
-        private const val TAG_VALUES_KEEP_MS = 5_000L
-
         private const val SEARCH_LIMIT = 100
+
+        /** How long the lists must stand still before [holdings] takes them in. */
+        private const val HOLDINGS_SETTLE_MS = 400L
+
+        /** How long a row of the library home must have nothing more before it goes — see [holdings]. */
+        private const val HOLDINGS_HIDE_MS = 600L
+
+        /** How long [holdings] must stand before it is kept for next launch. */
+        private const val HOLDINGS_SAVE_MS = 2_000L
 
         /** How long a stored popular-songs list is served before being refreshed. */
         private const val TOP_SONGS_TTL_MS = 7L * 24 * 60 * 60 * 1000

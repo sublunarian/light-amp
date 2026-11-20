@@ -40,6 +40,19 @@ fun SimpleLightScreen<Unit>.PlayRows(
     }
 }
 
+/** Play Next and Add to Queue for [tracks], each leaving the menu. */
+@Composable
+fun SimpleLightScreen<Unit>.QueueRows(tracks: List<Track>) {
+    TextRow(title = "Play Next") {
+        if (tracks.isNotEmpty()) App.playback.playNext(tracks)
+        goBack()
+    }
+    TextRow(title = "Add to Queue") {
+        if (tracks.isNotEmpty()) App.playback.addToQueue(tracks)
+        goBack()
+    }
+}
+
 @Composable
 fun SimpleLightScreen<Unit>.LikeTrackRow(track: Track) {
     TextRow(title = if (track.liked) "Unlike" else "Like") {

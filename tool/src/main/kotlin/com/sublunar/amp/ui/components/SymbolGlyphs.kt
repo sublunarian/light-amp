@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.dp
 /** Material Symbols' `library_music` at weight 300: at the bar's size, its lines weigh what the Albums stack's do. */
 val LibraryMusicSymbol: ImageVector by lazy { symbol("LibraryMusicSymbol", LIBRARY_MUSIC_PATH) }
 
-/** Trial: Material Symbols' `media_output` at weight 300, drawn [MEDIA_OUTPUT_INSET] in to stand as large as Material's cast. */
+/** Material Symbols' `media_output` at weight 300, the player's way to a speaker, drawn [MEDIA_OUTPUT_INSET] in to stand as large as Material's cast did. */
 val MediaOutputSymbol: ImageVector by lazy { symbol("MediaOutputSymbol", MEDIA_OUTPUT_PATH, inset = MEDIA_OUTPUT_INSET) }
 
 /** Its 19 units drawn across the 22 Material's cast spans: 24 × 19/22 is 20.7 units, 1.6 off each side. */
@@ -23,6 +23,12 @@ private const val MEDIA_OUTPUT_INSET = 1.6f
 
 /** Material Symbols' `theater_comedy` at weight 300: the two masks, for Genres. */
 val TheaterComedySymbol: ImageVector by lazy { symbol("TheaterComedySymbol", THEATER_COMEDY_PATH) }
+
+/** Material Symbols' `speaker` at weight 300: an outlined speaker, for the outputs that are one. */
+val SpeakerSymbol: ImageVector by lazy { symbol("SpeakerSymbol", SPEAKER_PATH) }
+
+/** Material Symbols' `music_cast` at weight 300, for what is cast to that isn't a speaker, drawn [MEDIA_OUTPUT_INSET] in as media output is: both span 19 units. */
+val MusicCastSymbol: ImageVector by lazy { symbol("MusicCastSymbol", MUSIC_CAST_PATH, inset = MEDIA_OUTPUT_INSET) }
 
 /** [path] in its 24-unit box, less [inset] units off each side so it fills more of it. */
 private fun symbol(name: String, path: String, inset: Float = 0f): ImageVector =
@@ -69,3 +75,18 @@ private const val THEATER_COMEDY_PATH =
         "m4.64-0.26q0.26-0.26 0.26-0.64T9.89,12.86T9.25,12.6T8.61,12.86T8.35,13.5t0.26,0.64T9.25,14.4" +
         "t0.64-0.26ZM8.9,17.33q0.71-0.47 0.74-1.24H4.87q0.03,0.77 0.74,1.24T7.25,17.8T8.9,17.33Z" +
         "M7.25,15.5Zm9.5-7Z"
+
+private const val SPEAKER_PATH =
+    "M16.69,21.5H7.31q-0.75,0-1.28-0.53T5.5,19.69V4.31q0-0.75 0.53-1.28T7.31,2.5h9.38q0.75,0 1.28,0.53" +
+        "T18.5,4.31V19.69q0,0.75-0.53,1.28T16.69,21.5Zm0-1.5q0.13,0 0.22-0.09T17,19.69V4.31q0-0.13-0.09-0.22" +
+        "T16.69,4H7.31Q7.17,4 7.09,4.09T7,4.31V19.69q0,0.13 0.09,0.22T7.31,20h9.38ZM13.28,8.28Q13.81,7.75 13.81,7" +
+        "T13.28,5.72T12,5.19T10.72,5.72T10.19,7t0.53,1.28T12,8.81t1.28-0.53Zm1.36,9.36q1.09-1.09 1.09-2.64" +
+        "t-1.09-2.64T12,11.27T9.36,12.36T8.27,15t1.09,2.64T12,18.73t2.64-1.09Zm-4.21-1.06Q9.77,15.92 9.77,15" +
+        "t0.65-1.58T12,12.77t1.58,0.65T14.23,15t-0.65,1.58T12,17.23t-1.58-0.65ZM7,4Q7,4 7,4.09T7,4.31V19.69" +
+        "q0,0.13 0,0.22T7,20q0,0 0-0.09t0-0.22V4.31Q7,4.17 7,4.09T7,4Z"
+
+private const val MUSIC_CAST_PATH =
+    "M11.63,18.47Q10.61,17.45 10.61,16t1.03-2.47t2.47-1.03q0.57,0 1.08,0.17t0.92,0.51V4.35h5.44V7H17.61v9" +
+        "q0,1.44-1.03,2.47T14.11,19.5t-2.47-1.03ZM2.45,16q0-2.41 0.92-4.53t2.5-3.7t3.7-2.5t4.53-0.92v1.5" +
+        "q-2.08,0-3.93,0.8T6.94,8.83T4.75,12.05T3.95,16H2.45Zm4.08,0q0-1.56 0.6-2.95t1.63-2.41t2.4-1.62" +
+        "t2.94-0.59v1.5q-2.53,0-4.3,1.77T8.03,16H6.53Z"

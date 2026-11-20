@@ -75,7 +75,6 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     item { TextRow(title = "Streams & Downloads") { go { StreamsDownloadsScreen(it) } } }
                 }
                 item { TextRow(title = "About") { go { AboutScreen(it) } } }
-                item { TextRow(title = "Test") { go { TestScreen(it) } } }
             }
         }
     }
@@ -90,6 +89,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val rowMark by App.settings.rowMark.state.collectAsState()
         val sources by App.settings.sources.state.collectAsState()
         val layoutMode by App.settings.layoutMode.state.collectAsState()
+        val showPopularSongs by App.settings.showPopularSongs.state.collectAsState()
 
         ListScreen(onBack = { goBack() }, title = "Appearance", headingRows = true) {
             ScrollableList {
@@ -103,6 +103,14 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 item {
                     ToggleRow("Synced Lyrics", syncedLyrics) {
                         App.scope.launch { App.settings.syncedLyrics.set(!syncedLyrics) }
+                    }
+                }
+                // Only a server can rank an artist's songs; the phone's own music has no plays to go on.
+                if (sources.any { it.supportsPopularSongs }) {
+                    item {
+                        ToggleRow("Show Popular Songs", showPopularSongs) {
+                            App.scope.launch { App.settings.showPopularSongs.set(!showPopularSongs) }
+                        }
                     }
                 }
                 item {
@@ -142,50 +150,6 @@ class RowMarkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     TextRow(title = mark.label, checked = mark == current) {
                         App.scope.launch { App.settings.rowMark.set(mark) }
                         goBack()
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** Trials, before each is kept or dropped. */
-class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
-
-    @Composable
-    override fun Content() {
-        val trimMoreMenu by App.settings.trimMoreMenu.state.collectAsState()
-        val artistPlayButtons by App.settings.artistPlayButtons.state.collectAsState()
-        val albumPlayButtons by App.settings.albumPlayButtons.state.collectAsState()
-        val hidePopularButton by App.settings.hidePopularButton.state.collectAsState()
-        val mediaOutputGlyph by App.settings.mediaOutputGlyph.state.collectAsState()
-
-        // Rows a step below the other settings pages', so a trial's whole name fits.
-        ListScreen(onBack = { goBack() }, title = "Test") {
-            ScrollableList {
-                item {
-                    ToggleRow("Hide Source, Settings, Genre", trimMoreMenu) {
-                        App.scope.launch { App.settings.trimMoreMenu.set(!trimMoreMenu) }
-                    }
-                }
-                item {
-                    ToggleRow("Artist Play & Shuffle", artistPlayButtons) {
-                        App.scope.launch { App.settings.artistPlayButtons.set(!artistPlayButtons) }
-                    }
-                }
-                item {
-                    ToggleRow("Album Play & Shuffle", albumPlayButtons) {
-                        App.scope.launch { App.settings.albumPlayButtons.set(!albumPlayButtons) }
-                    }
-                }
-                item {
-                    ToggleRow("Hide Popular Button", hidePopularButton) {
-                        App.scope.launch { App.settings.hidePopularButton.set(!hidePopularButton) }
-                    }
-                }
-                item {
-                    ToggleRow("Media Output Glyph", mediaOutputGlyph) {
-                        App.scope.launch { App.settings.mediaOutputGlyph.set(!mediaOutputGlyph) }
                     }
                 }
             }

@@ -27,7 +27,6 @@ import com.sublunar.amp.App
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.Track
-import com.sublunar.amp.data.shuffled
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.components.AppHeader
 import com.sublunar.amp.ui.components.AppIcons
@@ -45,8 +44,6 @@ import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.ScrollableList
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.SelectionHeader
-import com.sublunar.amp.ui.components.CentredPlayRow
-import com.sublunar.amp.ui.components.PlayShuffleRow
 import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.formatRunTime
 import com.sublunar.amp.ui.components.formatTime
@@ -89,11 +86,7 @@ class AlbumDetailScreen(
         // A row above the tracks only where there is a card: an album opened
         // from a playlist or a radio track can be missing from the album list.
         val card = album?.takeIf { !selection.active }
-        val playButtons = App.settings.albumPlayButtons.state.collectAsState().value && !selection.active
-        val listState = rememberListAnchor(
-            "album:$albumId",
-            headerCount = (if (card != null) 1 else 0) + (if (playButtons) 1 else 0),
-        )
+        val listState = rememberListAnchor("album:$albumId", headerCount = if (card != null) 1 else 0)
         // The card names the album, and the header takes the name only once the
         // card's title has scrolled up under it. Unmeasured counts as never
         // reached, so the header doesn't flash the name first.
@@ -145,25 +138,14 @@ class AlbumDetailScreen(
                 val numberColumn = rememberNumberColumn(numbers)
                 // A record on more than one disc lists each under its own heading.
                 val discs = remember(list) { list.mapNotNull { it.discNumber }.distinct() }
-                ScrollableList(state = listState) {
+                // The bar only while the page moves, as the album grid's.
+                ScrollableList(state = listState, fadingBar = true) {
                     if (card != null) {
                         item {
                             if (artworkHidden) {
                                 TextCard(card) { cardTitleBottomPx = it }
                             } else {
                                 AlbumCard(card) { cardTitleBottomPx = it }
-                            }
-                        }
-                    }
-                    if (playButtons) {
-                        item {
-                            val onPlay = { playAlbum(list, album?.title) }
-                            val onShuffle = { playAlbum(shuffled(list), album?.title) }
-                            if (artworkHidden) {
-                                CentredPlayRow(onPlay, onShuffle)
-                            } else {
-                                // From the cover's left edge, on the track numbers' axis.
-                                PlayShuffleRow(onPlay, onShuffle)
                             }
                         }
                     }
@@ -214,12 +196,6 @@ class AlbumDetailScreen(
                 }
             }
         }
-    }
-
-    private fun playAlbum(songs: List<Track>, name: String?) {
-        if (songs.isEmpty()) return
-        App.playback.playQueue(songs, 0, name = name)
-        go { NowPlayingScreen(it) }
     }
 
     /**
@@ -346,7 +322,7 @@ class AlbumDetailScreen(
                 .padding(start = px(SCROLLBAR_LANE_PX - LIST_EDGE_PX), bottom = px(cardGapPx())),
             horizontalAlignment = if (centred) Alignment.CenterHorizontally else Alignment.Start,
         ) {
-            CardTitle(album.title, centred = centred, maxLines = Int.MAX_VALUE, onTitleBottom = onTitleBottom)
+            CardTitle(album.title, centred = centred, maxLines = Int.MAX_VALUE, onTitleBottom = onTitleBottom, large = true)
             Spacer(Modifier.height(px(TEXT_CARD_LINE_GAP_PX)))
             AppText(
                 album.artist,

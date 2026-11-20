@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
@@ -143,8 +142,8 @@ fun BoxScope.OverlayScrollBar(target: ScrollTarget, scrolling: Boolean) {
     BoxWithConstraints(
         modifier = Modifier
             .align(Alignment.TopEnd)
+            // The list's whole height, as the lists' own bar takes.
             .fillMaxHeight()
-            .padding(vertical = px(OVERLAY_INSET_PX))
             // The lists' lane, so every bar in the app stands on one line.
             .width(px(SCROLLBAR_LANE_PX))
             .alpha(alpha)
@@ -205,10 +204,8 @@ fun BoxScope.OverlayScrollBar(target: ScrollTarget, scrolling: Boolean) {
 }
 
 /**
- * The SDK's inside bar on the LP3: a unit clear above and below, and a thumb
- * between a tenth and most of the track.
+ * The SDK's inside bar on the LP3: a thumb between a tenth and most of the track.
  */
-private const val OVERLAY_INSET_PX = 40
 private const val OVERLAY_MIN_FRACTION = 0.1f
 private const val OVERLAY_MAX_FRACTION = 0.85f
 

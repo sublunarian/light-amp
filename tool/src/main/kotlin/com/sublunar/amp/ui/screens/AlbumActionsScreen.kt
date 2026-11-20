@@ -58,14 +58,7 @@ class AlbumActionsScreen(
             ActionList {
                 // The album's own page plays from its first track already.
                 PlayRows(list, play = !fromAlbumPage)
-                TextRow(title = "Play Next") {
-                    if (list.isNotEmpty()) App.playback.playNext(list)
-                    goBack()
-                }
-                TextRow(title = "Add to Queue") {
-                    if (list.isNotEmpty()) App.playback.addToQueue(list)
-                    goBack()
-                }
+                QueueRows(list)
                 if (list.isNotEmpty()) AddToPlaylistRow(list.map { it.id }) { goBack() }
                 if (album != null && source.supportsLikes) {
                     TextRow(title = if (album.liked) "Unlike Album" else "Like Album") {

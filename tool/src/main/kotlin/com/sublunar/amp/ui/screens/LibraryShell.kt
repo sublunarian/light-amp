@@ -1,5 +1,8 @@
 package com.sublunar.amp.ui.screens
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import com.sublunar.amp.data.Holdings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.mutableIntStateOf
@@ -28,19 +31,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
 import com.sublunar.amp.data.MusicSource
 import com.sublunar.amp.data.Album
 import com.sublunar.amp.data.HomeCategory
-import com.sublunar.amp.data.splitTagValues
-import com.sublunar.amp.data.tagValuesIn
 import com.sublunar.amp.data.titleKey
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.SyncState
@@ -75,7 +73,6 @@ import com.sublunar.amp.ui.components.TextRole
 import com.sublunar.amp.ui.components.TitleCard
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.indexLetterOf
-import com.sublunar.amp.ui.components.listPadding
 import com.sublunar.amp.ui.components.rememberGridAnchor
 import com.sublunar.amp.ui.components.rememberLatest
 import com.sublunar.amp.ui.components.rememberListAnchor
@@ -124,17 +121,15 @@ fun SimpleLightScreen<*>.LibraryShell() {
                     TabContent(currentTab)
                 }
             }
-            // Over search's results the bar is back, in both layouts: the simple
-            // one lights search, the tabs none, as search is none of them. While
-            // typing the keyboard takes the bottom.
-            if (!searchActive || !typing) {
+            // Search is a page of its own, with no bar.
+            if (!searchActive) {
                 Navbar(
                     current = if (libraryIndex || searchActive) null else currentTab,
                     onSelect = { LibraryNav.tapTab(it) },
                     onSearch = { startSearch() },
                     onNowPlaying = { go { NowPlayingScreen(it) } },
                     onBrowse = { LibraryNav.pressLibrary() },
-                    libraryLit = !searchActive,
+                    onHome = libraryIndex,
                 )
             }
         }
@@ -224,9 +219,9 @@ fun likedOnly(tab: LibraryTab?): Boolean {
     }
 }
 
-/** What the tab is called: "Liked" in front when only liked items show. The other filters get [tabFilterLine]. */
+/** What the tab is called: "Favorite" in front when only liked items show. The other filters get [tabFilterLine]. */
 fun tabTitle(tab: LibraryTab, likedOnly: Boolean): String =
-    if (likedOnly) "Liked " + tab.title else tab.title
+    if (likedOnly) "Favorite " + tab.title else tab.title
 
 /**
  * The filters narrowing a tab other than Liked, which the title already names —
@@ -623,7 +618,7 @@ private fun SimpleLightScreen<*>.LibraryIndex() {
             val anchor = "index:${page.kind.name.lowercase()}:${page.downloaded}"
             val rows: LazyListScope.() -> Unit = {
                 lines.forEach { line ->
-                    item { IndexLine(line.title, line.icon, line.iconScale, pitch, line.onClick) }
+                    item { IndexLine(line.title, line.icon, line.iconScale, pitch, line.onLongClick, line.onClick) }
                 }
             }
             if (page.kind == IndexPage.Kind.GENRES) {
@@ -643,13 +638,14 @@ private class IndexEntry(
     val icon: ImageVector?,
     /** The glyph's size in its slot, for one that draws larger than the rest. */
     val iconScale: Float = 1f,
+    val onLongClick: (() -> Unit)? = null,
     val onClick: () -> Unit,
 )
 
 /**
  * The home list's header: the source's name with the SDK's chevron, a picker
  * as the library's name is at the top of Plexamp, and Settings in the corner.
- * With nothing else to pick, the name alone: Sync is in Settings > Sources.
+ * With nothing else to pick, just "Library": Sync is in Settings > Sources.
  * The pages under it are named, with the way back.
  */
 @Composable
@@ -659,7 +655,7 @@ private fun SimpleLightScreen<*>.IndexHeader(page: IndexPage) {
     val parent = page.parent
     if (parent == null) {
         AppHeader(
-            title = source.name.takeUnless { hasChoice(sources) },
+            title = "Library".takeUnless { hasChoice(sources) },
             fitTitle = true,
             titleContent = if (hasChoice(sources)) ({ SourceTitle(source.name) { go { SourcesScreen(it) } } }) else null,
             rightAction = settingsAction(),
@@ -689,19 +685,32 @@ private fun SimpleLightScreen<*>.IndexHeader(page: IndexPage) {
  */
 @Composable
 private fun homeLines(page: IndexPage): List<IndexEntry> {
-    val source by App.source.collectAsState()
     val layout by App.settings.homeLayout.state.collectAsState()
-    val genres by App.library.hasGenres.collectAsState()
+    val holdings by App.library.holdings.collectAsState()
+    val downloadedPlaylists by App.playlists.downloadedPlaylistIds.collectAsState()
     val downloaded = page.downloaded
     val downloadGlyph = AppIcons.Downloaded
+    val likedGlyph = AppIcons.Favorite
+    val liked = likedTabs(holdings, downloaded)
     return layout.listed.mapNotNull { category ->
+        // Under Downloaded, each only with something downloaded to show. What
+        // the source can do isn't asked: it changes over a frame apart from the
+        // holdings on a switch, and a source with no likes or downloads has none.
         val available = when (category) {
-            HomeCategory.GENRES -> genres
-            HomeCategory.FAVORITES -> source.supportsLikes
-            HomeCategory.DOWNLOADED -> source.supportsDownloads && !downloaded
-            else -> true
+            HomeCategory.PLAYLISTS -> !downloaded || downloadedPlaylists.isNotEmpty()
+            HomeCategory.ARTISTS, HomeCategory.ALBUMS, HomeCategory.SONGS -> !downloaded || holdings.downloads
+            HomeCategory.GENRES -> (if (downloaded) holdings.downloadedGenres else holdings.genres).isNotEmpty()
+            HomeCategory.FAVORITES -> liked.isNotEmpty()
+            HomeCategory.DOWNLOADED -> !downloaded && holdings.downloads
         }
         if (!available) return@mapNotNull null
+        // Only one kind liked: that list itself, rather than a page with one row.
+        if (category == HomeCategory.FAVORITES && liked.size == 1) {
+            val tab = liked.single()
+            return@mapNotNull IndexEntry("Favorite ${tab.title}", likedGlyph) {
+                openNarrowed(tab, page, App.Narrowing(liked = true, downloaded = downloaded))
+            }
+        }
         val open: () -> Unit = when (category) {
             HomeCategory.PLAYLISTS -> ({ openNarrowed(LibraryTab.PLAYLISTS, page, App.Narrowing(downloaded = downloaded)) })
             HomeCategory.ARTISTS -> ({ openNarrowed(LibraryTab.ARTISTS, page, App.Narrowing(downloaded = downloaded)) })
@@ -712,45 +721,38 @@ private fun homeLines(page: IndexPage): List<IndexEntry> {
             HomeCategory.DOWNLOADED -> ({ LibraryNav.openLibraryIndex(IndexPage(IndexPage.Kind.HOME, downloaded = true)) })
         }
         val scale = if (category == HomeCategory.DOWNLOADED) DOWNLOADED_GLYPH_SCALE else 1f
-        IndexEntry(category.title, iconFor(category, downloadGlyph), scale, open)
+        IndexEntry(category.title, iconFor(category, downloadGlyph), scale, onClick = open)
     }
 }
 
-/** Artists, Albums and Songs, each opening liked only — those with anything liked, as the Liked rows were. */
+/** Artists, Albums and Songs, each opening liked only — those with anything liked (and downloaded, under Downloaded). */
 @Composable
 private fun favoriteLines(page: IndexPage): List<IndexEntry> {
-    val likedArtists by App.library.hasLikedArtists.collectAsState()
-    val likedAlbums by App.library.hasLikedAlbums.collectAsState()
-    val likedTracks by App.library.hasLikedTracks.collectAsState()
-    return LIKED_ORDER.mapNotNull { tab ->
-        val any = when (tab) {
-            LibraryTab.ARTISTS -> likedArtists
-            LibraryTab.ALBUMS -> likedAlbums
-            else -> likedTracks
-        }
-        if (!any) return@mapNotNull null
+    val holdings by App.library.holdings.collectAsState()
+    return likedTabs(holdings, page.downloaded).map { tab ->
         IndexEntry(tab.title, iconFor(tab)) {
             openNarrowed(tab, page, App.Narrowing(liked = true, downloaded = page.downloaded))
         }
     }
 }
 
-/** The library's genres, by name, each opening Albums narrowed to it. Under Downloaded, only what the downloads carry. */
-@Composable
-private fun genreLines(page: IndexPage): List<IndexEntry> {
-    val all by App.library.genres.collectAsState()
-    val tracks by App.library.tracks.collectAsState()
-    val downloadedIds by App.library.downloadedTrackIds.collectAsState()
-    val inDownloads by produceState(emptyList<String>(), page, tracks, downloadedIds) {
-        if (page.downloaded) {
-            value = withContext(Dispatchers.Default) {
-                tagValuesIn(tracks.filter { it.id in downloadedIds }) { splitTagValues(it.genre) }
-            }
+/** The lists with anything liked in them, in the Liked page's order; under Downloaded, liked and downloaded both. */
+private fun likedTabs(holdings: Holdings, downloaded: Boolean): List<LibraryTab> =
+    LIKED_ORDER.filter { tab ->
+        when (tab) {
+            LibraryTab.ARTISTS -> if (downloaded) holdings.likedDownloadedArtists else holdings.likedArtists
+            LibraryTab.ALBUMS -> if (downloaded) holdings.likedDownloadedAlbums else holdings.likedAlbums
+            else -> if (downloaded) holdings.likedDownloadedSongs else holdings.likedSongs
         }
     }
-    val values = if (page.downloaded) inDownloads else all
+
+/** The library's genres, by name, each opening Albums narrowed to it. Under Downloaded, only what the downloads carry. */
+@Composable
+private fun SimpleLightScreen<*>.genreLines(page: IndexPage): List<IndexEntry> {
+    val holdings by App.library.holdings.collectAsState()
+    val values = if (page.downloaded) holdings.downloadedGenres else holdings.genres
     return values.map { value ->
-        IndexEntry(value, null) {
+        IndexEntry(value, null, onLongClick = { go { GenreActionsScreen(it, value, page.downloaded) } }) {
             openNarrowed(LibraryTab.ALBUMS, page, App.Narrowing(downloaded = page.downloaded, tags = TagFilter(value)))
         }
     }
@@ -822,12 +824,19 @@ private fun iconFor(tab: LibraryTab): ImageVector = when (tab) {
 
 /** A row of the home list, as 0.8.2 drew it: the glyph, then the name at Copy, [pitch] tall. */
 @Composable
-private fun IndexLine(title: String, icon: ImageVector?, iconScale: Float, pitch: Dp, onClick: () -> Unit) {
+private fun IndexLine(
+    title: String,
+    icon: ImageVector?,
+    iconScale: Float,
+    pitch: Dp,
+    onLongClick: (() -> Unit)?,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(pitch)
-            .rowClickable(onClick = onClick)
+            .rowClickable(onClick = onClick, onLongClick = onLongClick)
             // The glyph where every library list's content starts, 72px from the screen's edge.
             .padding(start = px(LIST_LEAD_PX)),
         verticalAlignment = Alignment.CenterVertically,

@@ -39,7 +39,7 @@ class ArtistSongsViewTest {
     fun `liked and downloaded narrow together`() {
         assertEquals(listOf("1", "3"), ids(ArtistSongsView(liked = true)))
         assertEquals(listOf("3"), ids(ArtistSongsView(liked = true, downloaded = true), downloaded = setOf("2", "3")))
-        assertEquals("Liked · Downloaded", ArtistSongsView(liked = true, downloaded = true).filterLine())
+        assertEquals("Favorites · Downloaded", ArtistSongsView(liked = true, downloaded = true).filterLine())
     }
 
     @Test
