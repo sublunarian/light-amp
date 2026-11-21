@@ -195,7 +195,6 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         upstream = { relayUpstream },
         allowed = { DlnaCast.allowsNetwork() },
         log = ::log,
-        shutSince = NetworkGate::slammedSince,
     )
 
     // A cold transcode can take a while to say anything, and the speaker is left waiting either way.

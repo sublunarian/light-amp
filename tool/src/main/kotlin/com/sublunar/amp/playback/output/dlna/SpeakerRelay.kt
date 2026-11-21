@@ -1,7 +1,6 @@
 package com.sublunar.amp.playback.output.dlna
 
 import com.sublunar.amp.log.logName
-import com.sublunar.amp.log.loggableWord
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -10,7 +9,6 @@ import java.io.OutputStream
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.ServerSocket
-import java.net.SocketException
 import java.net.Socket
 import java.security.SecureRandom
 import kotlin.concurrent.thread
@@ -43,8 +41,6 @@ internal class SpeakerRelay(
     private val allowed: () -> Boolean,
     private val log: (String) -> Unit,
     private val localAddressFacing: (InetAddress) -> InetAddress? = ::routeTo,
-    /** Whether this app shut every connection at or after a moment (monotonic ms) — see NetworkGate.slam. */
-    private val shutSince: (Long) -> Boolean = { false },
 ) {
     private class Connection(val socket: Socket) {
         @Volatile var call: Call? = null
@@ -207,10 +203,10 @@ internal class SpeakerRelay(
             log("relay: server unreachable: ${e.logName()}")
             return reply(output, 502, "Bad Gateway")
         }
-        response.use { relay(it, request, connection, output) }
+        response.use { relay(it, request, output) }
     }
 
-    private fun relay(response: Response, request: SpeakerRequest, connection: Connection, output: OutputStream) {
+    private fun relay(response: Response, request: SpeakerRequest, output: OutputStream) {
         val headOnly = request.method == "HEAD"
         // A server's refusal goes on as its status alone: its words may quote the request.
         if (headOnly || !response.isSuccessful) {
@@ -230,68 +226,21 @@ internal class SpeakerRelay(
         }
         output.write(responseHead(response, framing))
         output.flush()
-        val startedNs = System.nanoTime()
-        val startedMs = startedNs / 1_000_000
-        var sent = 0L
-        // Which side ended a stream is the one thing a speaker that stops early can't say.
-        val end = try {
-            sent = copy(response.body.byteStream(), output, chunked) { sent = it }
-            "the server's end"
-        } catch (e: SpeakerGone) {
-            if (connection.cut) "the cast ending" else "the speaker hanging up"
-        } catch (e: IOException) {
-            when {
-                connection.cut -> "the cast ending"
-                // Amp's own network wall closes every socket when it reads the link as forbidden.
-                shutSince(startedMs) -> "Amp shutting every connection (${e.logName()})"
-                else -> "the server breaking off (${e.logName()}${e.systemPhrase()})"
-            }
-        }
-        val framed = when {
-            length >= 0 -> "sized"
-            chunked -> "chunked"
-            else -> "unframed"
-        }
-        log(
-            "relay: ${response.code} $framed${if (request.range != null) ", ranged" else ""} ended by $end " +
-                "after ${(System.nanoTime() - startedNs) / 1_000_000_000} s, ${sent / 1024} KB",
-        )
+        copy(response.body.byteStream(), output, chunked)
     }
 
-    // A socket's own words are a fixed phrase from the system ("Connection reset",
-    // "Software caused connection abort") that tells who ended it; never an address.
-    private fun IOException.systemPhrase(): String =
-        if (this is SocketException) ": ${loggableWord(message)}" else ""
-
-    /** A write to the speaker failed: it hung up, or was cut off here. */
-    private class SpeakerGone : IOException()
-
-    /** [body] to [output] until the server ends it; the bytes sent, reported to [progress] as they go. */
-    private fun copy(body: InputStream, output: OutputStream, chunked: Boolean, progress: (Long) -> Unit): Long {
+    private fun copy(body: InputStream, output: OutputStream, chunked: Boolean) {
         val buffer = ByteArray(COPY_BYTES)
-        var sent = 0L
-        fun write(action: () -> Unit) = try {
-            action()
-        } catch (_: IOException) {
-            throw SpeakerGone()
-        }
         while (true) {
             val read = body.read(buffer)
             if (read < 0) break
-            write {
-                if (chunked) output.write("${read.toString(16)}\r\n".toByteArray(Charsets.ISO_8859_1))
-                output.write(buffer, 0, read)
-                if (chunked) output.write(CRLF)
-                output.flush()
-            }
-            sent += read
-            progress(sent)
-        }
-        write {
-            if (chunked) output.write(LAST_CHUNK)
+            if (chunked) output.write("${read.toString(16)}\r\n".toByteArray(Charsets.ISO_8859_1))
+            output.write(buffer, 0, read)
+            if (chunked) output.write(CRLF)
             output.flush()
         }
-        return sent
+        if (chunked) output.write(LAST_CHUNK)
+        output.flush()
     }
 
     private fun upstreamRequest(url: String, request: SpeakerRequest): Request =
