@@ -1,6 +1,7 @@
 package com.sublunar.amp.playback.output.dlna
 
 import com.sublunar.amp.log.logName
+import com.sublunar.amp.log.loggableWord
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -9,6 +10,7 @@ import java.io.OutputStream
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.net.SocketException
 import java.net.Socket
 import java.security.SecureRandom
 import kotlin.concurrent.thread
@@ -242,7 +244,7 @@ internal class SpeakerRelay(
                 connection.cut -> "the cast ending"
                 // Amp's own network wall closes every socket when it reads the link as forbidden.
                 shutSince(startedMs) -> "Amp shutting every connection (${e.logName()})"
-                else -> "the server breaking off (${e.logName()})"
+                else -> "the server breaking off (${e.logName()}${e.systemPhrase()})"
             }
         }
         val framed = when {
@@ -255,6 +257,11 @@ internal class SpeakerRelay(
                 "after ${(System.nanoTime() - startedNs) / 1_000_000_000} s, ${sent / 1024} KB",
         )
     }
+
+    // A socket's own words are a fixed phrase from the system ("Connection reset",
+    // "Software caused connection abort") that tells who ended it; never an address.
+    private fun IOException.systemPhrase(): String =
+        if (this is SocketException) ": ${loggableWord(message)}" else ""
 
     /** A write to the speaker failed: it hung up, or was cut off here. */
     private class SpeakerGone : IOException()
