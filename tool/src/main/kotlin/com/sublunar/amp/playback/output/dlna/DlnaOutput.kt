@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Protocol
 
 /**
  * Playing to a DLNA renderer. A renderer holds one URI, and optionally the
@@ -197,7 +198,14 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
     )
 
     // A cold transcode can take a while to say anything, and the speaker is left waiting either way.
-    private val relayUpstream by lazy { NetworkGate.transferClient(connectTimeoutMs = 7_000L, readTimeoutMs = 60_000L) }
+    // HTTP/1.1, as a speaker asks for itself: one reading a song at its own pace
+    // over HTTP/2 was reset by the server at exactly 16 MiB, the stream's window.
+    private val relayUpstream by lazy {
+        NetworkGate.transferClient(connectTimeoutMs = 7_000L, readTimeoutMs = 60_000L)
+            .newBuilder()
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .build()
+    }
 
     private val DlnaRenderer.speakerHost: String? get() = runCatching { java.net.URL(controlUrl).host }.getOrNull()
 
