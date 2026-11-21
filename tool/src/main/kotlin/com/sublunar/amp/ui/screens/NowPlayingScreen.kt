@@ -2,7 +2,6 @@ package com.sublunar.amp.ui.screens
 
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
-import com.thelightphone.sdk.ui.LightThemeColors
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -242,7 +241,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     onBack = { goBack() },
                     // Nothing in the card's place in hero mode, where the
                     // title lives on the stage instead — see heroTitle.
-                    titleContent = if (heroTitle) null else ({ TitleCard(current.title, credit, sdkGrey = true) }),
+                    titleContent = if (heroTitle) null else ({ TitleCard(current.title, credit) }),
                     rightAction = HeaderAction(
                         AppIcons.More,
                         onLongClick = { go { SettingsScreen(it) } },
@@ -413,13 +412,12 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     private fun HeroLine(text: String, sizePx: Int, linePx: Int, dim: Boolean, maxLines: Int = 1) {
         if (text.isBlank()) return
-        // The dim lines in the SDK's own lighter grey, as the title card's.
         AppText(
             text,
             pxSp(sizePx),
             lineHeight = pxSp(linePx),
             role = TextRole.Subheading,
-            color = if (dim) LightThemeColors.Dark.contentSecondary else LightThemeTokens.colors.content,
+            dim = dim,
             // Cut, not scrolled, as the stock tools do; Song Info has it whole.
             maxLines = maxLines,
             align = TextAlign.Center,

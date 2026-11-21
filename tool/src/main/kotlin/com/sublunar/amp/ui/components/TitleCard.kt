@@ -1,8 +1,5 @@
 package com.sublunar.amp.ui.components
 
-import com.thelightphone.sdk.ui.LightThemeTokens
-import com.thelightphone.sdk.ui.LightThemeColors
-import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
@@ -17,20 +14,15 @@ import com.sublunar.amp.ui.pxSp
  * of 3, so they are whole dp as well.
  */
 @Composable
-fun TitleCard(
-    top: String,
-    bottom: String,
-    /** The second line in the SDK's own lighter grey, as the player has it. */
-    sdkGrey: Boolean = false,
-) {
+fun TitleCard(top: String, bottom: String) {
     Column(modifier = Modifier.fillMaxWidth()) {
         TitleLine(top, TITLE_PX, TITLE_LINE_PX, dim = false)
-        TitleLine(bottom, SUB_PX, SUB_LINE_PX, dim = true, colour = if (sdkGrey) LightThemeColors.Dark.contentSecondary else null)
+        TitleLine(bottom, SUB_PX, SUB_LINE_PX, dim = true)
     }
 }
 
 @Composable
-private fun TitleLine(text: String, sizePx: Int, linePx: Int, dim: Boolean, colour: Color? = null) {
+private fun TitleLine(text: String, sizePx: Int, linePx: Int, dim: Boolean) {
     AppText(
         text,
         pxSp(sizePx),
@@ -38,8 +30,7 @@ private fun TitleLine(text: String, sizePx: Int, linePx: Int, dim: Boolean, colo
         role = TextRole.Subheading,
         // Regular on both lines, whatever the role's own weight.
         weight = FontWeight.Normal,
-        dim = dim && colour == null,
-        color = colour ?: LightThemeTokens.colors.content,
+        dim = dim,
         // Cut, not scrolled: nothing in LightOS moves, and Song Info has it whole.
         maxLines = 1,
         align = TextAlign.Center,
