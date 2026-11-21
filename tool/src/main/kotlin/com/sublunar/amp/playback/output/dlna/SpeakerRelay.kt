@@ -41,6 +41,8 @@ internal class SpeakerRelay(
     private val allowed: () -> Boolean,
     private val log: (String) -> Unit,
     private val localAddressFacing: (InetAddress) -> InetAddress? = ::routeTo,
+    /** Whether this app shut every connection at or after a moment (monotonic ms) — see NetworkGate.slam. */
+    private val shutSince: (Long) -> Boolean = { false },
 ) {
     private class Connection(val socket: Socket) {
         @Volatile var call: Call? = null
@@ -227,6 +229,7 @@ internal class SpeakerRelay(
         output.write(responseHead(response, framing))
         output.flush()
         val startedNs = System.nanoTime()
+        val startedMs = startedNs / 1_000_000
         var sent = 0L
         // Which side ended a stream is the one thing a speaker that stops early can't say.
         val end = try {
@@ -235,7 +238,12 @@ internal class SpeakerRelay(
         } catch (e: SpeakerGone) {
             if (connection.cut) "the cast ending" else "the speaker hanging up"
         } catch (e: IOException) {
-            if (connection.cut) "the cast ending" else "the server breaking off (${e.logName()})"
+            when {
+                connection.cut -> "the cast ending"
+                // Amp's own network wall closes every socket when it reads the link as forbidden.
+                shutSince(startedMs) -> "Amp shutting every connection (${e.logName()})"
+                else -> "the server breaking off (${e.logName()})"
+            }
         }
         val framed = when {
             length >= 0 -> "sized"

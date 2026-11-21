@@ -195,11 +195,12 @@ internal class DlnaOutput(private val host: OutputHost) : Output {
         upstream = { relayUpstream },
         allowed = { DlnaCast.allowsNetwork() },
         log = ::log,
+        shutSince = NetworkGate::slammedSince,
     )
 
     // A cold transcode can take a while to say anything, and the speaker is left waiting either way.
-    // HTTP/1.1, as a speaker asks for itself: one reading a song at its own pace
-    // over HTTP/2 was reset by the server at exactly 16 MiB, the stream's window.
+    // HTTP/1.1, as a speaker asks for itself: each stream a connection of its own,
+    // not one shared with the app's other requests.
     private val relayUpstream by lazy {
         NetworkGate.transferClient(connectTimeoutMs = 7_000L, readTimeoutMs = 60_000L)
             .newBuilder()

@@ -34,6 +34,7 @@ class SpeakerRelayTest {
     private lateinit var origin: ServerSocket
     private lateinit var relay: SpeakerRelay
     @Volatile private var allowed = true
+    @Volatile private var shut = false
 
     private val secret get() = "http://127.0.0.1:${origin.localPort}/rest/stream?id=7&u=me&t=SECRET&s=salt"
 
@@ -41,7 +42,7 @@ class SpeakerRelayTest {
     fun setUp() {
         origin = ServerSocket(0, 16, loopback)
         thread(isDaemon = true) { serveOrigin() }
-        relay = SpeakerRelay({ OkHttpClient() }, { allowed }, { logged += it }, { loopback })
+        relay = SpeakerRelay({ OkHttpClient() }, { allowed }, { logged += it }, { loopback }, { shut })
     }
 
     @AfterTest
@@ -219,6 +220,9 @@ class SpeakerRelayTest {
         assertTrue(ends[0].startsWith("relay: 200 sized ended by the server's end after"), ends[0])
         assertTrue("ended by the server breaking off" in ends[1], ends[1])
         assertTrue(ends.none { "SECRET" in it || "127.0.0.1" in it }, ends.toString())
+        shut = true
+        ask(address("$secret&short=1&again=1"))
+        assertTrue("ended by Amp shutting every connection" in logged.last { "ended by" in it })
     }
 
     @Test
