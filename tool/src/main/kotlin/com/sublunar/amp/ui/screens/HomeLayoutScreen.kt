@@ -62,7 +62,9 @@ class HomeLayoutScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     .dragReorderContainer(
                         state = drag,
                         enabled = true,
-                        restartKey = order,
+                        // The whole layout, not just the order: a category switched on
+                        // where it already stood changes only what can be grabbed.
+                        restartKey = layout,
                         orderedKeys = listed,
                         rowPx = rowPx,
                         onDrop = { moving, insertAt ->
