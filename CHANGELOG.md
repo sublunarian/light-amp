@@ -12,8 +12,13 @@
 - Casting to a DLNA speaker keeps your server login on the phone. The music
   now passes through the phone, so keep it on the same Wi-Fi while casting.
 - Resuming on an AirPlay speaker takes about half as long.
-- A cast rides out a short Wi-Fi drop: it plays on by itself once Wi-Fi is
-  back, with every speaker of a group.
+- An AirPlay cast rides out a short Wi-Fi drop: it plays on by itself once
+  Wi-Fi is back, with every speaker of a group.
+- The volume buttons show LightOS's own volume panel, while casting too.
+- Artist pages put Play All and Shuffle at the top, and can end with their five
+  most popular songs.
+- Albums with more than one disc are split by disc, and the sort menus are
+  simpler.
 - The simple layout's home list has its glyphs back, and the source picker
   shows only when there's more than one library to choose. Sync is now at the
   top of Settings > Sources.
@@ -30,6 +35,10 @@
   once with the code it shows. HomePods too.
 - Like songs, albums and artists in your local music. They're saved in a file
   you can take with you.
+- Choose what the simple layout's home page lists, and in what order, in
+  Settings > Library Home.
+- Local music: albums show a cover.jpg from their folder, FLAC albums show
+  their year, and lyrics stored in the files play, offline too.
 
 ## 0.9.2
 
