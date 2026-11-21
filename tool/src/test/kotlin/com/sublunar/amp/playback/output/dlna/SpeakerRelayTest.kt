@@ -30,6 +30,7 @@ class SpeakerRelayTest {
     private val loopback = InetAddress.getByName("127.0.0.1")
     private val song = Random(11).nextBytes(200_000)
     private val heard = CopyOnWriteArrayList<String>()
+    private val logged = CopyOnWriteArrayList<String>()
     private lateinit var origin: ServerSocket
     private lateinit var relay: SpeakerRelay
     @Volatile private var allowed = true
@@ -40,7 +41,7 @@ class SpeakerRelayTest {
     fun setUp() {
         origin = ServerSocket(0, 16, loopback)
         thread(isDaemon = true) { serveOrigin() }
-        relay = SpeakerRelay({ OkHttpClient() }, { allowed }, ::println, { loopback })
+        relay = SpeakerRelay({ OkHttpClient() }, { allowed }, { logged += it }, { loopback })
     }
 
     @AfterTest
@@ -211,6 +212,16 @@ class SpeakerRelayTest {
     }
 
     @Test
+    fun `the log says which side ended a stream`() {
+        ask(address())
+        ask(address("$secret&short=1"))
+        val ends = logged.filter { "ended by" in it }
+        assertTrue(ends[0].startsWith("relay: 200 sized ended by the server's end after"), ends[0])
+        assertTrue("ended by the server breaking off" in ends[1], ends[1])
+        assertTrue(ends.none { "SECRET" in it || "127.0.0.1" in it }, ends.toString())
+    }
+
+    @Test
     fun `a speaker's request is read as it was sent`() {
         val plain = assertNotNull(speakerRequest("GET /c/abc?ampTry=3 HTTP/1.0\r\nrange: bytes=5-\r\nUSER-AGENT: Denon\r\n\r\n"))
         assertEquals("abc", plain.token)
@@ -254,6 +265,10 @@ class SpeakerRelayTest {
                 val words = "no such song: u=me&t=SECRET".toByteArray()
                 output.write("HTTP/1.1 500 Oops\r\nContent-Length: ${words.size}\r\nConnection: close\r\n\r\n".toByteArray())
                 output.write(words)
+            }
+            "short=1" in path -> {
+                output.write("HTTP/1.1 200 OK\r\nContent-Type: audio/flac\r\nContent-Length: ${song.size}\r\nConnection: close\r\n\r\n".toByteArray())
+                output.write(song, 0, song.size / 2)
             }
             "live=1" in path -> {
                 output.write("HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nConnection: close\r\n\r\n".toByteArray())

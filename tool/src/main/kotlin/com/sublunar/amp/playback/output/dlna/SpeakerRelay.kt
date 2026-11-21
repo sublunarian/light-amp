@@ -203,10 +203,10 @@ internal class SpeakerRelay(
             log("relay: server unreachable: ${e.logName()}")
             return reply(output, 502, "Bad Gateway")
         }
-        response.use { relay(it, request, output) }
+        response.use { relay(it, request, connection, output) }
     }
 
-    private fun relay(response: Response, request: SpeakerRequest, output: OutputStream) {
+    private fun relay(response: Response, request: SpeakerRequest, connection: Connection, output: OutputStream) {
         val headOnly = request.method == "HEAD"
         // A server's refusal goes on as its status alone: its words may quote the request.
         if (headOnly || !response.isSuccessful) {
@@ -226,21 +226,57 @@ internal class SpeakerRelay(
         }
         output.write(responseHead(response, framing))
         output.flush()
-        copy(response.body.byteStream(), output, chunked)
+        val startedNs = System.nanoTime()
+        var sent = 0L
+        // Which side ended a stream is the one thing a speaker that stops early can't say.
+        val end = try {
+            sent = copy(response.body.byteStream(), output, chunked) { sent = it }
+            "the server's end"
+        } catch (e: SpeakerGone) {
+            if (connection.cut) "the cast ending" else "the speaker hanging up"
+        } catch (e: IOException) {
+            if (connection.cut) "the cast ending" else "the server breaking off (${e.logName()})"
+        }
+        val framed = when {
+            length >= 0 -> "sized"
+            chunked -> "chunked"
+            else -> "unframed"
+        }
+        log(
+            "relay: ${response.code} $framed${if (request.range != null) ", ranged" else ""} ended by $end " +
+                "after ${(System.nanoTime() - startedNs) / 1_000_000_000} s, ${sent / 1024} KB",
+        )
     }
 
-    private fun copy(body: InputStream, output: OutputStream, chunked: Boolean) {
+    /** A write to the speaker failed: it hung up, or was cut off here. */
+    private class SpeakerGone : IOException()
+
+    /** [body] to [output] until the server ends it; the bytes sent, reported to [progress] as they go. */
+    private fun copy(body: InputStream, output: OutputStream, chunked: Boolean, progress: (Long) -> Unit): Long {
         val buffer = ByteArray(COPY_BYTES)
+        var sent = 0L
+        fun write(action: () -> Unit) = try {
+            action()
+        } catch (_: IOException) {
+            throw SpeakerGone()
+        }
         while (true) {
             val read = body.read(buffer)
             if (read < 0) break
-            if (chunked) output.write("${read.toString(16)}\r\n".toByteArray(Charsets.ISO_8859_1))
-            output.write(buffer, 0, read)
-            if (chunked) output.write(CRLF)
+            write {
+                if (chunked) output.write("${read.toString(16)}\r\n".toByteArray(Charsets.ISO_8859_1))
+                output.write(buffer, 0, read)
+                if (chunked) output.write(CRLF)
+                output.flush()
+            }
+            sent += read
+            progress(sent)
+        }
+        write {
+            if (chunked) output.write(LAST_CHUNK)
             output.flush()
         }
-        if (chunked) output.write(LAST_CHUNK)
-        output.flush()
+        return sent
     }
 
     private fun upstreamRequest(url: String, request: SpeakerRequest): Request =
