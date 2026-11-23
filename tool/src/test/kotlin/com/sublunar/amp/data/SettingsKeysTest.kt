@@ -98,7 +98,7 @@ class SettingsKeysTest {
                 "pref.rowMark" to "LIKED",
                 "pref.artworkMode" to "NONE",
                 "pref.homeCategories" to
-                    "GENRES,PLAYLISTS,ARTISTS,ALBUMS,SONGS,-FAVORITES,-DOWNLOADED",
+                    "GENRES,PLAYLISTS,ARTISTS,ALBUMS,SONGS,FAVORITES,DOWNLOADED",
             ),
             store.all(),
         )

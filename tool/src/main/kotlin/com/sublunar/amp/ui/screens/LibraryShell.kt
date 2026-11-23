@@ -108,6 +108,7 @@ enum class LibraryTab(val title: String) {
 fun SimpleLightScreen<*>.LibraryShell() {
     val currentTab by LibraryNav.currentTab.collectAsState()
     val libraryIndex by LibraryNav.libraryIndex.collectAsState()
+    val indexPage by LibraryNav.indexPage.collectAsState()
     val searchActive by LibraryNav.searchActive.collectAsState()
     val typing by LibraryNav.typing.collectAsState()
     PlayerTheme(library = true) {
@@ -129,7 +130,8 @@ fun SimpleLightScreen<*>.LibraryShell() {
                     onSearch = { startSearch() },
                     onNowPlaying = { go { NowPlayingScreen(it) } },
                     onBrowse = { LibraryNav.pressLibrary() },
-                    onHome = libraryIndex,
+                    // Only the home list itself: Favorites, Downloaded and Genres keep the way back to it.
+                    onHome = libraryIndex && indexPage == IndexPage.HOME,
                 )
             }
         }

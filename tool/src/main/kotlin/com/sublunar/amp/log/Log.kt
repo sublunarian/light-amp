@@ -129,8 +129,11 @@ fun Throwable.logName(): String {
  * Where it was thrown, without what it said: up to [max] frames, Amp's own
  * package shortened, plus Amp's first frame if it isn't among them.
  */
-fun Throwable.logFrames(max: Int): List<String> {
-    val frames = stackTrace
+fun Throwable.logFrames(max: Int): List<String> = stackTrace.logFrames(max)
+
+/** [Throwable.logFrames] for a thread caught mid-way rather than a failure. */
+fun Array<StackTraceElement>.logFrames(max: Int): List<String> {
+    val frames = this
     val top = frames.take(max)
     val firstOwn = frames.firstOrNull { it.className.startsWith(OWN_PACKAGE) }
     val shown = if (firstOwn == null || firstOwn in top) top else top + firstOwn

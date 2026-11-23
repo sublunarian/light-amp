@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import androidx.compose.foundation.layout.Spacer
 import com.sublunar.amp.ui.components.LIST_LEAD_PX
 import androidx.compose.runtime.SideEffect
 import com.sublunar.amp.ui.components.rememberListAnchor
@@ -85,10 +86,12 @@ class ArtistDetailScreen(
     @Composable
     private fun PopularPreview(popular: List<Track>, grouped: Boolean) {
         if (popular.isEmpty()) return
-        // Always tight: its songs are one-line rows, closer together than records.
-        HeadingRow("Popular Songs", leadPx = if (grouped) ROW_LEAD_PX else LIST_LEAD_PX, tight = true) {
+        val buttonOnly by App.settings.popularButtonOnly.state.collectAsState()
+        // Tight over its songs: one-line rows, closer together than records.
+        HeadingRow("Popular Songs", leadPx = if (grouped) ROW_LEAD_PX else LIST_LEAD_PX, tight = !buttonOnly) {
             go { ArtistSongsScreen(it, name, popular = true, credit = credit) }
         }
+        if (buttonOnly) return
         popular.take(POPULAR_PREVIEW).forEachIndexed { index, track ->
             TrackRow(
                 title = track.title,
@@ -119,6 +122,7 @@ class ArtistDetailScreen(
             onShuffle = { playAll(shuffled(songsInOrderOf(records))) },
             playLabel = "Play All",
         )
+        Spacer(Modifier.height(px(PLAY_ROW_GAP_PX)))
     }
 
     /** Their songs record by record, as the page lists [records], each in disc and track order. */
@@ -286,6 +290,9 @@ private fun ArtistNameCard(name: String, inList: Boolean, onBottom: (Int) -> Uni
 
 /** Under the name, before the first row: 86px from the name's letters to Play All's, about what an album's card leaves above its first track. Measured on the phone. */
 private const val ARTIST_NAME_GAP_PX = 18
+
+/** Under Play All, so the row reads as the name's and the records start a step below: 103px to the first title, 73px above. Measured on the phone. */
+private const val PLAY_ROW_GAP_PX = 24
 
 /** Long-press sheet for an artist, and the one place an artist is liked. */
 class ArtistActionsScreen(

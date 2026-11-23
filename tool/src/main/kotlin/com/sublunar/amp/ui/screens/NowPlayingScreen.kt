@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import com.sublunar.amp.ui.SDK_GREY
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.foundation.Image
@@ -241,7 +242,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     onBack = { goBack() },
                     // Nothing in the card's place in hero mode, where the
                     // title lives on the stage instead — see heroTitle.
-                    titleContent = if (heroTitle) null else ({ TitleCard(current.title, credit) }),
+                    titleContent = if (heroTitle) null else ({ TitleCard(current.title, credit, bottomColour = SDK_GREY) }),
                     rightAction = HeaderAction(
                         AppIcons.More,
                         onLongClick = { go { SettingsScreen(it) } },
@@ -417,7 +418,7 @@ class NowPlayingScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
             pxSp(sizePx),
             lineHeight = pxSp(linePx),
             role = TextRole.Subheading,
-            dim = dim,
+            color = if (dim) SDK_GREY else LightThemeTokens.colors.content,
             // Cut, not scrolled, as the stock tools do; Song Info has it whole.
             maxLines = maxLines,
             align = TextAlign.Center,

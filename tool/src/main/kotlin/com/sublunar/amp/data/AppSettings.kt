@@ -255,6 +255,7 @@ class AppSettings(
             p.editSources { list -> list.filterNot { it.id == id } }
             if (p[ACTIVE_SOURCE] == id) p.remove(ACTIVE_SOURCE)
             p.remove(cachedPlaylistsKey(id))
+            p.remove(playlistEditsKey(id))
             val plays = p.playlistPlays()
             if (id in plays) p[PLAYLIST_PLAYS] = sourcesJson.encodeToString(plays - id)
             p.remove(lastSyncedKey(id))
@@ -533,6 +534,12 @@ class AppSettings(
     /** An artist's popular songs at the end of their page, where the source can name them. Off until chosen. */
     val showPopularSongs: Pref<Boolean> = bool("pref.showPopularSongs", false)
 
+    /** Trial: Popular Songs on an artist's page as its heading alone, without the five songs. */
+    val popularButtonOnly: Pref<Boolean> = bool("pref.popularButtonOnly", false)
+
+    /** Trial: an album's long track titles wrap to as many lines as they need. */
+    val wrapTrackTitles: Pref<Boolean> = bool("pref.wrapTrackTitles", false)
+
     /** Which categories the simple layout's library home lists, and in what order — see [HomeLayout]. */
     val homeLayout: Pref<HomeLayout> =
         pref(stringPreferencesKey("pref.homeCategories"), HomeLayout.DEFAULT, HomeLayout::decode, HomeLayout::encode)
@@ -626,6 +633,19 @@ class AppSettings(
 
     private fun cachedPlaylistsKey(sourceId: String) =
         stringPreferencesKey("${CACHED_PLAYLISTS.name}.$sourceId")
+
+    /**
+     * Playlist edits made while [sourceId]'s server couldn't be told, as JSON — see
+     * [PlaylistEdits]. Per source: playlist ids mean nothing on another server.
+     */
+    suspend fun playlistEdits(sourceId: String): String =
+        dataStore.data.first()[playlistEditsKey(sourceId)] ?: ""
+
+    suspend fun setPlaylistEdits(sourceId: String, value: String) =
+        putString(playlistEditsKey(sourceId), value)
+
+    private fun playlistEditsKey(sourceId: String) =
+        stringPreferencesKey("${PLAYLIST_EDITS.name}.$sourceId")
 
     /**
      * When [sourceId] last finished a library sync, in epoch ms; 0 if never.
@@ -787,6 +807,7 @@ class AppSettings(
         private val SHUFFLE_NONCE = intPreferencesKey("pref.shuffleNonce")
         private val CACHED_PLAYLISTS = stringPreferencesKey("state.playlists")
         private val PENDING_ACTIONS = stringPreferencesKey("state.pendingActions")
+        private val PLAYLIST_EDITS = stringPreferencesKey("state.playlistEdits")
         private val SAVED_QUEUE = stringPreferencesKey("state.queueIds")
         private val SAVED_INDEX = intPreferencesKey("state.queueIndex")
         private val SAVED_POSITION = longPreferencesKey("state.positionMs")

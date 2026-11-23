@@ -17,9 +17,9 @@ import kotlinx.coroutines.runBlocking
 class HomeLayoutTest {
 
     @Test
-    fun `by default the four tabs, then the rest switched off`() {
+    fun `by default the four tabs, Favorites and Downloaded, with Genres switched off`() {
         val layout = HomeLayout.DEFAULT
-        assertEquals(listOf(PLAYLISTS, ARTISTS, ALBUMS, SONGS), layout.listed)
+        assertEquals(listOf(PLAYLISTS, ARTISTS, ALBUMS, SONGS, FAVORITES, DOWNLOADED), layout.listed)
         assertEquals(HomeCategory.entries, layout.order)
     }
 
@@ -33,25 +33,25 @@ class HomeLayoutTest {
     fun `what is written reads back the same`() {
         val layout = HomeLayout.DEFAULT
             .toggled(PLAYLISTS)
-            .toggled(FAVORITES)
-            .moved(FAVORITES, 0)
+            .toggled(GENRES)
+            .moved(GENRES, 0)
             .moved(SONGS, 1)
-        assertEquals(listOf(FAVORITES, SONGS, ARTISTS, ALBUMS), layout.listed)
+        assertEquals(listOf(GENRES, SONGS, ARTISTS, ALBUMS, FAVORITES, DOWNLOADED), layout.listed)
         assertEquals(layout, HomeLayout.decode(layout.encode()))
     }
 
     @Test
     fun `a switched-off category leads those off, and one switched on ends those on`() {
         val off = HomeLayout.DEFAULT.toggled(ARTISTS)
-        assertEquals(listOf(PLAYLISTS, ALBUMS, SONGS, ARTISTS, GENRES, FAVORITES, DOWNLOADED), off.order)
-        val on = off.toggled(DOWNLOADED)
-        assertEquals(listOf(PLAYLISTS, ALBUMS, SONGS, DOWNLOADED, ARTISTS, GENRES, FAVORITES), on.order)
+        assertEquals(listOf(PLAYLISTS, ALBUMS, SONGS, FAVORITES, DOWNLOADED, ARTISTS, GENRES), off.order)
+        val on = off.toggled(GENRES)
+        assertEquals(listOf(PLAYLISTS, ALBUMS, SONGS, FAVORITES, DOWNLOADED, GENRES, ARTISTS), on.order)
     }
 
     @Test
     fun `a stored layout with one off among those on reads with it at the bottom`() {
         assertEquals(
-            listOf(PLAYLISTS, ALBUMS, ARTISTS, SONGS, GENRES, FAVORITES, DOWNLOADED),
+            listOf(PLAYLISTS, ALBUMS, ARTISTS, SONGS, FAVORITES, DOWNLOADED, GENRES),
             HomeLayout.decode("PLAYLISTS,-GENRES,ALBUMS").order,
         )
     }
@@ -59,11 +59,11 @@ class HomeLayoutTest {
     @Test
     fun `a move stays on its side of those on and those off`() {
         assertEquals(
-            listOf(PLAYLISTS, ARTISTS, ALBUMS, SONGS, DOWNLOADED, GENRES, FAVORITES),
-            HomeLayout.DEFAULT.moved(DOWNLOADED, -3).order,
+            listOf(PLAYLISTS, ARTISTS, ALBUMS, SONGS, FAVORITES, DOWNLOADED, GENRES),
+            HomeLayout.DEFAULT.moved(GENRES, -3).order,
         )
         assertEquals(
-            listOf(ARTISTS, ALBUMS, SONGS, PLAYLISTS, GENRES, FAVORITES, DOWNLOADED),
+            listOf(ARTISTS, ALBUMS, SONGS, FAVORITES, DOWNLOADED, PLAYLISTS, GENRES),
             HomeLayout.DEFAULT.moved(PLAYLISTS, 99).order,
         )
     }
@@ -72,11 +72,11 @@ class HomeLayoutTest {
     fun `an unknown name is skipped, a repeat counts once, and a missing category joins at the end`() {
         val layout = HomeLayout.decode("SONGS,-PLAYLISTS,COMPOSERS,SONGS, GENRES ,-ALBUMS")
         assertEquals(
-            listOf(SONGS, GENRES, ARTISTS, PLAYLISTS, ALBUMS, FAVORITES, DOWNLOADED),
+            listOf(SONGS, GENRES, ARTISTS, FAVORITES, DOWNLOADED, PLAYLISTS, ALBUMS),
             layout.order,
         )
-        // A missing one comes in as its default has it: Artists on, the rest off.
-        assertEquals(listOf(SONGS, GENRES, ARTISTS), layout.listed)
+        // A missing one comes in as its default has it: Artists, Favorites and Downloaded on.
+        assertEquals(listOf(SONGS, GENRES, ARTISTS, FAVORITES, DOWNLOADED), layout.listed)
     }
 
     @Test
@@ -92,9 +92,9 @@ class HomeLayoutTest {
         val settings = MemoryDataStore(
             preferencesOf(stringPreferencesKey("pref.homeCategories") to "ALBUMS,-PLAYLISTS"),
         ).settings()
-        assertEquals(listOf(ALBUMS, ARTISTS, SONGS), settings.homeLayout.value.listed)
+        assertEquals(listOf(ALBUMS, ARTISTS, SONGS, FAVORITES, DOWNLOADED), settings.homeLayout.value.listed)
         settings.homeLayout.set(settings.homeLayout.value.toggled(PLAYLISTS))
-        assertEquals(listOf(ALBUMS, ARTISTS, SONGS, PLAYLISTS), settings.homeLayout.value.listed)
+        assertEquals(listOf(ALBUMS, ARTISTS, SONGS, FAVORITES, DOWNLOADED, PLAYLISTS), settings.homeLayout.value.listed)
     }
 
     @Test

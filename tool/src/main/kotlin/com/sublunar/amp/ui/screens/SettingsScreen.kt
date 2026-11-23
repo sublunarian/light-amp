@@ -75,6 +75,7 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     item { TextRow(title = "Streams & Downloads") { go { StreamsDownloadsScreen(it) } } }
                 }
                 item { TextRow(title = "About") { go { AboutScreen(it) } } }
+                item { TextRow(title = "Test") { go { TestScreen(it) } } }
             }
         }
     }
@@ -151,6 +152,28 @@ class RowMarkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                         App.scope.launch { App.settings.rowMark.set(mark) }
                         goBack()
                     }
+                }
+            }
+        }
+    }
+}
+
+/** Trials, before each is kept or dropped. */
+class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
+
+    @Composable
+    override fun Content() {
+        val trials = listOf(
+            "Popular Songs Button Only" to App.settings.popularButtonOnly,
+            "Wrap Long Titles" to App.settings.wrapTrackTitles,
+        )
+
+        // Rows a step below the other settings pages', so a trial's whole name fits.
+        ListScreen(onBack = { goBack() }, title = "Test") {
+            ScrollableList {
+                items(trials) { (name, pref) ->
+                    val on by pref.state.collectAsState()
+                    ToggleRow(name, on) { App.scope.launch { pref.set(!on) } }
                 }
             }
         }

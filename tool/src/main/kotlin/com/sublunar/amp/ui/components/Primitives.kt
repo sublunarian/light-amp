@@ -66,11 +66,11 @@ object AppIcons {
     /** LightOS's own waveform, see [WaveformSymbol]. */
     val Waveform = WaveformSymbol
     val Sort = Icons.AutoMirrored.Filled.Sort
-    /** Favorites on the library home: Light's outlined star. */
-    val Favorite: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.STAR_OUTLINE.drawableResource)
+    /** Favorites on the library home: Symbols' outlined star. */
+    val Favorite = StarOutlineSymbol
 
-    /** A favorite as a row's mark: Light's filled star. */
-    val LikedMark: ImageVector @Composable get() = ImageVector.vectorResource(LightIcons.STAR.drawableResource)
+    /** A favorite as a row's mark: Symbols' filled star. */
+    val LikedMark = StarSymbol
     val FavoriteBorder = Icons.Filled.FavoriteBorder
     val Star = Icons.Filled.Star
     val StarBorder = Icons.Filled.StarBorder

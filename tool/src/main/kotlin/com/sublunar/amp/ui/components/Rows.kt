@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.RowScope
@@ -563,15 +564,18 @@ private const val NUMBERED_TITLE_LINE_PX = ROW_TITLE_LINE_PX
 private const val NUMBERED_SUB_PX = ROW_SUB_PX
 private const val NUMBERED_SUB_LINE_PX = ROW_SUB_LINE_PX
 
-/** The row's height with one line under the title, and with two. */
+/**
+ * The row's height with one line under the title, and with two: the second line
+ * takes 21px of the air between rows, so two-line tracks don't drift apart.
+ */
 private const val NUMBERED_ROW_H_PX = ROW_H_PX
-private const val NUMBERED_ROW_TALL_PX = ROW_H_PX + ROW_SUB_LINE_PX
+private const val NUMBERED_ROW_TALL_PX = ROW_H_PX + ROW_SUB_LINE_PX - 21
 
 /** The air a [NumberedRow] with one line under its title leaves above its lines. */
 fun numberedRowTopPx(): Int = (NUMBERED_ROW_H_PX - NUMBERED_TITLE_LINE_PX - NUMBERED_SUB_LINE_PX) / 2
 
-/** Air between a number's right edge and the title axis: the gap a list keeps beside a cover. */
-private const val NUMBER_GAP_PX = ROW_GAP_PX
+/** Air between a number's right edge and the title axis: a cover's gap less 8px, as a number is narrower than a cover. */
+private const val NUMBER_GAP_PX = ROW_GAP_PX - 8
 
 /**
  * The number gutter: the album's widest number, from the list's edge where a
@@ -619,12 +623,19 @@ fun NumberedRow(
     /** The album's widest number: see [rememberNumberColumn]. */
     numberColumn: Dp,
 ) {
+    // Trial: a long title wraps, the row growing a title line for each line past
+    // the first, the air above and below its lines as a one-line title's.
+    val wrap by App.settings.wrapTrackTitles.state.collectAsState()
+    val rowPx = if (subtitle.isNotBlank()) NUMBERED_ROW_TALL_PX else NUMBERED_ROW_H_PX
+    val linesPx = NUMBERED_TITLE_LINE_PX + NUMBERED_SUB_LINE_PX * (if (subtitle.isNotBlank()) 2 else 1)
     val numberLead = numberColumn + px(NUMBER_GAP_PX)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(px(if (subtitle.isNotBlank()) NUMBERED_ROW_TALL_PX else NUMBERED_ROW_H_PX))
-            .rowClickable(onClick = onClick, onLongClick = onLongClick),
+            .then(if (wrap) Modifier.heightIn(min = px(rowPx)) else Modifier.height(px(rowPx)))
+            .rowClickable(onClick = onClick, onLongClick = onLongClick)
+            // Inside the tap area, so the air still takes a tap.
+            .then(if (wrap) Modifier.padding(vertical = (px(rowPx) - px(linesPx)) / 2) else Modifier),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // The numbers start on the lists' margin too.
@@ -645,7 +656,14 @@ fun NumberedRow(
                         modifier = Modifier
                             .width(lead)
                             .padding(end = px(NUMBER_GAP_PX))
-                            .then(if (current) Modifier.align(Alignment.CenterVertically) else Modifier.alignByBaseline()),
+                            .then(
+                                when {
+                                    !current -> Modifier.alignByBaseline()
+                                    // On the first of a wrapped title's lines, not the middle of them all.
+                                    wrap -> Modifier.align(Alignment.Top).height(px(NUMBERED_TITLE_LINE_PX))
+                                    else -> Modifier.align(Alignment.CenterVertically)
+                                },
+                            ),
                         // Centred in the column, as a printed tracklist sets them.
                         contentAlignment = Alignment.Center,
                     ) {
@@ -669,7 +687,7 @@ fun NumberedRow(
                     title,
                     pxSp(NUMBERED_TITLE_PX),
                     lineHeight = pxSp(NUMBERED_TITLE_LINE_PX),
-                    maxLines = 1,
+                    maxLines = if (wrap) Int.MAX_VALUE else 1,
                     exact = true,
                     modifier = Modifier.weight(1f).alignByBaseline(),
                 )

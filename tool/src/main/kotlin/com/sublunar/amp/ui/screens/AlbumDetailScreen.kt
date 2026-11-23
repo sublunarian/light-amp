@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import com.sublunar.amp.ui.SDK_GREY
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -127,13 +128,15 @@ class AlbumDetailScreen(
             if (list == null) {
                 CenteredNote("Loading…")
             } else {
-                // Credits show only where the tracks' own artists vary, and then on
-                // every track. Judged against each other, not the album's artist: a
-                // classical record's tracks can all carry the composer while the
-                // album credits the performer.
+                // Credits show only where the tracks' own artists vary, and then only
+                // on the tracks that aren't the album artist's, as a printed tracklist
+                // credits its guests. Varied is judged among the tracks, not against
+                // the album: a classical record's tracks can all carry the composer
+                // while the album credits the performer, and then every track shows it.
                 val varied = remember(list) {
                     list.map { it.artist.trim().lowercase() }.distinct().size > 1
                 }
+                val albumArtist = album?.artist?.trim()?.lowercase()
                 val numbers = remember(list) { list.mapIndexed { i, t -> t.trackNumber ?: (i + 1) } }
                 val numberColumn = rememberNumberColumn(numbers)
                 // A record on more than one disc lists each under its own heading.
@@ -157,7 +160,11 @@ class AlbumDetailScreen(
                         NumberedRow(
                             number = numbers[index],
                             title = track.title,
-                            subtitle = if (varied) track.artist else "",
+                            subtitle = when {
+                                !varied -> ""
+                                albumArtist != null && track.artist.trim().lowercase() == albumArtist -> ""
+                                else -> track.artist
+                            },
                             detail = formatTime(track.durationMs),
                             current = current?.id == track.id,
                             selected = if (selection.active) track.id in selection.selected else null,
@@ -284,7 +291,7 @@ class AlbumDetailScreen(
                     pxSp(CARD_SUB_PX),
                     lineHeight = pxSp(CARD_SUB_LINE_PX),
                     role = TextRole.Copy,
-                    dim = true,
+                    color = SDK_GREY,
                     align = if (centred) TextAlign.Center else null,
                     maxLines = if (titleLines >= CARD_TITLE_LINES) 1 else CARD_ARTIST_LINES,
                     exact = true,
@@ -296,7 +303,7 @@ class AlbumDetailScreen(
                         year,
                         pxSp(CARD_SUB_PX),
                         lineHeight = pxSp(CARD_SUB_LINE_PX),
-                        dim = true,
+                        color = SDK_GREY,
                         align = if (centred) TextAlign.Center else null,
                         maxLines = 1,
                         exact = true,
@@ -329,7 +336,7 @@ class AlbumDetailScreen(
                 pxSp(LightType.FINE_PX),
                 lineHeight = pxSp(LightType.FINE_LINE_PX),
                 role = TextRole.Fine,
-                dim = true,
+                color = SDK_GREY,
                 align = if (centred) TextAlign.Center else null,
                 exact = true,
             )
@@ -340,7 +347,7 @@ class AlbumDetailScreen(
                     year,
                     pxSp(CARD_SUB_PX),
                     lineHeight = pxSp(CARD_SUB_LINE_PX),
-                    dim = true,
+                    color = SDK_GREY,
                     align = if (centred) TextAlign.Center else null,
                     maxLines = 1,
                     exact = true,

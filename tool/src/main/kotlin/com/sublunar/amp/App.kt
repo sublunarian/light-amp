@@ -49,6 +49,7 @@ import com.sublunar.amp.log.Log
 import com.sublunar.amp.log.logRef
 import com.sublunar.amp.log.loggableWord
 import com.sublunar.amp.playback.LateUnbindGuard
+import com.sublunar.amp.log.StallWatch
 import com.sublunar.amp.playback.PlaybackController
 import com.sublunar.amp.ui.screens.LibraryNav
 import com.sublunar.amp.ui.components.NOTICE_MS
@@ -521,6 +522,7 @@ object App {
         // and outside the once-only block because it keeps its own flag — see
         // LateUnbindGuard for why it has to be a raw post from right here.
         LateUnbindGuard.install()
+        StallWatch.start()
         if (!coreReady) {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             settings = AppSettings(context.dataStore, scope)
@@ -666,7 +668,10 @@ object App {
                     // other sources, which are judged by their own transfers.
                     downloader.setOffline(source.value.id, !reachable)
                     // Back: what was held while it was gone is sent.
-                    if (reachable) library.flushPending()
+                    if (reachable) {
+                        library.flushPending()
+                        runCatching { playlists.flushEdits() }
+                    }
                 }
             }
             // Every reaction to the rules, in one place and one order.
@@ -709,7 +714,17 @@ object App {
                     client != null && connected
                 }
                     .distinctUntilChanged()
-                    .collect { ready -> if (ready) runCatching { library.flushPending() } }
+                    .collect { ready ->
+                        if (ready) {
+                            runCatching { library.flushPending() }
+                            runCatching { playlists.flushEdits() }
+                        }
+                    }
+            }
+            // Playlist edits kept offline also go when the lists stop being narrowed to
+            // downloads: that is when the server has answered again.
+            scope.launch {
+                library.offline.collect { offline -> if (!offline) runCatching { playlists.flushEdits() } }
             }
             // The colour workaround (an off-SDK spike, see LightDisplayColor)
             // follows the artwork switch: with no covers there is nothing for it to do.

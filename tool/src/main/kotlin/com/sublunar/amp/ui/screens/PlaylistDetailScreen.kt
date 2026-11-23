@@ -99,15 +99,15 @@ class PlaylistDetailScreen(
     // leaving it cancelled the wait for the server.
     private var settled = false
 
-    // Whether the library is down to its downloads, kept live: a playlist left open
-    // when Wi-Fi drops would otherwise keep offering edits that can only fail.
+    // Whether the library is down to its downloads, kept live, for what an empty page says.
     private val offline = mutableStateOf(false)
 
     /**
-     * Whether this playlist may be edited: online (an edit touches the network, which
-     * offline modes forbid), and whole (a partial list can't be addressed by position).
+     * Whether this playlist may be edited: only a list that is whole, as the server has
+     * it or as the phone keeps it while edits wait to be sent (a partial list can't be
+     * addressed by position). Offline, an edit is kept and sent later.
      */
-    private fun canEdit(): Boolean = wholeList.value && !offline.value
+    private fun canEdit(): Boolean = wholeList.value
 
     // This playlist's own sort — see AppSettings.playlistSorts.
     private val sortKey = playlistSortKey(playlistId)
@@ -124,7 +124,7 @@ class PlaylistDetailScreen(
 
     // The same songs in the same order keep their rows, so a server that agrees only makes the list editable.
     private fun show(view: PlaylistView) {
-        wholeList.value = view.complete
+        wholeList.value = view.editable
         val current = entries.value
         if (current != null &&
             current.map { it.track.id } == view.all.map { it.id } &&

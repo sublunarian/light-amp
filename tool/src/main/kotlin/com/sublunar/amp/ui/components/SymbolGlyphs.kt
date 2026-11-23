@@ -30,6 +30,15 @@ val SpeakerSymbol: ImageVector by lazy { symbol("SpeakerSymbol", SPEAKER_PATH) }
 /** Material Symbols' `music_cast` at weight 300, for what is cast to that isn't a speaker, drawn [MEDIA_OUTPUT_INSET] in as media output is: both span 19 units. */
 val MusicCastSymbol: ImageVector by lazy { symbol("MusicCastSymbol", MUSIC_CAST_PATH, inset = MEDIA_OUTPUT_INSET) }
 
+/** Material Symbols' `star` at weight 300, outlined: Favorites on the library home, its lines weighing near the other glyphs' there, as Light's star's didn't. */
+val StarOutlineSymbol: ImageVector by lazy { symbol("StarOutlineSymbol", STAR_EDGE_PATH + STAR_HOLE_PATH, inset = STAR_INSET) }
+
+/** The same star filled, a liked row's mark: its edge alone, as Symbols' filled star is. */
+val StarSymbol: ImageVector by lazy { symbol("StarSymbol", STAR_EDGE_PATH, inset = STAR_INSET) }
+
+/** A sixth larger: at the library home's size, 55px across where it was 47, its lines near the other glyphs' 5px. */
+private const val STAR_INSET = 1.75f
+
 /** [path] in its 24-unit box, less [inset] units off each side so it fills more of it. */
 private fun symbol(name: String, path: String, inset: Float = 0f): ImageVector =
     ImageVector.Builder(
@@ -90,3 +99,8 @@ private const val MUSIC_CAST_PATH =
         "q0,1.44-1.03,2.47T14.11,19.5t-2.47-1.03ZM2.45,16q0-2.41 0.92-4.53t2.5-3.7t3.7-2.5t4.53-0.92v1.5" +
         "q-2.08,0-3.93,0.8T6.94,8.83T4.75,12.05T3.95,16H2.45Zm4.08,0q0-1.56 0.6-2.95t1.63-2.41t2.4-1.62" +
         "t2.94-0.59v1.5q-2.53,0-4.3,1.77T8.03,16H6.53Z"
+
+private const val STAR_EDGE_PATH =
+    "M6.58,19.96l1.43-6.17L3.22,9.64L9.54,9.1L12,3.28L14.46,9.1l6.32,0.55l-4.79,4.15l1.43,6.17L12,16.69L6.58,19.96Z"
+private const val STAR_HOLE_PATH =
+    "M8.85,16.83L12,14.93l3.15,1.93l-0.82-3.6l2.78-2.4l-3.65-0.33L12,7.13L10.55,10.5L6.9,10.83l2.78,2.43L8.85,16.83Z"

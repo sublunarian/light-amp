@@ -46,7 +46,17 @@ import kotlinx.serialization.json.Json
  * from cached membership the library no longer has every song for. A caller
  * that edits must check it first.
  */
-data class PlaylistView(val all: List<Track>, val complete: Boolean, val shown: List<Boolean> = all.map { true }) {
+data class PlaylistView(
+    val all: List<Track>,
+    val complete: Boolean,
+    val shown: List<Boolean> = all.map { true },
+    /**
+     * Whether a page may edit it: a whole read, or — while edits are being kept
+     * for later — the phone's own copy with every song found, which is what
+     * those edits are made against.
+     */
+    val editable: Boolean = complete,
+) {
     val tracks: List<Track> = all.filterIndexed { i, _ -> shown[i] }
 }
 
@@ -71,6 +81,17 @@ class LibraryPlaylists(
     private val library: LibraryRepository,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+
+    /** Edits made while the server couldn't be told — see [PlaylistEdits]. */
+    private val edits = PlaylistEdits(settings)
+
+    /**
+     * Playlists made on the phone that have reached the server since, by their
+     * phone id: a page opened before then still edits by the old one.
+     */
+    private val sentIds = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun current(id: String): String = sentIds[id] ?: id
 
     // Serializes playlist writes, first come first written: servers
     // read-then-write whole playlists with no compare-and-swap.
@@ -225,9 +246,11 @@ class LibraryPlaylists(
                 .getOrNull()
         }
         if (fetched != null) {
-            _playlists.value = fetched
+            // The server's list as stored, and as the phone has it shown.
+            val shown = withEdits(fetched, edits.read(sourceId), System.currentTimeMillis())
+            _playlists.value = shown
             settings.setCachedPlaylists(sourceId, json.encodeToString(fetched))
-            reconcileMembership(d, fetched)
+            reconcileMembership(d, shown)
             return
         }
         if (_playlists.value.isEmpty()) _playlists.value = loadCachedPlaylists()
@@ -252,9 +275,17 @@ class LibraryPlaylists(
 
     private suspend fun loadCachedPlaylists(): List<Playlist> {
         val sourceId = settings.activeSource.first()?.id ?: return emptyList()
-        return runCatching {
+        val cached = runCatching {
             json.decodeFromString<List<Playlist>>(settings.cachedPlaylists(sourceId))
         }.getOrDefault(emptyList())
+        return withEdits(cached, edits.read(sourceId), System.currentTimeMillis())
+    }
+
+    /** Whether edits to [id] are waiting to be sent: the server's copy of it is behind the phone's. */
+    private suspend fun waiting(id: String): Boolean {
+        if (isPhoneMade(id)) return true
+        val sourceId = settings.activeSource.first()?.id ?: return false
+        return edits.read(sourceId).any { it.playlistId == id }
     }
 
     /**
@@ -296,7 +327,7 @@ class LibraryPlaylists(
      * caller started with — see [storeMembership].
      */
     private suspend fun present(d: LibraryDao?, id: String, view: PlaylistView): PlaylistView {
-        val (tracks, whole) = view
+        val (tracks, whole, _, editable) = view
         // Held at full membership, narrowed on the way out: the badge needs what
         // the playlist *is*, the page what it can play.
         val ids = tracks.map { track -> track.id }
@@ -317,6 +348,7 @@ class LibraryPlaylists(
             tracks,
             whole,
             tracks.map { inView(it) && (downloaded == null || it.id in downloaded || PhoneFiles.isPhoneFile(it.id)) },
+            editable,
         )
     }
 
@@ -361,6 +393,8 @@ class LibraryPlaylists(
         // Nor while the lists are down to downloads: the server was found silent, and
         // asking again would wait out the connect timeout.
         if (library.offline.value) return null
+        // Behind the phone's copy until what's waiting is sent: the phone's is the one to show.
+        if (waiting(id)) return null
         val client = serverClient.value ?: return null
         val askedAtMs = monotonicMs()
         val tracks = try {
@@ -385,7 +419,11 @@ class LibraryPlaylists(
         // against. Held membership first: [Playlist.trackIds] is usually empty.
         val ids = membership.value[id]
             ?: (_playlists.value.firstOrNull { it.id == id } ?: return PlaylistView(emptyList(), false)).trackIds
-        return PlaylistView(library.getTracksByIds(ids), complete = false)
+        val tracks = library.getTracksByIds(ids)
+        // Editable where edits will be kept rather than sent, and only with every
+        // song found: positions into a list missing some would name others.
+        val keeping = !metadataAllowed() || library.offline.value || waiting(id)
+        return PlaylistView(tracks, complete = false, editable = keeping && tracks.size == ids.size)
     }
 
     /**
@@ -430,6 +468,8 @@ class LibraryPlaylists(
             return
         }
         if (!metadataAllowed()) return
+        // The phone's copy is ahead until what's waiting is sent.
+        if (waiting(id)) return
         val d = daos.value
         awaitPlaylistWrites()
         val ids = runCatching { serverClient.value?.getPlaylistTrackIds(id) }.noteOom("playlist prime").getOrNull() ?: return
@@ -515,18 +555,28 @@ class LibraryPlaylists(
             fileWrite(files.create(name.trim(), trackIds) != null)
         } else {
             val d = daos.value
-            // What was just saved is what the server holds: kept, the playlist opens at once.
-            serverClient.value?.let { client -> createInChunks(client, name.trim(), trackIds) { storeMembership(d, it, trackIds) } }
-                ?: WriteResult.Unreachable(UNREACHABLE)
+            var made = false
+            sendOrKeep(
+                d,
+                PlaylistEdit(PlaylistEdit.Kind.CREATE, newPhoneMadeId(), name.trim(), trackIds),
+                // Kept only if none of it reached the server, or a second copy would follow.
+                keepable = { !made },
+            ) { client ->
+                // What was just saved is what the server holds: kept, the playlist opens at once.
+                createInChunks(client, name.trim(), trackIds, onMade = { made = true }) { storeMembership(d, it, trackIds) }
+            }
         }
         refreshPlaylists()
         said("createPlaylist", result)
     }
 
     suspend fun renamePlaylist(id: String, name: String): WriteResult = playlistMutex.withLock {
+        val target = current(id)
         val result = playlistWrite(
-            phone = { it.rename(id, name.trim()) },
-            server = { it.renamePlaylist(id, name.trim()) },
+            daos.value,
+            PlaylistEdit(PlaylistEdit.Kind.RENAME, target, name = name.trim()),
+            phone = { it.rename(target, name.trim()) },
+            server = { it.renamePlaylist(target, name.trim()) },
         )
         refreshPlaylists()
         said("renamePlaylist", result)
@@ -534,11 +584,14 @@ class LibraryPlaylists(
 
     suspend fun deletePlaylist(id: String): WriteResult = playlistMutex.withLock {
         val d = daos.value
+        val target = current(id)
         val result = playlistWrite(
-            phone = { it.delete(id) },
-            server = { it.deletePlaylist(id) },
+            d,
+            PlaylistEdit(PlaylistEdit.Kind.DELETE, target),
+            phone = { it.delete(target) },
+            server = { it.deletePlaylist(target) },
+            landed = { dropMembership(d, target) },
         )
-        if (result == WriteResult.Saved) dropMembership(d, id)
         refreshPlaylists()
         said("deletePlaylist", result)
     }
@@ -550,11 +603,14 @@ class LibraryPlaylists(
      */
     suspend fun addToPlaylist(id: String, trackId: String): WriteResult = playlistMutex.withLock {
         val d = daos.value
+        val target = current(id)
         val result = playlistWrite(
-            phone = { it.add(id, trackId) },
-            server = { it.addToPlaylist(id, listOf(trackId)) },
+            d,
+            PlaylistEdit(PlaylistEdit.Kind.ADD, target, trackIds = listOf(trackId)),
+            phone = { it.add(target, trackId) },
+            server = { it.addToPlaylist(target, listOf(trackId)) },
+            landed = { editMembership(d, target) { it + trackId } },
         )
-        if (result == WriteResult.Saved) editMembership(d, id) { it + trackId }
         said("addToPlaylist", result)
     }
 
@@ -562,63 +618,269 @@ class LibraryPlaylists(
      * Remove the entries [at] these positions in the playlist, each given with the
      * song expected there — see [MusicServer.removeFromPlaylistAt]. Whether they
      * all went: callers show the edit at once and take it back on a false.
+     *
+     * Kept for later, it goes as the whole list the phone has without them, so the
+     * songs named must be where the page saw them in the phone's copy.
      */
     suspend fun removeFromPlaylistAt(id: String, at: Map<Int, String>): Boolean = playlistMutex.withLock {
         val d = daos.value
-        playlistEdit(
+        val target = current(id)
+        val after = membership.value[target]
+            ?.takeIf { held -> at.all { (index, song) -> held.getOrNull(index) == song } }
+            ?.filterIndexed { index, _ -> index !in at.keys }
+        val edited = playlistEdit(
             "removeFromPlaylistAt",
-            phone = { it.removeAt(id, at) },
-            server = { it.removeFromPlaylistAt(id, at) },
-        ).also { ok ->
-            if (ok) editMembership(d, id) { ids -> ids.filterIndexed { index, _ -> index !in at.keys } }
-            else markMembershipStale(id)
+            d,
+            after?.let { PlaylistEdit(PlaylistEdit.Kind.SET, target, trackIds = it) },
+            phone = { it.removeAt(target, at) },
+            server = { it.removeFromPlaylistAt(target, at) },
+        )
+        when (edited) {
+            Edited.SENT -> editMembership(d, target) { ids -> ids.filterIndexed { index, _ -> index !in at.keys } }
+            Edited.KEPT -> Unit
+            Edited.FAILED -> markMembershipStale(target)
         }
+        edited != Edited.FAILED
     }
 
     /** Whether the new order landed — see [removeFromPlaylistAt]. */
     suspend fun reorderPlaylist(id: String, orderedSongIds: List<String>): Boolean = playlistMutex.withLock {
         val d = daos.value
-        playlistEdit(
+        val target = current(id)
+        // Kept only as the same songs the phone holds, moved: anything else would lose some.
+        val keepAs = membership.value[target]
+            ?.takeIf { held -> held.sorted() == orderedSongIds.sorted() }
+            ?.let { PlaylistEdit(PlaylistEdit.Kind.SET, target, trackIds = orderedSongIds) }
+        val edited = playlistEdit(
             "reorderPlaylist",
-            phone = { it.reorder(id, orderedSongIds) },
-            server = { it.reorderPlaylist(id, orderedSongIds) },
-        ).also { ok ->
-            // The new order *is* the new membership. A refusal leaves the server's
-            // order unknown (Plex's can fail partway), so it is read again, and the
-            // stored copy serves until then.
-            if (ok) editMembership(d, id) { orderedSongIds } else markMembershipStale(id)
+            d,
+            keepAs,
+            phone = { it.reorder(target, orderedSongIds) },
+            server = { it.reorderPlaylist(target, orderedSongIds) },
+        )
+        // The new order *is* the new membership. A refusal leaves the server's
+        // order unknown (Plex's can fail partway), so it is read again, and the
+        // stored copy serves until then.
+        when (edited) {
+            Edited.SENT -> editMembership(d, target) { orderedSongIds }
+            Edited.KEPT -> Unit
+            Edited.FAILED -> markMembershipStale(target)
         }
+        edited != Edited.FAILED
     }
 
-    /** A playlist write, to the phone's playlist file or to the server. */
+    /** How an edit went: sent and landed, kept to send later, or neither. */
+    private enum class Edited { SENT, KEPT, FAILED }
+
+    /**
+     * A playlist write, to the phone's playlist file or to the server, or kept as
+     * [edit] for later — see [sendOrKeep]. [landed] is the phone's copy following
+     * a write that went through; a kept one is followed by [keep] instead.
+     */
     private suspend fun playlistWrite(
+        d: LibraryDao?,
+        edit: PlaylistEdit,
         phone: suspend (PhonePlaylists) -> Boolean,
         server: suspend (MusicServer) -> Unit,
+        landed: suspend () -> Unit = {},
     ): WriteResult {
         val files = phonePlaylists()
-        return if (files != null) fileWrite(phone(files)) else serverWrite(server)
+        if (files != null) return fileWrite(phone(files)).also { if (it == WriteResult.Saved) landed() }
+        var sent = false
+        val result = sendOrKeep(d, edit) { client -> attemptWrite { server(client) }.also { sent = it == WriteResult.Saved } }
+        if (sent) landed()
+        return result
     }
 
     /**
      * A playlist edit that answers whether it landed. The client's own answer,
      * not merely "it didn't throw": some clients catch their transport errors, so
-     * a refused write — or no client at all — would otherwise read as done.
+     * a refused write — or no client at all — would otherwise read as done. Kept
+     * as [keepAs] where [sendOrKeep] would keep it; never kept without one.
      */
     private suspend fun playlistEdit(
         what: String,
+        d: LibraryDao?,
+        keepAs: PlaylistEdit?,
         phone: suspend (PhonePlaylists) -> Boolean,
         server: suspend (MusicServer) -> Boolean,
-    ): Boolean {
+    ): Edited {
         val files = phonePlaylists()
-        if (files != null) return phone(files)
-        return runCatching { serverClient.value?.let { server(it) } ?: false }
-            .onFailure { Log.w("AmpSync", "$what failed: ${it.logName()}") }
-            .getOrDefault(false)
+        if (files != null) return if (phone(files)) Edited.SENT else Edited.FAILED
+        val sourceId = settings.activeSource.first()?.id
+        val client = serverClient.value
+        if (sourceId != null && keepAs != null && (client == null || mustKeep(sourceId))) {
+            keep(d, sourceId, keepAs)
+            return Edited.KEPT
+        }
+        if (client == null) return Edited.FAILED
+        var landed = false
+        val result = attemptWrite { landed = server(client) }
+        if (result is WriteResult.Saved && landed) return Edited.SENT
+        Log.w("AmpSync", "$what → ${if (result is WriteResult.Saved) "refused" else result::class.simpleName}")
+        if (result is WriteResult.Unreachable && sourceId != null && keepAs != null) {
+            keep(d, sourceId, keepAs)
+            return Edited.KEPT
+        }
+        return Edited.FAILED
     }
 
-    /** No client at all is a server that can't be reached, not one that said no. */
-    private suspend fun serverWrite(block: suspend (MusicServer) -> Unit): WriteResult =
-        serverClient.value?.let { client -> attemptWrite { block(client) } } ?: WriteResult.Unreachable(UNREACHABLE)
+    /**
+     * Send [edit] now through [send], or keep it for later: kept when the server
+     * can't be asked or edits are already waiting that it mustn't overtake, and
+     * when sending found the server unreachable and [keepable] says a resend is safe.
+     */
+    private suspend fun sendOrKeep(
+        d: LibraryDao?,
+        edit: PlaylistEdit,
+        keepable: () -> Boolean = { true },
+        send: suspend (MusicServer) -> WriteResult,
+    ): WriteResult {
+        val sourceId = settings.activeSource.first()?.id ?: return WriteResult.Unreachable(UNREACHABLE)
+        val client = serverClient.value
+        if (client == null || mustKeep(sourceId)) return keep(d, sourceId, edit)
+        val result = send(client)
+        return if (result is WriteResult.Unreachable && keepable()) keep(d, sourceId, edit) else result
+    }
+
+    /** Whether an edit can't go now: the server can't be asked, or edits it mustn't overtake are waiting. */
+    private suspend fun mustKeep(sourceId: String): Boolean =
+        !metadataAllowed() || library.offline.value || edits.read(sourceId).isNotEmpty()
+
+    /**
+     * Keep [edit] to send when the server is back, and show it on the phone now:
+     * the phone has it, so it's saved. Said the first time something is kept.
+     */
+    private suspend fun keep(d: LibraryDao?, sourceId: String, edit: PlaylistEdit): WriteResult {
+        val id = edit.playlistId
+        when (edit.kind) {
+            PlaylistEdit.Kind.CREATE, PlaylistEdit.Kind.SET -> storeMembership(d, id, edit.trackIds, fresh = false)
+            PlaylistEdit.Kind.ADD -> editMembership(d, id) { it + edit.trackIds }
+            PlaylistEdit.Kind.DELETE -> dropMembership(d, id)
+            PlaylistEdit.Kind.RENAME -> Unit
+        }
+        _playlists.update { withEdits(it, listOf(edit), System.currentTimeMillis()) }
+        if (edits.add(sourceId, edit)) tell(KEPT_NOTICE)
+        // The server may be back already, with nothing yet to say so.
+        if (metadataAllowed() && !library.offline.value) scope.launch { flushEdits() }
+        return WriteResult.Saved
+    }
+
+    /**
+     * Send the edits kept while the server couldn't be told, in order, stopping at
+     * the first it doesn't answer. One it refuses is dropped with everything after
+     * it for the same playlist, and said: it would get the same answer every time.
+     */
+    suspend fun flushEdits() {
+        if (phonePlaylists() != null || !metadataAllowed()) return
+        val sourceId = settings.activeSource.first()?.id ?: return
+        val client = serverClient.value ?: return
+        var sent = false
+        var refusal: String? = null
+        playlistMutex.withLock {
+            val d = daos.value
+            var queue = edits.read(sourceId)
+            var going = true
+            while (going && queue.isNotEmpty()) {
+                // Another source since: its playlists aren't these.
+                if (serverClient.value !== client || settings.activeSource.first()?.id != sourceId) return@withLock
+                val edit = queue.first()
+                val (result, instead) = send(client, d, edit)
+                when (result) {
+                    WriteResult.Saved -> {
+                        sent = true
+                        queue = instead + queue.drop(1)
+                    }
+                    is WriteResult.Unreachable -> {
+                        queue = instead + queue.drop(1)
+                        going = false
+                    }
+                    is WriteResult.Refused -> {
+                        refusal = refusal ?: result.reason
+                        Log.w("AmpSync", "kept ${edit.kind} refused")
+                        queue = queue.drop(1).filterNot { it.playlistId == edit.playlistId }
+                        markMembershipStale(edit.playlistId)
+                    }
+                }
+                edits.write(sourceId, queue)
+            }
+        }
+        if (sent || refusal != null) refreshPlaylists()
+        refusal?.let { tell("Couldn't sync a playlist change made offline\n$it") }
+    }
+
+    /**
+     * Send one kept edit: how it went, and what takes its place at the head of the
+     * queue — the rest of a list that went partway, to send next.
+     */
+    private suspend fun send(client: MusicServer, d: LibraryDao?, edit: PlaylistEdit): Pair<WriteResult, List<PlaylistEdit>> {
+        val id = edit.playlistId
+        var instead = listOf(edit)
+        val result = when (edit.kind) {
+            PlaylistEdit.Kind.CREATE -> {
+                var made: String? = null
+                var rest = emptyList<String>()
+                val sent = attemptWrite {
+                    val chunks = edit.trackIds.chunked(client.playlistIdsPerRequest())
+                    rest = chunks.drop(1).flatten()
+                    made = client.createPlaylist(edit.name, chunks.firstOrNull().orEmpty())
+                    if (made == null && rest.isNotEmpty()) throw RefusedWrite("The server didn't say which playlist it made")
+                }
+                if (sent == WriteResult.Saved) {
+                    instead = emptyList()
+                    madeOnServer(d, id, made, edit)
+                    made?.let { real -> if (rest.isNotEmpty()) instead = listOf(PlaylistEdit(PlaylistEdit.Kind.ADD, real, trackIds = rest)) }
+                }
+                sent
+            }
+            PlaylistEdit.Kind.ADD -> {
+                var done = 0
+                val sent = attemptWrite {
+                    for (chunk in edit.trackIds.chunked(client.playlistIdsPerRequest())) {
+                        client.addToPlaylist(id, chunk)
+                        done += chunk.size
+                    }
+                }
+                instead = if (sent == WriteResult.Saved) emptyList() else listOf(edit.copy(trackIds = edit.trackIds.drop(done)))
+                sent
+            }
+            PlaylistEdit.Kind.RENAME -> attemptWrite { client.renamePlaylist(id, edit.name) }
+            PlaylistEdit.Kind.DELETE -> attemptWrite { client.deletePlaylist(id) }
+            PlaylistEdit.Kind.SET -> attemptWrite { replaceOnServer(client, id, edit.trackIds) }
+        }
+        if (result == WriteResult.Saved && edit.kind != PlaylistEdit.Kind.CREATE) {
+            instead = instead.filterNot { it === edit }
+            // Read again when next wanted: the server's copy is the one to keep.
+            if (edit.kind != PlaylistEdit.Kind.DELETE) markMembershipStale(id)
+        }
+        return result to instead
+    }
+
+    /** The phone-made playlist [phoneId] is on the server now, as [made]: everything held follows it there. */
+    private suspend fun madeOnServer(d: LibraryDao?, phoneId: String, made: String?, edit: PlaylistEdit) {
+        dropMembership(d, phoneId)
+        if (made == null) {
+            _playlists.update { list -> list.filterNot { it.id == phoneId } }
+            return
+        }
+        sentIds[phoneId] = made
+        storeMembership(d, made, edit.trackIds, fresh = false)
+        _playlists.update { list -> list.map { if (it.id == phoneId) it.copy(id = made) else it } }
+    }
+
+    /**
+     * Make the server's copy of [id] exactly [target], with the calls every server
+     * has: removals, appends, then a reorder if one is still needed. Read first,
+     * so a run cut off partway is simply run again.
+     */
+    private suspend fun replaceOnServer(client: MusicServer, id: String, target: List<String>) {
+        val plan = replacement(client.getPlaylistTrackIds(id), target)
+        if (plan.removeAt.isNotEmpty() && !client.removeFromPlaylistAt(id, plan.removeAt)) {
+            throw RefusedWrite("The server wouldn't take songs out")
+        }
+        for (chunk in plan.append.chunked(client.playlistIdsPerRequest())) client.addToPlaylist(id, chunk)
+        if (plan.reorder && !client.reorderPlaylist(id, target)) throw RefusedWrite("The server wouldn't reorder it")
+    }
 
     /** The phone's own playlists are files, and a file that wouldn't change is the only way one fails. */
     private fun fileWrite(done: Boolean): WriteResult =
@@ -679,13 +941,17 @@ internal suspend fun createInChunks(
     client: MusicServer,
     name: String,
     ids: List<String>,
+    /** The playlist is on the server now, whatever comes of the rest. */
+    onMade: () -> Unit = {},
     onSaved: suspend (String) -> Unit = {},
 ): WriteResult {
-    val chunks = ids.chunked(client.playlistIdsPerRequest())
     var saved = -1
     var made: String? = null
     val result = attemptWrite {
+        // Inside the attempt: on Subsonic, the chunk size is itself a request.
+        val chunks = ids.chunked(client.playlistIdsPerRequest())
         val id = client.createPlaylist(name, chunks.firstOrNull().orEmpty())
+        onMade()
         made = id
         saved = chunks.firstOrNull()?.size ?: 0
         for (chunk in chunks.drop(1)) {
@@ -701,3 +967,6 @@ internal suspend fun createInChunks(
         is WriteResult.Refused -> result.copy(reason = "$partly. ${result.reason}")
     }
 }
+
+/** Said the first time a playlist edit is kept for later — see LibraryPlaylists.keep. */
+private const val KEPT_NOTICE = "Saved on the phone\nIt syncs when your server is back"

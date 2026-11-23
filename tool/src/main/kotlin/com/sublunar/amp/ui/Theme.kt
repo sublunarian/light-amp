@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -91,3 +92,6 @@ const val DISABLED_ALPHA = GREY_ALPHA
  * What can't take a colour fades to the same grey — see [GREY_ALPHA].
  */
 val LocalGreyText = compositionLocalOf { false }
+
+/** The SDK's own grey, a step lighter than [GREY_ALPHA]'s: the lines under an album's and the player's titles. */
+val SDK_GREY: Color = LightThemeColors.Dark.contentSecondary
