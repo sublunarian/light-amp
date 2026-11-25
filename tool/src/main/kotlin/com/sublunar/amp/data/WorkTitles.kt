@@ -6,18 +6,19 @@ data class WorkTitle(val work: String?, val title: String)
 /**
  * A classical album's tracks often each begin with their work:
  * "Goldberg Variations, BWV 988: I. Aria". Where two or more tracks in a row share
- * the part before the first ": ", that part is the work, said once as a heading,
- * and each track keeps the rest. A title with a colon of its own, alone, stays whole.
+ * the part before the first ": ", the album is one of those, and every title of
+ * that form is split: the work, said as a heading, and the rest. A work of one
+ * track (a Romance after a Concerto) so gets its own heading too. An album with no
+ * shared work keeps every title whole, so a lone "Interlude: Rain" stays as it is.
  */
 fun workTitles(titles: List<String>): List<WorkTitle> {
     val split = titles.map { title ->
         val at = title.indexOf(": ")
-        if (at <= 0) null else title.substring(0, at).trim() to title.substring(at + 2).trim()
+        if (at <= 0 || at + 2 >= title.length) null else title.substring(0, at).trim() to title.substring(at + 2).trim()
     }
+    val works = split.indices.any { i -> split[i] != null && split.getOrNull(i + 1)?.first == split[i]!!.first }
     return titles.mapIndexed { index, title ->
         val parts = split[index]
-        val shared = parts != null && parts.second.isNotEmpty() &&
-            (split.getOrNull(index - 1)?.first == parts.first || split.getOrNull(index + 1)?.first == parts.first)
-        if (shared) WorkTitle(parts!!.first, parts.second) else WorkTitle(null, title)
+        if (works && parts != null) WorkTitle(parts.first, parts.second) else WorkTitle(null, title)
     }
 }

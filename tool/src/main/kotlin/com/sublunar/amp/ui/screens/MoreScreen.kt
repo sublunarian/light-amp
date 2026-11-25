@@ -172,7 +172,9 @@ class MoreScreen(
                                 }
                             }
                         }
-                        if (genre != null && !trimmed) item { Setting("Genre", genre, stay = true) }
+                        // In both layouts: the simple layout's Genres page lists them, but narrowing
+                        // the list in hand is quicker from here.
+                        if (genre != null) item { Setting("Genre", genre, stay = true) }
                     }
                 }
             }
@@ -206,8 +208,8 @@ class MoreScreen(
 }
 
 /**
- * Whether the More pages go without their Source and Genre rows and Settings: in
- * the simple layout, whose home reaches all three. The tabs have no other way.
+ * Whether the More pages go without their Source row and Settings: in the simple
+ * layout, whose home reaches both. The tabs have no other way.
  */
 @Composable
 internal fun moreMenuTrimmed(): Boolean =

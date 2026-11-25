@@ -279,12 +279,12 @@ private val LIST_TYPE = RowType(
 )
 
 /**
- * Smaller Font: 46/52 of every size above but the grey lines, which stay the SDK's detail,
+ * Smaller Library Font: 46/52 of every size above but the grey lines, which stay the SDK's detail,
  * the smallest of Light's own sizes: the title between the lists' and theirs.
  */
 private val SMALL_LIST_TYPE = RowType(46, 53, TextRole.Fine, ROW_SUB_PX, 53, TextRole.Detail, 134, 102, 169)
 
-/** Every list's type and pitch, with covers or without: a step smaller with Smaller Font on. */
+/** Every list's type and pitch, with covers or without: a step smaller with Smaller Library Font on. */
 val ROW_TYPE: RowType
     @Composable get() = if (App.settings.smallerFont.state.collectAsState().value) SMALL_LIST_TYPE else LIST_TYPE
 

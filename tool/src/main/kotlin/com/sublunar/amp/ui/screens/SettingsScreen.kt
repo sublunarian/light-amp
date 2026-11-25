@@ -105,7 +105,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 }
                 item {
                     // The music lists a size down, for more on a screen; the grey lines stay readable.
-                    ToggleRow("Smaller Font", smallerFont) {
+                    ToggleRow("Smaller Library Font", smallerFont) {
                         App.scope.launch { App.settings.smallerFont.set(!smallerFont) }
                     }
                 }

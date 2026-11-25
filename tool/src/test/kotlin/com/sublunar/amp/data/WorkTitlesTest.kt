@@ -32,4 +32,21 @@ class WorkTitlesTest {
         val works = workTitles(listOf("A: 1", "A: 2", "Song", "B: 1", "B: 2")).map { it.work }
         assertEquals(listOf("A", "A", null, "B", "B"), works)
     }
+
+    @Test
+    fun `a work of one track gets its own heading on an album of works`() {
+        val titles = workTitles(
+            listOf(
+                "Concerto in D major, op. 61: I. Allegro ma non troppo",
+                "Concerto in D major, op. 61: II. Larghetto",
+                "Romance no. 1 in G major, op. 40: Andante",
+                "Romance no. 2 in F major, op. 50: Adagio cantabile",
+            ),
+        )
+        assertEquals(
+            listOf("Concerto in D major, op. 61", "Concerto in D major, op. 61", "Romance no. 1 in G major, op. 40", "Romance no. 2 in F major, op. 50"),
+            titles.map { it.work },
+        )
+        assertEquals("Andante", titles[2].title)
+    }
 }

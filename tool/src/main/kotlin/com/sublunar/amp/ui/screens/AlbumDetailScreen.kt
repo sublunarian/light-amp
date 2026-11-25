@@ -166,6 +166,9 @@ class AlbumDetailScreen(
                         // Again on a new disc, so a work that runs across both is named on each.
                         if (work.work != null && (index == 0 || newDisc || works[index - 1].work != work.work)) {
                             SectionLabel(work.work, dim = false, startPx = 0)
+                        } else if (work.work == null && index > 0 && !newDisc && works[index - 1].work != null) {
+                            // Out of the work above it: a heading's room with no words.
+                            SectionLabel(" ", dim = false, startPx = 0)
                         }
                         NumberedRow(
                             number = numbers[index],
