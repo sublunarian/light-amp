@@ -1,6 +1,7 @@
 package com.sublunar.amp.ui.screens
 
 import androidx.compose.runtime.getValue
+import com.sublunar.amp.data.ToolManagerFolders
 import com.sublunar.amp.data.Holdings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -246,7 +247,7 @@ private fun SimpleLightScreen<*>.libraryNotices(empty: Boolean): List<@Composabl
     val sync = App.librarySync.syncState.collectAsState().value
     val error = sync.error
     return buildList<@Composable () -> Unit> {
-        if (onPhone && empty && !sync.syncing) add { SectionLabel("Add music from a computer with Light's Tool Manager") }
+        if (onPhone && empty && !sync.syncing) add { SectionLabel("Add music from a computer: open ${ToolManagerFolders.LOCATION}") }
         if (!error.isNullOrBlank()) add { PlayAllRow(AppIcons.CloudOff, error) { go { SettingsScreen(it) } } }
         if (empty && sync.syncing) add { SectionLabel(syncProgressText(sync.phase)) }
     }
@@ -273,12 +274,14 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
     val reversed by App.settings.albumSortReversed.state.collectAsState()
     val downloadedAlbums by App.library.downloadedAlbumIds.collectAsState()
     val notices = libraryNotices(sorted.isEmpty())
+    // Nothing to pick from in an empty list.
+    val actionRows = if (sorted.isEmpty()) 0 else 1
     val grid = App.albumGrid.collectAsState().value
     Column(Modifier.fillMaxSize()) {
         if (header) TabHeader(LibraryTab.ALBUMS)
         if (grid) {
             // Its own anchor, separate from the list's: see rememberGridAnchor.
-            val gridState = rememberGridAnchor("tab:albums/grid", headerCount = 1 + notices.size)
+            val gridState = rememberGridAnchor("tab:albums/grid", headerCount = actionRows + notices.size)
             // No strip: the covers take the width, and AlbumGrid adds its own bar
             // once the list is long.
             Box(modifier = Modifier.weight(1f)) {
@@ -288,8 +291,8 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
                     onLongPress = { album -> go { AlbumActionsScreen(it, album.id) } },
                     state = gridState,
                 ) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        RandomAlbumRow(rows, tall = false)
+                    if (actionRows > 0) {
+                        item(span = { GridItemSpan(maxLineSpan) }) { RandomAlbumRow(rows, tall = false) }
                     }
                     notices.forEach { notice -> item(span = { GridItemSpan(maxLineSpan) }) { notice() } }
                 }
@@ -302,10 +305,10 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
                 // The action row and the notices, so the A–Z strip lands on
                 // the right album. Counted with or without the page's header:
                 // search borrows the list, rows and all.
-                headerCount = 1 + notices.size,
+                headerCount = actionRows + notices.size,
                 reversed = reversed,
             ) {
-                item { RandomAlbumRow(rows, tall = true) }
+                if (actionRows > 0) item { RandomAlbumRow(rows, tall = true) }
                 notices.forEach { notice -> item { notice() } }
                 items(sorted.size, key = { rows[it]?.id ?: it }) { i ->
                     val album = rows[i] ?: return@items
@@ -402,6 +405,8 @@ private fun SimpleLightScreen<*>.SongsTab(header: Boolean = true) {
     val downloadedIds by App.library.downloadedTrackIds.collectAsState()
     val selection = rememberSelection("songs")
     val notices = libraryNotices(sorted.isEmpty())
+    // Nothing to shuffle in an empty list.
+    val actionRows = if (sorted.isEmpty()) 0 else 1
 
     Column(Modifier.fillMaxSize()) {
         if (header) {
@@ -416,11 +421,11 @@ private fun SimpleLightScreen<*>.SongsTab(header: Boolean = true) {
         IndexedList(
             anchor = "tab:songs",
             letters = letters,
-            headerCount = if (selection.active) 0 else 1 + notices.size,
+            headerCount = if (selection.active) 0 else actionRows + notices.size,
             reversed = reversed,
         ) {
             if (!selection.active) {
-                item {
+                if (actionRows > 0) item {
                     ShuffleRow {
                         App.playback.playQueue(shuffled(rows.items), 0)
                         go { NowPlayingScreen(it) }

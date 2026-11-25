@@ -17,6 +17,12 @@ import java.io.File
  */
 object ToolManagerFolders {
 
+    /**
+     * Where LightOS keeps the Tool Manager, as Amp tells people. Only for now:
+     * Light is moving it, so check it on the current LightOS before every release.
+     */
+    const val LOCATION = "LightOS Settings > Developer > Tool Manager"
+
     private const val MUSIC = "Music"
     private const val PLAYLISTS = "Playlists"
 

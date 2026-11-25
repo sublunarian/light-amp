@@ -57,8 +57,9 @@ of the Library page.
 
 ## Music on the phone
 
-Music gets onto the phone through Light's Tool Manager. Open Amp there from a
-computer's browser and upload songs into **Music**. Amp reads them as soon as
+Music gets onto the phone through Light's Tool Manager. On the phone, open
+LightOS Settings > Developer > Tool Manager and connect a computer's browser as
+it shows. Then open Amp there and upload songs into **Music**. Amp reads them as soon as
 the upload finishes. They live in Amp's own storage, so uninstalling Amp
 deletes them.
 
