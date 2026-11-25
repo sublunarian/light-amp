@@ -1,15 +1,15 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
-index faaa5da..b0cd455 100644
+index 2511a37..d847401 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
 @@ -1,5 +1,6 @@
  package com.thelightphone.sdk
  
 +import com.thelightphone.sdk.display.LightDisplayColor
+ import android.content.ActivityNotFoundException
  import android.content.Context
- import android.os.Bundle
- import android.view.KeyEvent
-@@ -217,11 +218,16 @@ class LightActivity internal constructor() : ComponentActivity() {
+ import android.content.Intent
+@@ -287,6 +288,9 @@ class LightActivity internal constructor() : ComponentActivity() {
  
      override fun onPause() {
          super.onPause()
@@ -19,10 +19,12 @@ index faaa5da..b0cd455 100644
          currentScreen.value?.screen?.notifyAppPause()
      }
  
+@@ -297,6 +301,8 @@ class LightActivity internal constructor() : ComponentActivity() {
+ 
      override fun onResume() {
          super.onResume()
 +        // SDK PATCH (temporary spike): colour while we are in front.
 +        LightDisplayColor.applyForeground(this)
          currentScreen.value?.screen?.notifyWillShow()
      }
- }
+ 

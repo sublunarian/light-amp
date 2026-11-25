@@ -17,7 +17,7 @@ import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
-import com.sublunar.amp.ui.screens.editText
+import com.sublunar.amp.ui.screens.enterText
 import com.sublunar.amp.ui.screens.adoptServer
 
 /**
@@ -177,6 +177,6 @@ class JellyfinLinkScreen(
         // and with the keyboard over it, it would close the keyboard instead —
         // and leave this page up to be signed in from a second time.
         if (checking) return
-        editText(title, initial, onResult)
+        enterText(title, initial, onResult)
     }
 }

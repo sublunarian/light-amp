@@ -1,5 +1,5 @@
 diff --git a/sdk/client/src/main/AndroidManifest.xml b/sdk/client/src/main/AndroidManifest.xml
-index eb09947..439f751 100644
+index 56a3f3e..3ec1e95 100644
 --- a/sdk/client/src/main/AndroidManifest.xml
 +++ b/sdk/client/src/main/AndroidManifest.xml
 @@ -6,6 +6,12 @@
@@ -15,10 +15,10 @@ index eb09947..439f751 100644
      <application>
          <service
              android:name="com.thelightphone.sdk.LightPushService"
-@@ -17,5 +23,10 @@
-         <!-- LightAudioService is not declared here. The Gradle plugin emits it
-              into the manifests of tools that declare the detached-audio
-              capability, so no other tool carries a mediaPlayback claim. -->
+@@ -28,5 +34,10 @@
+         <!-- Some components are not declared directly here. See ManifestGenerator
+              in the Gradle plugin (plugin/src/main/kotlin/com/thelightphone/plugin/)
+              for the ones added at build time based on the tool's declared capabilities. -->
 +        <!-- SPIKE (background downloads): revert with LightTransferService. -->
 +        <service
 +            android:name="com.thelightphone.sdk.transfer.LightTransferService"

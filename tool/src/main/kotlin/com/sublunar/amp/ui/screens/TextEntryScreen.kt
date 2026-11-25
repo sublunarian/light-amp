@@ -84,7 +84,7 @@ class TextEntryScreen(
 }
 
 /** Opens [TextEntryScreen] over this page and hands back what was submitted; nothing when it was backed out of. */
-fun SimpleLightScreen<*>.editText(title: String, initial: String, onResult: (String) -> Unit) {
+fun SimpleLightScreen<*>.enterText(title: String, initial: String, onResult: (String) -> Unit) {
     navigateTo<String?>(
         { TextEntryScreen(it, title = title, initial = initial) },
         resultCallback = { text -> if (text != null) onResult(text) },

@@ -11,7 +11,7 @@ import com.sublunar.amp.source.SignInOutcome
 import com.sublunar.amp.source.firstAnsweringSpelling
 import com.sublunar.amp.ui.screens.QrScanScreen
 import com.sublunar.amp.ui.screens.adoptServer
-import com.sublunar.amp.ui.screens.editText
+import com.sublunar.amp.ui.screens.enterText
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.ScrollableList
@@ -217,7 +217,7 @@ class ServerScreen(
         // Not while a check is in flight: its answer goes back from this page,
         // and with the keyboard over it, it would close the keyboard instead.
         if (saving) return
-        editText(title, initial, onResult)
+        enterText(title, initial, onResult)
     }
 
     /**
