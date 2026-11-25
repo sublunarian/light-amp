@@ -813,7 +813,8 @@ object App {
                     }
             }
             coreReady = true
-            // Music may have come through the Tool Manager while Amp was closed.
+            // Music, or a login, may have come through the Tool Manager while Amp was closed.
+            scope.launch(Dispatchers.IO) { ToolManagerFolders.takeSentLogin() }
             scope.launch { librarySync.rescanPhoneIfChanged() }
             // Periodic background library refresh (min 15 min on WorkManager).
             LightWork.enqueuePeriodic(context, SYNC_JOB_KEY, 30.minutes)

@@ -105,7 +105,8 @@ Also waiting on Light:
 - The back swipe doesn't work in Amp.
 - Bluetooth can't be picked in Amp. Connect it in LightOS's settings instead
   ([light-sdk#191](https://github.com/lightphone/light-sdk/issues/191)).
-- Paste doesn't work. For a Bandcamp login, use Scan Username & Password
+- Paste doesn't work. For a Bandcamp login, send it from a computer with the
+  Tool Manager, under Amp > Bandcamp Login
   ([light-sdk#45](https://github.com/lightphone/light-sdk/issues/45)).
 - The volume buttons only change Amp's volume while it's on screen, and
   LightOS's volume panel doesn't show

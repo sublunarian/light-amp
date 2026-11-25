@@ -7,6 +7,8 @@
 - Add music and playlists from a computer with Light's Tool Manager. Every
   playlist there can be edited in Amp, and the ones in `Music/Amp/Playlists`
   move there on first launch.
+- Send a Bandcamp login from a computer with the Tool Manager, instead of
+  scanning a QR code.
 
 ### Fixed
 
@@ -16,9 +18,10 @@
 ### Changed
 
 - Local Music reads only what comes through the Tool Manager. Music in
-  `Music/Amp` needs uploading again, and Amp no longer asks to see your music
-  or photos.
-- Typing uses LightOS's keyboard. Search shows its results once you submit.
+  `Music/Amp` needs uploading again.
+- Amp no longer asks for any permission: not your music, photos or camera.
+- Typing uses LightOS's keyboard, except search, which still shows results as
+  you type.
 - Casting to a DLNA speaker keeps your server login on the phone. The music
   now passes through the phone, so keep it on the same Wi-Fi while casting.
 - Resuming on an AirPlay speaker takes about half as long.

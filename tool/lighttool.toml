@@ -8,10 +8,6 @@ permissions = [
     "android.permission.INTERNET",
     "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.WAKE_LOCK",
-    # Scanning a username and password from a QR code on the server form, with
-    # the SDK's own scanner. On the SDK's allowed list, and asked of the user
-    # through LightOS the first time a code is scanned.
-    "android.permission.CAMERA",
 ]
 # detached-audio: the plugin wires LightAudioService and its foreground
 # permissions into this tool's manifest.

@@ -18,10 +18,12 @@ object ToolEntryPoint : LightEntryPoint {
     override fun getToolManagerManifest(): ClientToolManifest = ToolManagerFolders.manifest()
 
     /**
-     * Files came or went through the Tool Manager. A process with no booted app
-     * has nothing to show them in; its next boot looks for changes itself.
+     * Files came or went through the Tool Manager, or a form was sent. A process
+     * with no booted app has nothing to show them in; its next boot looks itself.
      */
     override suspend fun onToolManagerDataUpdate() {
-        if (App.isReady) App.scope.launch { App.librarySync.rescanPhoneIfChanged(afterUpload = true) }
+        if (!App.isReady) return
+        ToolManagerFolders.takeSentLogin()
+        App.scope.launch { App.librarySync.rescanPhoneIfChanged(afterUpload = true) }
     }
 }

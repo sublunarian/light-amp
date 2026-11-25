@@ -1,15 +1,17 @@
 package com.sublunar.amp.source.subsonic
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.sublunar.amp.App
 import com.sublunar.amp.data.MusicSource
+import com.sublunar.amp.data.SentLogin
+import com.sublunar.amp.data.ToolManagerFolders
 import com.sublunar.amp.source.SignInOutcome
 import com.sublunar.amp.source.firstAnsweringSpelling
-import com.sublunar.amp.ui.screens.QrScanScreen
 import com.sublunar.amp.ui.screens.adoptServer
 import com.sublunar.amp.ui.screens.TextKind
 import com.sublunar.amp.ui.screens.enterText
@@ -39,7 +41,7 @@ class ServerScreen(
      * Adding Bandcamp: its address is always the same, so it is filled in, and
      * a line above the login fields says where its credentials come from: they
      * are made for Subsonic apps on Bandcamp's site, not the account's own
-     * login, and long enough that the form offers to scan them. Otherwise it is
+     * login, and long enough that the form offers to take them from a computer. Otherwise it is
      * an ordinary Subsonic server.
      */
     private val bandcamp: Boolean = false,
@@ -83,6 +85,15 @@ class ServerScreen(
         val passwordSet = newPass?.isNotEmpty() ?: (storedLength > 0)
         // A saved password's dots don't give away its length.
         val dots = "•".repeat(newPass?.length?.coerceIn(0, 24) ?: 8)
+        val forBandcamp = bandcamp || (source != null && isBandcampAddress(source.baseUrl))
+        // A login sent from a computer fills the form, here or the next time it opens.
+        val sent by ToolManagerFolders.sentLogin.collectAsState()
+        LaunchedEffect(sent, forBandcamp, saving) {
+            val login = sent ?: return@LaunchedEffect
+            if (!forBandcamp || saving) return@LaunchedEffect
+            ToolManagerFolders.sentLogin.value = null
+            fillFromComputer(login)
+        }
 
         ListScreen(
             onBack = { goBack() },
@@ -155,22 +166,15 @@ class ServerScreen(
                     )
                 }
                 // Bandcamp's long generated credentials are typed on a computer
-                // instead: any QR generator, the username on the first line and
-                // the password on the second, and one scan fills both. Only for
-                // Bandcamp: any other server's login is the one you know.
-                if (bandcamp || (source != null && isBandcampAddress(source.baseUrl))) item {
+                // instead, in the Tool Manager's Bandcamp Login form, and fill in
+                // here when they arrive. Only for Bandcamp: any other server's
+                // login is the one you know.
+                if (forBandcamp) item {
                     TextRow(
-                        title = "Scan Username & Password",
-                        subtitle = "On a computer, paste the username and password into any QR code " +
-                            "generator, each on its own line, then scan the code",
+                        title = "Send Login from a Computer",
+                        subtitle = "Open ${ToolManagerFolders.LOCATION} and connect a computer. " +
+                            "Under Amp, fill in Bandcamp Login, and it fills in here.",
                         subtitleLines = Int.MAX_VALUE,
-                        onClick = {
-                            if (saving) return@TextRow
-                            navigateTo<String?>(
-                                { QrScanScreen(it, title = "Scan Login") },
-                                resultCallback = { text -> if (text != null) fillFromScan(text) },
-                            )
-                        },
                     )
                 }
                 // Only how the server is reached, nothing about what it plays:
@@ -202,13 +206,8 @@ class ServerScreen(
         }
     }
 
-    /** Fills the username and password from a scanned code — see [ScannedLogin]. */
-    private fun fillFromScan(text: String) {
-        val login = ScannedLogin.parse(text)
-        if (login == null) {
-            status = "That code didn't hold a username and a password on two lines."
-            return
-        }
+    /** Fills the username and password from a login sent through the Tool Manager. */
+    private fun fillFromComputer(login: SentLogin) {
         user = login.username
         newPass = login.password
         status = "Username and password filled in. Tap Save."
