@@ -19,18 +19,6 @@ interface PhoneLibrary {
     /** The folder the music is read from, as the screens name it. */
     val folderLabel: String
 
-    /** The permission that makes the folder readable — see lighttool.toml. */
-    val permission: String
-
-    /** Whether the app may read the folder now, and if not, why. */
-    suspend fun access(): PhoneAccess
-
-    /** The permission that makes cover images beside the music readable. */
-    val coverPermission: String
-
-    /** Whether the app may read those cover images now. */
-    fun hasCoverAccess(): Boolean
-
     /** Whether files came, went or changed after [ms], so a scan would find something new. Touches the disk. */
     fun changedSince(ms: Long): Boolean
 
@@ -69,9 +57,6 @@ interface PhoneFavorites {
 
     suspend fun setArtist(name: String, liked: Boolean): Boolean
 }
-
-/** What stands between the app and the music folder, if anything. */
-enum class PhoneAccess { GRANTED, NOT_GRANTED, BLOCKED_BY_LIGHTOS }
 
 /** What a scan of the phone's music folder found. */
 data class PhoneScan(val tracks: List<Track>, val albums: List<Album>)

@@ -73,13 +73,10 @@ class PlaylistActionsScreen(
     }
 
     private fun rename() {
-        navigateTo<String?>(
-            { TextEntryScreen(it, title = "Rename Playlist", initial = playlistName) },
-            resultCallback = { newName ->
-                if (!newName.isNullOrBlank()) {
-                    App.scope.launch { App.playlists.renamePlaylist(playlistId, newName) }
-                }
-            },
-        )
+        enterText("Rename Playlist", playlistName, TextKind.NAME) { newName ->
+            if (newName.isNotBlank()) {
+                App.scope.launch { App.playlists.renamePlaylist(playlistId, newName) }
+            }
+        }
     }
 }

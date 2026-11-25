@@ -15,6 +15,10 @@
 
 ### Changed
 
+- Local Music reads only what comes through the Tool Manager. Music in
+  `Music/Amp` needs uploading again, and Amp no longer asks to see your music
+  or photos.
+- Typing uses LightOS's keyboard. Search shows its results once you submit.
 - Casting to a DLNA speaker keeps your server login on the phone. The music
   now passes through the phone, so keep it on the same Wi-Fi while casting.
 - Resuming on an AirPlay speaker takes about half as long.

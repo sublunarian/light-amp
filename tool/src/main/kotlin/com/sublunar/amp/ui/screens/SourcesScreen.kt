@@ -3,12 +3,11 @@ package com.sublunar.amp.ui.screens
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.sublunar.amp.App
@@ -20,7 +19,6 @@ import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
 import com.sublunar.amp.source.PendingServer
-import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.Providers
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
@@ -421,33 +419,9 @@ class SourceDetailScreen(
         val source = sources.firstOrNull { it.id == sourceId }
         val sync by App.librarySync.syncState.collectAsState()
 
-        // Re-checked as every sync starts and ends, since granting access is what
-        // the user goes off to do; not on each progress step. Keyed on the source
-        // too: the list starts empty, and an answer taken before it loaded would
-        // stand until the next sync.
-        var access by remember { mutableStateOf(PhoneAccess.GRANTED) }
-        LaunchedEffect(sync.syncing, sync.lastSyncedMs, source?.id) { access = source?.phoneLibrary?.access() ?: PhoneAccess.GRANTED }
-        val canRead = access == PhoneAccess.GRANTED
-        val askAccess = rememberAccessRequest(source?.phoneLibrary)
-
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Source", headingRows = true) {
             ScrollableList {
                 if (source == null) return@ScrollableList
-                if (source.phoneLibrary != null && !canRead) {
-                    // Without the permission the folder listing comes back empty
-                    // rather than failing, which looks like a phone with no music.
-                    item {
-                        TextRow(
-                            title = "Allow Music Access",
-                            subtitle = if (access == PhoneAccess.BLOCKED_BY_LIGHTOS) {
-                                "LightOS is blocking it for this tool"
-                            } else {
-                                "Needed to read this phone's music folder"
-                            },
-                            onClick = askAccess,
-                        )
-                    }
-                }
                 // How this kind of source is reached is its own to say — see
                 // SourceUi.connection.
                 source.provider.ui.connection(source)?.let { row ->
@@ -469,24 +443,11 @@ class SourceDetailScreen(
                             title = "Player name",
                             value = source.playerName.ifBlank { "Amp (default)" },
                             onClick = {
-                                navigateTo<String?>(
-                                    {
-                                        TextEntryScreen(
-                                            it,
-                                            title = "Player name",
-                                            initial = source.playerName,
-                                        )
-                                    },
-                                    resultCallback = { text ->
-                                        if (text != null) {
-                                            App.scope.launch {
-                                                App.settings.saveSource(
-                                                    source.copy(playerName = text.trim()),
-                                                )
-                                            }
-                                        }
-                                    },
-                                )
+                                enterText("Player name", source.playerName, TextKind.EXACT) { text ->
+                                    App.scope.launch {
+                                        App.settings.saveSource(source.copy(playerName = text.trim()))
+                                    }
+                                }
                             },
                         )
                     }

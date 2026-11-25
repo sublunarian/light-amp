@@ -40,8 +40,8 @@ object LocalPlaylists : PhonePlaylists {
     /** Files that couldn't be read, so one is logged once rather than at every listing. Never logged themselves. */
     private val unreadable = ConcurrentHashMap.newKeySet<String>()
 
-    /** Where playlists were kept before the Tool Manager. */
-    private fun legacyFolder(): File = File(LocalLibrary.MUSIC_DIR, "Playlists")
+    /** Where playlists were kept before the Tool Manager. Amp can still read the files it wrote there. */
+    private fun legacyFolder(): File = File("/storage/emulated/0/Music/Amp/Playlists")
 
     /** The old folder only in a process that never booted, which shows no playlists anyway. */
     internal fun folder(): File {

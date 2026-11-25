@@ -23,10 +23,8 @@ class PhoneLibraryTest {
     }
 
     @Test
-    fun `the folder and the permission are the ones it always had`() {
-        val phone = source(SourceKind.LOCAL).phoneLibrary!!
-        assertEquals("Music/Amp", phone.folderLabel)
-        assertEquals("android.permission.READ_MEDIA_AUDIO", phone.permission)
+    fun `its music comes through the Tool Manager`() {
+        assertEquals("Tool Manager", source(SourceKind.LOCAL).phoneLibrary!!.folderLabel)
     }
 
     @Test

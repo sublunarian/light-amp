@@ -11,6 +11,7 @@ import com.sublunar.amp.source.SignInOutcome
 import com.sublunar.amp.source.firstAnsweringSpelling
 import com.sublunar.amp.ui.screens.QrScanScreen
 import com.sublunar.amp.ui.screens.adoptServer
+import com.sublunar.amp.ui.screens.TextKind
 import com.sublunar.amp.ui.screens.enterText
 import com.sublunar.amp.ui.components.ListScreen
 import com.sublunar.amp.ui.components.SectionLabel
@@ -97,7 +98,7 @@ class ServerScreen(
                         TextRow(
                             title = "Name",
                             value = nickname.ifBlank { "Required" },
-                            onClick = { edit("Name", nickname) { nickname = it } },
+                            onClick = { edit("Name", nickname, TextKind.NAME) { nickname = it } },
                         )
                     }
                 } else {
@@ -106,7 +107,7 @@ class ServerScreen(
                             title = "Name",
                             value = source.name,
                             onClick = {
-                                edit("Name", source.name) { text ->
+                                edit("Name", source.name, TextKind.NAME) { text ->
                                     App.scope.launch {
                                         App.settings.saveSource(source.copy(name = text.trim()))
                                     }
@@ -149,7 +150,7 @@ class ServerScreen(
                             // "New" only where there is an old one to replace;
                             // adding a server, it is simply the password.
                             val title = if (storedLength > 0) "New password" else "Password"
-                            edit(title, "") { if (it.isNotEmpty()) newPass = it }
+                            edit(title, "", TextKind.PASSWORD) { if (it.isNotEmpty()) newPass = it }
                         },
                     )
                 }
@@ -213,11 +214,11 @@ class ServerScreen(
         status = "Username and password filled in. Tap Save."
     }
 
-    private fun edit(title: String, initial: String, onResult: (String) -> Unit) {
+    private fun edit(title: String, initial: String, kind: TextKind = TextKind.EXACT, onResult: (String) -> Unit) {
         // Not while a check is in flight: its answer goes back from this page,
         // and with the keyboard over it, it would close the keyboard instead.
         if (saving) return
-        enterText(title, initial, onResult)
+        enterText(title, initial, kind, onResult)
     }
 
     /**

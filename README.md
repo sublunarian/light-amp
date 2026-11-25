@@ -57,21 +57,14 @@ of the Library page.
 
 ## Music on the phone
 
-The easy way is Light's Tool Manager. Open Amp there from a computer's browser
-and upload albums into **Music**. Amp reads them as soon as the upload
-finishes. They live in Amp's own storage, so uninstalling Amp deletes them.
+Music gets onto the phone through Light's Tool Manager. Open Amp there from a
+computer's browser and upload songs into **Music**. Amp reads them as soon as
+the upload finishes. They live in Amp's own storage, so uninstalling Amp
+deletes them.
 
-Amp also reads `Music/Amp`, and nothing else, so music added with Light's Music
-tool won't show up.
-
-```bash
-adb push ~/Music/some-album "/sdcard/Music/Amp/"
-```
-
-Sub-folders are fine. Names come from the tags rather than the folders.
-Artwork embedded in the files always shows. A `cover.jpg` next to them shows
-for uploaded music, and for `Music/Amp` once Amp may see photos.
-APE, WavPack and DSD files are skipped.
+Names come from the tags, not the file names. Embed the artwork in the files:
+the Tool Manager can't make folders yet, so every upload lands in one folder
+and a `cover.jpg` would cover them all. APE, WavPack and DSD files are skipped.
 
 Playlists are `.m3u8` files in the Tool Manager's **Playlists** folder. Upload
 your own there and Amp can edit them like its own. Ones from `Music/Amp/Playlists`

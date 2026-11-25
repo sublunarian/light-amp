@@ -576,9 +576,6 @@ class AppSettings(
     /** The user's own hold on downloading, kept across launches. */
     val downloadsPaused: Pref<Boolean> = bool("pref.downloadsPaused", false)
 
-    /** Whether "Show Folder Covers?" has been tapped: it is offered until then, never after. */
-    val folderCoverOfferTapped: Pref<Boolean> = bool("pref.folderCoverQuestionAnswered", false)
-
     // After the last stored value: one declared below this would find no snapshot.
     init {
         launchSnapshot = null
@@ -733,6 +730,8 @@ class AppSettings(
     private suspend fun keepEarlierDefaults() {
         dataStore.edit { p ->
             p.forgetRemovedSorts()
+            // The question about folder covers went with the photos permission.
+            p.remove(booleanPreferencesKey("pref.folderCoverQuestionAnswered"))
             p.carryHiddenDownloadIcons()
             if (p[SOURCES] == null) return@edit
             for ((key, change) in CHANGED_DEFAULTS) if (p[key] !in change.known) p[key] = change.was

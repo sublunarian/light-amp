@@ -1,14 +1,9 @@
 package com.sublunar.amp.ui.screens
 
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import com.sublunar.amp.data.Holdings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.dp
 import com.sublunar.amp.ui.components.TabGlyphs
 import com.sublunar.amp.ui.components.INNER_GLYPH_PX
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
@@ -31,8 +26,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.sublunar.amp.App
@@ -44,8 +37,6 @@ import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.SyncState
 import com.sublunar.amp.data.TagFilter
 import com.sublunar.amp.data.shuffled
-import com.sublunar.amp.source.PhoneAccess
-import com.sublunar.amp.source.PhoneLibrary
 import com.sublunar.amp.ui.LightType
 import com.sublunar.amp.ui.PlayerTheme
 import com.sublunar.amp.ui.components.AlbumGrid
@@ -85,7 +76,6 @@ import com.sublunar.amp.ui.components.appClickable
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.SimpleLightScreen
-import com.thelightphone.sdk.rememberPermissionRequestLauncher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -110,7 +100,6 @@ fun SimpleLightScreen<*>.LibraryShell() {
     val libraryIndex by LibraryNav.libraryIndex.collectAsState()
     val indexPage by LibraryNav.indexPage.collectAsState()
     val searchActive by LibraryNav.searchActive.collectAsState()
-    val typing by LibraryNav.typing.collectAsState()
     PlayerTheme(library = true) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
@@ -173,7 +162,7 @@ private fun SimpleLightScreen<*>.TabHeader(tab: LibraryTab) {
         innerAction = if (simplified) {
             null
         } else {
-            HeaderAction(AppIcons.Search, iconPx = INNER_GLYPH_PX) { LibraryNav.openSearch(withKeyboard = true) }
+            HeaderAction(AppIcons.Search, iconPx = INNER_GLYPH_PX) { startSearch() }
         },
         fitTitle = true,
         rightAction = libraryCornerAction(tab.page),
@@ -238,36 +227,10 @@ fun tabFilterLine(tab: LibraryTab): String? {
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
-/** Whether the active source's music can be read: false only for a phone library not let in yet. */
-@Composable
-private fun rememberLocalAccess(): Boolean {
-    val source = App.source.collectAsState().value
-    val sync by App.librarySync.syncState.collectAsState()
-    var readable by remember(source.id) { mutableStateOf(true) }
-    LaunchedEffect(source.id, sync.lastSyncedMs) {
-        readable = source.phoneLibrary?.let { it.access() == PhoneAccess.GRANTED } ?: true
-    }
-    return readable
-}
-
-/**
- * Asks LightOS to let this tool read [phone]'s folder — see lighttool.toml.
- * Does nothing for a source with a server.
- *
- * The launcher is made whatever the source, so this is never a conditional
- * composable call — see ARCHITECTURE.md.
- */
-@Composable
-internal fun rememberAccessRequest(phone: PhoneLibrary?): () -> Unit {
-    val launcher = rememberPermissionRequestLauncher(phone?.permission.orEmpty())
-    return { if (phone != null) launcher?.launch() }
-}
-
 /**
  * The rows a tab list shows above its content when something needs saying:
  *
- * - Allow Music Access, for a phone library not let in yet. Without it the tab
- *   is simply empty, which reads as "this phone has no music".
+ * - Where music comes from, for the phone's own library while it has none.
  * - Why the last sync gave up. A refused login leaves the cached rows in place,
  *   so this may sit above a library that looks fine and is no longer being
  *   updated. Tapping goes to Settings, the way to the source that needs fixing.
@@ -279,12 +242,11 @@ internal fun rememberAccessRequest(phone: PhoneLibrary?): () -> Unit {
  */
 @Composable
 private fun SimpleLightScreen<*>.libraryNotices(empty: Boolean): List<@Composable () -> Unit> {
-    val needsAccess = !rememberLocalAccess()
-    val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
+    val onPhone = App.source.collectAsState().value.phoneLibrary != null
     val sync = App.librarySync.syncState.collectAsState().value
     val error = sync.error
     return buildList<@Composable () -> Unit> {
-        if (needsAccess) add { PlayAllRow(AppIcons.Smartphone, "Allow Music Access", onClick = askAccess) }
+        if (onPhone && empty && !sync.syncing) add { SectionLabel("Add music from a computer with Light's Tool Manager") }
         if (!error.isNullOrBlank()) add { PlayAllRow(AppIcons.CloudOff, error) { go { SettingsScreen(it) } } }
         if (empty && sync.syncing) add { SectionLabel(syncProgressText(sync.phase)) }
     }
@@ -315,7 +277,6 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
     Column(Modifier.fillMaxSize()) {
         if (header) TabHeader(LibraryTab.ALBUMS)
         if (grid) {
-            if (header) rememberFolderCoverAsk()?.let { FolderCoverQuestion(it) }
             // Its own anchor, separate from the list's: see rememberGridAnchor.
             val gridState = rememberGridAnchor("tab:albums/grid", headerCount = 1 + notices.size)
             // No strip: the covers take the width, and AlbumGrid adds its own bar
@@ -343,7 +304,6 @@ private fun SimpleLightScreen<*>.AlbumsTab(header: Boolean = true) {
                 // search borrows the list, rows and all.
                 headerCount = 1 + notices.size,
                 reversed = reversed,
-                asksFolderCovers = header,
             ) {
                 item { RandomAlbumRow(rows, tall = true) }
                 notices.forEach { notice -> item { notice() } }
@@ -402,32 +362,22 @@ internal fun ColumnScope.IndexedList(
     letters: List<Char>,
     headerCount: Int,
     reversed: Boolean = false,
-    /** A tab's own list: "Show Folder Covers?" is pinned over its top while it's asked. */
-    asksFolderCovers: Boolean = false,
     content: LazyListScope.() -> Unit,
 ) {
     val listState = rememberListAnchor(anchor, headerCount)
-    val askFolderCovers = if (asksFolderCovers) rememberFolderCoverAsk() else null
-    var questionPx by remember { mutableIntStateOf(0) }
-    val questionHeight = with(LocalDensity.current) { if (askFolderCovers != null) questionPx.toDp() else 0.dp }
     Box(modifier = Modifier.weight(1f)) {
         val indexed = letters.isNotEmpty()
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             // Keeps titles clear of whichever bar is down the right edge; without
-            // it a long album name ran underneath the letters. The question sits
-            // over the top, not above the box, so the strip keeps its height.
+            // it a long album name ran underneath the letters.
             contentPadding = PaddingValues(
                 start = px(LIST_EDGE_PX),
-                top = questionHeight,
                 end = px(if (indexed) INDEX_STRIP_PX else SCROLLBAR_LANE_PX),
             ),
             content = content,
         )
-        askFolderCovers?.let { ask ->
-            FolderCoverQuestion(ask, Modifier.align(Alignment.TopCenter).onSizeChanged { questionPx = it.height })
-        }
         if (!indexed) ListScrollBar(listState)
         // A descending list keeps its index; the strip just reads Z→A to match.
         if (indexed) {
@@ -468,7 +418,6 @@ private fun SimpleLightScreen<*>.SongsTab(header: Boolean = true) {
             letters = letters,
             headerCount = if (selection.active) 0 else 1 + notices.size,
             reversed = reversed,
-            asksFolderCovers = header,
         ) {
             if (!selection.active) {
                 item {
@@ -529,7 +478,6 @@ private fun SimpleLightScreen<*>.ArtistsTab(header: Boolean = true) {
             letters = letters,
             headerCount = notices.size,
             reversed = reversed,
-            asksFolderCovers = header,
         ) {
             notices.forEach { notice -> item { notice() } }
             items(sorted.size, key = { rows[it]?.name ?: it }) { i ->
@@ -577,7 +525,6 @@ private fun SimpleLightScreen<*>.PlaylistsTab(header: Boolean = true) {
             letters = letters,
             headerCount = 0,
             reversed = reversed,
-            asksFolderCovers = header,
         ) {
             items(playlists, key = { it.id }) { playlist ->
                 TrackRow(

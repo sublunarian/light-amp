@@ -27,15 +27,12 @@ class QueueActionsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) 
                 if (queue.isNotEmpty()) {
                     TextRow(title = "Save Queue as Playlist") {
                         val ids = queue.map { it.id }
-                        navigateTo<String?>(
-                            { TextEntryScreen(it, title = "Playlist Name", initial = queueName.orEmpty()) },
-                            resultCallback = { name ->
-                                if (!name.isNullOrBlank()) {
-                                    App.scope.launch { App.playlists.createPlaylist(name, ids) }
-                                    goBack()
-                                }
-                            },
-                        )
+                        enterText("Playlist Name", queueName.orEmpty(), TextKind.NAME) { name ->
+                            if (name.isNotBlank()) {
+                                App.scope.launch { App.playlists.createPlaylist(name, ids) }
+                                goBack()
+                            }
+                        }
                     }
                 }
                 // Only what is still to come: the song playing keeps playing.

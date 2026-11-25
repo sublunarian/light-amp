@@ -40,6 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerializationException
+import com.sublunar.amp.ui.screens.TextKind
 import com.sublunar.amp.ui.screens.enterText
 import com.sublunar.amp.ui.screens.adoptServer
 
@@ -372,7 +373,7 @@ class PlexManualScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 item { SectionLabel(status ?: "For a server not linked to an account") }
                 item {
                     TextRow(title = "Name", value = name.ifBlank { "Required" }) {
-                        edit("Name", name) { name = it }
+                        edit("Name", name, TextKind.NAME) { name = it }
                     }
                 }
                 item {
@@ -429,11 +430,11 @@ class PlexManualScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         }
     }
 
-    private fun edit(title: String, initial: String, onResult: (String) -> Unit) {
+    private fun edit(title: String, initial: String, kind: TextKind = TextKind.EXACT, onResult: (String) -> Unit) {
         // Not while a check is in flight: its answer goes back from this page,
         // and with the keyboard over it, it would close the keyboard instead
         // and leave this page up to be signed in from a second time.
         if (checking) return
-        enterText(title, initial, onResult)
+        enterText(title, initial, kind, onResult)
     }
 }

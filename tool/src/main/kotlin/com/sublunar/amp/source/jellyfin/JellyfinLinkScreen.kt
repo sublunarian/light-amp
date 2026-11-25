@@ -17,6 +17,7 @@ import com.thelightphone.sdk.SealedLightActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import com.sublunar.amp.ui.screens.TextKind
 import com.sublunar.amp.ui.screens.enterText
 import com.sublunar.amp.ui.screens.adoptServer
 
@@ -82,7 +83,7 @@ class JellyfinLinkScreen(
                     TextRow(
                         title = "Password",
                         value = if (password.isBlank()) "Leave blank if none" else "••••••••",
-                    ) { edit("Password", "") { password = it } }
+                    ) { edit("Password", "", TextKind.PASSWORD) { password = it } }
                 }
                 item {
                     TextRow(title = if (checking) "Checking…" else "Sign In") {
@@ -172,11 +173,11 @@ class JellyfinLinkScreen(
         }
     }
 
-    private fun edit(title: String, initial: String, onResult: (String) -> Unit) {
+    private fun edit(title: String, initial: String, kind: TextKind = TextKind.EXACT, onResult: (String) -> Unit) {
         // Not while a check is in flight: its answer goes back from this page,
         // and with the keyboard over it, it would close the keyboard instead —
         // and leave this page up to be signed in from a second time.
         if (checking) return
-        enterText(title, initial, onResult)
+        enterText(title, initial, kind, onResult)
     }
 }

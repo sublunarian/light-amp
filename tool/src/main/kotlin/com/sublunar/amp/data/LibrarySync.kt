@@ -7,7 +7,6 @@ import com.sublunar.amp.log.Log
 import com.sublunar.amp.log.logName
 import com.sublunar.amp.log.logRef
 import com.sublunar.amp.log.loggableWord
-import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.PhoneLibrary
 import com.sublunar.amp.source.PhoneLikes
 import java.util.concurrent.ConcurrentHashMap
@@ -591,20 +590,6 @@ class LibrarySync(
     private suspend fun runLocalScan(dao: LibraryDao, sourceId: String, phone: PhoneLibrary) {
         _syncState.update { it.copy(syncing = true, error = null, phase = "Reading this phone") }
         try {
-            val access = phone.access()
-            if (access != PhoneAccess.GRANTED) {
-                Log.i("AmpSync", "phone scan not run: music access $access")
-                _syncState.value = SyncState(
-                    syncing = false,
-                    // Blocked is not "not yet allowed": the prompt can't change a
-                    // LightOS policy, so say where the wall is.
-                    error = when (access) {
-                        PhoneAccess.BLOCKED_BY_LIGHTOS -> "LightOS is blocking this tool's music access"
-                        else -> "Allow music access to read this phone"
-                    },
-                )
-                return
-            }
             val startedMs = monotonicMs()
             val scan = phone.scan { count ->
                 _syncState.update { it.copy(phase = "$count tracks") }
