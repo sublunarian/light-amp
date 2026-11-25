@@ -39,9 +39,6 @@ object ToolManagerFolders {
 
     private val bandcampLoginDir: File? get() = shared?.let { File(it, BANDCAMP_LOGIN) }
 
-    /** A file in Amp's own storage, [path] from where [shared] sits. Null before [attach]. */
-    fun ownFile(path: String): File? = shared?.parentFile?.let { File(it, path) }
-
     /**
      * A Bandcamp login sent from a computer, until the Bandcamp form takes it.
      * Kept in memory only: the file it came in is deleted as soon as it is read.

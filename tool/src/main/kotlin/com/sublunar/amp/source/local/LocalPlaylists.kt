@@ -1,7 +1,6 @@
 package com.sublunar.amp.source.local
 
 import com.sublunar.amp.data.PhoneFiles
-import com.sublunar.amp.data.ToolManagerFolders
 import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.isReorderOf
 import com.sublunar.amp.log.Log
@@ -39,60 +38,7 @@ object LocalPlaylists : PhonePlaylists {
     /** Files that couldn't be read, so one is logged once rather than at every listing. Never logged themselves. */
     private val unreadable = ConcurrentHashMap.newKeySet<String>()
 
-    internal fun folder(): File {
-        val dir = File(LocalLibrary.MUSIC_DIR, "Playlists")
-        if (!broughtBack) bringBackOnce(dir)
-        return dir
-    }
-
-    @Volatile
-    private var broughtBack = false
-
-    /**
-     * Temporary, until the Tool Manager is finished: builds that never shipped
-     * moved playlists and likes into Amp's own storage. They come back to
-     * [dir] here, and the mark that they were moved goes, so the Tool Manager's
-     * return moves them again. Remove with that return.
-     */
-    @Synchronized
-    private fun bringBackOnce(dir: File) {
-        if (broughtBack) return
-        val from = ToolManagerFolders.ownFile("shared/Playlists") ?: return
-        bringBack(from, dir)
-        ToolManagerFolders.ownFile("playlists-moved")?.let { runCatching { it.delete() } }
-        broughtBack = true
-    }
-
-    /**
-     * Moves each playlist and likes file from [from] into [to], leaving any name
-     * [to] already has. Playlists hold full paths and are copied as they are;
-     * likes name songs relative to their folder, so they are rewritten for [to].
-     */
-    internal fun bringBack(from: File, to: File) {
-        val files = from.listFiles()?.filter { it.isFile && it.name.endsWith(EXTENSION, ignoreCase = true) }.orEmpty()
-        if (files.isEmpty()) return
-        if (!to.isDirectory && !to.mkdirs()) {
-            Log.w(TAG, "couldn't create the playlists folder")
-            return
-        }
-        var count = 0
-        for (file in files) {
-            val target = File(to, file.name)
-            if (target.exists()) continue
-            val moved = runCatching {
-                val text = file.readText()
-                target.writeText(if (FavoritesFile.isFavoritesFile(file.name)) renderFavorites(parseFavorites(text, from), to) else text)
-            }.onFailure {
-                Log.w(TAG, "couldn't bring a playlist file back: ${it.logName()}")
-                runCatching { target.delete() }
-            }.isSuccess
-            if (moved) {
-                count++
-                runCatching { file.delete() }
-            }
-        }
-        Log.i(TAG, "brought $count of ${files.size} playlist files back to Music/Amp/Playlists")
-    }
+    internal fun folder(): File = File(LocalLibrary.MUSIC_DIR, "Playlists")
 
     private fun idFor(file: File): String = ID_PREFIX + file.absolutePath
 
