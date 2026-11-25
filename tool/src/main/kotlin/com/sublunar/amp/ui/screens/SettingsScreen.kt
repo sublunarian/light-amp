@@ -76,7 +76,6 @@ class SettingsScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                     item { TextRow(title = "Streams & Downloads") { go { StreamsDownloadsScreen(it) } } }
                 }
                 item { TextRow(title = "About") { go { AboutScreen(it) } } }
-                item { TextRow(title = "Test") { go { TestScreen(it) } } }
             }
         }
     }
@@ -166,7 +165,7 @@ class RowMarkScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     }
 }
 
-/** Trials, before each is kept or dropped. */
+/** Trials, before each is kept or dropped. With none on trial, Settings leaves its row out. */
 class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable

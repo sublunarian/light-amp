@@ -4,49 +4,46 @@
 
 ### Added
 
-- Send a Bandcamp login from a computer with the Tool Manager, instead of
-  scanning a QR code.
-
-### Fixed
-
-- AirPlay speakers that were often missed, like an AirPort Express, are found
-  far more reliably.
+- Edit playlists offline: changes are saved on the phone and sync when your
+  server is back.
+- Play to an Apple TV or a Mac over AirPlay, lossless at CD quality: pair
+  once with the code it shows. HomePods too.
+- Like songs, albums and artists in your local music. They're saved in a file
+  you can take with you.
+- Customize what the simple layout's home page lists, and in what order, in
+  Settings > Library Home.
+- Local music: albums show a cover.jpg from their folder, FLAC albums show
+  their year, and lyrics stored in the files play, offline too.
+- Clear the queue, or save it as a playlist, from the queue's ••• menu.
+- Smaller Library Font in Settings > Appearance fits more on every list.
+- Type with LightOS's own keyboard, on the latest LightOS.
+- Send a Bandcamp login from a computer with the Tool Manager, once LightOS
+  opens it to tools. Typing it in Amp still works.
 
 ### Changed
 
-- Amp no longer uses the camera.
-- Typing uses LightOS's keyboard, except search, which still shows results as
-  you type.
+- Album pages show long song titles in full, credit a guest artist only on
+  their own songs, and name a classical work once above its movements.
+- Artist pages put Play All and Shuffle at the top, and can end with their five
+  most popular songs.
+- Albums with more than one disc are split by disc, and the sort menus are
+  simpler.
+- The simple layout's home page has the source picker in its header, and
+  Settings is no longer tucked away in the filter menu.
 - Casting to a DLNA speaker keeps your server login on the phone. The music
   now passes through the phone, so keep it on the same Wi-Fi while casting.
 - Resuming on an AirPlay speaker takes about half as long.
 - An AirPlay cast rides out a short Wi-Fi drop: it plays on by itself once
   Wi-Fi is back, with every speaker of a group.
-- The volume buttons show LightOS's own volume panel, while casting too.
-- Artist pages put Play All and Shuffle at the top, and can end with their five
-  most popular songs.
-- Albums with more than one disc are split by disc, and the sort menus are
-  simpler.
-- The simple layout's home list has its glyphs back, and the source picker
-  shows only when there's more than one library to choose. Sync is now at the
-  top of Settings > Sources.
-- Settings: Hide Download Icons and Synchronized Lyrics, and Invert Colors is gone.
-- Smaller touches: a lighter settings gear, an artless album page centred under
-  its header, Buffering in the artless player's album line, and an artist's
-  Popular songs ranked in the margin.
+- On the latest LightOS, the volume buttons show LightOS's own volume panel,
+  while casting too.
 - Built on Light's SDK 0.2.10.
-- Amp is open source again, under the GNU GPL 3.0. Light's SDK stays MIT.
 
-### Added
+### Fixed
 
-- Play to an Apple TV or a Mac over AirPlay, lossless at CD quality: pair
-  once with the code it shows. HomePods too.
-- Like songs, albums and artists in your local music. They're saved in a file
-  you can take with you.
-- Choose what the simple layout's home page lists, and in what order, in
-  Settings > Library Home.
-- Local music: albums show a cover.jpg from their folder, FLAC albums show
-  their year, and lyrics stored in the files play, offline too.
+- AirPlay speakers that were often missed, like an AirPort Express, are found
+  far more reliably.
+- Lyrics already in Latin letters no longer offer to be shown in Latin letters.
 
 ## 0.9.2
 
