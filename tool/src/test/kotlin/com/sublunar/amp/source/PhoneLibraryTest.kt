@@ -23,8 +23,8 @@ class PhoneLibraryTest {
     }
 
     @Test
-    fun `its music comes through the Tool Manager`() {
-        assertEquals("Tool Manager", source(SourceKind.LOCAL).phoneLibrary!!.folderLabel)
+    fun `its one library is the phone itself`() {
+        assertEquals("On This Phone", source(SourceKind.LOCAL).phoneLibrary!!.label)
     }
 
     @Test

@@ -144,8 +144,8 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
      * the only mark of where you are. Switch away and it goes.
      */
     private fun rowsUnder(source: MusicSource, ticked: Set<String>?): List<LibraryEntry> {
-        // The phone's own music is one folder, by definition.
-        source.phoneLibrary?.let { return listOf(LibraryEntry(it.folderLabel, null)) }
+        // The phone's own music is one library, by definition.
+        source.phoneLibrary?.let { return listOf(LibraryEntry(it.label, null)) }
         val shown = source.libraries.filter { it.id !in source.hiddenLibraryIds || it.id in ticked.orEmpty() }
         return if (shown.size >= 2) {
             shown.map { LibraryEntry(it.name, it.id) }
@@ -402,7 +402,7 @@ private val AddIcon.vector: ImageVector
 
 /** Where a source's music comes from, for the row that names it. */
 private fun subtitleFor(source: MusicSource): String =
-    source.phoneLibrary?.folderLabel ?: source.baseUrl.ifBlank { "Not connected" }
+    source.phoneLibrary?.label ?: source.baseUrl.ifBlank { "Not connected" }
 
 /**
  * One source's own settings: what it is called, and how it is reached. Its

@@ -16,8 +16,8 @@ import com.sublunar.amp.data.Track
  * phone, keyed on there being one of these rather than on a kind.
  */
 interface PhoneLibrary {
-    /** The folder the music is read from, as the screens name it. */
-    val folderLabel: String
+    /** Where the music is, as the screens name it: in place of a server's library name or address. */
+    val label: String
 
     /** Whether files came, went or changed after [ms], so a scan would find something new. Touches the disk. */
     fun changedSince(ms: Long): Boolean

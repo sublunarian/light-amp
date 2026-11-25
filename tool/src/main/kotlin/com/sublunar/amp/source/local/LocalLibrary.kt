@@ -31,7 +31,7 @@ import com.sublunar.amp.data.Track
  */
 object LocalLibrary : PhoneLibrary {
 
-    override val folderLabel: String get() = "Tool Manager"
+    override val label: String get() = "On This Phone"
 
     override val playlists: PhonePlaylists get() = LocalPlaylists
 
