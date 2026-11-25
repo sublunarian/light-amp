@@ -8,6 +8,9 @@ permissions = [
     "android.permission.INTERNET",
     "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.WAKE_LOCK",
+    # Reading Music/Amp, kept for now beside the Tool Manager folder (which needs
+    # no permission). On the SDK's allowed list, and asked through LightOS.
+    "android.permission.READ_MEDIA_AUDIO",
 ]
 # detached-audio: the plugin wires LightAudioService and its foreground
 # permissions into this tool's manifest.

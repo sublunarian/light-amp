@@ -1,5 +1,7 @@
 package com.sublunar.amp.ui.screens
 
+import com.sublunar.amp.source.PhoneAccess
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -419,9 +421,32 @@ class SourceDetailScreen(
         val source = sources.firstOrNull { it.id == sourceId }
         val sync by App.librarySync.syncState.collectAsState()
 
+        // Re-checked as every sync starts and ends, since granting access is what
+        // the user goes off to do; not on each progress step. Keyed on the source
+        // too: the list starts empty, and an answer taken before it loaded would
+        // stand until the next sync.
+        var access by remember { mutableStateOf(PhoneAccess.GRANTED) }
+        LaunchedEffect(sync.syncing, sync.lastSyncedMs, source?.id) { access = source?.phoneLibrary?.access() ?: PhoneAccess.GRANTED }
+        val askAccess = rememberAccessRequest(source?.phoneLibrary)
+
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Source", headingRows = true) {
             ScrollableList {
                 if (source == null) return@ScrollableList
+                if (source.phoneLibrary != null && access != PhoneAccess.GRANTED) {
+                    // Without the permission the folder listing comes back empty
+                    // rather than failing, which looks like a phone with no music.
+                    item {
+                        TextRow(
+                            title = "Allow Music Access",
+                            subtitle = if (access == PhoneAccess.BLOCKED_BY_LIGHTOS) {
+                                "LightOS is blocking it for this tool"
+                            } else {
+                                "Needed to read Music/Amp"
+                            },
+                            onClick = askAccess,
+                        )
+                    }
+                }
                 // How this kind of source is reached is its own to say — see
                 // SourceUi.connection.
                 source.provider.ui.connection(source)?.let { row ->

@@ -8,6 +8,10 @@ import com.sublunar.amp.source.PhoneFavorites
 import com.sublunar.amp.source.PhoneLibrary
 import com.sublunar.amp.source.PhonePlaylists
 import com.sublunar.amp.source.PhoneScan
+import com.sublunar.amp.source.PhoneAccess
+import com.thelightphone.sdk.checkPermission
+import com.thelightphone.sdk.shared.LightServiceMethod
+import com.thelightphone.sdk.shared.asKotlinResult
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -19,9 +23,11 @@ import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.Track
 
 /**
- * The phone's own music: the Music folder a computer fills through Light's
- * Tool Manager (see [ToolManagerFolders]), read straight off the filesystem.
- * It is Amp's own storage, so no permission is needed to read it.
+ * The phone's own music, read straight off the filesystem: the Music folder a
+ * computer fills through Light's Tool Manager (see [ToolManagerFolders]), which
+ * is Amp's own storage and needs no permission, and, for now, `Music/Amp`,
+ * which needs the music permission. `Music/Amp` goes once the Tool Manager is
+ * finished; until then a library copied there keeps working.
  *
  * There is no MediaStore here: `android.content` is a blocked import for a
  * tool, and the phone's media index never looks at a tool's own files. Tags
@@ -32,6 +38,22 @@ import com.sublunar.amp.data.Track
 object LocalLibrary : PhoneLibrary {
 
     override val label: String get() = "On This Phone"
+
+    override val permission: String get() = "android.permission.READ_MEDIA_AUDIO"
+
+    /** The shared folder read until the Tool Manager is finished: `Music/<AppName>`, as other LP3 music tools do. */
+    private const val FOLDER = "Music/Amp"
+
+    /** [FOLDER] on the phone's shared storage. */
+    internal val MUSIC_DIR = File("/storage/emulated/0", FOLDER)
+
+    /**
+     * Where music is looked for. `/sdcard` is a symlink to
+     * `/storage/emulated/0`, listed only because the roots are filtered by
+     * which actually resolve, then deduplicated by canonical path, so nothing
+     * is scanned twice.
+     */
+    private val SHARED_ROOTS = listOf(MUSIC_DIR, File("/sdcard", FOLDER))
 
     override val playlists: PhonePlaylists get() = LocalPlaylists
 
@@ -52,7 +74,40 @@ object LocalLibrary : PhoneLibrary {
     /** How deep to walk. Deep enough for Artist/Album/Disc, shallow enough to end. */
     private const val MAX_DEPTH = 6
 
-    private fun roots(): List<File> = listOfNotNull(ToolManagerFolders.musicDir).filter { it.isDirectory }
+    private fun roots(): List<File> =
+        (SHARED_ROOTS + listOfNotNull(ToolManagerFolders.musicDir)).filter { it.isDirectory }.distinctBy { it.canonicalPath }
+
+    /**
+     * Whether `Music/Amp` can be read, and if not, why. Without a `Music/Amp`
+     * there is nothing to ask for. Without the permission, listing the folder
+     * returns an *empty* array rather than an error, so any song seen in it
+     * proves access; otherwise LightOS is asked, and it can answer from its
+     * own policy rather than the grant, which is why a song seen wins.
+     */
+    override suspend fun access(): PhoneAccess = withContext(Dispatchers.IO) {
+        if (!MUSIC_DIR.isDirectory) return@withContext PhoneAccess.GRANTED
+        if (hasSong(MUSIC_DIR, 0)) return@withContext PhoneAccess.GRANTED
+        val lightOs = checkPermission(permission).asKotlinResult
+            .map { it.permissionResult }
+            .getOrNull()
+        Log.i(TAG, "Music/Amp access: lightos=${lightOs ?: "no answer"}")
+        when (lightOs) {
+            LightServiceMethod.GetPermission.Result.Granted -> PhoneAccess.GRANTED
+            LightServiceMethod.GetPermission.Result.BlockedByServer -> PhoneAccess.BLOCKED_BY_LIGHTOS
+            else -> PhoneAccess.NOT_GRANTED
+        }
+    }
+
+    private fun hasSong(dir: File, depth: Int): Boolean {
+        if (depth > MAX_DEPTH) return false
+        return dir.listFiles().orEmpty().any { entry ->
+            when {
+                entry.name.startsWith(".") -> false
+                entry.isDirectory -> hasSong(entry, depth + 1)
+                else -> entry.extension.lowercase() in AUDIO_EXTENSIONS
+            }
+        }
+    }
 
     override fun changedSince(ms: Long): Boolean = ToolManagerFolders.changedSince(ms)
 

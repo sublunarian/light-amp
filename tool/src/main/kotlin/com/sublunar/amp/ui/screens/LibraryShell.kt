@@ -1,5 +1,11 @@
 package com.sublunar.amp.ui.screens
 
+import com.thelightphone.sdk.rememberPermissionRequestLauncher
+import com.sublunar.amp.source.PhoneLibrary
+import com.sublunar.amp.source.PhoneAccess
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import com.sublunar.amp.data.ToolManagerFolders
 import com.sublunar.amp.data.Holdings
@@ -228,9 +234,36 @@ fun tabFilterLine(tab: LibraryTab): String? {
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
+/** Whether `Music/Amp` can be read: false only for a phone library not let in yet. */
+@Composable
+private fun rememberLocalAccess(): Boolean {
+    val source = App.source.collectAsState().value
+    val sync by App.librarySync.syncState.collectAsState()
+    var readable by remember(source.id) { mutableStateOf(true) }
+    LaunchedEffect(source.id, sync.lastSyncedMs) {
+        readable = source.phoneLibrary?.let { it.access() == PhoneAccess.GRANTED } ?: true
+    }
+    return readable
+}
+
+/**
+ * Asks LightOS to let this tool read [phone]'s shared folder — see lighttool.toml.
+ * Does nothing for a source with a server.
+ *
+ * The launcher is made whatever the source, so this is never a conditional
+ * composable call — see ARCHITECTURE.md.
+ */
+@Composable
+internal fun rememberAccessRequest(phone: PhoneLibrary?): () -> Unit {
+    val launcher = rememberPermissionRequestLauncher(phone?.permission.orEmpty())
+    return { if (phone != null) launcher?.launch() }
+}
+
 /**
  * The rows a tab list shows above its content when something needs saying:
  *
+ * - Allow Music Access, while `Music/Amp` can't be read. Without it the songs
+ *   there are simply missing, which reads as "this phone has no music".
  * - Where music comes from, for the phone's own library while it has none.
  * - Why the last sync gave up. A refused login leaves the cached rows in place,
  *   so this may sit above a library that looks fine and is no longer being
@@ -244,9 +277,12 @@ fun tabFilterLine(tab: LibraryTab): String? {
 @Composable
 private fun SimpleLightScreen<*>.libraryNotices(empty: Boolean): List<@Composable () -> Unit> {
     val onPhone = App.source.collectAsState().value.phoneLibrary != null
+    val needsAccess = !rememberLocalAccess()
+    val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
     val sync = App.librarySync.syncState.collectAsState().value
     val error = sync.error
     return buildList<@Composable () -> Unit> {
+        if (needsAccess) add { PlayAllRow(AppIcons.Smartphone, "Allow Music Access", onClick = askAccess) }
         if (onPhone && empty && !sync.syncing) add { SectionLabel("Add music from a computer: open ${ToolManagerFolders.LOCATION}") }
         if (!error.isNullOrBlank()) add { PlayAllRow(AppIcons.CloudOff, error) { go { SettingsScreen(it) } } }
         if (empty && sync.syncing) add { SectionLabel(syncProgressText(sync.phase)) }

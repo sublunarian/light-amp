@@ -70,6 +70,10 @@ it shows. Then open Amp there and upload songs into **Music**. Amp reads them as
 the upload finishes. They live in Amp's own storage, so uninstalling Amp
 deletes them.
 
+For now Amp also reads `Music/Amp`, so a library copied there with adb keeps
+working; Amp asks for music access to read it. This goes once the Tool Manager
+is finished.
+
 Names come from the tags, not the file names. Embed the artwork in the files:
 the Tool Manager can't make folders yet, so every upload lands in one folder
 and a `cover.jpg` would cover them all. APE, WavPack and DSD files are skipped.

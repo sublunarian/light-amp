@@ -19,6 +19,12 @@ interface PhoneLibrary {
     /** Where the music is, as the screens name it: in place of a server's library name or address. */
     val label: String
 
+    /** The permission that makes the shared music folder readable — see lighttool.toml. */
+    val permission: String
+
+    /** Whether the app may read the shared music folder now, and if not, why. */
+    suspend fun access(): PhoneAccess
+
     /** Whether files came, went or changed after [ms], so a scan would find something new. Touches the disk. */
     fun changedSince(ms: Long): Boolean
 
@@ -57,6 +63,9 @@ interface PhoneFavorites {
 
     suspend fun setArtist(name: String, liked: Boolean): Boolean
 }
+
+/** What stands between the app and the shared music folder, if anything. */
+enum class PhoneAccess { GRANTED, NOT_GRANTED, BLOCKED_BY_LIGHTOS }
 
 /** What a scan of the phone's music folder found. */
 data class PhoneScan(val tracks: List<Track>, val albums: List<Album>)

@@ -17,9 +17,8 @@
 
 ### Changed
 
-- Local Music reads only what comes through the Tool Manager. Music in
-  `Music/Amp` needs uploading again.
-- Amp no longer asks for any permission: not your music, photos or camera.
+- Amp no longer asks to see your photos or use the camera. Music in
+  `Music/Amp` still plays for now, but artwork has to be inside the files.
 - Typing uses LightOS's keyboard, except search, which still shows results as
   you type.
 - Casting to a DLNA speaker keeps your server login on the phone. The music
