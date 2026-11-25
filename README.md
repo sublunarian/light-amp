@@ -5,12 +5,19 @@ Bandcamp collection, or your own Plex, Jellyfin, Navidrome or other Subsonic
 server.
 
 <p align="center">
-  <img src="docs/screenshots/albums.png" width="24%" alt="All albums, with the A–Z index">
-  <img src="docs/screenshots/now-playing.png" width="24%" alt="Now playing">
+  <img src="docs/screenshots/albums-plain.png" width="24%" alt="All albums, with the A–Z index">
+  <img src="docs/screenshots/now-playing-plain.png" width="24%" alt="Now playing">
   <img src="docs/screenshots/lyrics.png" width="24%" alt="Synced lyrics">
-  <img src="docs/screenshots/artist.png" width="24%" alt="An artist's albums">
+  <img src="docs/screenshots/artist-plain.png" width="24%" alt="An artist's albums">
 </p>
-<p align="center"><sub>Shown with Library Tabs and artwork turned on.</sub></p>
+<p align="center"><sub>As Amp starts, without artwork.</sub></p>
+<p align="center">
+  <img src="docs/screenshots/albums.png" width="24%" alt="All albums, with covers">
+  <img src="docs/screenshots/now-playing.png" width="24%" alt="Now playing, with the cover">
+  <img src="docs/screenshots/lyrics.png" width="24%" alt="Synced lyrics">
+  <img src="docs/screenshots/artist.png" width="24%" alt="An artist's albums as a grid of covers">
+</p>
+<p align="center"><sub>With artwork turned on.</sub></p>
 
 > Side-load only for now. Amp isn't in Light's Tool Library yet.
 
