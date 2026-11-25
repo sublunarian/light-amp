@@ -57,27 +57,30 @@ of the Library page.
 
 ## Music on the phone
 
-Amp reads `Music/Amp`, and nothing else, so music added with Light's Music tool
-won't show up.
+The easy way is Light's Tool Manager. Open Amp there from a computer's browser
+and upload albums into **Music**. Amp reads them as soon as the upload
+finishes. They live in Amp's own storage, so uninstalling Amp deletes them.
+
+Amp also reads `Music/Amp`, and nothing else, so music added with Light's Music
+tool won't show up.
 
 ```bash
 adb push ~/Music/some-album "/sdcard/Music/Amp/"
 ```
 
-Sub-folders are fine. Names come from the tags rather than the folders, and
-artwork has to be embedded in the files. A `cover.jpg` next to them won't show.
+Sub-folders are fine. Names come from the tags rather than the folders.
+Artwork embedded in the files always shows. A `cover.jpg` next to them shows
+for uploaded music, and for `Music/Amp` once Amp may see photos.
 APE, WavPack and DSD files are skipped.
 
-Playlists live in `Music/Amp/Playlists` as `.m3u8`. One you drop in there shows
-up in Amp, but Amp can't change or delete it.
+Playlists are `.m3u8` files in the Tool Manager's **Playlists** folder. Upload
+your own there and Amp can edit them like its own. Ones from `Music/Amp/Playlists`
+move there the first time Amp starts.
 
-Local likes are saved in `Music/Amp/Playlists/_AmpFavorites.m3u8`. Copy the whole
-`Music/Amp` folder and the liked songs open as a playlist in other players. Liked
-albums and artists are listed in the same file as `#AMP-ALBUM` and `#AMP-ARTIST`
-lines. If Amp can't change a copy you brought back, it saves a numbered one
-beside it and uses the newest.
-
-Adding music through Light's Tool Manager, instead of adb, is on the to-do list.
+Local likes are saved in `_AmpFavorites.m3u8` in the same folder. Download the
+Music and Playlists folders together and the liked songs open as a playlist in
+other players. Liked albums and artists are listed in the same file as
+`#AMP-ALBUM` and `#AMP-ARTIST` lines.
 
 ## Color
 

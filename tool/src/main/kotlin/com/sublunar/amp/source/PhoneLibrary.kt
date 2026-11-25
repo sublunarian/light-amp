@@ -31,6 +31,9 @@ interface PhoneLibrary {
     /** Whether the app may read those cover images now. */
     fun hasCoverAccess(): Boolean
 
+    /** Whether files came, went or changed after [ms], so a scan would find something new. Touches the disk. */
+    fun changedSince(ms: Long): Boolean
+
     /** Every track and album in the folder, with [onProgress] told the count as it goes. */
     suspend fun scan(onProgress: (Int) -> Unit): PhoneScan
 

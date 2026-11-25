@@ -1,5 +1,6 @@
 package com.sublunar.amp
 
+import com.sublunar.amp.data.ToolManagerFolders
 import com.sublunar.amp.art.ArtworkLoader
 import com.sublunar.amp.art.ArtworkNeed
 import com.sublunar.amp.art.CacheReserve
@@ -518,6 +519,7 @@ object App {
                 "LightOS ${android.os.Build.DISPLAY}, Android ${android.os.Build.VERSION.RELEASE}, " +
                 "heap ${Runtime.getRuntime().maxMemory() shr 20} MB",
         )
+        ToolManagerFolders.attach(context.filesDir)
         // First, before anything below can make or release a player handle,
         // and outside the once-only block because it keeps its own flag — see
         // LateUnbindGuard for why it has to be a raw post from right here.
@@ -811,6 +813,8 @@ object App {
                     }
             }
             coreReady = true
+            // Music may have come through the Tool Manager while Amp was closed.
+            scope.launch { librarySync.rescanPhoneIfChanged() }
             // Periodic background library refresh (min 15 min on WorkManager).
             LightWork.enqueuePeriodic(context, SYNC_JOB_KEY, 30.minutes)
         }

@@ -129,6 +129,9 @@ internal class FavoritesFile(
         /** Whether a file in the playlists folder is this one rather than a playlist, a save in progress included. */
         fun isFavoritesFile(fileName: String): Boolean = fileName.startsWith(NAME, ignoreCase = true)
 
+        /** Whether it is one of the saved copies, not a save in progress. */
+        fun isCopy(fileName: String): Boolean = COPY.matches(fileName)
+
         private fun copyName(number: Int): String = if (number == 1) NAME + EXTENSION else "$NAME $number$EXTENSION"
 
         private fun copyNumber(fileName: String): Int =
@@ -207,10 +210,16 @@ internal fun parseFavorites(text: String, folder: File): FavoritesContent {
     return FavoritesContent(artists.toList(), albums.values.toList(), songs.values.toList())
 }
 
-/** The song's path from the file's own folder. `./` keeps a name starting with `#` from reading as a comment. */
+/**
+ * The song's path from the file's own folder when the song is in the library
+ * folder the file sits in, so that folder can be copied whole; its full path
+ * when it is anywhere else. `./` keeps a name starting with `#` from reading as a comment.
+ */
 private fun entryFor(trackId: String, folder: File): String {
-    val relative = File(PhoneFiles.pathOf(trackId).orEmpty()).relativeToOrSelf(folder).path
-    return if (relative.startsWith("#")) "./$relative" else relative
+    val song = File(PhoneFiles.pathOf(trackId).orEmpty())
+    val library = folder.parentFile
+    val entry = if (library != null && song.startsWith(library)) song.relativeTo(folder).path else song.path
+    return if (entry.startsWith("#")) "./$entry" else entry
 }
 
 private fun escaped(field: String): String =

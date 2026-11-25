@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -34,6 +35,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 
 data class SyncState(
     val syncing: Boolean = false,
@@ -864,6 +866,27 @@ class LibrarySync(
                 throw e
             }
         }
+    }
+
+    /**
+     * Read the phone again if its files changed since the last scan, once any
+     * sync running now has ended: that one may already have read them. For
+     * files that arrive through the Tool Manager, while Amp is open or before it was.
+     *
+     * [afterUpload]: files have just arrived. If a scan was running, it may
+     * have passed their folder before they landed, and ends later than they
+     * did, so its time can't tell: read them again regardless.
+     */
+    suspend fun rescanPhoneIfChanged(afterUpload: Boolean = false) {
+        val source = settings.activeSource.first() ?: return
+        val phone = source.phoneLibrary ?: return
+        val waited = _syncState.value.syncing
+        _syncState.first { !it.syncing }
+        val last = runCatching { settings.lastSyncedMs(source.id) }.getOrNull() ?: 0L
+        val overlapped = afterUpload && waited
+        if (!overlapped && !withContext(Dispatchers.IO) { phone.changedSince(last) }) return
+        Log.i("AmpSync", "the phone's files changed since the last scan; reading them again")
+        withContext(Dispatchers.Main) { syncInBackground(force = true) }
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.sublunar.amp.source.local
 
+import com.sublunar.amp.data.ToolManagerFolders
 import android.media.MediaMetadataRetriever
 import com.sublunar.amp.log.Log
 import com.sublunar.amp.log.logName
@@ -23,7 +24,9 @@ import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.Track
 
 /**
- * The phone's own music, read straight off the filesystem.
+ * The phone's own music, read straight off the filesystem: `Music/Amp`, and
+ * the Music folder a computer fills through the Tool Manager (see
+ * [ToolManagerFolders]), as one library.
  *
  * There is no MediaStore here: `android.content` is a blocked import for a
  * tool. A tool *can* hold `READ_MEDIA_AUDIO` and walk the shared music folder
@@ -81,7 +84,11 @@ object LocalLibrary : PhoneLibrary {
     private const val MAX_DEPTH = 6
 
     /**
-     * Whether the app may actually read the music folder, and if not, why.
+     * Whether the app may actually read the music, and if not, why.
+     *
+     * Music that came through the Tool Manager is Amp's own and needs no grant:
+     * with some there, the library is readable, and `Music/Amp` joins it once
+     * the grant is given.
      *
      * Not inferred from the filesystem: without the permission, listing the
      * folder returns an *empty* array rather than an error, so a folder we
@@ -94,6 +101,7 @@ object LocalLibrary : PhoneLibrary {
     override suspend fun access(): PhoneAccess {
         val held = hasRuntimePermission(permission)
         if (held == true) return PhoneAccess.GRANTED
+        if (hasUploadedMusic()) return PhoneAccess.GRANTED
         val lightOs = checkPermission(permission).asKotlinResult
             .map { it.permissionResult }
             .getOrNull()
@@ -110,8 +118,15 @@ object LocalLibrary : PhoneLibrary {
         runCatching { MUSIC_DIR.mkdirs() }
     }
 
+    private suspend fun hasUploadedMusic(): Boolean = withContext(Dispatchers.IO) {
+        ToolManagerFolders.musicDir?.list()?.isNotEmpty() == true
+    }
+
     private fun roots(): List<File> =
-        ROOTS.filter { it.isDirectory }.distinctBy { it.canonicalPath }
+        (ROOTS + listOfNotNull(ToolManagerFolders.musicDir)).filter { it.isDirectory }.distinctBy { it.canonicalPath }
+
+    /** Only the Tool Manager's folder: music copied into `Music/Amp` waits for Sync Now or the next scan, as before. */
+    override fun changedSince(ms: Long): Boolean = ToolManagerFolders.changedSince(ms)
 
     /**
      * Walk the folders and read every file's tags, on IO and cancellable

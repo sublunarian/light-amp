@@ -23,7 +23,9 @@ permissions = [
 # permissions into this tool's manifest.
 # cleartext-http: a self-hosted server on a home network usually speaks plain
 # http://, and without this Android refuses every such request.
-capabilities = ["detached-audio", "cleartext-http"]
+# tool-manager-provider: a computer adds music and playlists through LightOS's
+# Tool Manager, into Amp's own storage (see ToolManagerFolders).
+capabilities = ["detached-audio", "cleartext-http", "tool-manager-provider"]
 # A large library's lists and queue fit in Android's normal 128 MB heap only
 # just; this lets Amp grow to 256 MB on the LP3 before it runs out.
 largeHeap = true

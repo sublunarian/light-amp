@@ -292,7 +292,14 @@ any tool. #189 is still open upstream.
 
 ## Answered upstream, not yet adopted
 
-### Tool Manager — music from a computer, through a browser: to check on the phone
+### Tool Manager — music from a computer, through a browser: IN USE (branch feat/tool-manager-music), 24 Nov 2026
+
+Amp declares `tool-manager-provider` with two folders, Music and Playlists
+(`data/ToolManagerFolders.kt`). Light confirmed on
+[#350](https://github.com/lightphone/light-sdk/issues/350) that uploads only go
+to the tool's private folder; LightOS lists SDK tools in its Tool Manager from
+the beta after 600. The notes below are from before.
+
 
 - **What it is:** a tool that declares `tool-manager-provider` in
   `lighttool.toml` shows up in LightOS's Tool Manager, a page the user opens in

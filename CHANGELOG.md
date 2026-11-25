@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Add music and playlists from a computer with Light's Tool Manager. Every
+  playlist there can be edited in Amp, and the ones in `Music/Amp/Playlists`
+  move there on first launch.
+
 ### Fixed
 
 - AirPlay speakers that were often missed, like an AirPort Express, are found
@@ -26,7 +32,7 @@
 - Smaller touches: a lighter settings gear, an artless album page centred under
   its header, Buffering in the artless player's album line, and an artist's
   Popular songs ranked in the margin.
-- Built on Light's SDK 0.2.7.
+- Built on Light's SDK 0.2.10.
 - Amp is open source again, under the GNU GPL 3.0. Light's SDK stays MIT.
 
 ### Added

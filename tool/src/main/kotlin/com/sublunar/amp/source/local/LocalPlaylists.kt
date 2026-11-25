@@ -1,5 +1,6 @@
 package com.sublunar.amp.source.local
 
+import com.sublunar.amp.data.ToolManagerFolders
 import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.Playlist
 import com.sublunar.amp.data.isReorderOf
@@ -12,10 +13,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Playlists for the phone's own music, kept as `.m3u8` files in
- * `Music/Amp/Playlists`, the format every other music player already reads.
- * A file another app or adb put there is listed, but scoped storage leaves it
- * read-only to Amp.
+ * Playlists for the phone's own music, kept as `.m3u8` files, the format every
+ * other music player already reads, in the Tool Manager's Playlists folder
+ * (see [ToolManagerFolders]): a computer can add more there, and every file in
+ * it is Amp's to edit, whoever wrote it. Those that used to be kept in
+ * `Music/Amp/Playlists` are moved there once — see [moveLegacy].
  *
  * Entries are absolute paths, which is also exactly what a track id is once
  * [PhoneFiles.ID_PREFIX] is taken off, so the mapping in both directions is a
@@ -38,7 +40,65 @@ object LocalPlaylists : PhonePlaylists {
     /** Files that couldn't be read, so one is logged once rather than at every listing. Never logged themselves. */
     private val unreadable = ConcurrentHashMap.newKeySet<String>()
 
-    internal fun folder(): File = File(LocalLibrary.MUSIC_DIR, "Playlists")
+    /** Where playlists were kept before the Tool Manager. */
+    private fun legacyFolder(): File = File(LocalLibrary.MUSIC_DIR, "Playlists")
+
+    /** The old folder only in a process that never booted, which shows no playlists anyway. */
+    internal fun folder(): File {
+        val dir = ToolManagerFolders.playlistsDir ?: return legacyFolder()
+        if (!moved) moveLegacyOnce(dir)
+        return dir
+    }
+
+    @Volatile
+    private var moved = false
+
+    @Synchronized
+    private fun moveLegacyOnce(dir: File) {
+        if (moved) return
+        val marker = ToolManagerFolders.playlistsMovedMarker ?: return
+        if (!marker.exists() && moveLegacy(legacyFolder(), dir)) runCatching { marker.createNewFile() }
+        moved = true
+    }
+
+    /**
+     * Copies each playlist and likes file from [old] into [dir], then removes
+     * the old one. Song entries are rewritten as they go: relative ones were
+     * relative to the old folder. One Amp can't remove (adb put it there)
+     * stays behind, no longer read. A name [dir] already has is left alone.
+     * False if [dir] couldn't be made, so the move is tried again next launch.
+     */
+    internal fun moveLegacy(old: File, dir: File): Boolean {
+        val files = old.listFiles()?.filter { it.isFile && it.name.endsWith(EXTENSION, ignoreCase = true) }.orEmpty()
+        if (files.isEmpty()) return true
+        if (!dir.isDirectory && !dir.mkdirs()) {
+            Log.w(TAG, "couldn't create the playlists folder")
+            return false
+        }
+        var count = 0
+        for (file in files) {
+            val target = File(dir, file.name)
+            if (target.exists()) continue
+            val copied = runCatching {
+                when {
+                    FavoritesFile.isCopy(file.name) ->
+                        target.writeText(renderFavorites(parseFavorites(file.readText(), old), dir))
+                    FavoritesFile.isFavoritesFile(file.name) -> return@runCatching false
+                    else -> if (!writeIds(target, readIds(file))) error("not written")
+                }
+                true
+            }.getOrElse {
+                Log.w(TAG, "couldn't move a playlist file: ${it.logName()}")
+                runCatching { target.delete() }
+                false
+            }
+            if (!copied) continue
+            count++
+            runCatching { file.delete() }
+        }
+        Log.i(TAG, "moved $count of ${files.size} playlist files to the Tool Manager folder")
+        return true
+    }
 
     private fun idFor(file: File): String = ID_PREFIX + file.absolutePath
 
@@ -155,7 +215,8 @@ object LocalPlaylists : PhonePlaylists {
     /**
      * Track ids from a playlist file. Comments and blank lines are skipped
      * (`#EXTM3U`, `#EXTINF`), and relative paths resolve against the file's
-     * own folder, as other tools write them.
+     * own folder, as other tools write them, or against the Tool Manager's
+     * Music folder, as a playlist made beside a copy of that folder is.
      */
     private fun readIds(file: File): List<String> = runCatching {
         file.readLines()
@@ -176,13 +237,19 @@ object LocalPlaylists : PhonePlaylists {
      * and ids are compared as text, so `/sdcard/...` entries would otherwise
      * match nothing in the library and quietly disappear.
      */
-    internal fun trackIdOfEntry(line: String, folder: File?): String {
-        val entry = if (line.startsWith("/")) File(line) else File(folder, line)
+    internal fun trackIdOfEntry(line: String, folder: File?, musicDir: File? = ToolManagerFolders.musicDir): String {
+        val entry = if (line.startsWith("/")) File(line) else relativeEntry(line.replace('\\', '/'), folder, musicDir)
         // canonicalPath throws if it can't resolve, and a missing file
         // still belongs in the list so the count is honest.
         val path = runCatching { entry.canonicalPath }
             .getOrElse { entry.normalize().absolutePath }
         return PhoneFiles.ID_PREFIX + path
+    }
+
+    private fun relativeEntry(line: String, folder: File?, musicDir: File?): File {
+        val beside = File(folder, line)
+        if (beside.exists() || musicDir == null) return beside
+        return File(musicDir, line).takeIf { it.exists() } ?: beside
     }
 
     /** Absolute paths, one per line, under a header that marks the encoding. */
