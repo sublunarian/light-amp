@@ -1,5 +1,6 @@
 package com.sublunar.amp.art
 
+import kotlinx.coroutines.flow.MutableStateFlow
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
@@ -192,7 +193,10 @@ class ArtworkLoader(
         // A local track's cover id is its own path: the sleeve is inside the
         // file, or else beside it, and there is no server to ask for it.
         PhoneFiles.fileOf(coverArtId)?.let { file ->
-            return embedded(file) ?: folderCover(file)
+            return embedded(file) ?: run {
+                coverlessPhoneSong.value = true
+                folderCover(file)
+            }
         }
         // A cover is a quarter-megabyte at panel size: nothing next to the song
         // playing, but a listful is not. The rules say which may cost cellular.
@@ -287,6 +291,12 @@ class ArtworkLoader(
         }
     }
 
+    /**
+     * Whether a song on the phone has turned up with no picture inside it: the
+     * only time a cover.jpg beside it, and so the photos permission, can matter.
+     */
+    val coverlessPhoneSong = MutableStateFlow(false)
+
     /** The picture tagged into an audio file; [MediaMetadataRetriever] takes a path, so a tool can use it. */
     private fun embedded(file: File): ByteArray? {
         val retriever = MediaMetadataRetriever()
@@ -302,7 +312,8 @@ class ArtworkLoader(
 
     /**
      * The cover image in [file]'s folder (cover.jpg and its kin), or in the
-     * album's folder when the file sits in a disc folder of its own.
+     * album's folder when the file sits in a disc folder of its own. Images
+     * are invisible without the photos permission: the folder lists none.
      */
     private fun folderCover(file: File): ByteArray? {
         val folder = file.parentFile ?: return null

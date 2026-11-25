@@ -4,9 +4,6 @@
 
 ### Added
 
-- Add music and playlists from a computer with Light's Tool Manager. Every
-  playlist there can be edited in Amp, and the ones in `Music/Amp/Playlists`
-  move there on first launch.
 - Send a Bandcamp login from a computer with the Tool Manager, instead of
   scanning a QR code.
 
@@ -17,8 +14,7 @@
 
 ### Changed
 
-- Amp no longer asks to see your photos or use the camera. Music in
-  `Music/Amp` still plays for now, but artwork has to be inside the files.
+- Amp no longer uses the camera.
 - Typing uses LightOS's keyboard, except search, which still shows results as
   you type.
 - Casting to a DLNA speaker keeps your server login on the phone. The music

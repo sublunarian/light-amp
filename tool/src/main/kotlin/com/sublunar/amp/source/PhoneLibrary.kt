@@ -16,17 +16,20 @@ import com.sublunar.amp.data.Track
  * phone, keyed on there being one of these rather than on a kind.
  */
 interface PhoneLibrary {
-    /** Where the music is, as the screens name it: in place of a server's library name or address. */
-    val label: String
+    /** The folder the music is read from, as the screens name it. */
+    val folderLabel: String
 
-    /** The permission that makes the shared music folder readable — see lighttool.toml. */
+    /** The permission that makes the folder readable — see lighttool.toml. */
     val permission: String
 
-    /** Whether the app may read the shared music folder now, and if not, why. */
+    /** Whether the app may read the folder now, and if not, why. */
     suspend fun access(): PhoneAccess
 
-    /** Whether files came, went or changed after [ms], so a scan would find something new. Touches the disk. */
-    fun changedSince(ms: Long): Boolean
+    /** The permission that makes cover images beside the music readable. */
+    val coverPermission: String
+
+    /** Whether the app may read those cover images now. */
+    fun hasCoverAccess(): Boolean
 
     /** Every track and album in the folder, with [onProgress] told the count as it goes. */
     suspend fun scan(onProgress: (Int) -> Unit): PhoneScan
@@ -64,7 +67,7 @@ interface PhoneFavorites {
     suspend fun setArtist(name: String, liked: Boolean): Boolean
 }
 
-/** What stands between the app and the shared music folder, if anything. */
+/** What stands between the app and the music folder, if anything. */
 enum class PhoneAccess { GRANTED, NOT_GRANTED, BLOCKED_BY_LIGHTOS }
 
 /** What a scan of the phone's music folder found. */

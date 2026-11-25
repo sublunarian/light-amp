@@ -11,11 +11,11 @@ the image, video and contacts permissions; none of them closes a gap here. The
 rest stand.
 
 Built the way Light's store builder builds it (a pristine SDK, via
-`scripts/store-build-check.sh`), Amp stops at 42 compile errors on 0.2.10
-(checked 24 Nov; three of them follow from one missing `deviceVolume`), every
+`scripts/store-build-check.sh`), Amp stops at 44 compile errors on 0.2.7
+(checked 12 Nov; three of them follow from one missing `deviceVolume`), every
 one a call into our patches. It was 164 on 21 Sep. Most used first:
 `playWhenReady`, `repeatMode`, `replaceRange`,
-`deviceVolume`/`setSystemVolume`, `setMediaQueueAt`,
+`deviceVolume`/`setSystemVolume`, `setMediaQueueAt`, `hasRuntimePermission`,
 the transfer service and `LightDisplayColor`.
 
 ## Workarounds we would drop
@@ -279,9 +279,10 @@ any tool. #189 is still open upstream.
 - **Need:** paste what was copied in LightOS (Notes, Messages) into a field —
   Bandcamp's generated logins are too long to type — through LightOS's own
   hold-the-text menu of Copy, Paste and Clear.
-- **Now (24 Nov 2026):** Amp types everything in LightOS's keyboard app through
-  the SDK's `editText` (0.2.9), so paste arrives with whatever LightOS's keyboard
-  gets. Amp's own editor, its Clear menu and the embedded keyboard are gone.
+- **Now (24 Nov 2026):** fields type in LightOS's keyboard app through the SDK's
+  `editText` (0.2.9); search keeps the LP3 keyboard in its own page, driven by
+  the keyboard library's public `TextFieldKeyboardCallback`. Neither offers paste
+  or a hold menu yet; Amp's own editor and its Clear menu are gone.
 - **Would replace it:** #45 — copy/paste in the SDK's text inputs and to and
   from LightOS. Light is doing it internally and asks for no duplicates or PRs.
   It comes in a "big keyboard push" once the Backups work (#285) ships
@@ -290,12 +291,14 @@ any tool. #189 is still open upstream.
 
 ## Answered upstream, not yet adopted
 
-### Tool Manager — music from a computer, through a browser: IN USE (branch feat/tool-manager-music), 24 Nov 2026
+### Tool Manager — Bandcamp Login IN USE; music from a computer PARKED until the Tool Manager is finished (24 Nov 2026)
 
 Amp declares `tool-manager-provider` with two folders, Music and Playlists
-(`data/ToolManagerFolders.kt`), and it is the only way music gets in: `Music/Amp`
-is no longer read. The Tool Manager (0.0.18) can't make folders or upload into
-one, so uploads land side by side; asked of Light on #350. Light confirmed on
+(`data/ToolManagerFolders.kt`). For now only the Bandcamp Login form is
+offered: Local Music stays on `Music/Amp` until the Tool Manager is finished
+(user, 24 Nov), and the Music and Playlists folders come back then (commits
+6c7f60a, 19b0cca, b6342f4). The Tool Manager (0.0.18) can't make folders or
+upload into one; asked of Light. Light confirmed on
 [#350](https://github.com/lightphone/light-sdk/issues/350) that uploads only go
 to the tool's private folder; LightOS lists SDK tools in its Tool Manager from
 the beta after 600. The notes below are from before.
@@ -376,8 +379,8 @@ follows the green light. The asks went in on 23 Oct 2026: issues
 | `setHandleAudioBecomingNoisy(true)` | One line on the builder. Without it, unplugging headphones leaves music playing out of the speaker. Doing it by hand needs a `BroadcastReceiver`, which the sandbox blocks. | Reported as #300. |
 | `replaceRange()` | One queue update instead of one per item; an empty range appends. Reordering by repeated `moveMediaItem` rebuilds the session queue per move, and a few hundred moves exhausts memory. | Asked for list versions on [#217](https://github.com/lightphone/light-sdk/issues/217), with a 500-song shuffle timed on the phone. |
 | ~~Room migrations~~ — **closed in 0.2.3** | `buildDatabase` took no builder, so a tool could not register a migration. [#281](https://github.com/lightphone/light-sdk/pull/281) added a `configure` block; `App.kt` now sets `fallbackToDestructiveMigration` itself and the patch is gone. Every schema change still wipes the user's cache and download index. | Amp's own call: real migrations are possible now. |
-| ~~`hasRuntimePermission`~~ — **dropped 24 Nov 2026** | LightOS answered music access from its policy. Amp now reads only its own Tool Manager folder, which needs no permission. | Patch deleted. |
-| ~~`TextInputKeyboardCallback`~~ — **dropped 24 Nov 2026** | Was copied to put a keyboard under the search results. Search now types in LightOS's keyboard app. | Gone with the embedded keyboard. |
+| `hasRuntimePermission` | LightOS answers music access from its policy, and can say Blocked to a phone that granted it. | Could drop: any audio file visible in `Music/Amp` proves access. |
+| ~~`TextInputKeyboardCallback`~~ — **dropped 24 Nov 2026** | Was copied to put a keyboard under the search results. Search now uses the keyboard library's public `TextFieldKeyboardCallback`. | Nothing copied any more. |
 
 ## Blocked above the API
 
@@ -393,6 +396,6 @@ follows the green light. The asks went in on 23 Oct 2026: issues
   leftovers — no `TIT2`, `TPE1` or `TALB`), and MediaStore holds
   `title=<the UUID>, artist=<unknown>, album=Music`. The real titles live only
   in `com.lightos`'s private database. So a tool could list six tracks named
-  after their UUIDs, which is not a library. Amp reads only its own Tool
-  Manager folder. Worth re-checking after the Music tool
+  after their UUIDs, which is not a library. Amp reads its own folder, which is
+  why local files go in `Music/Amp`. Worth re-checking after the Music tool
   rework: if it starts writing real tags, this closes by itself.

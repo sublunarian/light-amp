@@ -157,10 +157,7 @@ Amp *asked* for is wrong when a server declines to transcode, and fails
 silently. `StreamProxy` sees whether the server sent a length, which is what
 the player decides on too, so Amp asks the door instead.
 
-### 9. ~~`hasRuntimePermission(permission)`~~ — dropped 24 Nov 2026
-
-Amp reads only its own Tool Manager folder now, which needs no permission, so
-the patch and its `LightPermissions.kt` are gone. What it was:
+### 9. `hasRuntimePermission(permission)` — `LightPermissions.kt`
 
 Whether this process holds a permission, from the process itself. The SDK's
 `checkPermission` asks the server, and the server answers from its own policy

@@ -64,28 +64,27 @@ of the Library page.
 
 ## Music on the phone
 
-Music gets onto the phone through Light's Tool Manager. On the phone, open
-LightOS Settings > Developer > Tool Manager and connect a computer's browser as
-it shows. Then open Amp there and upload songs into **Music**. Amp reads them as soon as
-the upload finishes. They live in Amp's own storage, so uninstalling Amp
-deletes them.
+Amp reads `Music/Amp`, and nothing else, so music added with Light's Music tool
+won't show up.
 
-For now Amp also reads `Music/Amp`, so a library copied there with adb keeps
-working; Amp asks for music access to read it. This goes once the Tool Manager
-is finished.
+```bash
+adb push ~/Music/some-album "/sdcard/Music/Amp/"
+```
 
-Names come from the tags, not the file names. Embed the artwork in the files:
-the Tool Manager can't make folders yet, so every upload lands in one folder
-and a `cover.jpg` would cover them all. APE, WavPack and DSD files are skipped.
+Sub-folders are fine. Names come from the tags rather than the folders, and
+artwork has to be embedded in the files. A `cover.jpg` next to them won't show.
+APE, WavPack and DSD files are skipped.
 
-Playlists are `.m3u8` files in the Tool Manager's **Playlists** folder. Upload
-your own there and Amp can edit them like its own. Ones from `Music/Amp/Playlists`
-move there the first time Amp starts.
+Playlists live in `Music/Amp/Playlists` as `.m3u8`. One you drop in there shows
+up in Amp, but Amp can't change or delete it.
 
-Local likes are saved in `_AmpFavorites.m3u8` in the same folder. Download the
-Music and Playlists folders together and the liked songs open as a playlist in
-other players. Liked albums and artists are listed in the same file as
-`#AMP-ALBUM` and `#AMP-ARTIST` lines.
+Local likes are saved in `Music/Amp/Playlists/_AmpFavorites.m3u8`. Copy the whole
+`Music/Amp` folder and the liked songs open as a playlist in other players. Liked
+albums and artists are listed in the same file as `#AMP-ALBUM` and `#AMP-ARTIST`
+lines. If Amp can't change a copy you brought back, it saves a numbered one
+beside it and uses the newest.
+
+Adding music through Light's Tool Manager, instead of adb, is on the to-do list.
 
 ## Color
 

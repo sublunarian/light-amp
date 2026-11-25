@@ -14,6 +14,7 @@ import com.sublunar.amp.data.db.TopSongEntity
 import com.sublunar.amp.data.db.toAlbum
 import com.sublunar.amp.log.Log
 import com.sublunar.amp.log.logName
+import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.PhoneFavorites
 import com.sublunar.amp.source.PhoneLibrary
 import java.util.concurrent.ConcurrentHashMap
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
@@ -799,7 +801,8 @@ class LibraryRepository(
         save: suspend (PhoneFavorites) -> Boolean,
         show: suspend () -> Unit,
     ) {
-        if (save(phone.favorites)) {
+        // Without music access a file Amp didn't write can't be seen, and a new one would hide it.
+        if (phone.access() == PhoneAccess.GRANTED && save(phone.favorites)) {
             show()
             wroteHere()
         } else {

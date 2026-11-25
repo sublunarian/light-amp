@@ -8,15 +8,18 @@ permissions = [
     "android.permission.INTERNET",
     "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.WAKE_LOCK",
-    # Reading Music/Amp, kept for now beside the Tool Manager folder (which needs
-    # no permission). On the SDK's allowed list, and asked through LightOS.
+    # Reading the phone's own music folder, for the Local Music source. On the
+    # SDK's allowed list, and requested through LightOS the first time it is used.
     "android.permission.READ_MEDIA_AUDIO",
+    # Reading cover.jpg beside the music, for albums with no cover inside their
+    # files. On the SDK's allowed list, and asked once, with artwork on.
+    "android.permission.READ_MEDIA_IMAGES",
 ]
 # detached-audio: the plugin wires LightAudioService and its foreground
 # permissions into this tool's manifest.
 # cleartext-http: a self-hosted server on a home network usually speaks plain
 # http://, and without this Android refuses every such request.
-# tool-manager-provider: a computer adds music and playlists through LightOS's
+# tool-manager-provider: a computer sends a Bandcamp login through LightOS's
 # Tool Manager, into Amp's own storage (see ToolManagerFolders).
 capabilities = ["detached-audio", "cleartext-http", "tool-manager-provider"]
 # A large library's lists and queue fit in Android's normal 128 MB heap only

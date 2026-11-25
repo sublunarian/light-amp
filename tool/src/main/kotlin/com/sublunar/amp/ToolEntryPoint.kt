@@ -6,7 +6,6 @@ import com.thelightphone.sdk.LightEntryPoint
 import com.thelightphone.sdk.shared.LightServerData
 import com.thelightphone.toolmanager.ClientToolManifest
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 
 /** Required by the SDK. Amp boots from BootScreen instead (see App.boot), and uses no pushes. */
 @EntryPoint
@@ -18,12 +17,10 @@ object ToolEntryPoint : LightEntryPoint {
     override fun getToolManagerManifest(): ClientToolManifest = ToolManagerFolders.manifest()
 
     /**
-     * Files came or went through the Tool Manager, or a form was sent. A process
-     * with no booted app has nothing to show them in; its next boot looks itself.
+     * A form was sent through the Tool Manager. A process with no booted app has
+     * nothing to show it in; its next boot looks itself.
      */
     override suspend fun onToolManagerDataUpdate() {
-        if (!App.isReady) return
-        ToolManagerFolders.takeSentLogin()
-        App.scope.launch { App.librarySync.rescanPhoneIfChanged(afterUpload = true) }
+        if (App.isReady) ToolManagerFolders.takeSentLogin()
     }
 }

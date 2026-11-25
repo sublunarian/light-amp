@@ -1,15 +1,15 @@
 package com.sublunar.amp.source.local
 
-import com.sublunar.amp.data.ToolManagerFolders
 import android.media.MediaMetadataRetriever
 import com.sublunar.amp.log.Log
 import com.sublunar.amp.log.logName
+import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.PhoneFavorites
 import com.sublunar.amp.source.PhoneLibrary
 import com.sublunar.amp.source.PhonePlaylists
 import com.sublunar.amp.source.PhoneScan
-import com.sublunar.amp.source.PhoneAccess
 import com.thelightphone.sdk.checkPermission
+import com.thelightphone.sdk.hasRuntimePermission
 import com.thelightphone.sdk.shared.LightServiceMethod
 import com.thelightphone.sdk.shared.asKotlinResult
 import java.io.File
@@ -23,41 +23,47 @@ import com.sublunar.amp.data.PhoneFiles
 import com.sublunar.amp.data.Track
 
 /**
- * The phone's own music, read straight off the filesystem: the Music folder a
- * computer fills through Light's Tool Manager (see [ToolManagerFolders]), which
- * is Amp's own storage and needs no permission, and, for now, `Music/Amp`,
- * which needs the music permission. `Music/Amp` goes once the Tool Manager is
- * finished; until then a library copied there keeps working.
+ * The phone's own music, read straight off the filesystem.
  *
  * There is no MediaStore here: `android.content` is a blocked import for a
- * tool, and the phone's media index never looks at a tool's own files. Tags
- * are read with [MediaMetadataRetriever], which takes a plain path.
+ * tool. A tool *can* hold `READ_MEDIA_AUDIO` and walk the shared music folder
+ * with `java.io`, reading tags with [MediaMetadataRetriever], which takes a
+ * plain path.
  *
  * Ids are the file's own path: see [PhoneFiles].
  */
 object LocalLibrary : PhoneLibrary {
 
-    override val label: String get() = "On This Phone"
+    /**
+     * The folder this app claims inside the shared music directory,
+     * `Music/<AppName>` as other LP3 music tools do (Reverb reads `Music/Reverb`).
+     * Only this folder: the phone's other audio isn't a library, and another
+     * tool's folder is that tool's library.
+     */
+    private const val FOLDER = "Music/Amp"
+
+    override val folderLabel: String get() = FOLDER
 
     override val permission: String get() = "android.permission.READ_MEDIA_AUDIO"
 
-    /** The shared folder read until the Tool Manager is finished: `Music/<AppName>`, as other LP3 music tools do. */
-    private const val FOLDER = "Music/Amp"
+    override val coverPermission: String get() = "android.permission.READ_MEDIA_IMAGES"
+
+    override fun hasCoverAccess(): Boolean = hasRuntimePermission(coverPermission) == true
+
+    override val playlists: PhonePlaylists get() = LocalPlaylists
+
+    override val favorites: PhoneFavorites by lazy { FavoritesFile(LocalPlaylists.folder()) }
 
     /** [FOLDER] on the phone's shared storage. */
     internal val MUSIC_DIR = File("/storage/emulated/0", FOLDER)
 
     /**
-     * Where music is looked for. `/sdcard` is a symlink to
-     * `/storage/emulated/0`, listed only because the roots are filtered by
-     * which actually resolve, then deduplicated by canonical path, so nothing
-     * is scanned twice.
+     * Where music is looked for. Both are the same directory (`/sdcard` is a
+     * symlink to `/storage/emulated/0`), listed twice only because the roots
+     * are filtered by which actually resolve, then deduplicated by canonical
+     * path, so nothing is scanned twice.
      */
-    private val SHARED_ROOTS = listOf(MUSIC_DIR, File("/sdcard", FOLDER))
-
-    override val playlists: PhonePlaylists get() = LocalPlaylists
-
-    override val favorites: PhoneFavorites by lazy { FavoritesFile(LocalPlaylists.folder()) }
+    private val ROOTS = listOf(MUSIC_DIR, File("/sdcard", FOLDER))
 
     /**
      * What the phone can actually play, by extension. Not everything with
@@ -74,53 +80,38 @@ object LocalLibrary : PhoneLibrary {
     /** How deep to walk. Deep enough for Artist/Album/Disc, shallow enough to end. */
     private const val MAX_DEPTH = 6
 
-    private fun roots(): List<File> =
-        (SHARED_ROOTS + listOfNotNull(ToolManagerFolders.musicDir)).filter { it.isDirectory }.distinctBy { it.canonicalPath }
-
     /**
-     * Whether `Music/Amp` can be read, and if not, why. Without a `Music/Amp`
-     * there is nothing to ask for. Without the permission, listing the folder
-     * returns an *empty* array rather than an error, so any song seen in it
-     * proves access; otherwise LightOS is asked, and it can answer from its
-     * own policy rather than the grant, which is why a song seen wins.
+     * Whether the app may actually read the music folder, and if not, why.
+     *
+     * Not inferred from the filesystem: without the permission, listing the
+     * folder returns an *empty* array rather than an error, so a folder we
+     * can't see looks exactly like an empty one.
+     *
+     * The grant, asked of this process, decides. LightOS answers from its own
+     * policy before it looks at the grant, so its word counts only when the
+     * process can't say, or to tell a block from a missing grant.
      */
-    override suspend fun access(): PhoneAccess = withContext(Dispatchers.IO) {
-        if (!MUSIC_DIR.isDirectory) return@withContext PhoneAccess.GRANTED
-        if (hasSong(MUSIC_DIR, 0)) return@withContext PhoneAccess.GRANTED
+    override suspend fun access(): PhoneAccess {
+        val held = hasRuntimePermission(permission)
+        if (held == true) return PhoneAccess.GRANTED
         val lightOs = checkPermission(permission).asKotlinResult
             .map { it.permissionResult }
             .getOrNull()
-        Log.i(TAG, "Music/Amp access: lightos=${lightOs ?: "no answer"}")
-        when (lightOs) {
-            LightServiceMethod.GetPermission.Result.Granted -> PhoneAccess.GRANTED
-            LightServiceMethod.GetPermission.Result.BlockedByServer -> PhoneAccess.BLOCKED_BY_LIGHTOS
+        Log.i(TAG, "Music access: grant=${held ?: "unknown"} lightos=${lightOs ?: "no answer"}")
+        return when {
+            held == null && lightOs == LightServiceMethod.GetPermission.Result.Granted -> PhoneAccess.GRANTED
+            lightOs == LightServiceMethod.GetPermission.Result.BlockedByServer -> PhoneAccess.BLOCKED_BY_LIGHTOS
             else -> PhoneAccess.NOT_GRANTED
         }
     }
 
-    private fun hasSong(dir: File, depth: Int): Boolean {
-        if (depth > MAX_DEPTH) return false
-        return dir.listFiles().orEmpty().any { entry ->
-            when {
-                entry.name.startsWith(".") -> false
-                entry.isDirectory -> hasSong(entry, depth + 1)
-                else -> entry.extension.lowercase() in AUDIO_EXTENSIONS
-            }
-        }
+    /** Created on demand, so there is somewhere obvious to copy music into. */
+    private fun ensureFolder() {
+        runCatching { MUSIC_DIR.mkdirs() }
     }
 
-    /**
-     * The Tool Manager's folder by its dates; `Music/Amp` only by whether a song
-     * can be seen there now and could at the last scan. That flips when access
-     * is granted, and the scan that ran before it, seeing nothing, mustn't stand
-     * in for one that can. Music copied into `Music/Amp` otherwise waits for
-     * Rescan or the next scan, as before.
-     */
-    override fun changedSince(ms: Long): Boolean =
-        ToolManagerFolders.changedSince(ms) || hasSong(MUSIC_DIR, 0) != (sawSharedMarker?.exists() == true)
-
-    /** Present when the last scan found songs in `Music/Amp`. */
-    private val sawSharedMarker: File? get() = ToolManagerFolders.privateFile("music-amp-seen")
+    private fun roots(): List<File> =
+        ROOTS.filter { it.isDirectory }.distinctBy { it.canonicalPath }
 
     /**
      * Walk the folders and read every file's tags, on IO and cancellable
@@ -128,12 +119,12 @@ object LocalLibrary : PhoneLibrary {
      */
     override suspend fun scan(onProgress: (Int) -> Unit): PhoneScan = withContext(Dispatchers.IO) {
         val startedMs = System.currentTimeMillis()
+        ensureFolder()
         val roots = roots()
         val files = mutableListOf<File>()
         roots.forEach { root -> collect(root, 0, files) }
-        val shared = MUSIC_DIR.canonicalFile
-        val sawShared = files.any { it.canonicalFile.startsWith(shared) }
-        sawSharedMarker?.let { runCatching { if (sawShared) it.createNewFile() else it.delete() } }
+        // "No songs" has two causes, a folder the app can't read and a folder
+        // with nothing in it, and they look the same from the library screen.
         Log.i(TAG, "scan: ${roots.size} music folder(s), ${files.size} audio files")
 
         val retriever = MediaMetadataRetriever()

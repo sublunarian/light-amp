@@ -23,8 +23,10 @@ class PhoneLibraryTest {
     }
 
     @Test
-    fun `its one library is the phone itself`() {
-        assertEquals("On This Phone", source(SourceKind.LOCAL).phoneLibrary!!.label)
+    fun `the folder and the permission are the ones it always had`() {
+        val phone = source(SourceKind.LOCAL).phoneLibrary!!
+        assertEquals("Music/Amp", phone.folderLabel)
+        assertEquals("android.permission.READ_MEDIA_AUDIO", phone.permission)
     }
 
     @Test

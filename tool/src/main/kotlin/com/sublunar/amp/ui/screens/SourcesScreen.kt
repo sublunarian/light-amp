@@ -1,15 +1,14 @@
 package com.sublunar.amp.ui.screens
 
-import com.sublunar.amp.source.PhoneAccess
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.sublunar.amp.App
@@ -21,6 +20,7 @@ import com.sublunar.amp.source.AddAction
 import com.sublunar.amp.source.AddEntry
 import com.sublunar.amp.source.AddIcon
 import com.sublunar.amp.source.PendingServer
+import com.sublunar.amp.source.PhoneAccess
 import com.sublunar.amp.source.Providers
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
@@ -146,8 +146,8 @@ class SourcesScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
      * the only mark of where you are. Switch away and it goes.
      */
     private fun rowsUnder(source: MusicSource, ticked: Set<String>?): List<LibraryEntry> {
-        // The phone's own music is one library, by definition.
-        source.phoneLibrary?.let { return listOf(LibraryEntry(it.label, null)) }
+        // The phone's own music is one folder, by definition.
+        source.phoneLibrary?.let { return listOf(LibraryEntry(it.folderLabel, null)) }
         val shown = source.libraries.filter { it.id !in source.hiddenLibraryIds || it.id in ticked.orEmpty() }
         return if (shown.size >= 2) {
             shown.map { LibraryEntry(it.name, it.id) }
@@ -404,7 +404,7 @@ private val AddIcon.vector: ImageVector
 
 /** Where a source's music comes from, for the row that names it. */
 private fun subtitleFor(source: MusicSource): String =
-    source.phoneLibrary?.label ?: source.baseUrl.ifBlank { "Not connected" }
+    source.phoneLibrary?.folderLabel ?: source.baseUrl.ifBlank { "Not connected" }
 
 /**
  * One source's own settings: what it is called, and how it is reached. Its
@@ -427,12 +427,13 @@ class SourceDetailScreen(
         // stand until the next sync.
         var access by remember { mutableStateOf(PhoneAccess.GRANTED) }
         LaunchedEffect(sync.syncing, sync.lastSyncedMs, source?.id) { access = source?.phoneLibrary?.access() ?: PhoneAccess.GRANTED }
+        val canRead = access == PhoneAccess.GRANTED
         val askAccess = rememberAccessRequest(source?.phoneLibrary)
 
         ListScreen(onBack = { goBack() }, title = source?.name ?: "Source", headingRows = true) {
             ScrollableList {
                 if (source == null) return@ScrollableList
-                if (source.phoneLibrary != null && access != PhoneAccess.GRANTED) {
+                if (source.phoneLibrary != null && !canRead) {
                     // Without the permission the folder listing comes back empty
                     // rather than failing, which looks like a phone with no music.
                     item {
@@ -441,7 +442,7 @@ class SourceDetailScreen(
                             subtitle = if (access == PhoneAccess.BLOCKED_BY_LIGHTOS) {
                                 "LightOS is blocking it for this tool"
                             } else {
-                                "Needed to read Music/Amp"
+                                "Needed to read this phone's music folder"
                             },
                             onClick = askAccess,
                         )
