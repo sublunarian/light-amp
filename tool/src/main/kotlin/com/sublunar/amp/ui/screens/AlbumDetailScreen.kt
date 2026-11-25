@@ -199,7 +199,8 @@ class AlbumDetailScreen(
                                 albumTotals(album, list),
                                 pxSp(CARD_SUB_PX),
                                 lineHeight = pxSp(CARD_SUB_LINE_PX),
-                                dim = true,
+                                // The SDK's grey, as the card's artist and year at the page's top.
+                                color = SDK_GREY,
                                 maxLines = 1,
                                 exact = true,
                                 modifier = Modifier.padding(
