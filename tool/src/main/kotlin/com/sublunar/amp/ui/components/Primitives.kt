@@ -14,6 +14,7 @@ import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -54,10 +55,6 @@ object AppIcons {
     val Popular = Icons.Filled.Whatshot
     val MusicNote = Icons.Filled.MusicNote
 
-    /**
-     * Artists: a filled mic, at the same weight as the note and the disc beside it.
-     * LightOS's own is a thin outline and reads as a hole in the row.
-     */
     val QueueMusic = Icons.AutoMirrored.Filled.QueueMusic
 
     /** Light's own three dots, for a page's menu. */
@@ -267,9 +264,15 @@ fun AppText(
     disabled: Boolean = false,
     /** A line height kept even where the text otherwise takes an SDK style whole (not [exact]). */
     lineHeightOverride: TextUnit = TextUnit.Unspecified,
+    /**
+     * Lines of about even length where a title wraps, rather than the first filled
+     * and a word or two left on the next: "Part / One" becomes two halves.
+     */
+    balanced: Boolean = false,
 ) {
     val style = appTextStyle(size, lineHeight, role, weight, align, exact)
         .let { if (lineHeightOverride != TextUnit.Unspecified) it.copy(lineHeight = lineHeightOverride) else it }
+        .let { if (balanced) it.copy(lineBreak = LineBreak.Heading) else it }
     val greyColour = dim && !disabled && LocalGreyText.current
     Text(
         text = text,

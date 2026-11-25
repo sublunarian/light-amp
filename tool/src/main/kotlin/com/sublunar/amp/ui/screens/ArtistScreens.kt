@@ -86,12 +86,18 @@ class ArtistDetailScreen(
     @Composable
     private fun PopularPreview(popular: List<Track>, grouped: Boolean) {
         if (popular.isEmpty()) return
-        val buttonOnly by App.settings.popularButtonOnly.state.collectAsState()
-        // Tight over its songs: one-line rows, closer together than records.
-        HeadingRow("Popular Songs", leadPx = if (grouped) ROW_LEAD_PX else LIST_LEAD_PX, tight = !buttonOnly) {
+        // Tight over its songs, with as much air under its words as each song has
+        // above its own, so heading and songs read at one even spacing.
+        val line = ROW_TYPE.titleLinePx
+        val headingPx = (ROW_H_PX - line) / 2 + line + (POPULAR_ROW_PX - line) / 2
+        HeadingRow(
+            "Popular Songs",
+            leadPx = if (grouped) ROW_LEAD_PX else LIST_LEAD_PX,
+            tight = true,
+            tightHeightPx = headingPx,
+        ) {
             go { ArtistSongsScreen(it, name, popular = true, credit = credit) }
         }
-        if (buttonOnly) return
         popular.take(POPULAR_PREVIEW).forEachIndexed { index, track ->
             TrackRow(
                 title = track.title,
@@ -106,6 +112,7 @@ class ArtistDetailScreen(
                 onLongClick = { openTrackActions(track.id, null, onArtistPage = name) },
                 number = index + 1,
                 numberOnLine = true,
+                oneLinePx = POPULAR_ROW_PX,
             )
         }
     }
@@ -117,12 +124,16 @@ class ArtistDetailScreen(
      */
     @Composable
     private fun PlayShortcuts(records: List<Album>) {
-        CentredPlayRow(
-            onPlay = { playAll(songsInOrderOf(records)) },
-            onShuffle = { playAll(shuffled(songsInOrderOf(records))) },
-            playLabel = "Play All",
-        )
-        Spacer(Modifier.height(px(PLAY_ROW_GAP_PX)))
+        // One block, the gap under it included: a grid cell lays its parts over
+        // each other, where a list's item stacks them.
+        Column {
+            CentredPlayRow(
+                onPlay = { playAll(songsInOrderOf(records)) },
+                onShuffle = { playAll(shuffled(songsInOrderOf(records))) },
+                playLabel = "Play All",
+            )
+            Spacer(Modifier.height(px(PLAY_ROW_GAP_PX)))
+        }
     }
 
     /** Their songs record by record, as the page lists [records], each in disc and track order. */
@@ -220,8 +231,14 @@ class ArtistDetailScreen(
                         }
                     },
                 ) {
-                    item(span = { GridItemSpan(maxLineSpan) }) { ArtistNameCard(name, inList = false) { nameBottomPx = it } }
-                    item(span = { GridItemSpan(maxLineSpan) }) { PlayShortcuts(shown) }
+                    // The name and Play row as one cell, with none of the grid's gap
+                    // between them: where the list has them.
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Column {
+                            ArtistNameCard(name, inList = false) { nameBottomPx = it }
+                            PlayShortcuts(shown)
+                        }
+                    }
                 }
                 return@LibrarySubPage
             }
@@ -244,6 +261,9 @@ class ArtistDetailScreen(
                         TrackRow(
                             title = album.title,
                             subtitle = album.year?.toString() ?: "",
+                            // A record without a year as tall as one with, its title where theirs
+                            // are: the titles keep one rhythm down the page.
+                            keepSubtitleLine = true,
                             coverArtId = album.coverArtId,
                             fallback = AppIcons.Album,
                             downloaded = album.id in downloadedAlbums,
@@ -281,6 +301,8 @@ private fun ArtistNameCard(name: String, inList: Boolean, onBottom: (Int) -> Uni
             role = TextRole.Copy,
             align = TextAlign.Center,
             exact = true,
+            // Trial: a name that wraps in lines of about even length.
+            balanced = App.settings.balancedNames.state.collectAsState().value,
             modifier = Modifier
                 .fillMaxWidth()
                 .onGloballyPositioned { onBottom(it.boundsInParent().bottom.toInt()) },
@@ -361,6 +383,8 @@ class ArtistSongsScreen(
         // Fixed for the page, so the branch never flips between compositions.
         val all = if (popular) rememberPopular() else rememberAll()
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
+        // Likes changed since the songs were read: see LibraryRepository.songLikes.
+        val songLikes by App.library.songLikes.collectAsState()
         val view by ArtistSongsVisit.view.collectAsState()
         val albums by App.library.albums.collectAsState()
         val songs = remember(all, view, downloadedIds, albums) {
@@ -426,7 +450,7 @@ class ArtistSongsScreen(
                             subtitle = track.album,
                             coverArtId = track.coverArtId,
                             downloaded = track.id in downloadedIds,
-                            liked = track.liked,
+                            liked = songLikes[track.id] ?: track.liked,
                             selected = if (selection.active) track.id in selection.selected else null,
                             onClick = {
                                 if (selection.active) {
@@ -569,13 +593,15 @@ private fun HeadingRow(
      * is about half the air above: for a heading over one-line rows.
      */
     tight: Boolean = false,
+    /** A tight heading's height where its rows set their own, else a one-line row's. */
+    tightHeightPx: Int? = null,
     onClick: () -> Unit,
 ) {
     val type = ROW_TYPE
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(px(if (tight) type.oneLinePx else ROW_H_PX))
+            .height(px(if (tight) tightHeightPx ?: type.oneLinePx else ROW_H_PX))
             .rowClickable(onClick = onClick)
             .padding(start = px(leadPx), top = px(if (tight) (ROW_H_PX - type.titleLinePx) / 2 else 0)),
         contentAlignment = if (tight) Alignment.TopStart else Alignment.CenterStart,
@@ -593,8 +619,12 @@ private fun HeadingRow(
 /** How many of the popular songs the artist page shows. */
 private const val POPULAR_PREVIEW = 5
 
+
 /** Popular's songs set in from its heading where that heading is on the list's 72px line. */
 private const val POPULAR_SONG_INDENT_PX = 20
+
+/** Popular's songs this far apart: 61px between titles, where the lists' one-line rows leave 76. */
+private const val POPULAR_ROW_PX = 100
 
 /** One of an artist's release groups, to Play or Shuffle: its songs record by record in the page's order, disc and track. */
 class GroupPlayScreen(

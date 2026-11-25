@@ -1,6 +1,7 @@
 package com.sublunar.amp.ui.screens
 
 import com.sublunar.amp.ui.SDK_GREY
+import com.sublunar.amp.data.workTitles
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -138,6 +139,8 @@ class AlbumDetailScreen(
                 }
                 val albumArtist = album?.artist?.trim()?.lowercase()
                 val numbers = remember(list) { list.mapIndexed { i, t -> t.trackNumber ?: (i + 1) } }
+                // A classical album's shared work said once over its tracks.
+                val works = remember(list) { workTitles(list.map { it.title }) }
                 val numberColumn = rememberNumberColumn(numbers)
                 // A record on more than one disc lists each under its own heading.
                 val discs = remember(list) { list.mapNotNull { it.discNumber }.distinct() }
@@ -154,12 +157,19 @@ class AlbumDetailScreen(
                     }
                     itemsIndexed(list, key = { _, t -> t.id }) { index, track ->
                         val disc = track.discNumber
-                        if (discs.size > 1 && disc != null && (index == 0 || list[index - 1].discNumber != disc)) {
-                            SectionLabel("Disc $disc", dim = false)
+                        val newDisc = discs.size > 1 && disc != null && (index == 0 || list[index - 1].discNumber != disc)
+                        if (newDisc) {
+                            // On the numbers' edge, the list's own, as the totals line closing the list is.
+                            SectionLabel("Disc $disc", dim = false, startPx = 0)
+                        }
+                        val work = works[index]
+                        // Again on a new disc, so a work that runs across both is named on each.
+                        if (work.work != null && (index == 0 || newDisc || works[index - 1].work != work.work)) {
+                            SectionLabel(work.work, dim = false, startPx = 0)
                         }
                         NumberedRow(
                             number = numbers[index],
-                            title = track.title,
+                            title = work.title,
                             subtitle = when {
                                 !varied -> ""
                                 albumArtist != null && track.artist.trim().lowercase() == albumArtist -> ""
@@ -193,7 +203,6 @@ class AlbumDetailScreen(
                                 maxLines = 1,
                                 exact = true,
                                 modifier = Modifier.padding(
-                                    start = px(ROW_LEAD_PX),
                                     top = px(TOTALS_TOP_PX),
                                     bottom = px(TOTALS_BOTTOM_PX),
                                 ),
@@ -228,6 +237,7 @@ class AlbumDetailScreen(
             maxLines = maxLines,
             align = if (centred) TextAlign.Center else null,
             exact = true,
+            balanced = App.settings.balancedNames.state.collectAsState().value,
             modifier = Modifier
                 .fillMaxWidth()
                 .onGloballyPositioned { onTitleBottom(it.boundsInParent().bottom.toInt()) },
@@ -295,6 +305,7 @@ class AlbumDetailScreen(
                     align = if (centred) TextAlign.Center else null,
                     maxLines = if (titleLines >= CARD_TITLE_LINES) 1 else CARD_ARTIST_LINES,
                     exact = true,
+                    balanced = App.settings.balancedNames.state.collectAsState().value,
                 )
                 val year = album.year?.toString().orEmpty()
                 if (year.isNotEmpty()) {
@@ -339,6 +350,7 @@ class AlbumDetailScreen(
                 color = SDK_GREY,
                 align = if (centred) TextAlign.Center else null,
                 exact = true,
+                balanced = App.settings.balancedNames.state.collectAsState().value,
             )
             val year = album.year?.toString().orEmpty()
             if (year.isNotEmpty()) {

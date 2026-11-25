@@ -478,11 +478,13 @@ fun SectionLabel(
     onClick: (() -> Unit)? = null,
     /** A glyph just after the words, on their line. */
     trailing: (@Composable () -> Unit)? = null,
+    /** Where the words start in the list: the menus' inset unless a list lines them up elsewhere. */
+    startPx: Int = MENU_ROW_INSET_PX,
 ) {
     Row(
         modifier = Modifier
             .then(if (onClick != null) Modifier.fillMaxWidth().appClickable(onClick = onClick) else Modifier)
-            .padding(start = px(MENU_ROW_INSET_PX), top = px(SECTION_TOP_PX), bottom = px(SECTION_BOTTOM_PX)),
+            .padding(start = px(startPx), top = px(SECTION_TOP_PX), bottom = px(SECTION_BOTTOM_PX)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AppText(

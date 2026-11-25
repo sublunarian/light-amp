@@ -534,11 +534,11 @@ class AppSettings(
     /** An artist's popular songs at the end of their page, where the source can name them. Off until chosen. */
     val showPopularSongs: Pref<Boolean> = bool("pref.showPopularSongs", false)
 
-    /** Trial: Popular Songs on an artist's page as its heading alone, without the five songs. */
-    val popularButtonOnly: Pref<Boolean> = bool("pref.popularButtonOnly", false)
+    /** Trial: a wrapped track title in lines of about even length. */
+    val balancedTitles: Pref<Boolean> = bool("pref.balancedTitles", false)
 
-    /** Trial: an album's long track titles wrap to as many lines as they need. */
-    val wrapTrackTitles: Pref<Boolean> = bool("pref.wrapTrackTitles", false)
+    /** Trial: an artist's name and an album's title and artist, where they wrap, in even lines. */
+    val balancedNames: Pref<Boolean> = bool("pref.balancedNames", false)
 
     /** Which categories the simple layout's library home lists, and in what order — see [HomeLayout]. */
     val homeLayout: Pref<HomeLayout> =

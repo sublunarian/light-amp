@@ -255,6 +255,8 @@ class PlaylistDetailScreen(
         val drag = rememberDragReorderState<String>()
         val rowPx = with(LocalDensity.current) { px(ROW_H_PX).toPx() }
         val downloaded by App.library.downloadedTrackIds.collectAsState()
+        // Likes changed since the list was read: see LibraryRepository.songLikes.
+        val songLikes by App.library.songLikes.collectAsState()
         val headerCount = if (editing) 0 else 1
         val listState = rememberListAnchor("playlist:$playlistId", headerCount)
         val orderedKeys = remember(list) { list.map { it.key } }
@@ -328,7 +330,7 @@ class PlaylistDetailScreen(
                                 }
                             },
                             downloaded = track.id in downloaded,
-                            liked = track.liked,
+                            liked = songLikes[track.id] ?: track.liked,
                             selected = if (editing) entry.key in selection.selected else null,
                             trailing = if (editing && canEdit() && reorderable) {
                                 { DragHandle { drag.iconCoords[entry.key] = it } }
@@ -363,6 +365,7 @@ class PlaylistDetailScreen(
         selection: SelectionState,
         downloaded: Set<String>,
     ) {
+        val songLikes by App.library.songLikes.collectAsState()
         list.forEach { entry ->
             if (entry.key !in draggingKeys) return@forEach
             val top = dragStartTops[entry.key] ?: return@forEach
@@ -376,7 +379,7 @@ class PlaylistDetailScreen(
                     .padding(start = px(LIST_EDGE_PX), end = px(SCROLLBAR_LANE_PX)),
                 onClick = {},
                 downloaded = entry.track.id in downloaded,
-                liked = entry.track.liked,
+                liked = songLikes[entry.track.id] ?: entry.track.liked,
                 selected = entry.key in selection.selected,
                 trailing = { Spacer(Modifier.width(px(DRAG_HANDLE_SLOT_PX))) },
             )

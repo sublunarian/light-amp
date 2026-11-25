@@ -2606,6 +2606,19 @@ class PlaybackController(
         }
     }
 
+    /** Drop everything after the track playing: it stays, and what came before it. */
+    fun clearUpcoming() {
+        editQueue { q ->
+            val from = _index.value + 1
+            if (from !in q.indices) return@editQueue null
+            val targets = (from until q.size).toList()
+            RowEdit(
+                queue = q.subList(0, from).toList(),
+                told = QueueEdit.Removed(targets.map { q[it].id }),
+            ) { held -> removeFromPlayer(held, targets) }
+        }
+    }
+
     /**
      * Move several tracks (by index) as a block to [insertAt] among the rest.
      * Within the window the player is given one move at a time, as it has no

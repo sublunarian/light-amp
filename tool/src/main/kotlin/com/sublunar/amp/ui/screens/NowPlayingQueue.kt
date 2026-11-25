@@ -42,6 +42,7 @@ import com.sublunar.amp.data.Track
 import com.sublunar.amp.ui.LocalDimTextAlpha
 import com.sublunar.amp.ui.components.AppArtwork
 import com.sublunar.amp.ui.components.AppHeader
+import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.AppIcon
 import com.sublunar.amp.ui.components.AppIcons
 import com.sublunar.amp.ui.components.AppText
@@ -124,6 +125,7 @@ internal fun SimpleLightScreen<*>.QueuePlayer(queue: List<Track>, index: Int, on
         } else {
             AppHeader(
                 onBack = onBack,
+                rightAction = HeaderAction(AppIcons.More) { go { QueueActionsScreen(it) } },
                 titleContent = {
                     QueueTitle(
                         // The page, not the track: that one is the row marked

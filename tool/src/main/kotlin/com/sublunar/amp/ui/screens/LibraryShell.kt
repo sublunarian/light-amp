@@ -706,10 +706,11 @@ private fun homeLines(page: IndexPage): List<IndexEntry> {
             HomeCategory.DOWNLOADED -> !downloaded && holdings.downloads
         }
         if (!available) return@mapNotNull null
-        // Only one kind liked: that list itself, rather than a page with one row.
+        // Only one kind liked: still Favorites here, but straight to that list rather
+        // than a page with one row. The list's own header names it.
         if (category == HomeCategory.FAVORITES && liked.size == 1) {
             val tab = liked.single()
-            return@mapNotNull IndexEntry("Favorite ${tab.title}", likedGlyph) {
+            return@mapNotNull IndexEntry(category.title, likedGlyph) {
                 openNarrowed(tab, page, App.Narrowing(liked = true, downloaded = downloaded))
             }
         }

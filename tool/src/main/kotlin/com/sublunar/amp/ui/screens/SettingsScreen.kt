@@ -164,8 +164,8 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val trials = listOf(
-            "Popular Songs Button Only" to App.settings.popularButtonOnly,
-            "Wrap Long Titles" to App.settings.wrapTrackTitles,
+            "Balanced Line Breaks" to App.settings.balancedTitles,
+            "Balanced Names" to App.settings.balancedNames,
         )
 
         // Rows a step below the other settings pages', so a trial's whole name fits.

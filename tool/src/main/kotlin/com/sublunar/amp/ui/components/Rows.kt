@@ -151,30 +151,35 @@ fun TrackRow(
     number: Int? = null,
     /** The [number] on the list's 72px line instead, the row set in after it — Popular's preview on an artist's page. */
     numberOnLine: Boolean = false,
+    /** A one-line row's height where the list sets its own, else the lists' usual. */
+    oneLinePx: Int? = null,
+    /** Room for a line under the title though [subtitle] is blank, so the row keeps a two-line row's height and the title its place. */
+    keepSubtitleLine: Boolean = false,
     /** A list with its own artwork switch says so — see App.hidePlaylistArtwork. */
     artworkHidden: Boolean = App.hideListArtwork.collectAsState().value,
 ) {
-    val oneLine = subtitle.isBlank() && artworkHidden && selected == null
+    val oneLine = subtitle.isBlank() && !keepSubtitleLine && artworkHidden && selected == null
+    val underTitle = subtitle.isNotBlank() || keepSubtitleLine
     val type = ROW_TYPE
     val big = tall && !artworkHidden
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(px(if (big) TALL_ROW_H_PX else if (oneLine) type.oneLinePx else type.rowPx))
+            .height(px(if (big) TALL_ROW_H_PX else if (oneLine) oneLinePx ?: type.oneLinePx else type.rowPx))
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Without artwork the mark sits on the title's line, half the subtitle's line above the middle.
         val noArt = artworkHidden && selected == null
         if (number != null && selected == null) {
-            if (numberOnLine) NumberOnLine(number, type, besideSubtitle = subtitle.isNotBlank()) else NumberLead(number, type)
+            if (numberOnLine) NumberOnLine(number, type, besideSubtitle = underTitle) else NumberLead(number, type)
         } else {
             RowLead(
                 downloaded,
                 liked,
                 inkDropPx = when {
                     !noArt -> null
-                    subtitle.isNotBlank() -> MARK_INK_DROP_PX - type.subLinePx / 2
+                    underTitle -> MARK_INK_DROP_PX - type.subLinePx / 2
                     else -> TITLE_ONLY_INK_DROP_PX
                 },
             )
@@ -195,6 +200,7 @@ fun TrackRow(
         Column(modifier = Modifier.weight(1f)) {
             RowTitle(title, type = type)
             if (subtitle.isNotBlank()) RowSubtitle(subtitle, type)
+            else if (keepSubtitleLine) Spacer(Modifier.height(px(type.subLinePx)))
         }
         trailing?.invoke()
     }
@@ -578,11 +584,11 @@ fun numberedRowTopPx(): Int = (NUMBERED_ROW_H_PX - NUMBERED_TITLE_LINE_PX - NUMB
 private const val NUMBER_GAP_PX = ROW_GAP_PX - 8
 
 /**
- * The number gutter: the album's widest number, from the list's edge where a
- * download mark would sit, then the gap; one width down the whole album, like a
- * printed tracklist's margin, the numbers centred in it and the titles' left
- * edges lined up. Measured once for the album, not per row: the font's digits
- * differ in width, so each number is measured.
+ * The number gutter: the album's widest number, from the list's own edge, then
+ * the gap; one width down the whole album, like a printed tracklist's margin,
+ * the numbers set to its right and the titles' left edges lined up. Measured
+ * once for the album, not per row: the font's digits differ in width, so each
+ * number is measured.
  */
 @Composable
 fun rememberNumberColumn(numbers: List<Int>): Dp {
@@ -623,25 +629,26 @@ fun NumberedRow(
     /** The album's widest number: see [rememberNumberColumn]. */
     numberColumn: Dp,
 ) {
-    // Trial: a long title wraps, the row growing a title line for each line past
-    // the first, the air above and below its lines as a one-line title's.
-    val wrap by App.settings.wrapTrackTitles.state.collectAsState()
+    // Trial: a wrapped title in lines of about even length, not a word left over.
+    val balanced by App.settings.balancedTitles.state.collectAsState()
+    // A long title wraps, the row growing a title line for each line past the
+    // first, the air above and below its lines as a one-line title's.
     val rowPx = if (subtitle.isNotBlank()) NUMBERED_ROW_TALL_PX else NUMBERED_ROW_H_PX
     val linesPx = NUMBERED_TITLE_LINE_PX + NUMBERED_SUB_LINE_PX * (if (subtitle.isNotBlank()) 2 else 1)
     val numberLead = numberColumn + px(NUMBER_GAP_PX)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (wrap) Modifier.heightIn(min = px(rowPx)) else Modifier.height(px(rowPx)))
+            .heightIn(min = px(rowPx))
             .rowClickable(onClick = onClick, onLongClick = onLongClick)
             // Inside the tap area, so the air still takes a tap.
-            .then(if (wrap) Modifier.padding(vertical = (px(rowPx) - px(linesPx)) / 2) else Modifier),
+            .padding(vertical = (px(rowPx) - px(linesPx)) / 2),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The numbers start on the lists' margin too.
-        Spacer(Modifier.width(px(ROW_LEAD_PX)))
         if (selected != null) {
-            // Select mode swaps the number gutter for the cover and check bubble.
+            // Select mode swaps the number gutter for the cover and check bubble,
+            // on the lists' margin as before: only the numbers go out to the edge.
+            Spacer(Modifier.width(px(ROW_LEAD_PX)))
             SelectionArtwork(coverArtId, selected)
             Spacer(Modifier.width(px(ROW_GAP_PX)))
         }
@@ -657,15 +664,13 @@ fun NumberedRow(
                             .width(lead)
                             .padding(end = px(NUMBER_GAP_PX))
                             .then(
-                                when {
-                                    !current -> Modifier.alignByBaseline()
-                                    // On the first of a wrapped title's lines, not the middle of them all.
-                                    wrap -> Modifier.align(Alignment.Top).height(px(NUMBERED_TITLE_LINE_PX))
-                                    else -> Modifier.align(Alignment.CenterVertically)
-                                },
+                                // The waveform on the first of a wrapped title's lines, not the middle of them all.
+                                if (current) Modifier.align(Alignment.Top).height(px(NUMBERED_TITLE_LINE_PX))
+                                else Modifier.alignByBaseline(),
                             ),
-                        // Centred in the column, as a printed tracklist sets them.
-                        contentAlignment = Alignment.Center,
+                        // To the right of the column, from the list's own edge: the
+                        // widest number sets it, and units line up as in a printed list.
+                        contentAlignment = Alignment.CenterEnd,
                     ) {
                         if (current) {
                             AppIcon(AppIcons.Waveform, size = px(41))
@@ -678,7 +683,7 @@ fun NumberedRow(
                                 exact = true,
                                 dim = true,
                                 maxLines = 1,
-                                align = TextAlign.Center,
+                                align = TextAlign.End,
                             )
                         }
                     }
@@ -687,7 +692,7 @@ fun NumberedRow(
                     title,
                     pxSp(NUMBERED_TITLE_PX),
                     lineHeight = pxSp(NUMBERED_TITLE_LINE_PX),
-                    maxLines = if (wrap) Int.MAX_VALUE else 1,
+                    balanced = balanced,
                     exact = true,
                     modifier = Modifier.weight(1f).alignByBaseline(),
                 )

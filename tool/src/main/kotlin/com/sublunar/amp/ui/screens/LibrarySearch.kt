@@ -53,6 +53,7 @@ import com.sublunar.amp.ui.components.ListScrollBar
 import com.sublunar.amp.ui.components.ROW_TITLE_LINE_PX
 import com.sublunar.amp.ui.components.ROW_TITLE_PX
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
+import com.sublunar.amp.ui.components.ROW_LEAD_PX
 import com.sublunar.amp.ui.components.SectionLabel
 import com.sublunar.amp.ui.components.TrackRow
 import com.sublunar.amp.ui.components.appClickable
@@ -151,7 +152,7 @@ internal fun SimpleLightScreen<*>.SearchView() {
                         item { EmptyState("No results") }
                     }
                     if (results.artists.isNotEmpty()) {
-                        item { SectionLabel("Artists") }
+                        item { SectionLabel("Artists", dim = false, startPx = ROW_LEAD_PX) }
                         items(results.artists, key = { "ar-${it.name}" }) { artist ->
                             // A list row like the albums and songs under it: a
                             // result is a thing in the library, not a menu entry.
@@ -167,7 +168,7 @@ internal fun SimpleLightScreen<*>.SearchView() {
                         }
                     }
                     if (results.albums.isNotEmpty()) {
-                        item { SectionLabel("Albums") }
+                        item { SectionLabel("Albums", dim = false, startPx = ROW_LEAD_PX) }
                         items(results.albums, key = { "al-${it.id}" }) { album ->
                             TrackRow(
                                 title = album.title,
@@ -187,7 +188,7 @@ internal fun SimpleLightScreen<*>.SearchView() {
                         }
                     }
                     if (results.tracks.isNotEmpty()) {
-                        item { SectionLabel("Songs") }
+                        item { SectionLabel("Songs", dim = false, startPx = ROW_LEAD_PX) }
                         items(results.tracks, key = { "tr-${it.id}" }) { track ->
                             TrackRow(
                                 title = track.title,

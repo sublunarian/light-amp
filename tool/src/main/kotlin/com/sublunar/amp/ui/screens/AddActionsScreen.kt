@@ -8,14 +8,12 @@ import com.sublunar.amp.App
 import com.sublunar.amp.ui.components.ActionList
 import com.sublunar.amp.ui.components.EmptyState
 import com.sublunar.amp.ui.components.ListScreen
-import com.sublunar.amp.ui.components.TextRow
 import com.thelightphone.sdk.SealedLightActivity
-import kotlinx.coroutines.launch
 
 /**
  * The player's "+" sheet: the ways of keeping the track that's playing (liked, in a
- * playlist, rated, on the device) and of keeping the queue as a playlist. The •••
- * menu is about the track itself.
+ * playlist, rated, on the device). The ••• menu is about the track itself; keeping
+ * the queue as a playlist is on the queue's own — see [QueueActionsScreen].
  */
 class AddActionsScreen(
     sealed: SealedLightActivity,
@@ -35,8 +33,6 @@ class AddActionsScreen(
         }
         val downloadedIds by App.library.downloadedTrackIds.collectAsState()
         val downloaded = id in downloadedIds
-        val queue by App.playback.queue.collectAsState()
-        val queueName by App.playback.queueName.collectAsState()
 
         ListScreen(
             onBack = { goBack() },
@@ -52,29 +48,6 @@ class AddActionsScreen(
                 if (source.supportsLikes) LikeTrackRow(track)
                 if (source.supportsRatings) RatingRow(track.id, track.title, track.rating, isAlbum = false)
                 AddToPlaylistRow(listOf(track.id)) { goBack() }
-                // How a song radio becomes something to come back to (or download):
-                // you hear it, you decide. The queue's name ("Judith Radio") is
-                // offered where it has one.
-                if (queue.isNotEmpty()) {
-                    TextRow(title = "Save Queue as Playlist") {
-                        val ids = queue.map { it.id }
-                        navigateTo<String?>(
-                            {
-                                TextEntryScreen(
-                                    it,
-                                    title = "Playlist Name",
-                                    initial = queueName.orEmpty(),
-                                )
-                            },
-                            resultCallback = { name ->
-                                if (!name.isNullOrBlank()) {
-                                    App.scope.launch { App.playlists.createPlaylist(name, ids) }
-                                    goBack()
-                                }
-                            },
-                        )
-                    }
-                }
                 // Last: a different kind of keeping, and its destructive half
                 // shouldn't sit where a tap aimed at Like might land.
                 DownloadRow(source, listOf(track), downloaded, "Add to Downloads")

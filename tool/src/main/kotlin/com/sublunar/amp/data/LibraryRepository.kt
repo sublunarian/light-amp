@@ -820,20 +820,34 @@ class LibraryRepository(
     suspend fun setTrackLiked(track: Track, liked: Boolean) {
         val pinned = dao
         activePhoneLibrary()?.let { phone ->
-            return likeOnPhone(phone, { it.setSong(track, liked) }) { pinned.setTrackLiked(track.id, liked) }
+            return likeOnPhone(phone, { it.setSong(track, liked) }) {
+                pinned.setTrackLiked(track.id, liked)
+                _songLikes.update { it + (track.id to liked) }
+            }
         }
         val client = reachableClient()
         pinned.setTrackLiked(track.id, liked)
+        _songLikes.update { it + (track.id to liked) }
         wroteHere()
         val source = settings.activeSource.first()?.id
         mirror(
             PendingAction(likeKind(LikeTarget.SONG, liked), track.id, sourceId = source), client, say = true,
             undo = {
                 pinned.setTrackLiked(track.id, !liked)
+                _songLikes.update { it + (track.id to !liked) }
                 wroteHere()
             },
         )
     }
+
+    private val _songLikes = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+
+    /**
+     * Songs liked or unliked here since the app started, by id. A page that read
+     * its songs before (a playlist, an artist's popular songs) holds them as they
+     * were: it shows a song's like from here where there is one.
+     */
+    val songLikes: StateFlow<Map<String, Boolean>> get() = _songLikes
 
     /**
      * Like an artist: stored by name (the app's artists come from track tags) and
