@@ -47,7 +47,7 @@ import com.sublunar.amp.ui.components.HeaderAction
 import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import com.sublunar.amp.ui.components.NOTICE_MS
 import com.sublunar.amp.ui.components.NoticePill
-import com.sublunar.amp.ui.components.ROW_H_PX
+import com.sublunar.amp.ui.components.listRowPx
 import com.sublunar.amp.ui.components.ShuffleRow
 import com.sublunar.amp.ui.components.SCROLLBAR_LANE_PX
 import com.sublunar.amp.ui.components.ScrollableList
@@ -253,7 +253,8 @@ class PlaylistDetailScreen(
     ) {
         val editing = selection.active
         val drag = rememberDragReorderState<String>()
-        val rowPx = with(LocalDensity.current) { px(ROW_H_PX).toPx() }
+        // The rows' own height, so a drag's slots line up whatever size the lists are.
+        val rowPx = with(LocalDensity.current) { px(listRowPx(App.hideListArtwork.collectAsState().value)).toPx() }
         val downloaded by App.library.downloadedTrackIds.collectAsState()
         // Likes changed since the list was read: see LibraryRepository.songLikes.
         val songLikes by App.library.songLikes.collectAsState()

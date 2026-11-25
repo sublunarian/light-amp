@@ -165,7 +165,7 @@ fun TrackRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(px(if (big) TALL_ROW_H_PX else if (oneLine) oneLinePx ?: type.oneLinePx else type.rowPx))
+            .height(px(if (big) TALL_ROW_H_PX else if (oneLine) oneLinePx ?: type.oneLinePx else listRowPx(artworkHidden)))
             .rowClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -268,14 +268,26 @@ class RowType(
     val rowPx: Int,
     /** The pitch of a one-line row (artists, playlists). */
     val oneLinePx: Int,
+    /** An album track's row with two lines under its title: the second takes some of the air between rows. */
+    val tallPx: Int,
 )
 
-/** Every list's type and pitch, with covers or without. */
-val ROW_TYPE = RowType(
+private val LIST_TYPE = RowType(
     ROW_TITLE_PX, ROW_TITLE_LINE_PX, TextRole.Fine,
     ROW_SUB_PX, ROW_SUB_LINE_PX, TextRole.Detail,
-    ROW_H_PX, ROW_TEXT_H_PX,
+    ROW_H_PX, ROW_TEXT_H_PX, ROW_H_PX + ROW_SUB_LINE_PX - 21,
 )
+
+/** Trial: 46/52 of every size above, the title between the lists' and the grey lines'. */
+private val SMALL_LIST_TYPE = RowType(46, 53, TextRole.Fine, 36, 53, TextRole.Detail, 134, 102, 169)
+
+/** Every list's type and pitch, with covers or without: a step smaller while that trial is on. */
+val ROW_TYPE: RowType
+    @Composable get() = if (App.settings.smallerListText.state.collectAsState().value) SMALL_LIST_TYPE else LIST_TYPE
+
+/** A two-line row's height: the type's without covers, the cover's own with them. */
+@Composable
+fun listRowPx(artworkHidden: Boolean): Int = if (artworkHidden) ROW_TYPE.rowPx else ROW_H_PX
 
 
 /**
@@ -486,7 +498,7 @@ fun PlayAllRow(
         !headsList -> ROW_ACTION_H_PX
         tall -> TALL_ROW_H_PX
         oneLineList && artworkHidden -> type.oneLinePx
-        else -> type.rowPx
+        else -> listRowPx(artworkHidden)
     }
     Row(
         modifier = Modifier
@@ -592,9 +604,10 @@ private const val NUMBER_GAP_PX = ROW_GAP_PX - 8
  */
 @Composable
 fun rememberNumberColumn(numbers: List<Int>): Dp {
+    val type = ROW_TYPE
     val style = appTextStyle(
-        pxSp(NUMBERED_TITLE_PX),
-        lineHeight = pxSp(NUMBERED_TITLE_LINE_PX),
+        pxSp(type.titlePx),
+        lineHeight = pxSp(type.titleLinePx),
         role = TextRole.Fine,
         exact = true,
     )
@@ -633,8 +646,9 @@ fun NumberedRow(
     val balanced by App.settings.balancedTitles.state.collectAsState()
     // A long title wraps, the row growing a title line for each line past the
     // first, the air above and below its lines as a one-line title's.
-    val rowPx = if (subtitle.isNotBlank()) NUMBERED_ROW_TALL_PX else NUMBERED_ROW_H_PX
-    val linesPx = NUMBERED_TITLE_LINE_PX + NUMBERED_SUB_LINE_PX * (if (subtitle.isNotBlank()) 2 else 1)
+    val type = ROW_TYPE
+    val rowPx = if (subtitle.isNotBlank()) type.tallPx else type.rowPx
+    val linesPx = type.titleLinePx + type.subLinePx * (if (subtitle.isNotBlank()) 2 else 1)
     val numberLead = numberColumn + px(NUMBER_GAP_PX)
     Row(
         modifier = Modifier
@@ -665,7 +679,7 @@ fun NumberedRow(
                             .padding(end = px(NUMBER_GAP_PX))
                             .then(
                                 // The waveform on the first of a wrapped title's lines, not the middle of them all.
-                                if (current) Modifier.align(Alignment.Top).height(px(NUMBERED_TITLE_LINE_PX))
+                                if (current) Modifier.align(Alignment.Top).height(px(type.titleLinePx))
                                 else Modifier.alignByBaseline(),
                             ),
                         // To the right of the column, from the list's own edge: the
@@ -677,8 +691,8 @@ fun NumberedRow(
                         } else {
                             AppText(
                                 number.toString(),
-                                pxSp(NUMBERED_TITLE_PX),
-                                lineHeight = pxSp(NUMBERED_TITLE_LINE_PX),
+                                pxSp(type.titlePx),
+                                lineHeight = pxSp(type.titleLinePx),
                                 role = TextRole.Fine,
                                 exact = true,
                                 dim = true,
@@ -690,8 +704,8 @@ fun NumberedRow(
                 }
                 AppText(
                     title,
-                    pxSp(NUMBERED_TITLE_PX),
-                    lineHeight = pxSp(NUMBERED_TITLE_LINE_PX),
+                    pxSp(type.titlePx),
+                    lineHeight = pxSp(type.titleLinePx),
                     balanced = balanced,
                     exact = true,
                     modifier = Modifier.weight(1f).alignByBaseline(),
@@ -700,8 +714,8 @@ fun NumberedRow(
             if (subtitle.isNotBlank()) {
                 AppText(
                     subtitle,
-                    pxSp(NUMBERED_SUB_PX),
-                    lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
+                    pxSp(type.subPx),
+                    lineHeight = pxSp(type.subLinePx),
                     dim = true,
                     maxLines = 1,
                     exact = true,
@@ -710,8 +724,8 @@ fun NumberedRow(
             }
             AppText(
                 detail,
-                pxSp(NUMBERED_SUB_PX),
-                lineHeight = pxSp(NUMBERED_SUB_LINE_PX),
+                pxSp(type.subPx),
+                lineHeight = pxSp(type.subLinePx),
                 dim = true,
                 maxLines = 1,
                 exact = true,

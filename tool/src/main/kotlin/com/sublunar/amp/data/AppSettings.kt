@@ -540,6 +540,9 @@ class AppSettings(
     /** Trial: an artist's name and an album's title and artist, where they wrap, in even lines. */
     val balancedNames: Pref<Boolean> = bool("pref.balancedNames", false)
 
+    /** Trial: every music list's text and rows about an eighth smaller. */
+    val smallerListText: Pref<Boolean> = bool("pref.smallerListText", false)
+
     /** Which categories the simple layout's library home lists, and in what order — see [HomeLayout]. */
     val homeLayout: Pref<HomeLayout> =
         pref(stringPreferencesKey("pref.homeCategories"), HomeLayout.DEFAULT, HomeLayout::decode, HomeLayout::encode)

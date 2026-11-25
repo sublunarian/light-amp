@@ -40,7 +40,6 @@ import com.sublunar.amp.ui.components.CentredPlayRow
 import com.sublunar.amp.ui.components.ROW_LEAD_PX
 import androidx.compose.foundation.layout.Column
 import com.sublunar.amp.ui.components.rowClickable
-import com.sublunar.amp.ui.components.ROW_H_PX
 import com.sublunar.amp.ui.pxSp
 import com.sublunar.amp.ui.components.AppText
 import com.sublunar.amp.ui.components.ROW_TYPE
@@ -89,7 +88,7 @@ class ArtistDetailScreen(
         // Tight over its songs, with as much air under its words as each song has
         // above its own, so heading and songs read at one even spacing.
         val line = ROW_TYPE.titleLinePx
-        val headingPx = (ROW_H_PX - line) / 2 + line + (POPULAR_ROW_PX - line) / 2
+        val headingPx = (ROW_TYPE.rowPx - line) / 2 + line + (POPULAR_ROW_PX - line) / 2
         HeadingRow(
             "Popular Songs",
             leadPx = if (grouped) ROW_LEAD_PX else LIST_LEAD_PX,
@@ -601,9 +600,9 @@ private fun HeadingRow(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(px(if (tight) tightHeightPx ?: type.oneLinePx else ROW_H_PX))
+            .height(px(if (tight) tightHeightPx ?: type.oneLinePx else type.rowPx))
             .rowClickable(onClick = onClick)
-            .padding(start = px(leadPx), top = px(if (tight) (ROW_H_PX - type.titleLinePx) / 2 else 0)),
+            .padding(start = px(leadPx), top = px(if (tight) (type.rowPx - type.titleLinePx) / 2 else 0)),
         contentAlignment = if (tight) Alignment.TopStart else Alignment.CenterStart,
     ) {
         AppText(

@@ -166,6 +166,7 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
         val trials = listOf(
             "Balanced Line Breaks" to App.settings.balancedTitles,
             "Balanced Names" to App.settings.balancedNames,
+            "Smaller List Text" to App.settings.smallerListText,
         )
 
         // Rows a step below the other settings pages', so a trial's whole name fits.

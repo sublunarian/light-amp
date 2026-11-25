@@ -57,7 +57,7 @@ import com.sublunar.amp.ui.components.LIST_EDGE_PX
 import com.sublunar.amp.ui.components.ListScrollBar
 import com.sublunar.amp.ui.components.ROW_ART_PX
 import com.sublunar.amp.ui.components.ROW_GAP_PX
-import com.sublunar.amp.ui.components.ROW_H_PX
+import com.sublunar.amp.ui.components.listRowPx
 import com.sublunar.amp.ui.components.RowSubtitle
 import com.sublunar.amp.ui.components.SelectionArtwork
 import com.sublunar.amp.ui.components.SelectionHeader
@@ -234,7 +234,8 @@ private fun SimpleLightScreen<*>.QueueView(
 ) {
     val drag = rememberDragReorderState<String>()
     val artworkHidden by App.hideListArtwork.collectAsState()
-    val rowPx = with(LocalDensity.current) { px(ROW_H_PX).toPx() }
+    val queueRowPx = listRowPx(artworkHidden)
+    val rowPx = with(LocalDensity.current) { px(queueRowPx).toPx() }
     // Read unconditionally, branch on the result — see ARCHITECTURE.md on
     // conditional composable calls.
     val rules by App.rules.collectAsState()
@@ -300,7 +301,7 @@ private fun SimpleLightScreen<*>.QueueView(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(px(ROW_H_PX))
+                            .height(px(queueRowPx))
                             .onGloballyPositioned { drag.rowCoords[rowKey] = it }
                             // Real row goes invisible; DragOverlay draws the floating stand-in.
                             .alpha(if (isDragging) 0f else if (isPast || mustWait) LocalDimTextAlpha.current else 1f)
@@ -395,7 +396,7 @@ private fun BoxScope.DragOverlay(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(px(ROW_H_PX))
+                .height(px(listRowPx(App.hideListArtwork.collectAsState().value)))
                 .align(Alignment.TopStart)
                 .graphicsLayer { translationY = top + fingerOffsetY }
                 .padding(start = px(QUEUE_START_PX), end = px(QUEUE_HANDLE_END_PX)),
