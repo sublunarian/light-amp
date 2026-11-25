@@ -109,7 +109,18 @@ object LocalLibrary : PhoneLibrary {
         }
     }
 
-    override fun changedSince(ms: Long): Boolean = ToolManagerFolders.changedSince(ms)
+    /**
+     * The Tool Manager's folder by its dates; `Music/Amp` only by whether a song
+     * can be seen there now and could at the last scan. That flips when access
+     * is granted, and the scan that ran before it, seeing nothing, mustn't stand
+     * in for one that can. Music copied into `Music/Amp` otherwise waits for
+     * Rescan or the next scan, as before.
+     */
+    override fun changedSince(ms: Long): Boolean =
+        ToolManagerFolders.changedSince(ms) || hasSong(MUSIC_DIR, 0) != (sawSharedMarker?.exists() == true)
+
+    /** Present when the last scan found songs in `Music/Amp`. */
+    private val sawSharedMarker: File? get() = ToolManagerFolders.privateFile("music-amp-seen")
 
     /**
      * Walk the folders and read every file's tags, on IO and cancellable
@@ -120,6 +131,9 @@ object LocalLibrary : PhoneLibrary {
         val roots = roots()
         val files = mutableListOf<File>()
         roots.forEach { root -> collect(root, 0, files) }
+        val shared = MUSIC_DIR.canonicalFile
+        val sawShared = files.any { it.canonicalFile.startsWith(shared) }
+        sawSharedMarker?.let { runCatching { if (sawShared) it.createNewFile() else it.delete() } }
         Log.i(TAG, "scan: ${roots.size} music folder(s), ${files.size} audio files")
 
         val retriever = MediaMetadataRetriever()

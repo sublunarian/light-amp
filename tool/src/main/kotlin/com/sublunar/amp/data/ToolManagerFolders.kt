@@ -92,7 +92,10 @@ object ToolManagerFolders {
     private const val TAG = "AmpSync"
 
     /** Outside [shared], so the Tool Manager never lists it: playlists from `Music/Amp` were moved once. */
-    val playlistsMovedMarker: File? get() = shared?.parentFile?.let { File(it, "playlists-moved") }
+    val playlistsMovedMarker: File? get() = privateFile("playlists-moved")
+
+    /** A file of Amp's own beside [shared], which the Tool Manager never lists. */
+    fun privateFile(name: String): File? = shared?.parentFile?.let { File(it, name) }
 
     /**
      * Whether anything in these folders came, went or changed after [ms].

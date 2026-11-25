@@ -7,7 +7,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
-import com.sublunar.amp.data.ToolManagerFolders
 import com.sublunar.amp.data.Holdings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -276,14 +275,12 @@ internal fun rememberAccessRequest(phone: PhoneLibrary?): () -> Unit {
  */
 @Composable
 private fun SimpleLightScreen<*>.libraryNotices(empty: Boolean): List<@Composable () -> Unit> {
-    val onPhone = App.source.collectAsState().value.phoneLibrary != null
     val needsAccess = !rememberLocalAccess()
     val askAccess = rememberAccessRequest(App.source.collectAsState().value.phoneLibrary)
     val sync = App.librarySync.syncState.collectAsState().value
     val error = sync.error
     return buildList<@Composable () -> Unit> {
         if (needsAccess) add { PlayAllRow(AppIcons.Smartphone, "Allow Music Access", onClick = askAccess) }
-        if (onPhone && empty && !sync.syncing) add { SectionLabel("Add music from a computer: open ${ToolManagerFolders.LOCATION}") }
         if (!error.isNullOrBlank()) add { PlayAllRow(AppIcons.CloudOff, error) { go { SettingsScreen(it) } } }
         if (empty && sync.syncing) add { SectionLabel(syncProgressText(sync.phase)) }
     }

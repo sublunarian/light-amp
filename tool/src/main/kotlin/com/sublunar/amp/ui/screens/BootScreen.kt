@@ -1,5 +1,6 @@
 package com.sublunar.amp.ui.screens
 
+import kotlinx.coroutines.launch
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -68,6 +69,9 @@ class BootScreen(private val sealed: SealedLightActivity) : LightScreen<Unit, Bo
 
     override fun willShow() {
         showing = true
+        // Back in front, from LightOS's permission prompt or anywhere else: the
+        // phone's files are looked at again, in case access was granted.
+        if (App.isReady) App.scope.launch { App.librarySync.rescanPhoneIfChanged() }
     }
 
     override fun willHide() {
