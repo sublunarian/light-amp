@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.sublunar.amp.App
+import com.sublunar.amp.data.Pref
 import com.sublunar.amp.data.ArtworkMode
 import com.sublunar.amp.data.LayoutMode
 import com.sublunar.amp.data.MusicSource
@@ -87,6 +88,7 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
     @Composable
     override fun Content() {
         val syncedLyrics by App.settings.syncedLyrics.state.collectAsState()
+        val smallerFont by App.settings.smallerFont.state.collectAsState()
         val rowMark by App.settings.rowMark.state.collectAsState()
         val sources by App.settings.sources.state.collectAsState()
         val layoutMode by App.settings.layoutMode.state.collectAsState()
@@ -99,6 +101,12 @@ class AppearanceScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
                 if (sources.any { it.supportsLikes || it.supportsDownloads }) {
                     item {
                         TextRow(title = "Indicator Icon", value = rowMark.label) { go { RowMarkScreen(it) } }
+                    }
+                }
+                item {
+                    // The music lists a size down, for more on a screen; the grey lines stay readable.
+                    ToggleRow("Smaller Font", smallerFont) {
+                        App.scope.launch { App.settings.smallerFont.set(!smallerFont) }
                     }
                 }
                 item {
@@ -163,11 +171,8 @@ class TestScreen(sealed: SealedLightActivity) : AmpScreen<Unit>(sealed) {
 
     @Composable
     override fun Content() {
-        val trials = listOf(
-            "Balanced Line Breaks" to App.settings.balancedTitles,
-            "Balanced Names" to App.settings.balancedNames,
-            "Smaller List Text" to App.settings.smallerListText,
-        )
+        // None on trial now: the page stays for the next.
+        val trials = emptyList<Pair<String, Pref<Boolean>>>()
 
         // Rows a step below the other settings pages', so a trial's whole name fits.
         ListScreen(onBack = { goBack() }, title = "Test") {

@@ -534,14 +534,8 @@ class AppSettings(
     /** An artist's popular songs at the end of their page, where the source can name them. Off until chosen. */
     val showPopularSongs: Pref<Boolean> = bool("pref.showPopularSongs", false)
 
-    /** Trial: a wrapped track title in lines of about even length. */
-    val balancedTitles: Pref<Boolean> = bool("pref.balancedTitles", false)
-
-    /** Trial: an artist's name and an album's title and artist, where they wrap, in even lines. */
-    val balancedNames: Pref<Boolean> = bool("pref.balancedNames", false)
-
-    /** Trial: every music list's text and rows about an eighth smaller. */
-    val smallerListText: Pref<Boolean> = bool("pref.smallerListText", false)
+    /** Every music list's titles and rows about an eighth smaller, the grey lines as they are. Off until chosen. */
+    val smallerFont: Pref<Boolean> = bool("pref.smallerFont", false)
 
     /** Which categories the simple layout's library home lists, and in what order — see [HomeLayout]. */
     val homeLayout: Pref<HomeLayout> =

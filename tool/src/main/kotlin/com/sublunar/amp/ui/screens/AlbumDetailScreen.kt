@@ -238,7 +238,7 @@ class AlbumDetailScreen(
             maxLines = maxLines,
             align = if (centred) TextAlign.Center else null,
             exact = true,
-            balanced = App.settings.balancedNames.state.collectAsState().value,
+            balanced = true,
             modifier = Modifier
                 .fillMaxWidth()
                 .onGloballyPositioned { onTitleBottom(it.boundsInParent().bottom.toInt()) },
@@ -306,7 +306,7 @@ class AlbumDetailScreen(
                     align = if (centred) TextAlign.Center else null,
                     maxLines = if (titleLines >= CARD_TITLE_LINES) 1 else CARD_ARTIST_LINES,
                     exact = true,
-                    balanced = App.settings.balancedNames.state.collectAsState().value,
+                    balanced = true,
                 )
                 val year = album.year?.toString().orEmpty()
                 if (year.isNotEmpty()) {
@@ -351,7 +351,7 @@ class AlbumDetailScreen(
                 color = SDK_GREY,
                 align = if (centred) TextAlign.Center else null,
                 exact = true,
-                balanced = App.settings.balancedNames.state.collectAsState().value,
+                balanced = true,
             )
             val year = album.year?.toString().orEmpty()
             if (year.isNotEmpty()) {

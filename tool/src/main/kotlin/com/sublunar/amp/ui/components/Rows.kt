@@ -279,14 +279,14 @@ private val LIST_TYPE = RowType(
 )
 
 /**
- * Trial: 46/52 of every size above but the grey lines, which stay the SDK's detail,
+ * Smaller Font: 46/52 of every size above but the grey lines, which stay the SDK's detail,
  * the smallest of Light's own sizes: the title between the lists' and theirs.
  */
 private val SMALL_LIST_TYPE = RowType(46, 53, TextRole.Fine, ROW_SUB_PX, 53, TextRole.Detail, 134, 102, 169)
 
-/** Every list's type and pitch, with covers or without: a step smaller while that trial is on. */
+/** Every list's type and pitch, with covers or without: a step smaller with Smaller Font on. */
 val ROW_TYPE: RowType
-    @Composable get() = if (App.settings.smallerListText.state.collectAsState().value) SMALL_LIST_TYPE else LIST_TYPE
+    @Composable get() = if (App.settings.smallerFont.state.collectAsState().value) SMALL_LIST_TYPE else LIST_TYPE
 
 /** A two-line row's height: the type's without covers, the cover's own with them. */
 @Composable
@@ -645,8 +645,6 @@ fun NumberedRow(
     /** The album's widest number: see [rememberNumberColumn]. */
     numberColumn: Dp,
 ) {
-    // Trial: a wrapped title in lines of about even length, not a word left over.
-    val balanced by App.settings.balancedTitles.state.collectAsState()
     // A long title wraps, the row growing a title line for each line past the
     // first, the air above and below its lines as a one-line title's.
     val type = ROW_TYPE
@@ -709,7 +707,8 @@ fun NumberedRow(
                     title,
                     pxSp(type.titlePx),
                     lineHeight = pxSp(type.titleLinePx),
-                    balanced = balanced,
+                    // Wrapped in lines of about even length, not a word left over.
+                    balanced = true,
                     exact = true,
                     modifier = Modifier.weight(1f).alignByBaseline(),
                 )

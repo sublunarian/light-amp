@@ -300,8 +300,8 @@ private fun ArtistNameCard(name: String, inList: Boolean, onBottom: (Int) -> Uni
             role = TextRole.Copy,
             align = TextAlign.Center,
             exact = true,
-            // Trial: a name that wraps in lines of about even length.
-            balanced = App.settings.balancedNames.state.collectAsState().value,
+            // A name that wraps in lines of about even length, not a word left over.
+            balanced = true,
             modifier = Modifier
                 .fillMaxWidth()
                 .onGloballyPositioned { onBottom(it.boundsInParent().bottom.toInt()) },
