@@ -33,15 +33,27 @@ object LibraryNav {
     /** The query the search results' scroll place belongs to: a new query starts them at the top. */
     internal var resultsQuery = ""
 
-    /** Show the search page with [query]'s results; a different query starts them from the top. */
-    fun showResults(query: String) {
-        if (query != searchQuery.value) {
-            ScrollAnchors.clear("search")
-            resultsQuery = ""
-        }
-        searchQuery.value = query
+    /**
+     * Show the search page, empty: a search starts afresh rather than on the
+     * last one. Straight to typing [withKeyboard] (the header's magnifier).
+     */
+    fun openSearch(withKeyboard: Boolean = false) {
+        ScrollAnchors.clear("search")
+        resultsQuery = ""
+        searchQuery.value = ""
         searchActive.value = true
+        typing.value = withKeyboard
     }
+
+    /**
+     * Whether the keyboard is up.
+     *
+     * Search is two states of one page: typing, with the keyboard at the bottom
+     * and the results above it, and reading, with the nav bar back. Return moves
+     * from the first to the second and the results never go away, which is why
+     * this isn't LightOS's full-screen keyboard.
+     */
+    val typing = MutableStateFlow(false)
 
     /**
      * The library index, where the simplified bar's library button leads.
@@ -108,10 +120,16 @@ object LibraryNav {
         libraryIndex.value = true
     }
 
-    /** Leave the search page; the query goes with it. */
+    fun setQuery(query: String) {
+        searchQuery.value = query
+        searchActive.value = true
+    }
+
+    /** Leave the search page; the query goes with it (see [openSearch]). */
     fun closeSearch() {
         searchQuery.value = ""
         searchActive.value = false
+        typing.value = false
         record(LastSection.LIBRARY)
     }
 
