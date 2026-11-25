@@ -205,6 +205,16 @@ turned the ringer. LightOS now turns media volume and shows its panel, so the
 keys go to LightOS again, casting included: the output follows the phone's
 media volume, which needs no patch.
 
+### 13a. `SealedLightContext.lightOsVersion` — added 24 Nov 2026
+
+LightOS's own version, the "600" of the `com.lightos` app's `600-release-lp3`,
+which a tool can't read through the SDK. Amp uses it for one thing: before
+LightOS 596 a forwarded volume key turns the ringer, so there each press steps
+media volume in Amp instead (`PlaybackController.handleVolumeKey`). A spike in
+`light-activity.patch`; remove it, `handleVolumeKey` and the `onKeyDown`
+overrides in `AmpScreen` and `BootScreen` once every phone Amp reaches is on
+596 or later, which the Tool Library release can assume.
+
 ### 14. `display/LightDisplayColor.kt` + `LightActivity.onResume`/`onPause`
 
 Switches LightOS's device-wide greyscale filter off while the tool is in front.

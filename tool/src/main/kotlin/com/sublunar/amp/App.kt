@@ -93,6 +93,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 object App {
     lateinit var scope: CoroutineScope
         private set
+
+    /** LightOS's own version ("600"), or null where it couldn't be read — see SealedLightContext.lightOsVersion. */
+    var lightOsVersion: Int? = null
+        private set
     lateinit var settings: AppSettings
         private set
     lateinit var library: LibraryRepository
@@ -512,11 +516,12 @@ object App {
     private const val SYNC_JOB_KEY = "library-sync"
 
     fun boot(sealedActivity: SealedLightActivity, context: SealedLightContext) {
+        lightOsVersion = context.lightOsVersion
         // Before anything else can log or crash: see Log. Once per process.
         Log.attach(
             context.filesDir,
             header = "Amp ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) ${BuildConfig.BUILD_TYPE}, " +
-                "LightOS ${android.os.Build.DISPLAY}, Android ${android.os.Build.VERSION.RELEASE}, " +
+                "LightOS ${lightOsVersion ?: "?"} (${android.os.Build.DISPLAY}), Android ${android.os.Build.VERSION.RELEASE}, " +
                 "heap ${Runtime.getRuntime().maxMemory() shr 20} MB",
         )
         ToolManagerFolders.attach(context.filesDir)

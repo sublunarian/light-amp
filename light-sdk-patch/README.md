@@ -19,7 +19,7 @@ Two kinds of change live here, and the distinction is the whole point:
 | Patch | What it is |
 |---|---|
 | `audio-player.patch` | All additive. SDK 0.2.1 brought single-item queue edits (`addMediaItem`, `removeMediaItem`, `moveMediaItem`, `replaceMediaItem`, `seekToDefaultPosition`), which Amp uses directly. What's left: multi-item `replaceRange` (one queue update instead of one per item; an empty range inserts, so it appends too), `setMediaQueueAt(items, index, positionMs)` so a queue can restore to an index *and* position, `repeatMode`, `playWhenReady` (intent vs. `isPlaying` mid-rebuffer), and the device-volume surface (`deviceVolume`/`setSystemVolume`). Also the player defaults in `SdkExoPlayer.kt`, where 0.2.1 builds both the attached and the detached player: device-volume control and `setHandleAudioBecomingNoisy` (headphones out ≠ speaker on). |
-| `light-activity.patch` | Spike only: `LightDisplayColor` foreground/background hooks. |
+| `light-activity.patch` | Spike only: `LightDisplayColor` foreground/background hooks, and `SealedLightContext.lightOsVersion` for the volume keys on LightOS before 596. |
 | `spike-background-transfer.patch` | `LightTransferService` (`dataSync` foreground service so long downloads aren't throttled 9× in the cached bucket) + its manifest entry and permissions. The background-*audio* half of this spike was retired when Amp adopted `capabilities = ["detached-audio"]`; the official answer for transfers is requested upstream as [light-sdk#187](https://github.com/lightphone/light-sdk/issues/187). |
 | `spike-display-color.patch` | `LightDisplayColor` — lifts LightOS's global greyscale daltonizer while Amp is foreground, via `WRITE_SECURE_SETTINGS` (a `pm grant` the user runs; a clean no-op without it). |
 

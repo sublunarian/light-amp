@@ -1,5 +1,5 @@
 diff --git a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
-index 2511a37..d847401 100644
+index 2511a37..a1646cb 100644
 --- a/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
 +++ b/sdk/client/src/main/kotlin/com/thelightphone/sdk/LightActivity.kt
 @@ -1,5 +1,6 @@
@@ -28,3 +28,21 @@ index 2511a37..d847401 100644
          currentScreen.value?.screen?.notifyWillShow()
      }
  
+@@ -325,6 +331,17 @@ class SealedLightContext(internal val androidContext: Context) {
+     val connectivity: LightConnectivity by lazy { LightConnectivity(androidContext) }
+     val textEntry: LightTextEntry by lazy { LightTextEntry(androidContext) }
+     fun readAsset(path: String): ByteArray = androidContext.assets.open(path).use { it.readBytes() }
++
++    // SPIKE (LightOS version): the number LightOS's Settings show, "600" of the
++    // com.lightos app's "600-release-lp3"; null where it can't be read. Lets a
++    // side-loaded tool keep a workaround on an older LightOS. Drop it once every
++    // phone a tool can reach is past the versions that need one.
++    val lightOsVersion: Int? by lazy {
++        runCatching {
++            androidContext.packageManager.getPackageInfo("com.lightos", 0)
++                .versionName?.takeWhile { it.isDigit() }?.toIntOrNull()
++        }.getOrNull()
++    }
+ }
+ /**
+  * Wrapper class to pass around an instance of LightActivity without exposing it to

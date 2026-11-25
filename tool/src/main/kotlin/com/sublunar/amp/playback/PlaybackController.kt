@@ -1,5 +1,6 @@
 package com.sublunar.amp.playback
 
+import android.view.KeyEvent
 import android.graphics.Bitmap
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -2814,6 +2815,26 @@ class PlaybackController(
         if (p.repeatMode != wanted) p.repeatMode = wanted
     }
 
+    /**
+     * A hardware volume key, on a LightOS older than [VOLUME_KEYS_FIXED_IN]: there a
+     * key Amp forwards turns the ringer, even with music playing, so each press steps
+     * the media volume here instead (the speaker's while casting) and is kept from
+     * LightOS. True when handled. On a newer LightOS, false: LightOS turns media
+     * volume itself and shows its panel. Goes with the lightOsVersion spike.
+     */
+    fun handleVolumeKey(keyCode: Int): Boolean {
+        val version = App.lightOsVersion ?: return false
+        if (version >= VOLUME_KEYS_FIXED_IN) return false
+        val step = when (keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> VOLUME_KEY_STEP
+            KeyEvent.KEYCODE_VOLUME_DOWN -> -VOLUME_KEY_STEP
+            else -> return false
+        }
+        val from = if (isCasting) _volume.value else player?.deviceVolume?.value ?: _volume.value
+        setVolume(from + step)
+        return true
+    }
+
     /** Set the volume of whatever has the sound: the output, or the phone's media stream. */
     fun setVolume(fraction: Float) {
         val v = fraction.coerceIn(0f, 1f)
@@ -3376,6 +3397,12 @@ class PlaybackController(
     }
 
     companion object {
+        /** The first LightOS seen turning media volume for a forwarded key, and showing its panel (Nov 2026). */
+        private const val VOLUME_KEYS_FIXED_IN = 596
+
+        /** One of Android's fifteen media volume steps. */
+        private const val VOLUME_KEY_STEP = 1f / 15
+
         /** The folder under an output's that outlives the process — see [OutputHost.keepDir]. */
         private const val KEPT = "kept"
 
